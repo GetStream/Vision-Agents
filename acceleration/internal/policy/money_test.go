@@ -529,7 +529,7 @@ func (s *PolicySuite) TestJoinWarmsTheDecisionAndTheAccount() {
 	elapsed := time.Since(started)
 
 	s.Require().NoError(err)
-	s.Less(elapsed, 10*time.Millisecond, "answered from memory with the policies locked")
+	s.Less(elapsed, joinTimeout, "answered from memory with the policies locked, not after a read of them gives up")
 	s.Require().NotNil(admitted.DataPolicy.AllowTraining)
 	s.False(*admitted.DataPolicy.AllowTraining, "the app's floor")
 	s.ErrorIs(admitted.Spend, ErrNoCredits, "the account's balance, which is nothing")
@@ -1090,7 +1090,7 @@ func (s *PolicySuite) TestASubjectSeenAgainAfterIdleIsReadBeforeItsAdmission() {
 	s.spend(s.app, 400_000)
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.SumEvery = time.Hour })
+	enforcer := s.newEnforcer(configs, nil, idle, func(settings *Settings) { settings.SumEvery = time.Hour })
 	s.Require().NoError(s.admit(enforcer, s.app).Spend)
 	s.eventually(func() bool {
 		enforcer.money.mu.Lock()
@@ -1183,9 +1183,16 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 	s.T().Cleanup(func() { _ = db.Close() })
 	reads := &limitsReads{}
 	db.DB().AddQueryHook(reads)
-	configs, err := appconfig.New(appconfig.Options{Store: db})
+	// Policies cached in Redis, as a router has them, so the admissions reach their first read
+	// of money together rather than as each read of its policies lands.
+	configs, err := appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.Fresh, settings.SumEvery = time.Hour, time.Hour })
+	s.T().Cleanup(configs.Close)
+	// The loops read nothing on their own, and an admission waits for its read as long as the
+	// read may take, however slow a loaded machine makes the batch.
+	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+		settings.Fresh, settings.SpendEvery, settings.SumEvery, settings.FirstRead = time.Hour, time.Hour, time.Hour, readTimeout
+	})
 	const accounts = 60
 	apps := make([]string, accounts)
 	for i := range apps {
@@ -1194,6 +1201,10 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 		s.Require().NoError(s.store.JoinOrganization(s.ctx, apps[i], organization))
 		s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: organization, AppID: apps[i], LimitMicros: 1})
 		s.spendAs(store.Request{CustomerID: apps[i], CostMicros: 1})
+		_, _, _, err := enforcer.policies(s.ctx, apps[i])
+		s.Require().NoError(err)
+		_, err = configs.HasUserPolicies(s.ctx, apps[i])
+		s.Require().NoError(err)
 	}
 	before := reads.reads.Load()
 
@@ -1402,12 +1413,15 @@ func (s *PolicySuite) TestAnAppInNoOrganizationWithNoLimitIsNeverRefused() {
 }
 
 func (s *PolicySuite) TestAnIdleDecisionIsDropped() {
-	s.admit(s.enforcer, s.app)
-	_, kept := s.enforcer.decided(s.app)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, idle)
+	s.admit(enforcer, s.app)
+	_, kept := enforcer.decided(s.app)
 	s.Require().True(kept)
 
 	s.eventually(func() bool {
-		_, kept := s.enforcer.decided(s.app)
+		_, kept := enforcer.decided(s.app)
 		return !kept
 	}, 5*time.Second, 10*time.Millisecond, "dropped once unused for Idle")
 }

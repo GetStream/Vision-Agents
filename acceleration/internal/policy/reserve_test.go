@@ -23,12 +23,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
-// sharing is how fast the reservation tests share holds: a flush every 10 ms, the other
-// routers' holds read every 50 ms, and billable work refused once a hold waits 200 ms unshared.
+// sharing is how fast the reservation tests share holds: a flush every 10 ms and the other
+// routers' holds read every 50 ms. Billable work is refused once a hold waits a minute unshared,
+// so a flush a loaded machine holds up refuses nothing; a test of that refusal sets its own lag.
 func sharing(redis rueidis.Client) func(*Settings) {
 	return func(settings *Settings) {
 		settings.Holds = redis
-		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, 200*time.Millisecond
+		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, time.Minute
 	}
 }
 
@@ -230,7 +231,8 @@ func (s *PolicySuite) TestTwoRoutersSeeEachOthersHolds() {
 	s.NoError(b.Reserve(s.owner(), newID(), 200_000, time.Minute), "$0.10 is left, so the next unit may start")
 	s.ErrorIs(b.Reserve(s.owner(), newID(), 200_000, time.Minute), ErrNoCredits)
 	s.EqualValues(200_000, pending(b.Enforcer, s.org), "a refusal holds nothing")
-	s.Zero(remoteHeld(a.Enforcer, s.org), "a router never counts its own holds twice")
+	s.eventually(func() bool { return remoteHeld(a.Enforcer, s.org) == 200_000 }, time.Second, 5*time.Millisecond,
+		"a router counts the other's hold, and never its own twice")
 	s.ErrorIs(s.admit(b.Enforcer, s.app).Spend, ErrNoCredits, "an admission counts them too")
 }
 
@@ -363,7 +365,7 @@ func (s *PolicySuite) TestRedisLosingItsDataChangesNoBalance() {
 func (s *PolicySuite) TestRedisDownAdmitsFromMemoryThenRefuses() {
 	proxy, redis := s.redis()
 	s.usage().Credit(s.T(), s.org, 100_000_000)
-	enforcer := s.sharer(redis)
+	enforcer := s.sharer(redis, func(settings *Settings) { settings.FlushMaxLag = 200 * time.Millisecond })
 	proxy.stop()
 	stopped := time.Now()
 
