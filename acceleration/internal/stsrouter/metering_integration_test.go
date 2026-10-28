@@ -87,7 +87,6 @@ func (s *MeteringSuite) health(modality routing.Modality, provider, model string
 	return health.Requests
 }
 
-// spent is what the customer has spent on the modality, as the live counters have it.
 // priced is what used costs at the suite's prices for the model of that modality, read from
 // vendor.json so a price change there leaves the tests passing.
 func (s *MeteringSuite) priced(modality routing.Modality, name string, used pricing.Quantities) int64 {
@@ -95,6 +94,7 @@ func (s *MeteringSuite) priced(modality routing.Modality, name string, used pric
 	return pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: string(modality), Provider: provider, Model: model}, used)
 }
 
+// spent is what the customer has spent on the modality, as the live counters have it.
 func (s *MeteringSuite) spent(modality routing.Modality, customer string) int64 {
 	usage, err := s.live.Usage(s.ctx, string(modality), customer)
 	s.Require().NoError(err)

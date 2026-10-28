@@ -138,7 +138,6 @@ func (s *TextMeteringSuite) TestAnMMSThatArrivedIsBilledAsOne() {
 	s.Equal(s.sms("inbound", row.Meters), row.CostMicros, "Telnyx's rate for an MMS received")
 }
 
-// row waits for the customer's one text row.
 // sms is what used costs on a US text in that direction at the vendor list's rates, read from
 // vendor.json so a price change there leaves the tests passing.
 func (s *TextMeteringSuite) sms(direction string, used pricing.Quantities) int64 {
@@ -147,6 +146,7 @@ func (s *TextMeteringSuite) sms(direction string, used pricing.Quantities) int64
 	return pricingtest.Micros(s.T(), s.prices, item, used)
 }
 
+// row waits for the customer's one text row.
 func (s *TextMeteringSuite) row() store.Request {
 	var rows []store.Request
 	s.Require().Eventually(func() bool {
