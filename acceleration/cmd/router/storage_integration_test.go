@@ -39,7 +39,7 @@ func (s *UsageCommandsSuite) runStorage(server *turbopuffertest.Server, hour tim
 	s.Require().NoError(err)
 	defer stop()
 	var out bytes.Buffer
-	err = recordStorage(s.ctx, metered.NewKnowledge(backend, recorder), s.store, hour, logger, &out)
+	err = recordStorage(s.ctx, metered.NewKnowledge(backend, recorder, nil), s.store, hour, logger, &out)
 	return out.String(), err
 }
 
