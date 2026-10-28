@@ -79,6 +79,13 @@ type Signal struct {
 	At time.Time
 }
 
+// Media is one file a person sent with a message: where the provider keeps it, which may be a
+// URL that expires, and its MIME type as the provider says it.
+type Media struct {
+	URL      string
+	MIMEType string
+}
+
 // InboundMessage is one message a person sent on an external thread, named by the provider's
 // ids and by a thread key the verifier builds. Like Signal it names no connection or Stream Chat channel: the channel bridge
 // maps ProviderUnitID to a connection, ThreadKey to a thread channel and AuthorID to a
@@ -96,6 +103,8 @@ type InboundMessage struct {
 	AuthorID string
 	// Text is the message text. It may be empty, for a message that is only a file.
 	Text string
+	// Media is the files sent with the message, in order (MessageRule.Media), such as a photo.
+	Media []Media
 	// ProviderMessageID is the provider's id for this message: WhatsApp messages[].id, Slack
 	// event.ts, Twilio MessageSid. It finds this message's entry in Raw when one delivery
 	// batches several, and it is the key for dropping a retried delivery. Slack's ts is

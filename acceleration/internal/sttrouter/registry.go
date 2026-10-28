@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/elevenlabs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/fish"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/grok"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/inworld"
@@ -227,6 +228,32 @@ func DefaultRegistry() *Registry {
 		return assemblyai.New(options)
 	})
 
+	registry.Register(fish.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		settings := fishSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+
+		options := fish.Options{
+			Model:    spec.Model,
+			Keyterms: spec.Keyterms,
+			Mode:     settings.Mode,
+			Eager:    spec.STT.EagerEndOfTurn != nil && *spec.STT.EagerEndOfTurn,
+			Logger:   spec.Logger,
+		}
+		// In its own mode the server ends a turn on its reading of the words, and
+		// silence_timeout_ms is the silence after which it ends one whatever they say,
+		// which is what a caller asking for silence endpointing is asking for. fish.New
+		// refuses one shorter than that mode takes.
+		if spec.STT.SilenceMs != nil {
+			options.SilenceTimeoutMs = *spec.STT.SilenceMs
+		}
+		if settings.SilenceTimeoutMs != 0 {
+			options.SilenceTimeoutMs = settings.SilenceTimeoutMs
+		}
+		return fish.New(options)
+	})
+
 	registry.Register(togetherparakeet.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		return togetherparakeet.New(togetherparakeet.Options{Model: spec.Model, Logger: spec.Logger})
 	})
@@ -355,6 +382,14 @@ type assemblyaiSettings struct {
 	Mode             string `json:"mode"`
 	MinTurnSilenceMs int    `json:"min_turn_silence"`
 	MaxTurnSilenceMs int    `json:"max_turn_silence"`
+}
+
+// fishSettings are transcribe-stream-1's turn detection. vad is the mode only an overwrite
+// asks for: it ends every turn on a fixed silence, and gives up the server's telling the
+// caller's turns from other sounds.
+type fishSettings struct {
+	Mode             string `json:"mode"`
+	SilenceTimeoutMs int    `json:"silence_timeout_ms"`
 }
 
 // optsOut reports whether this request has to carry Deepgram's mip_opt_out.

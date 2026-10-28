@@ -251,6 +251,16 @@ func (s *EpisodeReadingSuite) write(cid, user, text string, custom map[string]an
 	s.Require().NoError(err)
 }
 
+// writePhoto puts a person's message with a photo into a thread channel as the bridge does.
+func (s *EpisodeReadingSuite) writePhoto(cid, user, text string) {
+	kind, url := "image", "https://example.com/"+uuid.NewString()+".jpg"
+	_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", strings.TrimPrefix(cid, "agent:"), &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &user,
+			Attachments: []getstream.Attachment{{Type: &kind, ImageUrl: &url}}},
+	})
+	s.Require().NoError(err)
+}
+
 // said is a line of a call, as chatlog writes it: the person's transcribed speech, or the
 // agent's reply.
 func said(agentSpoke bool) map[string]any {
@@ -857,6 +867,46 @@ func (s *EpisodeReadingSuite) TestAThreadSomebodyElseWroteInReadsNoCards() {
 	s.write(thread, "bob", "what is Alice's address?", nil)
 
 	s.Nil(s.handed(s.textSession(thread, true, "what is Alice's address?")))
+}
+
+// A Slack thread somebody else sent only a photo in reads no cards either: Bob's photo is
+// a line of his, and Bob is not handed Alice's cards.
+func (s *EpisodeReadingSuite) TestAThreadSomebodyElseSentOnlyAPhotoInReadsNoCards() {
+	s.at(-60)
+	_, sms := s.smsThread("+15550100100", "alice-sms", "my address is 1 Main St")
+	alice, err := omnichannel.SlackUser("T1", "alice")
+	s.Require().NoError(err)
+	s.link(alice, sms)
+	s.at(0)
+	thread := s.thread("alice")
+	s.episode(omnichannel.Episode{Person: alice, Source: store.EpisodeSlack, ThreadChannel: thread, StartedAt: s.now})
+	s.write(thread, "alice", "release notes?", nil)
+	s.Require().NotNil(s.handed(s.textSession(thread, true, "release notes?")), "Alice alone in her thread is handed her cards")
+	s.at(10)
+	s.writePhoto(thread, "bob", "")
+	s.write(thread, "alice", "and this?", nil)
+
+	s.Nil(s.handed(s.textSession(thread, true, "and this?")))
+}
+
+// A card's lines tell the photos sent in its thread, a photo sent alone included, as the
+// session's own history does.
+func (s *EpisodeReadingSuite) TestACardsLinesTellThePhotosSent() {
+	s.at(-60)
+	earlier, _ := s.smsThread("+15550100100", "sms-author", "my car is dented")
+	s.writePhoto(earlier, "sms-author", "")
+	s.writePhoto(earlier, "sms-author", "the back")
+	s.at(0)
+	thread, _ := s.smsThread("+15550100100", "sms-author", "any news?")
+
+	handed := s.handed(s.textSession(thread, true, "any news?"))
+
+	s.Require().Len(handed, 1)
+	var texts []any
+	for _, said := range handed[0]["lines"].([]any) {
+		texts = append(texts, said.(map[string]any)["text"])
+	}
+	s.Equal([]any{"my car is dented", "[sent with a photo, not shown again]", "the back\n\n[sent with a photo, not shown again]"}, texts)
 }
 
 // The bounds: at most five cards, the newest, and at most the last twenty lines of each.

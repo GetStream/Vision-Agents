@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
@@ -95,28 +95,9 @@ type ElevenLabsSuite struct {
 	suite.Suite
 }
 
-// quotaRefusals is how many socket frames of a spent quota the pool of ELEVENLABS_API_KEY
-// has counted as refused.
-func quotaRefusals(t *testing.T) float64 {
-	families, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, family := range families {
-		if family.GetName() != "router_keypool_refused_attempts_total" {
-			continue
-		}
-		for _, metric := range family.GetMetric() {
-			labels := map[string]string{}
-			for _, pair := range metric.GetLabel() {
-				labels[pair.GetName()] = pair.GetValue()
-			}
-			if labels["key_var"] == "ELEVENLABS_API_KEY" && labels["status"] == "quota_exceeded" {
-				return metric.GetCounter().GetValue()
-			}
-		}
-	}
-	return 0
+// refusals is how many refusals of status the pool of ELEVENLABS_API_KEY has counted.
+func refusals(t *testing.T, status string) float64 {
+	return keypooltest.Refused(t, "ELEVENLABS_API_KEY", status)
 }
 
 func TestElevenLabsSuite(t *testing.T) {
@@ -1053,7 +1034,7 @@ func (s *ElevenLabsSuite) TestAKeyWithNoQuotaLeftIsCountedAsRefused() {
 	spent, spare := "elevenlabs-"+rand.Text(), "elevenlabs-"+rand.Text()
 	fake := newFakeElevenLabs()
 	defer fake.close()
-	before := quotaRefusals(s.T())
+	before := refusals(s.T(), "quota_exceeded")
 	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare})
 	defer provider.Close()
 
@@ -1064,5 +1045,39 @@ func (s *ElevenLabsSuite) TestAKeyWithNoQuotaLeftIsCountedAsRefused() {
 		return failed
 	})
 
-	s.Equal(before+1, quotaRefusals(s.T()))
+	s.Equal(before+1, refusals(s.T(), "quota_exceeded"))
+}
+
+// invalidKeyFrame is the frame ElevenLabs sent a made-up key on 2026-10-28, right after the
+// handshake, before closing with 1008 0.8s later.
+const invalidKeyFrame = `{"message":"API key is invalid.","error":"invalid_api_key","code":1008}`
+
+// refusedBy is how many invalid keys were counted while the server sent these frames on a
+// socket opened on a key of its own; it waits for the error each frame reports.
+func (s *ElevenLabsSuite) refusedBy(frames ...string) float64 {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{APIKey: "sk_" + rand.Text()})
+	defer provider.Close()
+	before := refusals(s.T(), "invalid_key")
+
+	for _, frame := range frames {
+		s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(frame)))
+	}
+	failures := 0
+	s.collect(provider, func(event tts.Event) bool {
+		if _, failed := event.(tts.Error); failed {
+			failures++
+		}
+		return failures == len(frames)
+	})
+	return refusals(s.T(), "invalid_key") - before
+}
+
+func (s *ElevenLabsSuite) TestAnInvalidKeyFrameIsCountedOncePerConnection() {
+	s.Equal(1.0, s.refusedBy(invalidKeyFrame, invalidKeyFrame))
+}
+
+func (s *ElevenLabsSuite) TestAnotherErrorFrameIsNotAnInvalidKey() {
+	s.Zero(s.refusedBy(`{"message":"API key is invalid.","error":"invalid_request","code":1008}`))
 }

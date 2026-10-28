@@ -114,14 +114,15 @@ func (s *AuthorizationsSuite) TestAForcedDeleteOfABoundConnectionEndsItsGrantAtT
 // A caller that hangs up once the row is deleted does not cancel the revoke: the router can
 // never revoke the grant later, since the row that held its tokens is gone.
 func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvider() {
+	reached := make(chan struct{})
 	gone := make(chan struct{})
 	provider, err := url.Parse(s.provider.URL)
 	s.Require().NoError(err)
 	proxy := httputil.NewSingleHostReverseProxy(provider)
 	proxy.Transport = s.provider.Client().Transport
-	// The revoke endpoint waits for the caller to hang up, then a second more, in which a
-	// revoke cancelled with the caller closes its connection and is dropped here; a revoke
-	// still alive is passed on to the fake.
+	// The revoke endpoint says it was reached, waits for the caller to hang up, then a second
+	// more, in which a revoke cancelled with the caller closes its connection and is dropped
+	// here; a revoke still alive is passed on to the fake.
 	slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Read up front: net/http notices a closed connection, and cancels r's context, only
 		// once the handler has read the whole body.
@@ -130,6 +131,7 @@ func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvid
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
+		close(reached)
 		select {
 		case <-gone:
 		case <-time.After(5 * time.Second):
@@ -148,13 +150,27 @@ func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvid
 	stored, manifest := s.held(id)
 	before := s.provider.Hits(fakeprovider.PathRevoke)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
+	ctx, hangUp := context.WithCancel(context.Background())
+	defer hangUp()
 	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, s.server.URL+"/v1/agents/connections/"+id, nil)
 	s.Require().NoError(err)
 	request.Header = s.serverClient.header.Clone()
-	_, err = s.server.Client().Do(request) //nolint:bodyclose // no response: the caller hung up
-	s.Require().ErrorIs(err, context.DeadlineExceeded)
+	answered := make(chan error, 1)
+	go func() {
+		_, err := s.server.Client().Do(request) //nolint:bodyclose // no response: the caller hung up
+		answered <- err
+	}()
+	// The caller hangs up once the revoke reached the provider, so after the delete committed:
+	// a hang-up before it cancels the delete, which leaves the connection and its grant live.
+	select {
+	case <-reached:
+	case err := <-answered:
+		s.Require().FailNow("the delete was answered before its revoke reached the provider", "error: %v", err)
+	case <-time.After(5 * time.Second):
+		s.Require().FailNow("the delete's revoke never reached the provider")
+	}
+	hangUp()
+	s.Require().ErrorIs(<-answered, context.Canceled)
 	close(gone)
 
 	s.Require().Eventually(func() bool { return s.provider.Hits(fakeprovider.PathRevoke) == before+1 }, 5*time.Second, 20*time.Millisecond)

@@ -263,6 +263,55 @@ func (s *BrokerSuite) TestCodeInTheSandboxQueriesGitHubsGraphQLAndMutatesNothing
 	s.Equal([]string{"Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
 }
 
+// TestCodeInTheSandboxReadsBigQueryWithOneSELECTAlone: under BigQuery's manifest, the SELECT
+// google-cloud-bigquery's client.query_and_wait sends reaches BigQuery with the token after its
+// dry run; a script reaches it as the dry run alone, and jobs.insert, which client.query() sends,
+// not at all. Both get the SQL read's answer.
+func (s *BrokerSuite) TestCodeInTheSandboxReadsBigQueryWithOneSELECTAlone() {
+	raw, err := fs.ReadFile(providers.FS, "bigquery.yaml")
+	s.Require().NoError(err)
+	manifest, err := core.ParseManifest(raw)
+	s.Require().NoError(err)
+	mount, err := s.broker.Prepare(s.ctx, []sandbox.Grant{{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-bigquery"},
+		Binding: "bigquery", Scheme: "oauth2_code", Env: manifest.Sandbox.Env, Hosts: manifest.Sandbox.Hosts, Reads: manifest.Sandbox.Reads}})
+	s.Require().NoError(err)
+	post := func(path, body string) (int, string) {
+		request, err := http.NewRequestWithContext(s.ctx, http.MethodPost, "https://bigquery.googleapis.com"+path, strings.NewReader(body))
+		s.Require().NoError(err)
+		request.Header.Set("Authorization", "Bearer "+mount.Env["BIGQUERY_TOKEN"])
+		request.Header.Set("Content-Type", "application/json")
+		response, err := s.rig.sandboxClient(s.T(), mount).Do(request)
+		s.Require().NoError(err)
+		defer response.Body.Close()
+		answer, err := io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		return response.StatusCode, string(answer)
+	}
+	selects := `{"useLegacySql": false, "formatOptions": {"useInt64Timestamp": true}, "query": "SELECT 1", "requestId": "r1"}`
+
+	status, _ := post("/bigquery/v2/projects/p/queries?prettyPrint=false", selects)
+
+	s.Equal(http.StatusOK, status)
+	s.Require().Len(s.rig.host.requests(), 2)
+	s.Contains(s.rig.host.requests()[0].Body, `"dryRun":true`)
+	s.Equal(selects, s.rig.host.requests()[1].Body)
+	s.Equal([]string{"Bearer gho_live-token-of-the-connection", "Bearer gho_live-token-of-the-connection"}, s.rig.host.authorizations())
+	s.rig.host.forget()
+
+	status, answer := post("/bigquery/v2/projects/p/queries", `{"query": "SELECT 1; DELETE FROM d.t WHERE true"}`)
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(answer, "refused (a jobs.query SCRIPT, not one SELECT): code in the sandbox reads BigQuery with one SELECT per request")
+	s.Len(s.rig.host.requests(), 1)
+	s.rig.host.forget()
+
+	status, answer = post("/bigquery/v2/projects/p/jobs", `{"configuration": {"query": {"query": "SELECT 1"}}}`)
+
+	s.Equal(http.StatusForbidden, status)
+	s.Contains(answer, "jobs refused: code in the sandbox reads BigQuery with one SELECT per request")
+	s.Empty(s.rig.host.requests())
+}
+
 // TestTheBundleHoldsTheSandboxsRootsAndTheCA: a host of the config's allowed domains, which
 // the proxy tunnels to as it is, is verified with the image's own roots, from the first file of
 // them it has, and an image with none runs no code. Daytona's netleash CA, which nothing passes
@@ -805,7 +854,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	upstreamCA, _, upstreamKey := newCA(t, "hosts CA")
 	upstream := x509.NewCertPool()
 	upstream.AddCert(upstreamCA)
-	r.host = newHost(t, upstreamCA, upstreamKey, "api.github.com", "uploads.github.com")
+	r.host = newHost(t, upstreamCA, upstreamKey, "api.github.com", "uploads.github.com", "bigquery.googleapis.com")
 	r.upstream, r.upstreamKey = upstreamCA, upstreamKey
 	dial := &net.Dialer{}
 	proxy, err := egress.New(egress.Options{Store: egress.NewStore(r.redis), CACert: caCert, CAKey: keyPEM(t, caKey), Logger: logger,

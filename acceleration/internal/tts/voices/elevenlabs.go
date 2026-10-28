@@ -42,16 +42,15 @@ type ElevenLabs struct {
 
 // NewElevenLabs validates the options and returns a cloner.
 func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
-	if options.APIKey == "" {
-		options.APIKey = keypool.FromEnv("", "ELEVENLABS_API_KEY").Peek()
-	}
+	keys := keypool.FromEnv(options.APIKey, "ELEVENLABS_API_KEY")
+	options.APIKey = keys.Peek()
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set ELEVENLABS_API_KEY)")
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = elevenLabsBaseURL
 	}
-	return &ElevenLabs{options: options, client: client(options.Timeout)}, nil
+	return &ElevenLabs{options: options, client: client(keys, keypool.Header("xi-api-key", ""), options.Timeout)}, nil
 }
 
 // Prepare uploads the recordings and returns the voice id sessions ask for: one clone.
