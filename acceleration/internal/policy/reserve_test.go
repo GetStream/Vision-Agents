@@ -629,12 +629,25 @@ func (s *PolicySuite) TestAFlushOfMoreKeysThanAChunkLandsWhole() {
 	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == int64(users)*1_000 }, 2*time.Second, 5*time.Millisecond,
 		"every hold reaches the organization's key, whatever chunk carried it")
 	// The other router may read the organization's key before the pass that wrote it has landed
-	// its other chunks, so what is still to write is waited for.
+	// its other chunks, so what is still to write is waited for, then read from Redis.
 	s.eventually(func() bool {
 		a.money.mu.Lock()
 		defer a.money.mu.Unlock()
 		return len(a.money.dirty) == 0
-	}, 2*time.Second, 5*time.Millisecond, "and each of its users' keys took it")
+	}, 2*time.Second, 5*time.Millisecond, "every hold is written")
+	direct := s.direct()
+	lengths := make(rueidis.Commands, 0, users)
+	for i := range users {
+		user := usage.SubjectRef{OrganizationID: s.org, Subject: usage.SubjectUser, AppID: s.app, UserID: "user-" + strconv.Itoa(i)}
+		lengths = append(lengths, direct.B().Hlen().Key(holdKey(user.Key(usage.CounterPrefix))).Build())
+	}
+	took := 0
+	for _, length := range direct.DoMulti(s.ctx, lengths...) {
+		if held, err := length.AsInt64(); err == nil && held == 1 {
+			took++
+		}
+	}
+	s.Equal(users, took, "and each of its users' keys took it")
 }
 
 func (s *PolicySuite) TestAPassOfManyChunksGivesUpByItsDeadlineWhenRedisHangs() {
