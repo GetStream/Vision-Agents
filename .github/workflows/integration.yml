@@ -93,10 +93,14 @@ jobs:
     # acceleration/internal/config/testing.yaml wins over the environment and names these two
     # host ports, so the services listen there and no ROUTER_* variable is set.
     # Postgres keeps its data in memory: the suites truncate their tables before every test,
-    # and on disk each TRUNCATE waits on fsync.
+    # and on disk each TRUNCATE waits on fsync. Nothing outlives the job, so the server gives up
+    # crash safety for speed. wal_level=minimal does not start without max_wal_senders=0.
     services:
       postgres:
         image: postgres:16-alpine
+        command: >-
+          -c fsync=off -c synchronous_commit=off -c full_page_writes=off
+          -c wal_level=minimal -c max_wal_senders=0
         env:
           POSTGRES_PASSWORD: postgres
         ports:
