@@ -1153,6 +1153,21 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 	}
 }
 
+// TestATunnelToAnAllowedDomainWhoseHostReadsNothingIsClosedAtTheIdleTimeout: the sandbox's bytes
+// fill the buffers and the copy to the host blocks in its write, with no read pending on either
+// end; the deadline on the host's end ends it.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseHostReadsNothingIsClosedAtTheIdleTimeout() {
+	const idle = 300 * time.Millisecond
+	sandbox, _ := s.blindTunnel(idle)
+	stalled := time.Now()
+	go func() {
+		// Far more than the socket buffers on the way hold (a few MiB on loopback).
+		_, _ = sandbox.Write(make([]byte, 64<<20))
+	}()
+
+	s.GreaterOrEqual(s.closedWithin(sandbox, stalled), idle)
+}
+
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
 // wildcard that names no domain, which no broker stores, takes nothing.
 func (s *ProxySuite) TestAHostWithATrailingDotIsTheHostWithout() {

@@ -231,15 +231,15 @@ func (p *Proxy) IdleTimeout() time.Duration {
 	return p.idleTimeout
 }
 
-// idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end reads or
-// writes moves the deadline of both, so a tunnel with a transfer in one direction and silence
-// in the other lives on.
+// idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end sends moves
+// the deadline of both, so a tunnel with a transfer in one direction and silence in the other
+// lives on, and a copy stuck writing to a peer that reads nothing fails at the deadline too.
 type idleTunnel struct {
 	timeout time.Duration
 	ends    [2]net.Conn
 }
 
-// touch gives both ends timeout from now to move a byte.
+// touch gives both ends timeout from now to send a byte.
 func (i *idleTunnel) touch() {
 	deadline := time.Now().Add(i.timeout)
 	for _, end := range i.ends {
@@ -247,13 +247,13 @@ func (i *idleTunnel) touch() {
 	}
 }
 
-// watch is conn with each byte it moves a touch. Only Read and Write are on it, so io.Copy
-// cannot hand the bytes to the kernel and skip the touch.
+// watch is conn with each read a touch. Only Read and Write are on it, so io.Copy cannot hand
+// the bytes to the kernel and skip the touch.
 func (i *idleTunnel) watch(conn net.Conn) net.Conn {
 	return &watched{Conn: conn, tunnel: i}
 }
 
-// watched is a tunnel end whose reads and writes keep the tunnel's deadline.
+// watched is a tunnel end whose reads keep the tunnel's deadline.
 type watched struct {
 	net.Conn
 	tunnel *idleTunnel
@@ -261,14 +261,6 @@ type watched struct {
 
 func (c *watched) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	if n > 0 {
-		c.tunnel.touch()
-	}
-	return n, err
-}
-
-func (c *watched) Write(p []byte) (int, error) {
-	n, err := c.Conn.Write(p)
 	if n > 0 {
 		c.tunnel.touch()
 	}
