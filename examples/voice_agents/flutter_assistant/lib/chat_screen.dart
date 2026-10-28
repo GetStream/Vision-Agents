@@ -168,6 +168,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   SessionOptions(
                     llm: Assistant.chatModel,
                     tools: Assistant.tools,
+                    returnUrl: Assistant.returnUrl,
                   ),
                 );
       final chat = await AgentChat.open(session);

@@ -103,12 +103,13 @@ the backend's URLs, the customer id, the Stream key, the agent's name and the us
 
 Each of these waits on Stream's Flutter AI components or on the Dart SDK, not on the app.
 
-- **Signing in to Gmail and Linear.** A call that waits for a sign-in shows its step, with no
-  Connect or Not now: the sign-in card is `AIToolAuthorizer` in GetStream/stream-chat-flutter-ai#41,
-  not merged yet, and the Dart SDK has neither `SessionOptions.returnUrl`, which names where the
-  sign-in comes back to, nor `AgentSession.declineLogin` for Not now (the Swift and Kotlin SDKs
-  have both). Until then, connect Gmail and Linear from the iOS app, which is the same
-  `juno-owner`, and this app uses those connections.
+- **Signing in to Gmail and Linear.** Every new conversation names
+  `io.getstream.visionagents.flutterassistant:/connected` as its session's `return_url`, the app's
+  own scheme in the reverse domain form the router asks for, so its sign-ins can come back to the
+  app. A call that waits for a sign-in still shows its step with no Connect or Not now: the
+  sign-in card is `AIToolAuthorizer` in GetStream/stream-chat-flutter-ai#41, not merged yet.
+  Until then, connect Gmail and Linear from the iOS app, which is the same `juno-owner`, and this
+  app uses those connections.
 - **Looking through the camera.** Asked "what's this?", the agent's `vision` skill asks the call
   for what the camera showed. The Swift and Kotlin SDKs answer that themselves (`CameraFrames`);
   the Dart SDK does not yet, nor can it send images with a tool's result.

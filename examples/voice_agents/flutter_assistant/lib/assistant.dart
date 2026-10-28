@@ -49,6 +49,14 @@ abstract final class Assistant {
   /// which is what fills a reply's thinking panel. A call keeps the agent's faster model.
   static const chatModel = 'xai/grok-4.7';
 
+  /// The scheme the router sends a sign-in back to, once the person has answered the provider
+  /// an agent's tool needs, such as Linear or Gmail. The router takes an app's own scheme only
+  /// in reverse domain form.
+  static const callbackScheme = 'io.getstream.visionagents.flutterassistant';
+
+  /// Where the sign-ins a conversation asks for go back to, kept with its session.
+  static const returnUrl = '$callbackScheme:/connected';
+
   /// Who this phone is: the same person as the iOS and Android apps, so all three list the
   /// same conversations.
   static const userId = 'juno-owner';
