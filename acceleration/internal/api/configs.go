@@ -323,8 +323,11 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 		return nil, errUnknownConfig
 	}
 	// A deleted config's tasks have no agent left to run on: paused, they stop failing
-	// every occurrence and counting against their users' limit, and stay readable.
-	if err := s.store.PauseScheduledTasksForConfig(ctx, customerID, request.Id); err != nil {
+	// every occurrence and counting against their users' limit, and stay readable. The delete
+	// has committed and nothing pauses them later, so the pause outlives a caller that hung up.
+	paused, cancel := detachedWrite(ctx)
+	defer cancel()
+	if err := s.store.PauseScheduledTasksForConfig(paused, customerID, request.Id); err != nil {
 		s.logger.Error("could not pause a deleted config's scheduled tasks",
 			"config", request.Id, "error", err)
 	}

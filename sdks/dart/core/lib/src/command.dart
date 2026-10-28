@@ -62,7 +62,8 @@ final class ToolResultCommand extends Command {
 }
 
 /// A person's answer to a tool call that waited for them. A declined call's step shows
-/// [summary]. The call is still answered with [ToolResultCommand] either way.
+/// [summary]. The call is still answered with [ToolResultCommand] either way, except a
+/// connector's sign-in declined with [allowed] false, which the router answers itself.
 final class ToolApprovalCommand extends Command {
   const ToolApprovalCommand(
     this.toolCallId, {

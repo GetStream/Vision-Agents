@@ -189,7 +189,9 @@ func (s *Store) Remember(ctx context.Context, scope memory.Scope, messages []llm
 	if err := s.call(ctx, opAdd, scope, http.MethodPost, "/v3/memories/add/", body, &response); err != nil {
 		return memory.Billed{}, err
 	}
-	s.logger.Debug("queued a conversation to remember", "event", response.EventID, "status", response.Status)
+	// The run names the session whose exchange the event holds: mem0 may start an event long
+	// after queueing it, and the event is how to ask it what became of the exchange.
+	s.logger.Debug("queued a conversation to remember", "event", response.EventID, "status", response.Status, "run_id", scope.RunID)
 	return memory.Billed{Requests: 1}, nil
 }
 

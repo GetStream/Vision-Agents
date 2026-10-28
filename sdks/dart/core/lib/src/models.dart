@@ -333,6 +333,7 @@ final class SessionOptions {
     this.modelOverwrites,
     this.tools = const [],
     this.tags = const {},
+    this.returnUrl,
   });
 
   /// An id to hold the session by, for a caller that wants to know it before the session
@@ -380,6 +381,13 @@ final class SessionOptions {
 
   /// Cost labels, carried onto every request the session makes.
   final Map<String, String> tags;
+
+  /// Where a sign-in the conversation asks for goes back to. Name the app's own scheme in
+  /// reverse domain form, such as `com.example.app:/connected`, and the router hands the
+  /// browser back to the app. It is kept with the session, so a conversation carried on later
+  /// goes back there too. Null sends the sign-in back to the dashboard, which a phone cannot
+  /// open.
+  final String? returnUrl;
 }
 
 /// What the agent says as it joins a call, before anyone speaks.

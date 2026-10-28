@@ -1,8 +1,11 @@
 package tts
 
 import (
+	"fmt"
 	"slices"
 	"sync"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // InOrder makes a provider that takes each sentence as its own request speak them in the
@@ -22,6 +25,7 @@ func InOrder(provider TTS) TTS {
 		TTS:     provider,
 		emitter: NewEmitter(64),
 		held:    map[string]*heldSynthesis{},
+		closed:  map[string]struct{}{},
 		dropped: map[string]struct{}{},
 	}
 	go ordered.relay()
@@ -38,6 +42,8 @@ type inOrder struct {
 	queue []string
 	// held is what has arrived for a sentence behind the head.
 	held map[string]*heldSynthesis
+	// closed is the sentences in queue whose final request has been sent.
+	closed map[string]struct{}
 	// dropped is the sentences a barge-in gave up on whose completion has not come yet.
 	dropped map[string]struct{}
 }
@@ -51,14 +57,28 @@ type heldSynthesis struct {
 }
 
 // Synthesize queues the sentence behind the ones already asked for and sends it to the
-// provider straight away.
+// provider straight away. The pieces of one sentence share its place in the queue.
+//
+// A request for a sentence whose final piece was already sent, before it has finished, is
+// refused: the order is kept by id, and a second sentence under the same id would leave the
+// queue waiting on a sentence that has already finished.
 func (o *inOrder) Synthesize(request Request) error {
 	// The order is kept by id, so the sentence needs one before the provider is asked.
 	if request.ID == "" {
 		request.ID = NewSynthesisID()
 	}
 	o.mu.Lock()
-	o.queue = append(o.queue, request.ID)
+	if _, closed := o.closed[request.ID]; closed {
+		o.mu.Unlock()
+		return stack.Wrap(fmt.Errorf(
+			"tts: %q is still being spoken; give the next utterance an id of its own", request.ID))
+	}
+	if !slices.Contains(o.queue, request.ID) {
+		o.queue = append(o.queue, request.ID)
+	}
+	if request.Final {
+		o.closed[request.ID] = struct{}{}
+	}
 	o.mu.Unlock()
 
 	if err := o.TTS.Synthesize(request); err != nil {
@@ -80,7 +100,12 @@ func (o *inOrder) Interrupt() error {
 	for _, id := range o.queue {
 		held := o.held[id]
 		if held == nil || !held.complete {
-			o.dropped[id] = struct{}{}
+			// A sentence whose final piece was never sent will get no completion: the
+			// provider throws its unsent text away. Marking it dropped would swallow the
+			// next sentence under the same id.
+			if _, final := o.closed[id]; final {
+				o.dropped[id] = struct{}{}
+			}
 			continue
 		}
 		// Finished while it waited, so its completion is already here and was never
@@ -91,6 +116,7 @@ func (o *inOrder) Interrupt() error {
 	}
 	o.queue = nil
 	clear(o.held)
+	clear(o.closed)
 	o.mu.Unlock()
 
 	o.sendLater(settled)
@@ -129,6 +155,7 @@ func (o *inOrder) relay() {
 	}
 	o.queue = nil
 	clear(o.held)
+	clear(o.closed)
 	o.mu.Unlock()
 	for _, event := range rest {
 		o.emitter.Send(event)
@@ -182,6 +209,7 @@ func (o *inOrder) order(event Event) []Event {
 		return []Event{event}
 	}
 	o.queue = o.queue[1:]
+	delete(o.closed, id)
 	return append([]Event{event}, o.release()...)
 }
 
@@ -193,6 +221,7 @@ func (o *inOrder) forget(id string) []Event {
 	}
 	o.queue = slices.Delete(o.queue, position, position+1)
 	delete(o.held, id)
+	delete(o.closed, id)
 	if position > 0 {
 		return nil
 	}
@@ -215,6 +244,7 @@ func (o *inOrder) release() []Event {
 			return released
 		}
 		o.queue = o.queue[1:]
+		delete(o.closed, head)
 	}
 	return released
 }

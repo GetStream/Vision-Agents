@@ -117,6 +117,7 @@ api.CreateSessionRequest createRequestOf(
             ),
         ],
   tags: options.tags.isEmpty ? null : options.tags,
+  returnUrl: _set(options.returnUrl),
 );
 
 api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequest(
