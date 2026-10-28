@@ -68,6 +68,24 @@ func (s *ScriptSuite) TestAScriptClosedWhileItsContextIsLiveDoesNotFail() {
 	s.Equal(llm.StatusCancelled, stream.Response().Status)
 }
 
+func (s *ScriptSuite) TestAScriptThatSettledBeforeItsCancelDoesNotFail() {
+	script := New(llm.StreamOptions{ResponseID: "turn-1", Provider: "test", Model: "test-model"})
+	ctx, cancel := context.WithCancel(context.Background())
+	script.FailOnCancel(ctx, errors.New("connection reset by peer"))
+
+	script.OutputText("Done.")
+	script.Done()
+	cancel()
+	<-script.broke
+
+	stream := script.Stream()
+	for stream.Next() {
+		_, failed := stream.Current().(llm.ResponseFailed)
+		s.False(failed, "a response that already settled is not broken by a later cancel")
+	}
+	s.Equal(llm.StatusCompleted, stream.Response().Status)
+}
+
 func (s *ScriptSuite) TestAScriptRunsItsCloseHookBeforeTheResponseEnds() {
 	script := New(llm.StreamOptions{ResponseID: "turn-1", Provider: "test", Model: "test-model"})
 	ran, abandonedDuringHook := false, false
