@@ -33,14 +33,15 @@ final class AgentTool {
     this.displayTitle,
     this.executor,
     this.approval,
-  }) : run = ((arguments) async => ToolOutput(await run(arguments)));
+  }) : run = ((arguments) async => ToolOutput(text: await run(arguments)));
 
   /// A tool that answers with pictures as well as words, such as a frame from the camera.
   ///
   ///     AgentTool.withPictures(
   ///       name: 'photograph_room',
   ///       description: 'Take a photo of the room.',
-  ///       run: (_) async => ToolOutput('the room', images: [AgentImage('data:image/jpeg;base64,...')]),
+  ///       run: (_) async =>
+  ///           ToolOutput(text: 'the room', images: [AgentImage('data:image/jpeg;base64,...')]),
   ///     )
   const AgentTool.withPictures({
     required this.name,
@@ -103,7 +104,7 @@ final class AgentTool {
 /// the tool failed. Each picture is a data URI or an https URL, and one socket message holds at
 /// most 5 MB, so shrink a photo before returning it.
 final class ToolOutput {
-  const ToolOutput(this.text, {this.images = const []});
+  const ToolOutput({this.text = '', this.images = const []});
 
   /// What the tool says.
   final String text;

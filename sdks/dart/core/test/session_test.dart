@@ -183,7 +183,7 @@ void main() {
               name: 'photograph_room',
               description: 'Take a photo of the room.',
               run: (_) async => const ToolOutput(
-                'the room',
+                text: 'the room',
                 images: [
                   AgentImage('data:image/jpeg;base64,AAAA', detail: 'low'),
                   AgentImage('https://example.com/room.jpg'),
@@ -225,13 +225,13 @@ void main() {
               AgentTool.withPictures(
                 name: 'words',
                 description: 'Words only.',
-                run: (_) async => const ToolOutput('nothing in view'),
+                run: (_) async => const ToolOutput(text: 'nothing in view'),
               ),
               AgentTool.withPictures(
                 name: 'picture',
                 description: 'A picture only.',
                 run: (_) async =>
-                    const ToolOutput('', images: [AgentImage('https://example.com/a.jpg')]),
+                    const ToolOutput(images: [AgentImage('https://example.com/a.jpg')]),
               ),
             ],
           ),
@@ -252,6 +252,68 @@ void main() {
         await chat.close();
       },
     );
+
+    test('a picture tool that asks first sends its pictures once allowed', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              approval: const ToolApproval(title: 'Share a photo of the room?'),
+              run: (_) async =>
+                  const ToolOutput(images: [AgentImage('data:image/jpeg;base64,AAAA')]),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}",'
+        '"request_id":"m1","turn_id":"t1"}',
+      );
+      await until(() => chat.approvals.value.isNotEmpty);
+      chat.decide('c1', allowed: true);
+
+      expect((await socket.next())['type'], 'tool_approval');
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': [
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,AAAA'},
+          },
+        ],
+        'error': '',
+        'request_id': 'm1',
+        'turn_id': 't1',
+      });
+      await chat.close();
+    });
+
+    test('a picture tool that throws tells the model it did not work', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              run: (_) async => throw StateError('the camera is off'),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}"}');
+
+      final result = await socket.next();
+      expect(result['output'], '');
+      expect(result['error'], contains('the camera is off'));
+      await chat.close();
+    });
 
     test("repeats a request's ids, so no other request can adopt the result", () async {
       final chat = await agents.chat(

@@ -104,12 +104,12 @@ and one socket message holds at most 5 MB, so shrink a photo before returning it
 final photograph = AgentTool.withPictures(
   name: 'photograph_room',
   description: 'Take a photo of the room.',
-  run: (_) async => ToolOutput('the room', images: [AgentImage(await camera.jpegDataUri())]),
+  run: (_) async => ToolOutput(text: 'the room', images: [AgentImage(await camera.jpegDataUri())]),
 );
 ```
 
-A call the router cancels, because its timeout passed, is not answered: the tool's future runs
-to its end and what it returns is dropped.
+A call the router cancels, because its timeout passed or the caller interrupted it, is not
+answered: the tool's future runs to its end and what it returns is dropped.
 
 ### A connector's sign-in
 
