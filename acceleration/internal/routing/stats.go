@@ -45,6 +45,11 @@ type Owner struct {
 	AgentID string
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string
+	// Region is where the work is done: an agent's work is in its config's region, a direct
+	// call's in the one its own data policy asks for. It is carried with the work and never
+	// looked up. Empty names none, which is pricing.DefaultRegion for routing and for a
+	// knowledge base the work creates, and reaches a knowledge base kept anywhere.
+	Region string
 	// Tags are the customer's own cost labels, carried onto every row so spend can be
 	// broken down by whatever the customer cares about.
 	Tags Tags

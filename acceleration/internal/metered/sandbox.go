@@ -1,6 +1,7 @@
 package metered
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -69,7 +70,8 @@ const (
 	LabelOrganization = "stream.organization"
 	LabelApp          = "stream.app"
 	LabelSession      = "stream.session"
-	// LabelRegion is the region the sandbox runs in, such as eu: the owner's policies' region.
+	// LabelRegion is the region the sandbox runs in, such as eu: the region of the work it is
+	// made for, an agent's.
 	LabelRegion = "stream.region"
 	// LabelAccount is SandboxAccountCustomer on a sandbox made in the owner's own Daytona
 	// organization, on the key they keep for its region, and absent on one in the deployment's.
@@ -101,8 +103,6 @@ type SandboxesOptions struct {
 	// The default region is always served: on its target here, else on DAYTONA_TARGET or
 	// Daytona's own default. A region with no target is refused.
 	Targets map[string]string
-	// Regions says which region an owner's sandbox runs in. Nil is the default region.
-	Regions routing.Regioner
 	// Keys are the keys customers keep for their own Daytona organizations: an owner who keeps
 	// one for their region has their sandboxes made there. Nil makes every one in the
 	// deployment's.
@@ -146,10 +146,11 @@ type SandboxSpec struct {
 //
 // An owner with no app or no session is refused: every customer's sandboxes share one Daytona
 // organization, so one labelled with no app is nobody's to bill or tell apart, and one with no
-// session is deleted by the sweep while it runs. So is an owner whose policies keep their work
-// in a region no Daytona target serves: their code is never run in another.
+// session is deleted by the sweep while it runs. So is work in a region no Daytona target
+// serves (Serves): its code is never run in another. Work naming no region runs in the default
+// one.
 //
-// An owner who keeps a Daytona key for their region has the sandbox made in their own
+// An owner who keeps a Daytona key for the work's region has the sandbox made in their own
 // organization on it, on the same target, labelled LabelAccount, its secrets kept there too, and
 // its time priced at the BYOK entry.
 func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
@@ -159,17 +160,11 @@ func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxS
 	case owner.SessionID == "":
 		return nil, stack.Wrap(errors.New("metered: a sandbox needs the session it runs for"))
 	}
-	region := pricing.DefaultRegion
-	if s.options.Regions != nil {
-		var err error
-		if region, err = s.options.Regions.Region(ctx, owner.CustomerID); err != nil {
-			return nil, err
-		}
-	}
-	target, ok := s.options.Targets[region]
-	if !ok && region != pricing.DefaultRegion {
+	region := cmp.Or(owner.Region, pricing.DefaultRegion)
+	if !s.Serves(region) {
 		return nil, routing.Refused(stack.Wrap(fmt.Errorf("metered: this deployment runs no sandboxes in region %s", region)))
 	}
+	target := s.options.Targets[region]
 	labels := s.Labels(owner)
 	labels[LabelRegion] = region
 	key, byok, err := s.customerKey(ctx, owner.CustomerID, region)
@@ -191,6 +186,13 @@ func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxS
 		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment,
 			region: region, byok: byok},
 	})
+}
+
+// Serves reports whether sandboxes are made in region: the default one always, any other on
+// the Daytona target Targets names for it.
+func (s *Sandboxes) Serves(region string) bool {
+	_, targeted := s.options.Targets[region]
+	return targeted || region == pricing.DefaultRegion
 }
 
 // customerKey is the key a customer keeps for their own Daytona organization in region, and

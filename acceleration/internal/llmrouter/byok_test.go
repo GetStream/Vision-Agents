@@ -82,7 +82,12 @@ func keyedConfig(t *testing.T, at *vendor, extra ...routing.ProviderConfig) rout
 
 // answeredFor asks the router for one response of the config's first model for customerID.
 func answeredFor(ctx context.Context, t *testing.T, router *Router, customerID string) llm.Response {
-	session, err := router.Start(ctx, Request{CustomerID: customerID, Target: router.Config().Providers[0].Name()})
+	return answeredIn(ctx, t, router, customerID, "")
+}
+
+// answeredIn is answeredFor for work done in region.
+func answeredIn(ctx context.Context, t *testing.T, router *Router, customerID, region string) llm.Response {
+	session, err := router.Start(ctx, Request{CustomerID: customerID, Region: region, Target: router.Config().Providers[0].Name()})
 	require.NoError(t, err)
 	defer session.Close()
 	stream, err := session.Create(ctx, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hello"}}})
@@ -164,9 +169,9 @@ func (s *LLMRouterSuite) TestACustomersKeyForTheUSIsNotUsedForAnEUInstance() {
 	s.T().Setenv(euKeyEnv, euDeploymentKey)
 	config := keyedConfig(s.T(), at, routing.ProviderConfig{Provider: anthropic.ProviderName, Model: haiku, Languages: []string{"en"},
 		Region: pricing.RegionEU, Endpoint: at.URL, APIKeyEnv: euKeyEnv})
-	router := s.keyedRouter(config, keptKeys{"acme/anthropic/us": customerKey}, inRegion(pricing.RegionEU))
+	router := s.keyedRouter(config, keptKeys{"acme/anthropic/us": customerKey}, nil)
 
-	s.answered(router)
+	answeredIn(s.ctx, s.T(), router, "acme", pricing.RegionEU)
 
 	s.Equal([]string{euDeploymentKey}, at.asked(), "only the eu instance serves, on the deployment's eu key")
 }
@@ -176,11 +181,52 @@ func (s *LLMRouterSuite) TestACustomersKeyForTheEUIsUsedForTheEUInstance() {
 	s.T().Setenv(euKeyEnv, euDeploymentKey)
 	config := keyedConfig(s.T(), at, routing.ProviderConfig{Provider: anthropic.ProviderName, Model: haiku, Languages: []string{"en"},
 		Region: pricing.RegionEU, Endpoint: at.URL, APIKeyEnv: euKeyEnv})
-	router := s.keyedRouter(config, keptKeys{"acme/anthropic/eu": customerKey}, inRegion(pricing.RegionEU))
+	router := s.keyedRouter(config, keptKeys{"acme/anthropic/eu": customerKey}, nil)
 
-	s.answered(router)
+	answeredIn(s.ctx, s.T(), router, "acme", pricing.RegionEU)
 
 	s.Equal([]string{customerKey}, at.asked())
+}
+
+func (s *LLMRouterSuite) TestACustomersKeyIsLookedUpForTheWorksRegionAlone() {
+	at := startVendor(s.T())
+	s.T().Setenv(euKeyEnv, euDeploymentKey)
+	config := keyedConfig(s.T(), at, routing.ProviderConfig{Provider: anthropic.ProviderName, Model: haiku, Languages: []string{"en"},
+		Region: pricing.RegionEU, Endpoint: at.URL, APIKeyEnv: euKeyEnv})
+	keys := &lookedUp{kept: keptKeys{"acme/anthropic/us": customerKey, "acme/anthropic/eu": customerKey}}
+	router := s.keyedRouter(config, keys, nil)
+
+	candidates, err := router.Candidates(s.ctx, routing.Request{CustomerID: "acme", Region: pricing.RegionEU, Target: "anthropic/" + haiku})
+
+	s.Require().NoError(err)
+	s.Equal([]string{"anthropic/eu"}, keys.asked(), "an instance in the us never serves eu work, so its key is never read")
+	var own []string
+	for _, candidate := range candidates {
+		if candidate.Config.BYOK {
+			own = append(own, candidate.Config.Region)
+		}
+	}
+	s.Equal([]string{pricing.RegionEU}, own)
+}
+
+// lookedUp is kept keys that remember each provider and region they were asked for.
+type lookedUp struct {
+	kept keptKeys
+	mu   sync.Mutex
+	seen []string
+}
+
+func (k *lookedUp) CustomerKey(ctx context.Context, customerID, provider, region string) (string, bool, error) {
+	k.mu.Lock()
+	k.seen = append(k.seen, provider+"/"+region)
+	k.mu.Unlock()
+	return k.kept.CustomerKey(ctx, customerID, provider, region)
+}
+
+func (k *lookedUp) asked() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return slices.Clone(k.seen)
 }
 
 func (s *LLMRouterSuite) TestAVendorWhoseFactoryTakesNoKeyIsNeverAskedOnACustomersKey() {

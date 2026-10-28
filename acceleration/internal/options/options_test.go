@@ -235,32 +235,23 @@ func (s *OptionsSuite) TestADataPolicyIsNotSomethingAVoiceHasToExpress() {
 
 func (s *OptionsSuite) TestTheStricterPolicyForbidsTrainingIfEitherDoes() {
 	yes := true
-	merged := s.stricter(DataPolicy{AllowTraining: &yes}, DataPolicy{AllowTraining: no()})
+	merged := DataPolicy{AllowTraining: &yes}.Stricter(DataPolicy{AllowTraining: no()})
 
 	s.Require().NotNil(merged.AllowTraining)
 	s.False(*merged.AllowTraining)
-	s.Nil(s.stricter(DataPolicy{}, DataPolicy{}).AllowTraining, "two policies asking nothing still ask nothing")
+	s.Nil(DataPolicy{}.Stricter(DataPolicy{}).AllowTraining, "two policies asking nothing still ask nothing")
 }
 
 func (s *OptionsSuite) TestTheStricterPolicyKeepsTheShorterRetention() {
-	s.Equal(Retention("24h"), s.stricter(DataPolicy{Retention: "30d"}, DataPolicy{Retention: "24h"}).Retention)
-	s.Equal(RetentionNone, s.stricter(DataPolicy{Retention: RetentionNone}, DataPolicy{Retention: "30d"}).Retention)
-	s.Equal(Retention("30d"), s.stricter(DataPolicy{}, DataPolicy{Retention: "30d"}).Retention)
-	s.Equal(Retention("30d"), s.stricter(DataPolicy{Retention: "30d"}, DataPolicy{}).Retention)
+	s.Equal(Retention("24h"), DataPolicy{Retention: "30d"}.Stricter(DataPolicy{Retention: "24h"}).Retention)
+	s.Equal(RetentionNone, DataPolicy{Retention: RetentionNone}.Stricter(DataPolicy{Retention: "30d"}).Retention)
+	s.Equal(Retention("30d"), DataPolicy{}.Stricter(DataPolicy{Retention: "30d"}).Retention)
+	s.Equal(Retention("30d"), DataPolicy{Retention: "30d"}.Stricter(DataPolicy{}).Retention)
 }
 
-func (s *OptionsSuite) TestARegionSetOnEitherSideIsTheMergedRegion() {
-	s.Equal("eu", s.stricter(DataPolicy{Region: "eu"}, DataPolicy{}).Region)
-	s.Equal("eu", s.stricter(DataPolicy{}, DataPolicy{Region: "eu"}).Region)
-	s.Equal("eu", s.stricter(DataPolicy{Region: "eu"}, DataPolicy{Region: "eu"}).Region)
-	s.Empty(s.stricter(DataPolicy{}, DataPolicy{}).Region, "nobody asking is left for the default region")
-}
-
-func (s *OptionsSuite) TestTwoDifferentRegionsAreAConflictNamingBoth() {
-	_, err := DataPolicy{Region: "eu"}.Stricter(DataPolicy{Region: "us"})
-
-	s.Require().ErrorIs(err, ErrRegionConflict)
-	s.ErrorContains(err, "eu and us")
+func (s *OptionsSuite) TestTheStricterPolicyKeepsTheRequestsRegionAndTakesNoneFromAFloor() {
+	s.Equal("eu", DataPolicy{Region: "eu"}.Stricter(DataPolicy{}).Region)
+	s.Empty(DataPolicy{}.Stricter(DataPolicy{Region: "eu"}).Region, "a policy's floor says nothing of where work is done")
 }
 
 func (s *OptionsSuite) TestARegionCountsAsAsking() {
@@ -277,13 +268,6 @@ func (s *OptionsSuite) TestAConfigsRegionIsKeptUnlessTheRequestNamesOne() {
 
 	s.Equal("eu", config.Merge(STT{}).DataPolicy.Region)
 	s.Equal("us", config.Merge(STT{DataPolicy: DataPolicy{Region: "us"}}).DataPolicy.Region)
-}
-
-// stricter is the merge of two policies that do not conflict.
-func (s *OptionsSuite) stricter(policy, other DataPolicy) DataPolicy {
-	merged, err := policy.Stricter(other)
-	s.Require().NoError(err)
-	return merged
 }
 
 func intOf(value int) *int { return &value }

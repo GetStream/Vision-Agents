@@ -69,7 +69,7 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	s.Equal(map[string]string{AttributeSandboxID: "sandbox-1", AttributeSandboxClass: "container", AttributeSandboxCPU: "2",
 		AttributeSandboxMemoryGB: "4", AttributeSandboxDiskGB: "10", routing.AttributeMeasuredBy: routing.MeasuredByRouter,
 		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a", AttributeSandboxRegion: pricing.RegionUS}, row.Attributes)
-	s.Equal("sandbox-daytona-running-class-container-us", row.SKU, "a customer whose policies name no region is billed in the us")
+	s.Equal("sandbox-daytona-running-class-container-us", row.SKU, "work naming no region is billed in the us")
 	container := map[string]string{AttributeSandboxClass: "container"}
 	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxRunning, container, row.Meters), row.CostMicros, "at Daytona's rates")
 	s.True(row.Billable)
@@ -79,14 +79,16 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 		LabelApp: owner.CustomerID, LabelSession: owner.SessionID, LabelRegion: pricing.RegionUS, "code-toolbox-language": "python"}, held.Labels)
 }
 
-func (s *MeteredSuite) TestASandboxOfAnEUCustomerIsMadeOnTheEUTargetAndPricedAtTheEUEntry() {
+func (s *MeteredSuite) TestASandboxOfEUWorkIsMadeOnTheEUTargetAndPricedAtTheEUEntry() {
 	list := pricingtest.List(s.T(), "fixtures")
 	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
 	server := daytonatest.Start(s.T())
 	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour,
-		Targets: map[string]string{pricing.RegionEU: "eu"}, Regions: &keptIn{region: pricing.RegionEU}, Logger: slog.New(slog.DiscardHandler)})
+		Targets: map[string]string{pricing.RegionEU: "eu"}, Logger: slog.New(slog.DiscardHandler)})
+	owner := s.sandboxOwner()
+	owner.Region = pricing.RegionEU
 
-	box, err := sandboxes.Open(s.ctx, s.sandboxOwner(), SandboxSpec{})
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
 	s.Require().NoError(err)
 	_, err = box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
@@ -105,13 +107,17 @@ func (s *MeteredSuite) TestASandboxOfAnEUCustomerIsMadeOnTheEUTargetAndPricedAtT
 func (s *MeteredSuite) TestASandboxInARegionWithNoDaytonaTargetIsRefusedNamingIt() {
 	server := daytonatest.Start(s.T())
 	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(),
-		Regions: &keptIn{region: pricing.RegionEU}, Logger: slog.New(slog.DiscardHandler)})
+		Logger: slog.New(slog.DiscardHandler)})
+	owner := s.sandboxOwner()
+	owner.Region = pricing.RegionEU
 
-	_, err := sandboxes.Open(s.ctx, s.sandboxOwner(), SandboxSpec{})
+	_, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
 
 	s.Require().ErrorIs(err, routing.ErrRequest)
 	s.ErrorContains(err, "runs no sandboxes in region eu")
 	s.Empty(server.Creations())
+	s.False(sandboxes.Serves(pricing.RegionEU))
+	s.True(sandboxes.Serves(pricing.RegionUS), "the default region is always served")
 }
 
 func (s *MeteredSuite) TestAGapOfAnEUSandboxIsPricedInTheEU() {

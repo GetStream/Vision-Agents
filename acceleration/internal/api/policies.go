@@ -35,7 +35,7 @@ var (
 type Policy struct {
 	Budget               map[string]any    `json:"budget,omitempty" deprecated:"true" doc:"Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back."`
 	Quota                *Quota            `json:"quota,omitempty"`
-	DataPolicy           *DataPolicy       `json:"data_policy,omitempty"`
+	DataPolicy           *PolicyDataPolicy `json:"data_policy,omitempty"`
 	PromptInjection      *bool             `json:"prompt_injection,omitempty" doc:"Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on."`
 	AllowedModels        *[]string         `json:"allowed_models,omitempty" example:"[\"deepseek/DeepSeek-V4-Flash-0731\"]" doc:"The only models requests may be routed to, as provider/model names, in every modality. Left out allows every model, and an empty list allows none. A request that could only go to models not on the list is refused, and a failover never reaches one."`
 	Tags                 map[string]string `json:"tags,omitempty" example:"{\"application\":\"support\"}" doc:"Labels recorded on every row of usage, over whatever the request labelled it with, so spend is attributed whatever a caller sends. Together with the request's own they must fit in 16 tags."`
@@ -51,6 +51,39 @@ func (*Policy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schem
 		"is optional, and a field left out is no opinion rather than off. Spend limits are " +
 		"not here: they are /v1/spend/limits."
 	return schema
+}
+
+// PolicyDataPolicy is what a policy requires of what happens to what its requests send. It has
+// no region: where work is done is an agent's own, or a direct call's.
+type PolicyDataPolicy struct {
+	AllowTraining *bool   `json:"allow_training,omitempty" doc:"False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no."`
+	Retention     *string `json:"retention,omitempty" doc:"The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing." example:"none"`
+}
+
+func (*PolicyDataPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What an organization or an app requires of what happens to what its requests send. " +
+		"It is a floor every routed request is held to, on top of whatever the request asks: a request is " +
+		"only routed to a model whose declared handling meets both, and is refused rather than sent somewhere " +
+		"that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's " +
+		"region) or what a direct call's own data_policy.region asks, so region is refused here, as is any " +
+		"other field it does not have."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+// policyDataPolicyOf and policyDataPolicyFor move a policy's data policy between the two shapes.
+func policyDataPolicyOf(sent *PolicyDataPolicy) store.PolicyDataPolicy {
+	if sent == nil {
+		return store.PolicyDataPolicy{}
+	}
+	return store.PolicyDataPolicy{AllowTraining: sent.AllowTraining, Retention: options.Retention(value(sent.Retention))}
+}
+
+func policyDataPolicyFor(stored store.PolicyDataPolicy) *PolicyDataPolicy {
+	if !stored.Floor().Asks() {
+		return nil
+	}
+	return &PolicyDataPolicy{AllowTraining: stored.AllowTraining, Retention: optional(string(stored.Retention))}
 }
 
 // Quota is what one end user may spend in a UTC day: on an organization's policy the default
@@ -217,7 +250,7 @@ func (s *Server) updateOrganizationPolicy(ctx context.Context, request *policyRe
 func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id string, sent Policy, auditedAs string) (Policy, error) {
 	document := store.PolicyDocument{
 		Quota:                quotaOf(sent.Quota),
-		DataPolicy:           dataPolicyOf(sent.DataPolicy),
+		DataPolicy:           policyDataPolicyOf(sent.DataPolicy),
 		PromptInjection:      sent.PromptInjection,
 		AllowedModels:        sent.AllowedModels,
 		Tags:                 sent.Tags,
@@ -252,7 +285,7 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	if message, ok := toolOutputRetentionComplaint("tool_output_retention", document.ToolOutputRetention); !ok {
 		return Policy{}, stack.Wrap(errors.New(message))
 	}
-	if err := document.DataPolicy.Validate(); err != nil {
+	if err := document.DataPolicy.Floor().Validate(); err != nil {
 		return Policy{}, err
 	}
 	if err := routing.Tags(sent.Tags).Validate(); err != nil {
@@ -286,7 +319,7 @@ func (s *Server) policyOf(ctx context.Context, scope store.PolicyScope, id strin
 	}
 	return Policy{
 		Quota:                quotaFor(document.Quota),
-		DataPolicy:           dataPolicyFor(document.DataPolicy),
+		DataPolicy:           policyDataPolicyFor(document.DataPolicy),
 		PromptInjection:      document.PromptInjection,
 		AllowedModels:        document.AllowedModels,
 		Tags:                 document.Tags,

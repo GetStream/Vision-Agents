@@ -101,6 +101,7 @@ func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router,
 		CustomerID: owner.CustomerID,
 		AgentID:    owner.AgentID,
 		CallID:     owner.CallID,
+		Region:     owner.Region,
 		Tags:       owner.Tags,
 	})
 	if err != nil {

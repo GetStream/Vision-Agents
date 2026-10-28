@@ -64,8 +64,7 @@ func (s *MeteredSuite) accounts(keys keptKeys) (*Knowledge, *turbopuffertest.Ser
 		theirs.Config.Handler.ServeHTTP(w, r)
 	}))
 	s.T().Cleanup(theirs.front.Close)
-	base := NewRegionalKnowledge(map[string]knowledge.Backend{pricing.RegionUS: backend}, s.recorder,
-		&keptIn{region: pricing.RegionUS}, s.store)
+	base := NewRegionalKnowledge(map[string]knowledge.Backend{pricing.RegionUS: backend}, s.recorder, nil, s.store)
 	base.WithCustomerAccounts(keys, func(region, key string) (knowledge.Backend, error) {
 		s.Equal(pricing.RegionUS, region)
 		return turbopuffer.New(turbopuffer.Options{APIKey: key, BaseURL: theirs.front.URL})

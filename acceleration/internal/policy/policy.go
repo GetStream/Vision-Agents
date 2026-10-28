@@ -28,10 +28,8 @@
 package policy
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -43,7 +41,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -217,13 +214,10 @@ type tierSeen struct {
 // decision is what an app's policies say. Read through appconfig, so from process memory once
 // read, and refreshed in the background once older than Fresh.
 type decision struct {
-	floor options.DataPolicy
-	// conflict is the organization's and the app's policies naming different regions, which
-	// refuses every request of the app until one of them changes.
-	conflict error
-	models   []string
-	tags     routing.Tags
-	screen   bool
+	floor  options.DataPolicy
+	models []string
+	tags   routing.Tags
+	screen bool
 	// ownApp is a customer that must act in a Stream app of its own.
 	ownApp bool
 	// toolOutput is the longest a session keeps what its tools were given and gave back.
@@ -290,9 +284,6 @@ func (e *Enforcer) Admit(ctx context.Context, owner routing.Owner) (routing.Admi
 	ctx, span := tracer.Start(ctx, "policy.admit")
 	defer span.End()
 	decided := e.decide(ctx, customerID)
-	if decided.conflict != nil {
-		return routing.Admission{}, decided.conflict
-	}
 	refusal, spend, grants := e.spendable(ctx, owner, decided)
 	limits, tier := e.money.inForce(decided.organization)
 	return routing.Admission{
@@ -525,23 +516,6 @@ func (e *Enforcer) tier(ctx context.Context, organizationID string) string {
 	return current.tier
 }
 
-// Region is the region a customer's work is done in when nothing routes it, as their knowledge
-// and sandboxes are: the one the organization's or the app's policy names, else
-// pricing.DefaultRegion. Policies naming two refuse it. A policy that could not be read is
-// the default region, as it adds no data policy floor to a routed request either.
-func (e *Enforcer) Region(ctx context.Context, customerID string) (string, error) {
-	if e == nil || customerID == "" {
-		return pricing.DefaultRegion, nil
-	}
-	decided := e.decide(ctx, customerID)
-	if decided.conflict != nil {
-		return "", decided.conflict
-	}
-	return cmp.Or(decided.floor.Region, pricing.DefaultRegion), nil
-}
-
-var _ routing.Regioner = (*Enforcer)(nil)
-
 // RequiresOwnStreamApp reports whether a customer must act in a Stream app of its own. It is
 // the one thing here that fails closed: a policy that could not be read is taken to
 // require it, since the other answer writes a customer into an app it may have been kept
@@ -749,17 +723,11 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		return decision{}, err
 	}
 
-	floor, conflict := organization.DataPolicy.Stricter(app.DataPolicy)
-	if conflict != nil {
-		conflict = routing.Refused(stack.Wrap(fmt.Errorf("policy: the organization's policy keeps its work in %s and the app's in %s: %w",
-			organization.DataPolicy.Region, app.DataPolicy.Region, options.ErrRegionConflict)))
-	}
 	decided := decision{
-		floor:    floor,
-		conflict: conflict,
-		models:   allowedByBoth(organization.AllowedModels, app.AllowedModels),
-		tags:     labelled(organization, app),
-		screen:   enabled(organization.PromptInjection) || enabled(app.PromptInjection),
+		floor:  organization.DataPolicy.Floor().Stricter(app.DataPolicy.Floor()),
+		models: allowedByBoth(organization.AllowedModels, app.AllowedModels),
+		tags:   labelled(organization, app),
+		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),
 		// Either scope requiring it requires it: an app can ask for it and cannot opt out.
 		ownApp:         enabled(organization.RequireOwnStreamApp) || enabled(app.RequireOwnStreamApp),
 		resumeHistory:  resumeHistoryOf(app).Over(resumeHistoryOf(organization)),

@@ -1,6 +1,7 @@
 package metered
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -54,14 +55,15 @@ type AccountBackend func(region, key string) (knowledge.Backend, error)
 // Knowledge holds the knowledge backends, one per region. A Store or a Writer comes only from
 // For, which needs an owner, so nothing can be looked up or written that nobody is charged for.
 //
-// Each call goes to the region the owner's policies keep their work in (routing.Regioner, the
-// default region when the gate is none), and a region with no backend is refused, never served
-// by another. A knowledge base stays in the region it was first written in: its reads and
-// writes from an owner whose policies now name another are refused rather than moved, and its
-// deletes go where it is.
+// A knowledge base stays in the region it was first written in. Work naming a region
+// (routing.Owner.Region, an agent's) reads and writes a base kept in it, makes one nothing was
+// written to there, and is refused one kept in another rather than having it moved. Work naming
+// none, as the knowledge API's, goes where the base is kept, and makes a new one in the default
+// region. A region with no backend is refused, never served by another, and a delete goes where
+// the base is whatever the work names.
 //
 // With customer accounts (WithCustomerAccounts), a base an owner first writes while they keep a
-// key for the vendor in their region is kept in their own account there, on that key, and its
+// key for the vendor in the work's region is kept in their own account there, on that key, and its
 // work is priced at the vendor's BYOK entries. A base stays in the account it was first written
 // in: one in the deployment's stays there when its owner puts a key, and one in theirs is
 // refused once its key is deleted, never reached in the deployment's.
@@ -86,7 +88,7 @@ func NewKnowledge(backend knowledge.Backend, recorder *routing.Recorder, gate ro
 }
 
 // NewRegionalKnowledge is NewKnowledge with a backend per region, the place each knowledge base
-// is kept recorded in places. Nil places records none, and every call goes to the owner's region.
+// is kept recorded in places. Nil places records none, and every call goes to the work's region.
 func NewRegionalKnowledge(backends map[string]knowledge.Backend, recorder *routing.Recorder, gate routing.Gate,
 	places NamespacePlaces) *Knowledge {
 	if recorder != nil {
@@ -227,6 +229,12 @@ func (k *Knowledge) customerKey(ctx context.Context, customerID, region string) 
 	return k.keys.CustomerKey(ctx, customerID, k.Provider(), region)
 }
 
+// Place is where a customer's knowledge base is kept, and false for one nothing has been
+// written to or with no places recorded.
+func (k *Knowledge) Place(ctx context.Context, customerID, namespace string) (store.KnowledgePlace, bool, error) {
+	return k.keptAt(ctx, customerID, namespace)
+}
+
 // keptAt is where a customer's knowledge base is kept, and false for one nothing has been
 // written to or with no places recorded.
 func (k *Knowledge) keptAt(ctx context.Context, customerID, namespace string) (store.KnowledgePlace, bool, error) {
@@ -290,8 +298,8 @@ func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []strin
 
 // Upsert writes passages, a row per request of knowledge.WriteBatch, so when one fails the
 // requests before it, which the provider billed, are billed too. Writing none asks the
-// provider nothing. The first write to a knowledge base keeps it in the owner's region, in
-// their own account when they keep a key for the vendor there.
+// provider nothing. The first write to a knowledge base keeps it in the work's region, in the
+// owner's own account when they keep a key for the vendor there.
 func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
 	if err := o.Admit(ctx); err != nil {
 		return err
@@ -316,7 +324,7 @@ func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents 
 }
 
 // Delete removes passages by id, a row per request as Upsert writes them, where the knowledge
-// base is kept, whatever the owner's policies say now: data can always be removed where it is.
+// base is kept, whatever region the work names: data can always be removed where it is.
 // Removing none asks the provider nothing.
 func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []string) error {
 	if len(ids) == 0 {
@@ -327,11 +335,7 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 		return err
 	}
 	if !kept {
-		home, err := o.home(ctx)
-		if err != nil {
-			return err
-		}
-		if place, err = o.unwritten(ctx, home); err != nil {
+		if place, err = o.unwritten(ctx, o.region()); err != nil {
 			return err
 		}
 	}
@@ -351,6 +355,15 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 	return nil
 }
 
+// Keep keeps a knowledge base nothing has been written to where the owner's first write would,
+// so later work naming no region, such as a page's refresh, finds it there. A base kept in
+// another region than the one the work names is refused, as a write is. The vendor is asked
+// nothing.
+func (o OwnedKnowledge) Keep(ctx context.Context, namespace string) error {
+	_, _, err := o.writing(ctx, namespace)
+	return err
+}
+
 // Admit refuses a write the owner may not pay for: writing is most of what knowledge costs,
 // and its rows are only recorded once the provider has billed them. Deletes are not admitted,
 // so data can always be removed. Upsert admits itself; a caller that pays for work before
@@ -366,13 +379,10 @@ func (o OwnedKnowledge) Admit(ctx context.Context) error {
 	return admission.Spend
 }
 
-// home is the region the owner's policies keep their work in.
-func (o OwnedKnowledge) home(ctx context.Context) (string, error) {
-	regions, ok := o.knowledge.gate.(routing.Regioner)
-	if !ok {
-		return pricing.DefaultRegion, nil
-	}
-	return regions.Region(ctx, o.owner.CustomerID)
+// region is where a knowledge base the owner's work makes is kept: the region it names, else
+// the default one.
+func (o OwnedKnowledge) region() string {
+	return cmp.Or(o.owner.Region, pricing.DefaultRegion)
 }
 
 // unwritten is where a base nothing has been written to would be kept in region: the owner's
@@ -389,22 +399,19 @@ func (o OwnedKnowledge) unwritten(ctx context.Context, region string) (store.Kno
 	return place, nil
 }
 
-// reading is the backend a knowledge base is read from, and where it is kept: the owner's
-// region, which a base kept elsewhere is refused for, in the account the base is kept in.
+// reading is the backend a knowledge base is read from, and where it is kept: where it is,
+// unless the work names another region, which it is refused for; in the work's region for one
+// nothing was written to. It is in the account the base is kept in.
 func (o OwnedKnowledge) reading(ctx context.Context, namespace string) (knowledge.Backend, store.KnowledgePlace, error) {
-	home, err := o.home(ctx)
-	if err != nil {
-		return nil, store.KnowledgePlace{}, err
-	}
 	place, recorded, err := o.knowledge.keptAt(ctx, o.owner.CustomerID, namespace)
 	if err != nil {
 		return nil, store.KnowledgePlace{}, err
 	}
-	if recorded && place.Region != home {
-		return nil, store.KnowledgePlace{}, o.elsewhere(namespace, place.Region, home)
+	if recorded && o.owner.Region != "" && place.Region != o.owner.Region {
+		return nil, store.KnowledgePlace{}, o.elsewhere(namespace, place.Region, o.owner.Region)
 	}
 	if !recorded {
-		if place, err = o.unwritten(ctx, home); err != nil {
+		if place, err = o.unwritten(ctx, o.region()); err != nil {
 			return nil, store.KnowledgePlace{}, err
 		}
 	}
@@ -436,11 +443,11 @@ func (o OwnedKnowledge) writing(ctx context.Context, namespace string) (knowledg
 	return backend, place, nil
 }
 
-// elsewhere refuses the owner a knowledge base kept in another region than theirs.
-func (o OwnedKnowledge) elsewhere(namespace, kept, home string) error {
+// elsewhere refuses work done in one region a knowledge base kept in another.
+func (o OwnedKnowledge) elsewhere(namespace, kept, region string) error {
 	return routing.Refused(stack.Wrap(fmt.Errorf(
-		"metered: the knowledge base %q is kept in %s and your policies keep your work in %s: it is not read, written or moved there",
-		namespace, kept, home)))
+		"metered: the knowledge base %q is kept in %s and this work is done in %s: it is not read, written or moved there",
+		namespace, kept, region)))
 }
 
 // scoped is the provider's name for the owner's knowledge base namespace. An empty name
