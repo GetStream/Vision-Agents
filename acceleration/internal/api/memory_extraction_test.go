@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -112,7 +113,9 @@ func (w mem0Extraction) queuedAs(session string) string {
 // its deadlines on what it can. mem0 is a stand-in that answers each event with a canned status.
 type Mem0ExtractionSuite struct {
 	suite.Suite
-	answers  map[string]func(int) (int, string)
+	answers map[string]func(int) (int, string)
+	// mu guards handed, which a test writes while until reads it through the log closure.
+	mu       sync.Mutex
 	handed   map[string]string
 	asked    atomic.Int32
 	wait     mem0Extraction
@@ -136,6 +139,8 @@ func (s *Mem0ExtractionSuite) SetupTest() {
 		client: server.Client(), baseURL: server.URL + "/", apiKey: "key",
 		log: func() string {
 			var log strings.Builder
+			s.mu.Lock()
+			defer s.mu.Unlock()
 			for session, event := range s.handed {
 				fmt.Fprintf(&log, `{"msg":"queued a conversation to remember","event":%q,"run_id":%q}`+"\n", event, session)
 			}
@@ -164,7 +169,9 @@ func (s *Mem0ExtractionSuite) TestASessionHandedOverLateIsWaitedFor() {
 	s.answers["ev"] = func(int) (int, string) { return http.StatusOK, `{"status":"SUCCEEDED"}` }
 	go func() {
 		time.Sleep(100 * time.Millisecond)
+		s.mu.Lock()
 		s.handed["session-1"] = "ev"
+		s.mu.Unlock()
 	}()
 
 	s.Require().NoError(s.until(time.Now().Add(time.Minute), "session-1"))
