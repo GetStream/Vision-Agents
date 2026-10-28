@@ -595,6 +595,34 @@ func (s *ConfigSuite) TestAManageKeyOfItsOwnIsTaken() {
 	s.Equal("the-manage-key", config.Auth.ManageKey)
 }
 
+func (s *ConfigSuite) TestTheDeliveryKeysAreACommaSeparatedListAndExported() {
+	s.T().Setenv("ROUTER_STREAM_DELIVERY_KEYS", "current-key=, previous-key=,")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"current-key=", "previous-key="}, config.Stream.DeliveryKeys)
+	s.Equal("current-key=,previous-key=", os.Getenv("ROUTER_STREAM_DELIVERY_KEYS"))
+}
+
+func (s *ConfigSuite) TestTheDeliveryKeysAreASequenceInAFile() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("stream:\n  delivery_keys: [current-key=, previous-key=]\n"), 0o600))
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"current-key=", "previous-key="}, config.Stream.DeliveryKeys)
+	s.Equal("current-key=,previous-key=", os.Getenv("ROUTER_STREAM_DELIVERY_KEYS"), "what a file sets reaches the environment")
+}
+
+func (s *ConfigSuite) TestNoDeliveryKeysIsTheDefault() {
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Nil(config.Stream.DeliveryKeys)
+}
+
 func (s *ConfigSuite) TestAUsageServiceWithoutItsTokenIsRefused() {
 	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
 
