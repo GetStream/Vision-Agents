@@ -101,7 +101,12 @@ func (s *Script) FailOnCancel(ctx context.Context, err error) {
 		defer close(broke)
 		select {
 		case <-ctx.Done():
-			s.Fail(err, "read")
+			// A response that settled before the cancel came is over, and nothing broke it.
+			select {
+			case <-s.ended:
+			default:
+				s.Fail(err, "read")
+			}
 		case <-s.ended:
 		}
 	}()

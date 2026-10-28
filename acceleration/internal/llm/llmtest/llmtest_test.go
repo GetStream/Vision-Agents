@@ -70,11 +70,12 @@ func (s *ScriptSuite) TestAScriptClosedWhileItsContextIsLiveDoesNotFail() {
 
 func (s *ScriptSuite) TestAScriptRunsItsCloseHookBeforeTheResponseEnds() {
 	script := New(llm.StreamOptions{ResponseID: "turn-1", Provider: "test", Model: "test-model"})
-	var abandonedDuringHook bool
-	script.OnClose(func() { abandonedDuringHook = script.Abandoned() })
+	ran, abandonedDuringHook := false, false
+	script.OnClose(func() { ran, abandonedDuringHook = true, script.Abandoned() })
 
 	s.Require().NoError(script.Stream().Close())
 
+	s.True(ran, "the hook never ran")
 	s.False(abandonedDuringHook, "the hook ran after the response was already abandoned")
 	s.True(script.Abandoned())
 }

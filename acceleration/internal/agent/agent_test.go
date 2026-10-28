@@ -231,6 +231,10 @@ type stubLLM struct {
 	// time to notice cancellation does.
 	holdCompletion <-chan struct{}
 
+	// breaks, if set, is what a response fails with once the agent cancels it, as a
+	// connection that broke as the turn was cut off does.
+	breaks error
+
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
 	refuses error
@@ -275,7 +279,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
 	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
-	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
+	hold, completion, refuses, breaks := s.holdCreate, s.holdCompletion, s.refuses, s.breaks
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -295,6 +299,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if breaks != nil {
+		script.FailOnCancel(ctx, breaks)
+	}
 	if completion != nil {
 		script.Stream().Observe(func(event llm.Event) {
 			if _, done := event.(llm.ResponseCompleted); done {
