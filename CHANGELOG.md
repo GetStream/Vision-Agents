@@ -159,6 +159,10 @@ Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH
 
 The router now streams to `fish/transcribe-stream-1`, reachable by name or by any shortcut whose terms it satisfies. It needs `FISH_API_KEY`, covers 29 languages, and declares `keyterms`, which can change on an open stream, and `endpointing`; `silence_ms` is its `silence_timeout_ms`, at least 3000 in its own turn detection. It ends a turn when the words read as finished, and a turn the server judges is not the caller's (noise, a television, another voice) is never reported. Sound tags such as `[laughter]` are taken out of the text. `eager_end_of_turn` turns on its early guess. `overwrites` takes `mode` (`auto`, `vad`) and `silence_timeout_ms`. $0.36 an audio hour.
 
+### The agent says why it stopped talking
+
+Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
+
 ## Bug Fixes
 
 ### Every agent knows the date and the hour
