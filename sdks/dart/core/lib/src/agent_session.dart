@@ -358,7 +358,8 @@ final class AgentSession {
         final output = await tool.run(call.argumentValues);
         result = ToolResultCommand(
           call.id,
-          output: output,
+          output: output.text,
+          images: output.images,
           requestId: call.requestId,
           turnId: call.turnId,
         );

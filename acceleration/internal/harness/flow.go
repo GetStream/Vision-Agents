@@ -492,6 +492,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.
 	var ruler Ruler
 	if err != nil {
 		invalidRulings.WithLabelValues(invalid).Inc()
+		ruler = Unusable
 		// Truncated JSON used to mean continue, which is how Gemini thinking ate the
 		// token budget and the caller talking over the agent never took the floor.
 		if asked.turn.Unfinished {
@@ -529,7 +530,8 @@ func (f *flow) yieldExpiredOverlap(asked *candidate) bool {
 	if !asked.turn.Unfinished || !asked.turn.Speaking || !errors.Is(asked.ctx.Err(), context.DeadlineExceeded) {
 		return false
 	}
-	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop, TookMs: millis(time.Since(asked.askedAt))})
+	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop,
+		TookMs: millis(time.Since(asked.askedAt)), Ruler: Deadline})
 	return true
 }
 

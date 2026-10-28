@@ -90,9 +90,6 @@ jobs:
           # AI-2037
           - package: internal/connectors/resolver
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
-          # AI-2038
-          - package: internal/sandbox/egress
-            skip: '^TestTunnelSuite$/^TestACheckWhoseForwarderLostThePortFindsTheWinnerUp$'
     # acceleration/internal/config/testing.yaml wins over the environment and names these two
     # host ports, so the services listen there and no ROUTER_* variable is set.
     services:

@@ -287,7 +287,7 @@ func (s *TelnyxChannelSuite) TestAZoneThePersonNamedIsTheirsForTheirNextTask() {
 	s.scheduledMu.Lock()
 	defer s.scheduledMu.Unlock()
 	s.True(slices.ContainsFunc(s.scheduled, func(model *schedulingModel) bool {
-		return strings.Contains(model.instructions(), "for the user (America/New_York).")
+		return strings.Contains(model.instructions(), "for the user (America/New_York),")
 	}), "the later turn's clock line is in the person's zone")
 }
 

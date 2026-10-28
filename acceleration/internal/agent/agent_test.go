@@ -501,6 +501,10 @@ type stubTTS struct {
 	silent bool
 	// refuses, if set, is what every synthesis fails with.
 	refuses error
+	// synthesizing, if set, is closed when a synthesis is taken, which then waits for
+	// synthesisRelease.
+	synthesizing     chan struct{}
+	synthesisRelease <-chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -539,7 +543,13 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		delete(s.active, request.ID)
 	}
+	synthesizing, release := s.synthesizing, s.synthesisRelease
+	s.synthesizing = nil
 	s.mu.Unlock()
+	if synthesizing != nil {
+		close(synthesizing)
+		<-release
+	}
 
 	if refuses != nil {
 		return refuses
@@ -843,6 +853,8 @@ type AgentSuite struct {
 	logs *logLines
 	// callID is the call the agent serves, empty unless a test names one.
 	callID string
+	// timezone is the user's zone a text agent joins with, empty unless a test names one.
+	timezone string
 	// region is where the agent's work is done, and twinned a region every router also
 	// declares its stub in, beside the default one: both empty unless a test is about
 	// regions. builtIn is the region each modality's stub was built in, every time it was.
@@ -863,6 +875,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.callID = ""
+	s.timezone = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -973,6 +986,7 @@ func (s *AgentSuite) joinText() {
 		Sandbox:            box,
 		Publish:            publish,
 		Instructions:       "be brief",
+		Timezone:           s.timezone,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		SubagentTarget:     subagentTarget,
@@ -1580,7 +1594,7 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	request := s.model.requests()[0]
-	s.Equal("be brief", request.Instructions)
+	s.Equal("be brief", withoutClock(request.Instructions))
 	s.Require().Len(request.Input, 1)
 	s.Equal("hello", request.Input[0].Content)
 	s.Equal(llm.User, request.Input[0].Role)
@@ -2094,7 +2108,7 @@ func (s *AgentSuite) TestWithoutAMemoryStoreTheAgentOnlyKnowsItsInstructions() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWhatIsRememberedIsToldToTheModel() {
@@ -2133,7 +2147,7 @@ func (s *AgentSuite) TestAVoiceThatCannotActDirectionsAsksForNone() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions,
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions),
 		"a voice that would read a direction out must not be offered one")
 }
 
@@ -2280,7 +2294,7 @@ func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"a memory store that is down is not a broken conversation")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
@@ -3087,7 +3101,7 @@ func (s *AgentSuite) TestWithoutASubagentTheModelAnswersEverythingItself() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions, "nothing is offered that nobody can do")
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions), "nothing is offered that nobody can do")
 }
 
 func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
@@ -3419,7 +3433,7 @@ func (s *AgentSuite) TestATurnItHeardClearlyIsJustAnswered() {
 	s.mumbles(participant, "book a table for four", 0.95)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
@@ -3433,7 +3447,7 @@ func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
 	s.mumbles(participant, "book a table for four", 0)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
