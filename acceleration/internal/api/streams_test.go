@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -361,6 +362,32 @@ func (s *StreamsSuite) TestWhatIsSentToBeSpokenReachesTheVoice() {
 		}
 		return false
 	}, settleFor, 10*time.Millisecond)
+}
+
+func (s *StreamsSuite) TestASecondUtteranceUnderAnIdStillBeingSpokenIsRefusedAndTheNextIsHeard() {
+	speaking := s.start("/v1/tts/stream", frame{"target": "en-low-latency"})
+	s.Equal("started", s.nextFrame(speaking)["type"])
+	s.speaking().completedByTest.Store(true)
+	first, again, next := "first "+s.utils.uuid(), "again "+s.utils.uuid(), "next "+s.utils.uuid()
+
+	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": first}))
+	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": again}))
+	refused := s.nextFrame(speaking)
+	s.Equal("error", refused["type"])
+	s.Equal(`tts: "s1" is still being spoken; give the next utterance an id of its own`, refused["error"])
+
+	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s2", "text": next}))
+	s.Require().Eventually(func() bool { return slices.Contains(s.voice.spoken(), next) },
+		settleFor, 10*time.Millisecond)
+	s.NotContains(s.voice.spoken(), again, "a refused utterance never reaches the voice")
+	s.speaking().emitter.Send(tts.SynthesisComplete{SynthesisID: "s2"})
+	s.speaking().emitter.Send(tts.SynthesisComplete{SynthesisID: "s1"})
+
+	for _, id := range []string{"s1", "s2"} {
+		complete := s.nextFrame(speaking)
+		s.Equal("synthesis_complete", complete["type"])
+		s.Equal(id, complete["id"], "the utterance after the refused one is still heard, in order")
+	}
 }
 
 func (s *StreamsSuite) TestTheStartedFrameNamesTheVoiceSpeaking() {
