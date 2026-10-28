@@ -551,8 +551,9 @@ type AgentConfig struct {
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
-	// replies, as names or path.Match patterns. Empty shows search and web_search.
-	VisibleTools []string `bun:"visible_tools,type:jsonb"`
+	// replies, as names or path.Match patterns. Nil, stored as NULL, is a config that never
+	// set it and shows search and web_search; empty shows no tool.
+	VisibleTools []string `bun:"visible_tools,type:jsonb,nullzero"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one

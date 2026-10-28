@@ -3038,11 +3038,13 @@ type AgentConfig struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools        *AgentTools   `json:"tools,omitempty"`
-	Tts          *string       `json:"tts,omitempty"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	Video        *SessionVideo `json:"video,omitempty"`
-	VisibleTools *[]string     `json:"visible_tools,omitempty"`
+	Tools     *AgentTools   `json:"tools,omitempty"`
+	Tts       *string       `json:"tts,omitempty"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Video     *SessionVideo `json:"video,omitempty"`
+
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies. Absent when the config never set it, which shows search and web_search; an empty list shows no tool.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
@@ -3119,7 +3121,7 @@ type AgentConfigPatch struct {
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
 
-	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. Left out, the stored ones stay; an empty list shows no tool.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
@@ -3217,7 +3219,7 @@ type AgentConfigRequest struct {
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
 
-	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
+	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Left out, the agent shows search and web_search; an empty list shows no tool.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
@@ -8723,6 +8725,9 @@ type SyncAgentRequest struct {
 	Tools *AgentTools   `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
+
+	// VisibleTools The tools agent.yaml shows end users the steps of, as tool names or path.Match patterns such as athena_*. Sent, they replace the stored ones, an empty list showing no tool. Left out, the stored ones are left alone, and a config that never set them shows search and web_search.
+	VisibleTools *[]string `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`

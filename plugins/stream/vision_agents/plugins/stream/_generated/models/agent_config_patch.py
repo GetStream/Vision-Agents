@@ -93,7 +93,7 @@ class AgentConfigPatch:
             visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
                 tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its
                 arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds
-                those citations to the reply's sources. An empty list shows search and web_search.
+                those citations to the reply's sources. Left out, the stored ones stay; an empty list shows no tool.
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
                 one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
                 voice name instead.

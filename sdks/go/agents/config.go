@@ -294,6 +294,9 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
+	if settings.VisibleTools != nil {
+		body.VisibleTools = &settings.VisibleTools
+	}
 	if len(settings.Tags) > 0 {
 		tags := maps.Clone(settings.Tags)
 		body.Tags = &tags

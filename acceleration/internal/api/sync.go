@@ -46,6 +46,7 @@ type SyncAgentRequest struct {
 	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors."`
 	Keyterms          *[]string                  `json:"keyterms,omitempty"`
+	VisibleTools      *[]string                  `json:"visible_tools,omitempty" maxItems:"64" doc:"The tools agent.yaml shows end users the steps of, as tool names or path.Match patterns such as athena_*. Sent, they replace the stored ones, an empty list showing no tool. Left out, the stored ones are left alone, and a config that never set them shows search and web_search."`
 	Sandbox           *Sandbox                   `json:"sandbox,omitempty"`
 	Harness           *Harness                   `json:"harness,omitempty"`
 	Dispatch          *AgentDispatch             `json:"dispatch,omitempty"`
@@ -415,6 +416,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if len(keytermsOf(body.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
 	}
+	if complaint, ok := visibleToolsComplaint(body.VisibleTools); !ok {
+		return complaint, false
+	}
 	if _, ok := sandboxOf(body.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
 	}
@@ -572,6 +576,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
 	}
+	config.VisibleTools = override(config.VisibleTools, body.VisibleTools)
 	if body.Sandbox != nil {
 		box, _ := sandboxOf(body.Sandbox)
 		config.Sandbox = box

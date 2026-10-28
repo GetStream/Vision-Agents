@@ -671,6 +671,62 @@ func (s *SyncSuite) TestASyncWithNoBindingsClearsThem() {
 	s.Nil(s.configsNamed("support")[0].Connectors)
 }
 
+func (s *SyncSuite) TestASyncThatDeclaresNoVisibleToolsLeavesThemUnset() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "instructions": "Be brief."})
+
+	s.Nil(result.Config.VisibleTools, "a config that never set them shows search and web_search")
+	s.Nil(s.configsNamed("support")[0].VisibleTools)
+}
+
+func (s *SyncSuite) TestASyncStoresTheVisibleToolsItDeclares() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "visible_tools": []string{"athena_*", "lookup_order"}})
+
+	s.Equal([]string{"athena_*", "lookup_order"}, value(result.Config.VisibleTools))
+	s.Equal(result.Config.VisibleTools, s.configsNamed("support")[0].VisibleTools)
+}
+
+func (s *SyncSuite) TestASyncWithNoVisibleToolsShowsNone() {
+	s.sync(map[string]any{"name": "support", "hash": "v1", "visible_tools": []string{"lookup_order"}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "visible_tools": []string{}})
+
+	s.Require().NotNil(second.Config.VisibleTools, "an empty list is not the same as none")
+	s.Empty(*second.Config.VisibleTools)
+	stored := s.configsNamed("support")[0].VisibleTools
+	s.Require().NotNil(stored)
+	s.Empty(*stored)
+}
+
+func (s *SyncSuite) TestASyncThatDeclaresNoVisibleToolsLeavesTheOnesStored() {
+	first := s.sync(map[string]any{"name": "support", "hash": "v1", "visible_tools": []string{}})
+
+	second := s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "Be brief."})
+
+	s.Equal(first.Config.VisibleTools, second.Config.VisibleTools)
+	s.NotNil(second.Config.VisibleTools)
+}
+
+func (s *SyncSuite) TestASyncNamingAVisibleToolThatCannotMatchIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "support", "hash": "v1", "visible_tools": []string{"athena_[*"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "visible_tools")
+	s.Empty(s.configsNamed("support"), "a refused sync stores nothing")
+}
+
+func (s *SyncSuite) TestASyncAskedToCheckIsRefusedWhenTheVisibleToolsWereChangedSince() {
+	result := s.sync(map[string]any{"name": "support", "hash": "v1", "visible_tools": []string{"lookup_order"}})
+	s.patch(result.Config.Id, map[string]any{"visible_tools": []string{"search"}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v2", "visible_tools": []string{}, "check_changes": true,
+	})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "visible_tools")
+}
+
 func (s *SyncSuite) TestASyncBindingAConnectorThatDoesNotExistIsRefusedAndStoresNothing() {
 	binding := sessionSlack("crm")
 	binding["connector_id"] = "custom_nothing_here"

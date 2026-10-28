@@ -27,9 +27,9 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples \
 go run ./configure
 ```
 
-`configure` syncs the directory with the Go SDK, then patches on `visible_tools` and `skills`,
-which `agent.yaml` has no field for: the first shows a step for the phone's own tools on a reply,
-and the second adds `vision`, which looks through the phone's camera on a call.
+`configure` syncs the directory with the Go SDK, then patches on `skills`, which `agent.yaml` has
+no field for, to add `vision`, which looks through the phone's camera on a call. `agent.yaml`'s
+`visible_tools` shows a step for the phone's own tools on a reply.
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
 demo's does, and does what only a server may with the person's Gmail connection: send a mail

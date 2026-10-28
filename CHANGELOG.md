@@ -153,6 +153,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### `agent.yaml` declares `visible_tools`
+
+`agent.yaml` takes `visible_tools`, the tools whose steps end users see on a reply, which the Go SDK refused as an unexpected key although the config API has it. Left out, a sync keeps what is stored, and a config that never set it shows `search` and `web_search`; `visible_tools: []` shows no tool. The same goes for the config API: an empty `visible_tools` on a create, update or patch now shows no tool rather than the defaults, and a config reads back without `visible_tools` until it sets one. Configs stored with an empty list, which meant the defaults, keep them. The other SDKs' folder loaders follow.
+
 ### Go clients keep working with a region
 
 An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
