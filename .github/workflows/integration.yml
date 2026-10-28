@@ -47,6 +47,7 @@ jobs:
           - internal/appconfig
           - internal/channelbridge
           - internal/channels
+          - internal/chatdelivery
           - internal/concurrency
           - internal/connectors/core
           - internal/connectors/credentialstores/pgsealed
