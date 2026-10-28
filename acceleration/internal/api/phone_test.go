@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -513,30 +514,30 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 		"the session waits for its start timeout")
 }
 
-// openPhoneSession opens the session id as the phone service opens one, by the manager: the
-// suite has no telephony to place a call with.
-func (s *CallStatusSuite) openPhoneSession(id string) *session.Session {
-	opened, err := s.manager.Create(context.Background(), session.Spec{ID: id, CustomerID: s.customerID(),
-		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
-	s.Require().NoError(err)
-	return opened
+// openPhoneSession opens the session id for a placed call as an SDK does, after placing it.
+func (s *CallStatusSuite) openPhoneSession(id string) (int, ErrorResponse) {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: &id, StartVoice: pointerTo(true), Phone: &SessionPhone{Number: s.utils.number()},
+	})
+	var answered ErrorResponse
+	if status >= http.StatusBadRequest {
+		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	}
+	return status, answered
 }
 
-func (s *CallStatusSuite) TestASessionOpenedAfterItsCallWasBusyEndsBeforeTheStartTimeout() {
+func (s *CallStatusSuite) TestOpeningASessionAfterItsCallWasBusyIsRefused() {
 	id := s.utils.uuid()
 	token, _ := s.placedFor(id)
 	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
 
-	s.openPhoneSession(id)
+	status, answered := s.openPhoneSession(id)
 
-	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 5*time.Second, 20*time.Millisecond,
-		"the session waits for its start timeout")
-	var read Session
-	s.Require().Eventually(func() bool {
-		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read) == http.StatusOK
-	}, 5*time.Second, 20*time.Millisecond)
-	s.Require().NotNil(read.CallOutcome)
-	s.Equal(CallOutcomeBusy, value(read.CallOutcome.Outcome))
+	s.Equal(http.StatusConflict, status)
+	s.Equal("call_unanswered", answered.Error.Code)
+	s.Contains(answered.Error.Message, "busy")
+	s.False(s.manager.Running(id))
+	s.Equal(outcome.Busy, s.read(id).Outcome)
 }
 
 func (s *CallStatusSuite) TestASessionOpenedAfterItsCallCompletedIsNotEnded() {
@@ -544,9 +545,10 @@ func (s *CallStatusSuite) TestASessionOpenedAfterItsCallCompletedIsNotEnded() {
 	token, _ := s.placedFor(id)
 	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"completed"}}))
 
-	opened := s.openPhoneSession(id)
-	defer func() { _, _ = s.manager.Close(id, session.OwnerOf(opened.Spec())) }()
+	status, answered := s.openPhoneSession(id)
+	defer s.serverClient.stopSession(id)
 
+	s.Equal(http.StatusCreated, status, answered.Error.Message)
 	s.True(s.manager.Running(id))
 }
 
@@ -554,8 +556,9 @@ func (s *CallStatusSuite) TestASessionOpenedWhileItsCallRingsIsNotEnded() {
 	id := s.utils.uuid()
 	s.placedFor(id)
 
-	opened := s.openPhoneSession(id)
-	defer func() { _, _ = s.manager.Close(id, session.OwnerOf(opened.Spec())) }()
+	status, answered := s.openPhoneSession(id)
+	defer s.serverClient.stopSession(id)
 
+	s.Equal(http.StatusCreated, status, answered.Error.Message)
 	s.True(s.manager.Running(id))
 }

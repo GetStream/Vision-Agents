@@ -409,6 +409,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, stack.Wrap(ErrSessionExists)
 		}
 	}
+	// Before anything is joined or paid for: a vendor often says a call was busy before its
+	// session opens.
+	if err := m.unanswered(ctx, spec); err != nil {
+		return nil, err
+	}
 
 	if m.records != nil && !spec.Incognito {
 		floor, err := m.options.Policies.ToolOutputRetention(ctx, spec.CustomerID)
@@ -940,9 +945,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Directory != nil {
 		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
 	}
+	// Asked again now the session is held: a status that came while the call was being
+	// joined found no session to end, and one that comes after this finds it.
+	if err := m.unanswered(ctx, spec); err != nil {
+		opened = true
+		m.end(created, TimeoutUnanswered)
+		return nil, err
+	}
 	// A phone call's episode card, once the session holds the call (T41).
 	m.cards.started(created, stream)
-	m.endIfUnanswered(ctx, created)
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
@@ -950,26 +961,35 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	return created, nil
 }
 
-// endIfUnanswered ends created when its placed call already went unanswered. A vendor can say
-// so before the session opens, when OnUnanswered found nothing to end; read only once the
-// session is held, so a status either lands before this read or finds the session.
-func (m *Manager) endIfUnanswered(ctx context.Context, created *Session) {
-	spec := created.Spec()
+// CallUnansweredError refuses a session for a placed call that already ended with nobody
+// answering: the agent would join a call nobody will ever be on.
+type CallUnansweredError struct {
+	Outcome outcome.Outcome
+}
+
+func (e *CallUnansweredError) Error() string {
+	return "session: the call ended without an answer: " + string(e.Outcome)
+}
+
+// unanswered is the CallUnansweredError a phone session is refused with, or nil. A call it
+// cannot read is opened as before.
+func (m *Manager) unanswered(ctx context.Context, spec Spec) error {
 	if spec.Phone == nil || m.options.Phone == nil || m.options.Phone.Outcomes() == nil {
-		return
+		return nil
 	}
-	call, err := m.options.Phone.Outcomes().Read(ctx, spec.CustomerID, created.id)
+	call, err := m.options.Phone.Outcomes().Read(ctx, spec.CustomerID, spec.ID)
 	if errors.Is(err, outcome.ErrUnknownCall) {
-		return
+		return nil
 	}
 	if err != nil {
 		m.logger.Warn("could not read whether a session's placed call went unanswered",
-			"session", created.id, "error", err)
-		return
+			"session", spec.ID, "error", err)
+		return nil
 	}
 	if call.NobodyAnswered() {
-		m.EndUnanswered(spec.CustomerID, created.id)
+		return stack.Wrap(&CallUnansweredError{Outcome: call.Outcome})
 	}
+	return nil
 }
 
 // replaces reports whether a session being reopened may take the place of the one held under

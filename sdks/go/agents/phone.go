@@ -127,7 +127,8 @@ func (a *Agent) Answer(ctx context.Context, call InboundCall) (*Session, error) 
 // StartCall rings somebody and holds the conversation when they answer.
 //
 // The agent placed this call, so it is told it is navigating: recordings are let finish and
-// menus are answered rather than talked over.
+// menus are answered rather than talked over. A call that was busy, or ended otherwise
+// unanswered, before the session opened is a *stream.RouterError with Code call_unanswered.
 func (a *Agent) StartCall(ctx context.Context, from, to string) (*Session, error) {
 	if from == "" || to == "" {
 		return nil, errors.New("agents: a call needs a number to ring from and one to ring")

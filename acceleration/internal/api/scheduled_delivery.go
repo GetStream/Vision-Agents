@@ -916,6 +916,9 @@ func callSpec(config store.AgentConfig, delivery scheduledDelivery, agentID stri
 // final: another attempt would ring them again.
 func (s *Server) carryOutOnCall(ctx context.Context, delivery scheduledDelivery, spec session.Spec) (string, string, error) {
 	created, err := s.sessions.Create(ctx, spec)
+	if _, unanswered := errors.AsType[*session.CallUnansweredError](err); unanswered {
+		return "", "", s.callEnded(ctx, delivery, spec.ID, undeliveredFinally(scheduling.ReasonNotAnswered, err))
+	}
 	if err != nil {
 		return "", "", s.callEnded(ctx, delivery, spec.ID, undeliveredFinally(scheduling.ReasonFailed, err))
 	}

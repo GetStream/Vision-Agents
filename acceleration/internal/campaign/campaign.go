@@ -280,6 +280,12 @@ func (r *Runner) ring(
 	}
 
 	created, err := r.sessions.Create(ctx, spec)
+	if _, unanswered := errors.AsType[*session.CallUnansweredError](err); unanswered {
+		// Done, as a call nobody answered is once its session ends.
+		finished.CallID = spec.ID
+		r.finish(ctx, finished)
+		return
+	}
 	if err != nil {
 		finished.State = store.Failed
 		finished.Error = err.Error()

@@ -170,7 +170,9 @@ or Bandwidth then knows only the join and leave, and an unanswered one is `unkno
 A busy, unanswered, failed or canceled call ends its session at once, rather than leaving the
 agent to wait out its start timeout. It is ended off the vendor's request, on this router or
 on the node holding the session. A status that arrives before the session opens, as a busy
-often does, is read when the session opens, which then ends at once the same way. A session
+often does, refuses the session instead: opening it answers 409 `call_unanswered`, naming the
+outcome, before the agent joins the call. A campaign contact refused this way is `done`, and
+a scheduled task's call `not_answered`. A session
 whose phone joined is never ended this way.
 
 A dial the vendor refuses keeps nothing: the call never rang, so it has no outcome.
