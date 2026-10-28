@@ -222,16 +222,70 @@ func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
 	source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
 	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
 
-	s.nativeStoppedOnItsOwn()
-}
-
-func (s *AgentSuite) nativeStoppedOnItsOwn() {
 	logged := s.interruptedOnce()
 	s.Equal("r1", logged["turn"])
 	s.Equal(causeProvider, logged["cause"])
 	s.Equal("none", logged["ruler"])
 	s.Equal("", logged["words"])
 	s.Equal(echoNoWords, logged["echo"])
+}
+
+func (s *AgentSuite) TestANativeReplyTheModelStoppedAndTheAPIInterruptedIsToldOnce() {
+	s.logs = &logLines{}
+	logger := slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{},
+		STSTarget: "openai/gpt-realtime-2", Logger: logger})
+	s.Require().NoError(err)
+	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
+	s.T().Cleanup(func() { agent.Close() })
+	events := collect(agent)
+	source := make(chan sts.Event, 8)
+	// Nobody reads it: consumeSTS is behind, as it is while PublishAudio blocks, so the reply
+	// is still the one speaking when Agent.Interrupt comes.
+	behind := make(chan sts.Event, 8)
+	agent.pipe = newPipeline(agent.ctx, true)
+	agent.pipe.running.Add(1)
+	go agent.receiveSTS(agent.pipe, source, behind)
+	s.T().Cleanup(func() { close(source) })
+	agent.mu.Lock()
+	agent.speakingTurn = "r1"
+	agent.mu.Unlock()
+	agent.turns.started("r1", kindCaller)
+	api := testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))
+
+	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
+	s.Equal(causeProvider, s.loggedOnce(interruptedLine)["cause"])
+	agent.Interrupt()
+
+	s.eventually(func() bool { return countOf[Interrupted](events.seen()) == 2 },
+		"both abandons are reported, as before the line existed")
+	s.Equal(causeProvider, s.interruptedOnce()["cause"])
+	s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))-api,
+		"the reply the model stopped is not counted again")
+}
+
+func (s *AgentSuite) TestALineInterruptedAndThenRefusedIsToldOnce() {
+	s.logs = &logLines{}
+	s.join(false)
+	synthesizing, release := make(chan struct{}), make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.synthesizing, s.voice.synthesisRelease = synthesizing, release
+	s.voice.refuses = errors.New("socket closed")
+	s.voice.mu.Unlock()
+	refused := testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))
+	said := make(chan error, 1)
+	go func() { said <- s.agent.Say(s.ctx, "Hi, thanks for getting in touch.") }()
+
+	<-synthesizing
+	s.agent.Interrupt()
+	close(release)
+	s.Require().Error(<-said)
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 2 },
+		"both abandons are reported, as before the line existed")
+	s.Equal(causeAPI, s.interruptedOnce()["cause"])
+	s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))-refused,
+		"the line the caller interrupted is not counted again")
 }
 
 func (s *AgentSuite) TestALineALostVoiceWasSayingSaysTheVoiceWasLost() {

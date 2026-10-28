@@ -501,6 +501,10 @@ type stubTTS struct {
 	silent bool
 	// refuses, if set, is what every synthesis fails with.
 	refuses error
+	// synthesizing, if set, is closed when a synthesis is taken, which then waits for
+	// synthesisRelease.
+	synthesizing     chan struct{}
+	synthesisRelease <-chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -539,7 +543,13 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		delete(s.active, request.ID)
 	}
+	synthesizing, release := s.synthesizing, s.synthesisRelease
+	s.synthesizing = nil
 	s.mu.Unlock()
+	if synthesizing != nil {
+		close(synthesizing)
+		<-release
+	}
 
 	if refuses != nil {
 		return refuses

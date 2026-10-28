@@ -412,6 +412,10 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// toldInterrupts is every turn whose abandoning was logged and counted. Two paths can
+	// abandon the same reply (a model stopping and Agent.Interrupt, a refused line and
+	// Agent.Interrupt), and the reason is told once. Like abandoned it lives as long as the call.
+	toldInterrupts map[string]struct{}
 	// leftNoted is the reply whose audio for a left call was last logged, so a reply logs
 	// it once rather than once per chunk. Only the speech-to-speech consumer touches it.
 	leftNoted string
@@ -635,6 +639,7 @@ func New(options Options) (*Agent, error) {
 		voices:           map[string]string{},
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
+		toldInterrupts:   map[string]struct{}{},
 		heard:            map[string]*utterance{},
 		finished:         map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
