@@ -146,16 +146,24 @@ func (s *PolicySuite) admit(enforcer *Enforcer, appID string) routing.Admission 
 	return admitted
 }
 
-// read waits for the organization's account to have landed a read since now.
+// read waits for the organization's account to have landed a read asked since now. A read
+// stamps when it landed, so the first to land since now may have been asked before; the pass
+// after it was asked after.
 func (s *PolicySuite) read(enforcer *Enforcer, organization string) {
 	since := time.Now()
-	s.eventually(func() bool {
-		_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
-		enforcer.money.mu.Lock()
-		defer enforcer.money.mu.Unlock()
-		acct := enforcer.money.accounts[organization]
-		return acct != nil && acct.read.After(since)
-	}, 5*time.Second, 5*time.Millisecond, "the account is read")
+	for range 2 {
+		s.eventually(func() bool {
+			_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
+			enforcer.money.mu.Lock()
+			defer enforcer.money.mu.Unlock()
+			acct := enforcer.money.accounts[organization]
+			if acct == nil || !acct.read.After(since) {
+				return false
+			}
+			since = acct.read
+			return true
+		}, 5*time.Second, 5*time.Millisecond, "the account is read")
+	}
 }
 
 // pending is what the account still holds in either ledger.
@@ -726,7 +734,9 @@ func (s *PolicySuite) counted() (*Enforcer, *usagetest.Service, rueidis.Client) 
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh = service.Client, counters, time.Hour
-		settings.MaxStale = 2 * time.Hour
+		// The first admission waits for its read however slow the machine, so it is answered on
+		// what the counters say, never on the tier's fail mode.
+		settings.MaxStale, settings.FirstRead = 2*time.Hour, readTimeout
 	})
 	return enforcer, service, counters
 }
@@ -808,6 +818,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh, settings.MaxStale = client, counters, time.Hour, 2*time.Hour
+		settings.FirstRead = readTimeout
 	})
 	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
 	service.Credit(s.T(), s.org, 10_000_000)
@@ -1359,7 +1370,9 @@ func (s *PolicySuite) TestAnAccountNeverReadFollowsItsTiersFailMode() {
 	s.never(func() bool { return s.admit(learned.Enforcer, other).Spend != nil }, 500*time.Millisecond, 10*time.Millisecond,
 		"a tier whose row was read open admits an organization not read yet")
 
-	unknown := s.billed()
+	// Unread for a second before the default fails closed, so its first admission comes before
+	// that however slow the machine.
+	unknown := s.billed(func(settings *Settings) { settings.MaxStale = time.Second })
 	unknown.front.down.Store(true)
 	unknown.Join(s.app, s.org, openTier)
 	s.NoError(s.admit(unknown.Enforcer, s.app).Spend, "admitted until the first read is due")

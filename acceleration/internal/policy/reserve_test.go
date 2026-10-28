@@ -586,18 +586,30 @@ func (s *PolicySuite) TestTheScriptExpiresHoldsByRedisClock() {
 		return values
 	}
 
-	exec("a", "u1", "5:150")
+	// redisNow is Redis's clock, in milliseconds.
+	redisNow := func() int64 {
+		clock, err := client.Do(s.ctx, client.B().Time().Build()).AsStrSlice()
+		s.Require().NoError(err)
+		seconds, _ := strconv.ParseInt(clock[0], 10, 64)
+		micros, _ := strconv.ParseInt(clock[1], 10, 64)
+		return seconds*1000 + micros/1000
+	}
+	// A second, so the other router's count lands before the expiry however slow the machine.
+	const ttl = 1000
+
+	before := redisNow()
+	exec("a", "u1", "5:"+strconv.Itoa(ttl))
+	after := redisNow()
 	stored, err := client.Do(s.ctx, client.B().Hget().Key(key).Field("u1:a").Build()).ToString()
 	s.Require().NoError(err)
-	clock, err := client.Do(s.ctx, client.B().Time().Build()).AsStrSlice()
-	s.Require().NoError(err)
-	seconds, _ := strconv.ParseInt(clock[0], 10, 64)
-	micros, _ := strconv.ParseInt(clock[1], 10, 64)
 	expires, _ := strconv.ParseInt(strings.SplitN(stored, ":", 2)[1], 10, 64)
-	s.InDelta(seconds*1000+micros/1000+150, expires, 100, "the expiry is Redis's now plus the hold's ttl")
+	s.GreaterOrEqual(expires, before+ttl, "the expiry is Redis's now plus the hold's ttl")
+	s.LessOrEqual(expires, after+ttl)
 
 	s.Equal([]int64{5, 1}, exec("b"), "another router counts it")
-	time.Sleep(200 * time.Millisecond)
+	for redisNow() <= expires {
+		time.Sleep(10 * time.Millisecond)
+	}
 	s.Equal([]int64{0, 0}, exec("b"), "gone at its expiry, by Redis's clock")
 }
 
