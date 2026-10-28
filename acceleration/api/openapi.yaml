@@ -980,6 +980,9 @@ components:
       type: object
     AttachedNumber:
       properties:
+        agent_config_id:
+          description: The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+          type: string
         route_id:
           type: string
         sip_uri:
@@ -5704,6 +5707,9 @@ components:
       type: string
     PhoneNumber:
       properties:
+        agent_config_id:
+          description: The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+          type: string
         capabilities:
           items:
             $ref: '#/components/schemas/PhoneCapability'
@@ -8169,6 +8175,15 @@ components:
           type: integer
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
+          type: string
+      type: object
+    SetNumberAgentRequest:
+      properties:
+        agent:
+          description: The name of the agent config that answers the number. Give this or config_id.
+          type: string
+        config_id:
+          description: The id of the agent config that answers the number. Give this or agent.
           type: string
       type: object
     SetPluginClientRequest:
@@ -21411,6 +21426,99 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Give a number back, which stops its monthly charge
+  /v1/phone/numbers/{e164}/agent:
+    delete:
+      description: The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+      operationId: removePhoneNumberAgent
+      parameters:
+        - description: The number in +15551234567 form.
+          in: path
+          name: e164
+          required: true
+          schema:
+            description: The number in +15551234567 form.
+            type: string
+      responses:
+        "204":
+          description: No agent answers the number
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Send a number's calls back to dispatch
+    put:
+      description: Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+      operationId: setPhoneNumberAgent
+      parameters:
+        - description: The number in +15551234567 form.
+          in: path
+          name: e164
+          required: true
+          schema:
+            description: The number in +15551234567 form.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetNumberAgentRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumber'
+          description: The agent now answers the number
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Have an agent answer a number's calls
   /v1/phone/numbers/{e164}/attach:
     delete:
       description: Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.

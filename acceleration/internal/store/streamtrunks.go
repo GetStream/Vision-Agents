@@ -183,6 +183,7 @@ func (t *TrunkGroupTx) ClearLine(e164 string) error {
 func (t *TrunkGroupTx) Detach(e164 string) error {
 	result, err := t.tx.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("attached_at = NULL").
+		Set("config_id = NULL").
 		Where("customer_id = ?", t.group.CustomerID).
 		Where("vendor = ?", t.group.Vendor).
 		Where("e164 = ?", e164).

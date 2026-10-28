@@ -562,3 +562,186 @@ func (s *CallStatusSuite) TestASessionOpensWhileItsCallRings() {
 	s.Equal(http.StatusCreated, status, answered.Error.Message)
 	s.True(s.manager.Running(id))
 }
+
+// attachedForSessions is a number attached the way attaching does today: every caller gets a
+// session of their own, so no one call is recorded.
+func (s *PhoneSuite) attachedForSessions(customerID string) string {
+	ctx := context.Background()
+	number := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: number, Vendor: "bics", Country: "US", CustomerID: customerID, PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, customerID, number, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), RouteID: "route-" + s.utils.uuid(), CallType: "agent",
+	}))
+	return number
+}
+
+func (s *PhoneSuite) listedNumber() PhoneNumber {
+	var numbers []PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
+	s.Require().Len(numbers, 1)
+	return numbers[0]
+}
+
+func (s *PhoneSuite) TestANumberCanBeGivenAnAgent() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+
+	var answered PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, &answered))
+
+	s.Require().NotNil(answered.AgentConfigId)
+	s.Equal(config, *answered.AgentConfigId)
+	listed := s.listedNumber()
+	s.Require().NotNil(listed.AgentConfigId)
+	s.Equal(config, *listed.AgentConfigId)
+}
+
+func (s *PhoneSuite) TestANumberCanBeGivenAnAgentByName() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	name := "agent-" + s.utils.uuid()
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{Name: name, Llm: pointerTo("echo/local-model")}, &created))
+
+	var answered PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{Agent: &name}, &answered))
+
+	s.Require().NotNil(answered.AgentConfigId)
+	s.Equal(created.Id, *answered.AgentConfigId)
+}
+
+func (s *PhoneSuite) TestGivingANumberAnotherAgentReplacesIt() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	first, second := s.config("echo/local-model"), s.config("echo/local-model")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &first}, nil))
+	var answered PhoneNumber
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &second}, &answered))
+
+	s.Require().NotNil(answered.AgentConfigId)
+	s.Equal(second, *answered.AgentConfigId)
+}
+
+func (s *PhoneSuite) TestANumbersAgentCanBeRemoved() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/agent", nil, nil))
+
+	s.Nil(s.listedNumber().AgentConfigId)
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/agent", nil, nil))
+}
+
+func (s *PhoneSuite) TestANumberThatIsNotAttachedCannotBeGivenAnAgent() {
+	s.useApp(s.data.createApp())
+	number := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(context.Background(), &store.PhoneNumber{
+		E164: number, Vendor: "bics", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	config := s.config("echo/local-model")
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "attach the number first")
+}
+
+func (s *PhoneSuite) TestANumberAttachedToACallOfItsOwnCannotBeGivenAnAgent() {
+	s.useApp(s.data.createApp())
+	number := s.attachedNumber(s.customerID())
+	config := s.config("echo/local-model")
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "attach the number again")
+}
+
+func (s *PhoneSuite) TestAnAgentMustBeOneOfTheCustomersConfigs() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	unknown := "config-" + s.utils.uuid()
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &unknown})
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, errUnknownConfig.Message)
+
+	status, _ = s.serverClient.failure(http.MethodPut, "/v1/phone/numbers/"+number+"/agent", SetNumberAgentRequest{})
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *PhoneSuite) TestAnotherCustomersNumberCannotBeGivenAnAgent() {
+	s.useApp(s.data.createApp())
+	theirs := s.attachedForSessions(s.data.createApp().app.ID)
+	config := s.config("echo/local-model")
+
+	status, _ := s.serverClient.failure(http.MethodPut, "/v1/phone/numbers/"+theirs+"/agent",
+		SetNumberAgentRequest{ConfigId: &config})
+
+	s.Equal(http.StatusNotFound, status)
+}
+
+func (s *PhoneSuite) TestDetachingANumberRemovesItsAgent() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/attach", nil, nil))
+
+	answering, err := s.store.NumbersAnsweredBy(context.Background(), s.customerID(), config)
+	s.Require().NoError(err)
+	s.Empty(answering)
+	s.Nil(s.listedNumber().AgentConfigId)
+}
+
+func (s *PhoneSuite) TestReleasingANumberRemovesItsAgent() {
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	s.Require().NoError(s.store.ReleaseNumber(ctx, s.customerID(), number, time.Time{}))
+
+	answering, err := s.store.NumbersAnsweredBy(ctx, s.customerID(), config)
+	s.Require().NoError(err)
+	s.Empty(answering)
+	held, err := s.store.CustomerNumbers(ctx, s.customerID(), true)
+	s.Require().NoError(err)
+	s.Require().Len(held, 1)
+	s.Empty(held[0].ConfigID, "a released row keeps no agent")
+}
+
+func (s *PhoneSuite) TestReattachingANumberKeepsItsAgent() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	s.Require().NoError(s.store.AttachNumber(context.Background(), s.customerID(), number, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), RouteID: "route-" + s.utils.uuid(), CallType: "agent",
+	}))
+
+	listed := s.listedNumber()
+	s.Require().NotNil(listed.AgentConfigId)
+	s.Equal(config, *listed.AgentConfigId)
+}
