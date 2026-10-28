@@ -984,8 +984,7 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 	}
 
 	handOverFirst()
-	// The old router's Serve has ended: an Accept already under way when the listener closed
-	// may still take a connection, so only a dial after this one is the new router's.
+	// Ordering: a dial counts as after the hand-over only once the old router's Serve has returned.
 	s.ErrorIs(s.servedWithin(), net.ErrClosed, "the draining router's Serve did not end with its listener")
 	handedOver.Store(true)
 	for after := 0; after < 20; {
