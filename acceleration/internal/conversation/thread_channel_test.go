@@ -86,6 +86,99 @@ func (s *ThreadChannelSuite) TestThePeoplesMessagesAreHistoryOnceAnswered() {
 	}, history)
 }
 
+// AI-2095: a photo sent in the thread is history once answered as a note that it was sent,
+// not the photo again: the reply to it saw it, and says what it showed.
+func (s *ThreadChannelSuite) TestAPhotoSentWithTextIsHistoryAsANoteOnceAnswered() {
+	s.personWith("U1", "what colour is this?", photo("image_url", "https://cdn.fake/image/bike.jpg"))
+	s.reopenedAfter("what colour is this?", "It is red.")
+
+	_, history, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+
+	s.Require().NoError(err)
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "what colour is this?\n\n[sent with a photo, not shown again]", Author: "U1"},
+		{Role: llm.Assistant, Content: "It is red."},
+	}, history)
+}
+
+// AI-2095: a photo sent with no text is history once answered, as the note alone.
+func (s *ThreadChannelSuite) TestAPhotoSentAloneIsHistoryOnceAnswered() {
+	s.personWith("U1", "", photo("image_url", "https://cdn.fake/image/bike.jpg"))
+	s.reopenedAfter("", "A red bike.")
+
+	_, history, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+
+	s.Require().NoError(err)
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: "U1"},
+		{Role: llm.Assistant, Content: "A red bike."},
+	}, history)
+}
+
+// AI-2095: the attachments history counts as photos are the ones the message hook answers as
+// photos (api messageEvent.photos), at most as many as a reply takes.
+func (s *ThreadChannelSuite) TestOnlyWhatTheHookTakesForAPhotoIsNoted() {
+	nine := make([]getstream.Attachment, 9)
+	for index := range nine {
+		nine[index] = photo("image_url", "https://cdn.fake/image/bike.jpg")
+	}
+	preview := photo("image_url", "https://example.com/og.png")
+	preview.OGScrapeUrl = ptr("https://example.com")
+	file := photo("asset_url", "https://cdn.fake/file/notes.pdf")
+	file.Type = ptr("file")
+	untyped := photo("image_url", "https://cdn.fake/image/bike.jpg")
+	untyped.Type = nil
+	emptyScrape := photo("image_url", "https://cdn.fake/image/bike.jpg")
+	emptyScrape.OGScrapeUrl = ptr("")
+	emptyImageURL := photo("image_url", "")
+	emptyImageURL.AssetUrl = ptr("https://cdn.fake/image/bike.jpg")
+	for name, test := range map[string]struct {
+		attachments []getstream.Attachment
+		said        string
+	}{
+		"its URL in asset_url":                {[]getstream.Attachment{photo("asset_url", "https://cdn.fake/image/bike.jpg")}, "hi\n\n[sent with a photo, not shown again]"},
+		"an empty image_url beside asset_url": {[]getstream.Attachment{emptyImageURL}, "hi\n\n[sent with a photo, not shown again]"},
+		"two photos":                          {[]getstream.Attachment{photo("image_url", "https://a.fake/1.jpg"), photo("image_url", "https://a.fake/2.jpg")}, "hi\n\n[sent with 2 photos, not shown again]"},
+		"more photos than a reply takes":      {nine, "hi\n\n[sent with 8 photos, not shown again]"},
+		"the preview of a link in the text":   {[]getstream.Attachment{preview}, "hi"},
+		"an empty og_scrape_url":              {[]getstream.Attachment{emptyScrape}, "hi\n\n[sent with a photo, not shown again]"},
+		"a file":                              {[]getstream.Attachment{file}, "hi"},
+		"an attachment of no type":            {[]getstream.Attachment{untyped}, "hi"},
+		"an image with no URL":                {[]getstream.Attachment{photo("image_url", "")}, "hi"},
+		"a photo beside what is none":         {[]getstream.Attachment{file, photo("image_url", "https://a.fake/1.jpg"), preview}, "hi\n\n[sent with a photo, not shown again]"},
+	} {
+		s.Run(name, func() {
+			s.SetupTest()
+			s.personWith("U1", "hi", test.attachments...)
+			s.reopenedAfter("hi", "Hello.")
+
+			_, history, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+
+			s.Require().NoError(err)
+			s.Require().Len(history, 2)
+			s.Equal(test.said, history[0].Content)
+		})
+	}
+}
+
+// AI-2095: a message with neither text nor a photo, only an attachment that is none, is still
+// no turn of history, as on base.
+func (s *ThreadChannelSuite) TestAMessageWithNoTextAndNoPhotoIsNoHistory() {
+	file := photo("asset_url", "https://cdn.fake/file/notes.pdf")
+	file.Type = ptr("file")
+	s.personWith("U1", "", file)
+	s.person("U1", "hi")
+	s.reopenedAfter("hi", "Hello.")
+
+	_, history, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+
+	s.Require().NoError(err)
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "hi", Author: "U1"},
+		{Role: llm.Assistant, Content: "Hello."},
+	}, history)
+}
+
 func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 	s.person("U1", "is the build green?")
 	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
@@ -321,6 +414,36 @@ func (s *ThreadChannelSuite) person(user, text string) {
 	})
 	s.Require().NoError(err)
 }
+
+// personWith writes a message with attachments into the thread channel as the bridge does.
+func (s *ThreadChannelSuite) personWith(user, text string, attachments ...getstream.Attachment) {
+	_, err := s.chat.Client.Chat().SendMessage(context.Background(), "agent", s.channel, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &user, Attachments: attachments},
+	})
+	s.Require().NoError(err)
+}
+
+// reopenedAfter opens the conversation, answers told with reply and lets the conversation go,
+// as answerThread does with the session it opens for a turn.
+func (s *ThreadChannelSuite) reopenedAfter(told, reply string) {
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	s.answer(c, told, reply)
+	c.Release()
+}
+
+// photo is an image attachment with its URL under key, image_url or asset_url.
+func photo(key, url string) getstream.Attachment {
+	attachment := getstream.Attachment{Type: ptr("image")}
+	if key == "image_url" {
+		attachment.ImageUrl = &url
+	} else {
+		attachment.AssetUrl = &url
+	}
+	return attachment
+}
+
+func ptr[T any](value T) *T { return &value }
 
 // answer has the conversation answer told with reply, as Session.FollowUp leads it to, and
 // returns the follow-up's id.

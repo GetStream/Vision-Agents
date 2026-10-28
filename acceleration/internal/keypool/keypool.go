@@ -317,16 +317,69 @@ func (p *Pool) refused(response *http.Response) (time.Duration, bool) {
 	case http.StatusTooManyRequests:
 		return p.retryAfter(response), true
 	case http.StatusUnauthorized, http.StatusPaymentRequired:
-		if response.Body == nil {
-			return 0, false
-		}
-		peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
-		response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
-		if bytes.Contains(peeked, []byte("quota_exceeded")) {
+		if bytes.Contains(peek(response), []byte("quota_exceeded")) {
 			return MaxCooldown, true
 		}
 	}
 	return 0, false
+}
+
+// badKeyMarker is what a provider that answers a key it does not know with a 400 or 403, not
+// a 401, says in the body, as each answered a made-up key on 2026-10-27. It counts only on its
+// own status, so a generic text on another status is not taken for a bad key.
+type badKeyMarker struct {
+	status int
+	text   []byte
+}
+
+var badKeyMarkers = []badKeyMarker{
+	// Google's native API (x-goog-api-key, ?key=): a 400 whose google.rpc.ErrorInfo reason
+	// is API_KEY_INVALID.
+	{http.StatusBadRequest, []byte(`"API_KEY_INVALID"`)},
+	// Gemini's OpenAI-compatible endpoint: a 400 that gives no reason, only this message.
+	{http.StatusBadRequest, []byte("Please pass a valid API key")},
+	// xAI: a 400, on HTTP and on the websocket handshake alike.
+	{http.StatusBadRequest, []byte("Incorrect API key provided")},
+	// Baseten's inference API: a 403.
+	{http.StatusForbidden, []byte("please check the api-key you provided")},
+	// Baseten's dedicated deployments (HTTP and websocket handshake): a 403 with only this
+	// generic text, so it counts on a 403 alone.
+	{http.StatusForbidden, []byte("Authentication failed")},
+	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED), for a key that is not base64 of
+	// id:secret...
+	{http.StatusForbidden, []byte("Invalid authorization credentials")},
+	// ...and for a key of that shape that is revoked or made up.
+	{http.StatusForbidden, []byte("API key does not exist or was deleted")},
+}
+
+// rejectsKey reports whether a response says the provider would not take the key at all: a
+// 401 for a key it does not know, a 402 for an account out of credit, such as Gemini's
+// "prepayment credits are depleted", or a 400 or 403 whose body says the key is not valid,
+// which is how Google, xAI, Baseten and Inworld refuse one. Each is counted as refused, so a
+// key to replace or top up shows up, even when refused leaves it in turn. Any other 400 or
+// 403 is the request's fault, or a key allowed in but not to this, and is not counted.
+func rejectsKey(response *http.Response) bool {
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusPaymentRequired:
+		return true
+	case http.StatusBadRequest, http.StatusForbidden:
+		peeked := peek(response)
+		return slices.ContainsFunc(badKeyMarkers, func(marker badKeyMarker) bool {
+			return marker.status == response.StatusCode && bytes.Contains(peeked, marker.text)
+		})
+	}
+	return false
+}
+
+// peek reads the start of a response's body and puts it back, so the caller still reads it
+// whole.
+func peek(response *http.Response) []byte {
+	if response.Body == nil {
+		return nil
+	}
+	peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
+	response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
+	return peeked
 }
 
 // peekedBody is a body with what was read of it put back in front.
@@ -351,10 +404,12 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 			return response, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return response, nil
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 
 		if attempt >= attempts-1 || ctx.Err() != nil {
@@ -495,10 +550,12 @@ func (p *Pool) Dial(
 			return conn, response, key, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return conn, response, key, err
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 		if attempt >= attempts-1 || ctx.Err() != nil {
 			return conn, response, key, err

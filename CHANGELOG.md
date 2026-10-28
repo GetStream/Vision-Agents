@@ -2,9 +2,15 @@
 
 ## Features
 
+### An iMessage photo reaches the agent
+
+A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).
+
 ### A photo in a thread channel reaches the agent
 
 A message in a `thread-` channel with an image attachment (`type: image`, `image_url` or `asset_url`), with or without text, is answered, and the agent sees the photo; an agent with no vision skill and a model that takes text alone says it cannot see it rather than staying silent (AI-2093).
+
+A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
 ### A Node.js tool's parameters can be a Zod schema
 
@@ -17,6 +23,10 @@ Every call's arguments are checked against the schema the model was told before 
 ### Python describes a tool's arguments with Pydantic
 
 A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
+### Sandbox code reads BigQuery
+
+A `bigquery` binding with `sandbox: true` lets code in the session's sandbox call BigQuery's REST API (`https://bigquery.googleapis.com`) with `Authorization: Bearer $BIGQUERY_TOKEN`. Behind the egress proxy, GETs pass, and a jobs.query POST (`client.query_and_wait`) passes only when BigQuery's own dry run of it says it is one `SELECT`; a script, DML, DDL, `EXPORT DATA` and jobs.insert (`client.query()`) get 403. A connection made at revision 3 or earlier gives the sandbox nothing until it connects again (AI-2114).
 
 ### Sandbox code reads Linear
 
@@ -119,9 +129,17 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### The knowledge passage limits are configurable
 
-`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A value of 0 or below is the default (AI-1992).
+`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
 ## Bug Fixes
+
+### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
+
+`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
+
+### Every 401 and 402 on a pooled key is counted as refused
+
+`router_keypool_refused_attempts_total` now counts every 401 and 402 a provider answers on a pooled key, whatever the body says, with `status` `401` or `402`. Before, it counted one only when the body said `quota_exceeded`, so Gemini's 402 "prepayment credits are depleted" raised no `key_refused` alert. Which keys rest and when a request moves to the next key is unchanged (AI-2123).
 
 ### Sandbox code can no longer write through a method-override header
 
@@ -130,6 +148,10 @@ Under the egress proxy broker, a request from sandbox code to a connector's host
 ### An end user's device opens only its own memories
 
 A session created by an end user's device (`POST /v1/agents/sessions` or the session socket's start frame) with a `memory.user_id` other than the caller's own user id is refused with `403`, and an anonymous caller naming any `memory.user_id` is refused too. Before, a signed-in user could name another user of the same app, read that user's memories through the agent and add to them. A backend may still name any of its users. `MEM0_API_KEY` is read as one key: a comma-separated list or `MEM0_API_KEY_1` is no longer taken as a pool, since a mem0 key belongs to one project.
+
+### A saved policy applies at once and stays applied
+
+The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for a few milliseconds. A save whose request was cancelled just after it committed also left the old value in place; it now clears it. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
 
 ### An iMessage photo's caption is answered
 
@@ -150,6 +172,10 @@ Only the first 128 bytes of a heading, cut between characters, are now repeated 
 ### A knowledge base can have any name
 
 A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
+
+### A knowledge write is refused when its organization may not pay for it
+
+`POST /v1/agents/knowledge`, a directory sync with knowledge and the URL crawler are admitted as a model call is before they write: a suspended organization is a 403 `account_suspended`, no credit or a spent limit a 402, one end user's spent limit a 429 with Retry-After. Nothing is written. Deleting a document is never refused for money. The URL crawler does not read a page for an organization that is refused: the page fails with the reason and is retried like any other. A provider failure while writing is now a 500 "something went wrong" rather than a 400 carrying the provider's response (AI-1990).
 
 ### The agent tells people apart in a group text chat
 

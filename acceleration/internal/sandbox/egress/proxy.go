@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,9 +74,9 @@ type Options struct {
 	// public addresses only.
 	Dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	Logger *slog.Logger
-	// HandshakeTimeout, IdleTimeout and HeaderTimeout replace handshakeTimeout, idleTimeout
-	// and headerTimeout when set, for tests.
-	HandshakeTimeout, IdleTimeout, HeaderTimeout time.Duration
+	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
+	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
+	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -89,7 +90,7 @@ type Proxy struct {
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	logger    *slog.Logger
 
-	handshakeTimeout, idleTimeout time.Duration
+	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
 }
 
 func New(options Options) (*Proxy, error) {
@@ -116,7 +117,8 @@ func New(options Options) (*Proxy, error) {
 	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
-		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout)}, nil
+		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout)}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -258,8 +260,9 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 }
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
-// GraphQL read, with queries alone). It reads the grants again for each, so after Delete no
-// request goes out on a tunnel the credential opened.
+// GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
+// says). It reads the grants again for each, and after a dry run, so after Delete no request
+// goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -291,7 +294,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		reads, graphQL := record.reads(host, r.Method, r.URL)
+		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
 		if name := overrider(r.Header); name != "" {
 			reads, logger = false, logger.With("why", "a method override header: "+name)
 		}
@@ -301,15 +304,21 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
+		var query map[string]json.RawMessage
+		var why error
+		if sql && reads {
+			if query, why = onlyOneQuery(r); why != nil {
+				reads, logger = false, logger.With("why", why.Error())
+			}
+		}
 		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
-		// the trailer is checked after every body read (GraphQL's is the only one now).
+		// the trailer is checked after every body read (GraphQL's and a SQL read's), before the
+		// dry run.
 		if name := overrider(r.Trailer); name != "" {
 			reads, logger = false, logger.With("why", "a method override trailer: "+name)
 		}
 		if !reads {
-			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
-			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+
-				"code in the sandbox only reads through a connector; write with the connector's tools", r.Method, host, r.URL.EscapedPath()))
+			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
 			return
 		}
 		forward := &httputil.ReverseProxy{
@@ -325,6 +334,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		grant, form, placed := record.placed(host, r.Header.Get("Authorization"))
 		if !placed {
+			if err := p.selectsOrRefuse(w, r, t, logger, query, r.Header.Get("Authorization"), nil); err != nil {
+				return
+			}
 			sent, done := counted(w, t.label, r.Method, decisionGrantedNoToken)
 			defer done()
 			forward.ServeHTTP(sent, r)
@@ -342,8 +354,6 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
 			return
 		}
-		sent, done := counted(w, t.label, r.Method, decisionToken)
-		defer done()
 		pairs := echoes(token, grant.Placeholder)
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
@@ -351,6 +361,11 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// An echo of the whole Authorization value in base64 holds the token at another
 		// alignment than the token's own base64.
 		pairs = append(pairs, wholeInBase64(form.scheme+" "+form.credential(token), form.scheme+" "+form.credential(grant.Placeholder))...)
+		if err := p.selectsOrRefuse(w, r, t, logger, query, form.scheme+" "+form.credential(token), pairs); err != nil {
+			return
+		}
+		sent, done := counted(w, t.label, r.Method, decisionToken)
+		defer done()
 		forward.Rewrite = func(pr *httputil.ProxyRequest) {
 			p.toHost(pr, t)
 			pr.Out.Header.Set("Authorization", form.scheme+" "+form.credential(token))
@@ -391,6 +406,62 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		forward.ServeHTTP(finalOnly{sent}, r)
 	}
 }
+
+// sqlHint is how code in the sandbox reads a host with a SQL read, which a refusal there tells the
+// model: google-cloud-bigquery's client.query_and_wait sends jobs.query, and its client.query
+// sends jobs.insert (POST .../jobs), which no read lists (_job_helpers.py, 3.41.0).
+const sqlHint = "code in the sandbox reads BigQuery with one SELECT per request, sent as POST /bigquery/v2/projects/<project>/queries " +
+	"(jobs.query, such as client.query_and_wait in Python); client.query() sends jobs.insert, which is refused, and so are scripts, " +
+	"DML, DDL and EXPORT DATA; write with the connector's tools"
+
+// refuseWrite answers a request that is no read 403, saying how code in the sandbox reads the
+// host: on a host with a SQL read, with why, when a check of the body said it, and what BigQuery
+// said when it refused the dry run.
+func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger, sqlHost bool, why error) {
+	logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
+	refused := fmt.Sprintf("egress: %s %s%s refused", r.Method, t.host, r.URL.EscapedPath())
+	var dry refusedDryRun
+	switch {
+	case sqlHost && errors.As(why, &dry) && dry.said != "":
+		refused += " (" + why.Error() + ": " + dry.said + "): " + sqlHint
+	case sqlHost && why != nil:
+		refused += " (" + why.Error() + "): " + sqlHint
+	case sqlHost:
+		refused += ": " + sqlHint
+	default:
+		refused += ": code in the sandbox only reads through a connector; write with the connector's tools"
+	}
+	refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, refused)
+}
+
+// selectsOrRefuse asks the host's dry run whether the request to a SQL read, query, is one
+// SELECT, and answers 403 when it is not, BigQuery's words in it with the token's echoes in pairs
+// replaced. No query, the request of any other read, passes. The grants are read again after
+// the dry run, which can take dryRunTimeout: a grant that ended meanwhile sends nothing on.
+func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger,
+	query map[string]json.RawMessage, authorization string, pairs []string) error {
+	if query == nil {
+		return nil
+	}
+	if err := p.selects(r.Context(), r, t, query, authorization, pairs); err != nil {
+		p.refuseWrite(w, r, t, logger.With("why", err.Error()), true, err)
+		return err
+	}
+	record, _, err := p.lookup(r.Context(), t.credential)
+	if err != nil {
+		p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
+		refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
+		return err
+	}
+	if !record.granted(t.host) {
+		refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
+		return errGrantEnded
+	}
+	return nil
+}
+
+// errGrantEnded is a grant that ended during a request's dry run.
+var errGrantEnded = errors.New("egress: the grant ended during the dry run")
 
 // methodOverrides are the headers in which a client names the method a host should run in place
 // of the request's own, in net/http's canonical form. Google runs a GET with

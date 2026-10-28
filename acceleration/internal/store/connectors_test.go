@@ -5,6 +5,7 @@ package store
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -464,7 +465,8 @@ func (s *StoreSuite) TestAConnectionIsComparedWithItsOwnCustomersRevisionsOnly()
 // sensitive-connector check reads, from the latest revision. A router that ships it, on a
 // database the build before it seeded with revision 2, stores 3 as the latest, keeps 2
 // unmarked, moves no other built-in, and leaves a connection pinned to 2 current.
-// testdata/bigquery-revision-2.yaml is the file the base, 8e132bd37, shipped.
+// testdata/bigquery-revision-2.yaml is the file the base, 8e132bd37, shipped; revision 3 is
+// today's file without the sandbox block revision 4 adds.
 func (s *StoreSuite) TestBigQueryRevisionThreeLeavesAConnectionOnRevisionTwoCurrent() {
 	two, err := os.ReadFile("testdata/bigquery-revision-2.yaml")
 	s.Require().NoError(err)
@@ -476,7 +478,11 @@ func (s *StoreSuite) TestBigQueryRevisionThreeLeavesAConnectionOnRevisionTwoCurr
 		s.Require().NoError(err)
 		before[file.Name()] = &fstest.MapFile{Data: raw}
 	}
+	after := maps.Clone(before)
 	before["bigquery.yaml"] = &fstest.MapFile{Data: two}
+	threeAndFour, _, found := strings.Cut(string(after["bigquery.yaml"].Data), "\nsandbox:\n")
+	s.Require().True(found)
+	after["bigquery.yaml"] = &fstest.MapFile{Data: []byte(strings.Replace(threeAndFour, "revision: 4\n", "revision: 3\n", 1))}
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
 	latest := func() map[string]int {
 		revisions := map[string]int{}
@@ -494,7 +500,7 @@ func (s *StoreSuite) TestBigQueryRevisionThreeLeavesAConnectionOnRevisionTwoCurr
 	s.Require().NoError(err)
 	s.Require().Equal(DefinitionCurrent, statuses["bigquery 2"].Status)
 
-	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, after))
 
 	now := latest()
 	s.Equal(3, now["bigquery"])

@@ -45,6 +45,10 @@ channel:
     # text stays for a build before text_parts, which reads the first part.
     text: $.data.parts[0].value
     text_parts: $.data.parts[*].value
+    # [events]: a media part has a url and a mime_type; it is a file of the message.
+    media:
+      url: $.data.parts[*].url
+      mime_type: $.data.parts[*].mime_type
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages.
     url: https://api.linqapp.com/api/partner/v3/chats/{thread.chat_id}/messages
