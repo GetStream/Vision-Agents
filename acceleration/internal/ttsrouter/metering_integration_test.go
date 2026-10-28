@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -111,4 +112,60 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	s.Empty(session.sent, "text for a settled utterance is not counted, so nothing is left waiting for a completion")
+}
+
+// rows reads back what the session recorded for a customer, once it and its recorder have
+// closed.
+func (s *MeteringSuite) rows(customer string) []store.Request {
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Order("id").Scan(s.ctx))
+	return rows
+}
+
+func (s *MeteringSuite) TestAnUtteranceAVoiceReportsFinishedTwiceIsBilledOnce() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := newStubTTS()
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Hello there.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12, AudioDurationMs: 900})
+	s.completed(session)
+	// The same final frame again, as a voice that repeats it would send.
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12, AudioDurationMs: 900})
+	s.completed(session)
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 1, "one utterance is one row, however often the voice reports it finished")
+	s.EqualValues(12, rows[0].Characters)
+	s.Equal("u1", rows[0].OperationID)
+}
+
+func (s *MeteringSuite) TestAnUtteranceAVoiceStartsAgainAfterItSettledIsBilledAgain() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := newStubTTS()
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Hello there.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12})
+	s.completed(session)
+	// A voice that opens a settled utterance again for more text speaks it, and starts it
+	// over to say so.
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Again.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 6})
+	s.completed(session)
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 2)
+	s.EqualValues(12, rows[0].Characters)
+	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed what the voice counted")
+	s.Equal("u1", rows[1].OperationID)
 }

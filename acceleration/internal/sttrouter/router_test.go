@@ -90,6 +90,7 @@ func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachab
 		"inworld/inworld-stt-1",
 		"elevenlabs/scribe_v2_realtime",
 		"assemblyai/universal-3-6-pro",
+		"fish/transcribe-stream-1",
 	} {
 		candidates, err := router.Resolve(s.ctx, name, nil)
 		s.Require().NoErrorf(err, "target %s", name)

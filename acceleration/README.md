@@ -743,6 +743,7 @@ vendor rates in `prices/vendor.json`; customers are charged each entry's price, 
 | `gemma/gemma-4-26B-A4B-it`        | low-latency  | $0.24  | -       | $1.20   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
+| `openai/gpt-6.1-terra`            | high-quality | $1.00  | $0.05   | $5.00   |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
