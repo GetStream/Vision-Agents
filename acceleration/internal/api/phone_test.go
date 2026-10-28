@@ -562,17 +562,3 @@ func (s *CallStatusSuite) TestASessionOpensWhileItsCallRings() {
 	s.Equal(http.StatusCreated, status, answered.Error.Message)
 	s.True(s.manager.Running(id))
 }
-
-func (s *CallStatusSuite) TestASessionEndedUnansweredIsNotCarriedOnWhenWatched() {
-	id := s.utils.uuid()
-	token, _ := s.placedFor(id)
-	status, answered := s.openPhoneSession(id)
-	s.Require().Equal(http.StatusCreated, status, answered.Error.Message)
-	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
-	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 5*time.Second, 20*time.Millisecond)
-
-	_, watched := s.serverClient.watch("/v1/agents/sessions/" + id + "/events")
-
-	s.Equal(http.StatusConflict, watched)
-	s.False(s.manager.Running(id), "the session was carried on in writing")
-}

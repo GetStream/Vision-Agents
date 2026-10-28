@@ -618,7 +618,12 @@ func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() 
 
 	_, _, err := s.router.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
 
-	s.Require().NoError(<-reported)
+	select {
+	case err := <-reported:
+		s.Require().NoError(err)
+	case <-time.After(5 * time.Second):
+		s.Fail("the vendor was sent no status URL to report the busy to")
+	}
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonNotAnswered, failure.Reason)
 	s.True(failure.Final, "the user was rung already")

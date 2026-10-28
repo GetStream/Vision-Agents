@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 )
 
 // unansweredPeerPath is where a router asks the router holding a placed call's session to end
@@ -94,26 +92,4 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		s.sessions.EndUnanswered(asked.CustomerID, asked.SessionID)
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// refuseUnanswered is callUnanswered for the session sessionID when the call placed for it
-// ended with nobody answering, or nil. Such a session is not carried on in writing: nobody
-// was ever on its conversation, and an SDK attaching to it would hold it open for nothing.
-func (s *Server) refuseUnanswered(ctx context.Context, customerID, sessionID string) error {
-	if s.phone == nil {
-		return nil
-	}
-	call, err := s.phone.Outcomes().Read(ctx, customerID, sessionID)
-	if errors.Is(err, outcome.ErrUnknownCall) {
-		return nil
-	}
-	if err != nil {
-		s.logger.Warn("could not read whether a session's placed call went unanswered",
-			"session", sessionID, "error", err)
-		return nil
-	}
-	if call.NobodyAnswered() {
-		return callUnanswered(call.Outcome)
-	}
-	return nil
 }

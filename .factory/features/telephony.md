@@ -175,9 +175,7 @@ A status that arrives before the session opens, as a busy often does, refuses th
 opening it answers 409 `call_unanswered`, naming the outcome. Read before the agent joins the
 call, it leaves no session and no call row behind. Read again once the session is held, for a
 status that came during the join, it ends the session just opened: the agent has joined, the
-session row is kept as ended, and opening the id again answers `session_exists`. A session
-that ended unanswered is not carried on in writing: watching it or writing to it answers the
-same 409.
+session row is kept as ended, and opening the id again answers `session_exists`.
 
 A campaign contact refused this way is `done` with its `call_id` set and its `outcome` read
 from `phone_calls`; when no session ever opened, that `call_id` names no session or call row.

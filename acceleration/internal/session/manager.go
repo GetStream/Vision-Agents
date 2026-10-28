@@ -953,17 +953,25 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// joined found no session to end, and one that comes after this finds it. The session
 	// has joined by now, so a refusal here ends it rather than never opening it.
 	err = m.unanswered(ctx, spec)
-	m.mu.Lock()
-	ended := m.sessions[created.id] != created
-	m.mu.Unlock()
-	if err != nil || ended {
+	if err != nil {
 		opened = true
 		m.end(created, TimeoutUnanswered)
-		// A status that ended it before the hold above found no claim to take back, so the
-		// hold would otherwise be renewed for a session nobody holds.
-		m.release(created.id)
-		if err == nil {
-			err = stack.Wrap(errors.New("session: the session ended as it opened"))
+	}
+	m.mu.Lock()
+	held, present := m.sessions[created.id]
+	m.mu.Unlock()
+	if err == nil && held != created {
+		// Ended between going into the map and here, by a status, a takeover or shutdown:
+		// the id is taken and nothing is left to answer with.
+		opened = true
+		err = stack.Wrap(ErrSessionExists)
+	}
+	if err != nil {
+		// An end before the hold above found no claim to take back, so the hold would
+		// otherwise be renewed for a session nobody holds. One reopened under the id since
+		// holds its own.
+		if !present {
+			m.release(created.id)
 		}
 		return nil, err
 	}

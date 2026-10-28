@@ -502,11 +502,6 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 	case failure == nil && (found.State() != session.Ended || !found.Spec().PersistConversation):
 		return found, func() {}, nil
 	case failure == nil:
-		if found.Spec().Phone != nil {
-			if refused := s.refuseUnanswered(ctx, found.Spec().CustomerID, id); refused != nil {
-				return nil, nil, refused
-			}
-		}
 		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
 		// It is carried on in writing, whether or not it ended on a call.
 		spec = found.Spec().Written()
@@ -549,11 +544,6 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	row := stored.Stored
 	if row == nil || row.ConversationID == "" || row.UserID != CallerFrom(ctx).UserID {
 		return session.Spec{}, errUnknownSession
-	}
-	if row.CallID != "" {
-		if refused := s.refuseUnanswered(ctx, row.CustomerID, id); refused != nil {
-			return session.Spec{}, refused
-		}
 	}
 	var spec session.Spec
 	if row.ConfigID != "" {
