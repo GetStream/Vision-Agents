@@ -176,8 +176,14 @@ func (s *CallHooksSuite) arriveRingingNumber() int {
 
 // refused reports whether the router logged refusing the test's call.
 func (s *CallHooksSuite) refused() bool {
+	return s.refusedCall(s.callID)
+}
+
+// refusedCall is refused for one call. It reads no field a later test sets, so a check still
+// running when its test ends cannot race with the next one.
+func (s *CallHooksSuite) refusedCall(callID string) bool {
 	for _, line := range strings.Split(s.logged.String(), "\n") {
-		if strings.Contains(line, "refused an arriving call") && strings.Contains(line, s.callID) {
+		if strings.Contains(line, "refused an arriving call") && strings.Contains(line, callID) {
 			return true
 		}
 	}
@@ -190,11 +196,26 @@ func (s *CallHooksSuite) answerable() {
 	s.callID = s.utils.uuid()
 }
 
+// answered waits for the agent answering the test's call, which joins after the hook answers.
+func (s *CallHooksSuite) answered() *session.Session {
+	var found *session.Session
+	s.Require().Eventually(func() bool {
+		var live bool
+		found, live = s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
+		return live
+	}, settleFor, 10*time.Millisecond, "no agent answered the call")
+	return found
+}
+
 // arriveRingingNumberOn is arriveRingingNumber on a call of callType.
 func (s *CallHooksSuite) arriveRingingNumberOn(callType string) int {
-	body := strings.Replace(s.arriving(callType+":"+s.callID),
+	return s.signedly("/v1/phone/hooks/stream", s.ringingNumber(callType))
+}
+
+// ringingNumber is the call.session_started of a call of callType that rang the number.
+func (s *CallHooksSuite) ringingNumber(callType string) string {
+	return strings.Replace(s.arriving(callType+":"+s.callID),
 		`"custom": {"line": "support"}`, fmt.Sprintf(`"custom": {"line": "support", "phone_number": %q}`, s.e164), 1)
-	return s.signedly("/v1/phone/hooks/stream", body)
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallTheRouterPlacedIsNotDispatched() {
@@ -226,7 +247,7 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberIsStillDispatched() {
 func (s *CallHooksSuite) TestAnArrivingCallToANumberWithAnAgentIsAnsweredByIt() {
 	s.answerable()
 	s.numberTags = map[string]string{"line": "support", "team": "number"}
-	s.hold("agent", s.callID)
+	s.hold("default", s.callID)
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
 		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("echo/local-model"),
@@ -235,11 +256,12 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberWithAnAgentIsAnsweredByIt() 
 	config := created.Id
 	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, config))
 
-	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("default"))
 
-	found, live := s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
-	s.Require().True(live, "no agent answered the call")
+	found := s.answered()
 	spec := found.Spec()
+	s.Equal("default", spec.CallType, "the agent joins the call the caller is in")
+	s.Equal(s.callID, spec.CallID)
 	s.Equal(config, spec.ConfigID)
 	s.True(spec.PersistConversation, "the conversation is kept, as a worker's session keeps it")
 	s.Empty(spec.Caller.UserID, "a caller id is easy to fake, so it names no user")
@@ -258,11 +280,14 @@ func (s *CallHooksSuite) TestAnArrivingCallDeliveredTwiceKeepsItsAgentOnTheLine(
 	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, config))
 
 	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
+	s.answered()
 	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
 
+	call := s.callID
+	s.Never(func() bool { return s.refusedCall(call) }, dropped, 10*time.Millisecond,
+		"a second delivery ended a call its agent is on")
 	_, live := s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
 	s.True(live, "the agent answering the call was hung up on")
-	s.False(s.refused(), "a second delivery ended a call its agent is on")
 }
 
 func (s *CallHooksSuite) TestACallToANumberWithAnAgentOnARouterWithNoSessionsIsRefused() {
@@ -290,8 +315,7 @@ func (s *CallHooksSuite) TestARouterWithNoDispatchPoolStillAnswersWithTheAgent()
 
 	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
 
-	_, live := s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
-	s.True(live, "no agent answered the call")
+	s.answered()
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallToANumberWithAnAgentIsNotGivenToAWaitingWorker() {
@@ -320,7 +344,9 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberWhoseAgentIsGoneIsRefused() 
 	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
 
 	s.nothingReaches(worker.Calls(), "a number whose agent is gone fell back to a worker")
-	s.Contains(s.logged.String(), "refused an arriving call to a number whose agent is gone")
+	s.Eventually(func() bool {
+		return strings.Contains(s.logged.String(), "refused an arriving call to a number whose agent is gone")
+	}, settleFor, 10*time.Millisecond)
 	_, live := s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
 	s.False(live)
 }
