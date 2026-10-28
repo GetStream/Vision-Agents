@@ -2358,6 +2358,19 @@ impl Client {
         )
         .await
     }
+    /// Receive a message Stream Chat delivers
+    ///
+    /// `POST /v1/chat/internal/messages` (`receiveChatDelivery`).
+    pub async fn receive_chat_delivery(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/chat/internal/messages",
+            None::<&()>,
+            None::<&()>,
+            "receiveChatDelivery",
+        )
+        .await
+    }
     /// Ask a classifier typed questions about a piece of text
     ///
     /// `POST /v1/classify` (`classify`).

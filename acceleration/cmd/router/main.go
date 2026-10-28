@@ -35,6 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatdelivery"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -1238,6 +1239,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 
+	// A key that does not read is refused at start: the endpoint would otherwise answer
+	// every delivery 401 and Stream's messages would go unanswered with nothing in the log
+	// but rejections.
+	chatDeliveryKeys, err := chatdelivery.ParsePublicKeys(settings.Stream.DeliveryKeys)
+	if err != nil {
+		return err
+	}
+
 	var telnyxPublicKey ed25519.PublicKey
 	if settings.Telnyx.PublicKey != "" {
 		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
@@ -1284,6 +1293,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
+		ChatDeliveryKeys:      chatDeliveryKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,

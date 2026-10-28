@@ -375,6 +375,10 @@ type RouterSuite struct {
 	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
 	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
 	telnyxPublicKey ed25519.PublicKey
+	// chatDeliveryKeys, set by a suite about Stream Chat's delivery endpoint before it starts
+	// the harness, are what its deliveries are checked against, on every node. Nil leaves it
+	// unconfigured.
+	chatDeliveryKeys []ed25519.PublicKey
 	// telnyxConnectionID is the TeXML application the router's Telnyx numbers are on, for the
 	// same suite to set. Empty is a router with none, which answers no Telnyx call.
 	telnyxConnectionID string
@@ -713,6 +717,7 @@ func (s *RouterSuite) SetupSuite() {
 		Stream:             s.stream,
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
+		ChatDeliveryKeys:   s.chatDeliveryKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
@@ -1619,6 +1624,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		ProxyDeclaresKind: s.appMode,
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
+		ChatDeliveryKeys:  s.chatDeliveryKeys,
 		Secrets:           keyring,
 		// The node's phone service is the suite's: the call hook a peer hands over answers
 		// the same database.
