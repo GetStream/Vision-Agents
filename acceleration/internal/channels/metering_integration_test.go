@@ -144,7 +144,7 @@ func (s *TextMeteringSuite) TestAnMMSThatArrivedIsBilledAsOne() {
 func (s *TextMeteringSuite) sms(direction string, used pricing.Quantities) int64 {
 	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: "sms",
 		Attributes: map[string]string{"country": "US", "direction": direction}}
-	return pricingtest.Micros(s.prices, item, used)
+	return pricingtest.Micros(s.T(), s.prices, item, used)
 }
 
 func (s *TextMeteringSuite) row() store.Request {

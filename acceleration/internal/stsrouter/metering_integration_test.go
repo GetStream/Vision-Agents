@@ -92,7 +92,7 @@ func (s *MeteringSuite) health(modality routing.Modality, provider, model string
 // vendor.json so a price change there leaves the tests passing.
 func (s *MeteringSuite) priced(modality routing.Modality, name string, used pricing.Quantities) int64 {
 	provider, model, _ := strings.Cut(name, "/")
-	return pricingtest.Micros(s.prices, pricing.Item{Modality: string(modality), Provider: provider, Model: model}, used)
+	return pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: string(modality), Provider: provider, Model: model}, used)
 }
 
 func (s *MeteringSuite) spent(modality routing.Modality, customer string) int64 {

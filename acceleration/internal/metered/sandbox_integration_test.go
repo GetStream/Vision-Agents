@@ -160,7 +160,7 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	s.Equal(at, rows[0].StartedAt.UTC(), "dated to the period it bills")
 	gap := func(g SandboxGap) int64 {
 		item := pricing.Item{Modality: string(routing.Sandbox), Provider: daytonaProvider, Model: g.Model, Attributes: map[string]string{AttributeSandboxClass: g.Class}}
-		return pricingtest.Micros(s.prices, item, g.Used)
+		return pricingtest.Micros(s.T(), s.prices, item, g.Used)
 	}
 	s.Equal(gap(running), rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
 	s.Equal(gap(stopped), rows[1].CostMicros, "an hour of its 3 GiB disk")
