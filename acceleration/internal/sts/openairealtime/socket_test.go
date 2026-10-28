@@ -2,6 +2,7 @@ package openairealtime
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
 
@@ -729,4 +731,59 @@ func (s *RealtimeSocketSuite) TestOnlyOpenAIsRealtimeIsToldAboutAnOpenCall() {
 
 	s.False(provider.UpdatesCalls())
 	s.ErrorIs(provider.UpdateCall(sts.CallUpdate{CallID: "call_1", Status: "searching"}), sts.ErrNoCallUpdates)
+}
+
+// invalidKeyFrame is how OpenAI refused a made-up key on 2026-10-28: this frame right after
+// the handshake, before any frame of the client's, then a close 3000.
+const invalidKeyFrame = `{"type":"error","event_id":"event_1","error":{"type":"invalid_request_error","code":"invalid_api_key","message":"Incorrect API key provided: sk-proj-****bipw. You can find your API key at https://platform.openai.com/account/api-keys.","param":null,"event_id":null}}`
+
+// startRefused starts an OpenAI session on a key of its own against a server that sends
+// opening and closes, and returns how many invalid keys OPENAI_API_KEY's pool counted
+// meanwhile and Start's error.
+func (s *RealtimeSocketSuite) startRefused(opening string) (float64, error) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(opening)); err != nil {
+			return
+		}
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(3000, "invalid_request_error.invalid_api_key"), time.Now().Add(time.Second))
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	before := keypooltest.Refused(s.T(), OpenAI.APIKeyEnvVar, "invalid_key")
+	provider, err := New(Options{Vendor: OpenAI, APIKey: "sk-proj-" + rand.Text(), URL: "ws://" + strings.TrimPrefix(server.URL, "http://")})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = provider.Start(ctx)
+	return keypooltest.Refused(s.T(), OpenAI.APIKeyEnvVar, "invalid_key") - before, err
+}
+
+func (s *RealtimeSocketSuite) TestAKeyRefusedInAFrameAfterTheHandshakeIsCountedAsInvalid() {
+	counted, err := s.startRefused(invalidKeyFrame)
+
+	s.Equal(1.0, counted)
+	s.ErrorContains(err, "session refused")
+	s.ErrorContains(err, "Incorrect API key provided", "the server's own reason is what the caller hears")
+}
+
+func (s *RealtimeSocketSuite) TestAnotherErrorFrameIsNotAnInvalidKey() {
+	counted, err := s.startRefused(`{"type":"error","error":{"type":"server_error","code":"server_error","message":"try again later"}}`)
+
+	s.Zero(counted)
+	s.ErrorContains(err, "try again later")
+}
+
+func (s *RealtimeSocketSuite) TestTheKeyCodeOnAnotherFrameTypeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(`{"type":"response.done","error":{"code":"invalid_api_key","message":"not an error frame"}}`)
+
+	s.Zero(counted)
+	s.ErrorContains(err, "expected session.created, got response.done")
 }

@@ -392,7 +392,7 @@ func (s *DialogueSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{APIKey: spent + "," + spare, VoiceID: "v1"})
 	defer provider.Close()
-	before := quotaRefusals(s.T())
+	before := refusals(s.T(), "quota_exceeded")
 
 	payload, err := json.Marshal(map[string]any{
 		"message": "This request exceeds your API key quota.", "error": "quota_exceeded", "code": 1008,
@@ -407,5 +407,35 @@ func (s *DialogueSuite) TestAKeyWithNoQuotaLeftIsRestedForTheSessionsAfter() {
 	pool := keypool.FromEnv(spent + "," + spare)
 	s.Equal([]string{spare, spare}, []string{pool.Next(), pool.Next()},
 		"the sessions after are opened on the key that has quota")
-	s.Equal(before+1, quotaRefusals(s.T()), "the refusal is counted")
+	s.Equal(before+1, refusals(s.T(), "quota_exceeded"), "the refusal is counted")
+}
+
+// refusedBy is how many invalid keys were counted while the server sent these frames on a
+// session opened on a key of its own; it waits for the error each frame reports.
+func (s *DialogueSuite) refusedBy(frames ...string) float64 {
+	fake := newFakeElevenLabs()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{APIKey: "sk_" + rand.Text(), VoiceID: "v1"})
+	defer provider.Close()
+	before := refusals(s.T(), "invalid_key")
+
+	for _, frame := range frames {
+		s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(frame)))
+	}
+	failures := 0
+	s.collect(provider, func(event tts.Event) bool {
+		if _, failed := event.(tts.Error); failed {
+			failures++
+		}
+		return failures == len(frames)
+	})
+	return refusals(s.T(), "invalid_key") - before
+}
+
+func (s *DialogueSuite) TestAnInvalidKeyFrameIsCountedOncePerConnection() {
+	s.Equal(1.0, s.refusedBy(invalidKeyFrame, invalidKeyFrame))
+}
+
+func (s *DialogueSuite) TestAnotherErrorFrameIsNotAnInvalidKey() {
+	s.Zero(s.refusedBy(`{"message":"API key is invalid.","error":"invalid_request","code":1008}`))
 }

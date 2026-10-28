@@ -2,6 +2,7 @@ package inworld
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -265,4 +267,53 @@ func (s *InworldSocketSuite) finalText(provider *STT) string {
 		}
 	}
 	return settled
+}
+
+// invalidKeyFrame is how Inworld refused a made-up key on 2026-10-28, right after the
+// handshake, before closing with 1000.
+const invalidKeyFrame = `{"error":{"code":7,"message":"API key does not exist or was deleted: \"ZGty***\"","details":[]}}`
+
+// refusedBy is how many invalid keys INWORLD_API_KEY's pool counted while the server sent
+// these frames on a session opened on a key of its own; it waits for the error each frame
+// reports.
+func (s *InworldSocketSuite) refusedBy(frames ...string) float64 {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{APIKey: rand.Text()})
+	defer provider.Close()
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+
+	for _, frame := range frames {
+		s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(frame)))
+	}
+	deadline := time.After(5 * time.Second)
+	for failures := 0; failures < len(frames); {
+		select {
+		case event := <-provider.Events():
+			if _, failed := event.(stt.Error); failed {
+				failures++
+			}
+		case <-deadline:
+			s.FailNow("the provider did not report every error frame")
+		}
+	}
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before
+}
+
+func (s *InworldSocketSuite) TestAnInvalidKeyFrameIsCountedOncePerConnection() {
+	s.Equal(1.0, s.refusedBy(invalidKeyFrame, invalidKeyFrame))
+}
+
+// Inworld's answer to a key that is not base64 of id:secret: a 101, this frame, then a close
+// with 1000 (probed 2026-10-28), though the same text on a 403 is counted at the handshake.
+func (s *InworldSocketSuite) TestInvalidCredentialsAreAnInvalidKey() {
+	s.Equal(1.0, s.refusedBy(`{"error":{"code":7,"message":"Invalid authorization credentials","details":[]}}`))
+}
+
+func (s *InworldSocketSuite) TestAnotherPermissionDeniedIsNotAnInvalidKey() {
+	s.Zero(s.refusedBy(`{"error":{"code":7,"message":"Permission denied on model inworld/inworld-stt-1","details":[]}}`))
+}
+
+func (s *InworldSocketSuite) TestTheKeyTextUnderAnotherCodeIsNotAnInvalidKey() {
+	s.Zero(s.refusedBy(`{"error":{"code":5,"message":"API key does not exist or was deleted","details":[]}}`))
 }
