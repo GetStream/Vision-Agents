@@ -214,7 +214,8 @@ func (s *RecordingSuite) TestCacheWritesAndServiceTierReachTheRow() {
 	s.Equal(map[string]string{"service_tier": "flex", "reasoning_tokens": "7"}, row.Attributes)
 	s.EqualValues(2_389, row.InputTokens, "the input stays the whole prompt")
 	// 3 fresh tokens, 2,386 written and 22 generated, at the flex tier's rates.
-	flex := pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-5.6-terra", Attributes: map[string]string{"service_tier": "flex"}}
+	flex := pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-5.6-terra", Region: pricing.RegionUS,
+		Attributes: map[string]string{"service_tier": "flex"}}
 	s.Equal(pricingtest.Micros(s.T(), s.prices, flex, pricing.Quantities{pricing.InputTokens: 3,
 		pricing.CacheWriteInputTokens: 2_386, pricing.OutputTokens: 22}), row.CostMicros)
 	s.Equal(row.CostMicros, told, "the caller is told what the row costs")
@@ -230,7 +231,7 @@ func (s *RecordingSuite) TestAResponseWithNothingBeyondItsTokensStoresNoMeters()
 
 	s.Empty(row.Meters)
 	s.Empty(row.Attributes)
-	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-6-luna"},
+	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-6-luna", Region: pricing.RegionUS},
 		pricing.Quantities{pricing.InputTokens: 9, pricing.OutputTokens: 5}), row.CostMicros)
 }
 

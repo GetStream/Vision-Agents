@@ -15,6 +15,10 @@ final readonly class PriceEntryInput
         public string $modality,
         public string $model,
         public string $provider,
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
         // The vendor charges nothing for it. A free entry has no price.
         public ?bool $free = null,
         // Refused with invalid_price: a model is local when the routing config says so.
@@ -52,6 +56,8 @@ final readonly class PriceEntryInput
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
             local: array_key_exists('local', $data) && $data['local'] !== null ? Json::bool($data, 'local') : null,
             priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
@@ -76,6 +82,10 @@ final readonly class PriceEntryInput
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
+        }
         if ($this->free !== null) {
             $out['free'] = $this->free;
         }

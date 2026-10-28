@@ -25,20 +25,25 @@ class PriceEntryInput:
         modality (str): Such as llm, stt, tts, sms or phone.
         model (str):
         provider (str):
+        region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+            priced only by an entry of its own region, never another region's.
+        byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+            by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
         free (bool | Unset): The vendor charges nothing for it. A free entry has no price.
         local (bool | Unset): Refused with invalid_price: a model is local when the routing config says so.
         price_tiers (list[PriceTier] | None | Unset): What customers are charged for long prompts: one tier for each of
             tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.
         prices (PriceEntryInputPrices | Unset): What customers are charged, in the shape of rates: the same meters, or
-            400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+            400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee
+            included. Bounded as a rate is.
         rates (PriceEntryInputRates | Unset): The vendor's cost, by meter, kept for reference: input_tokens,
             cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests,
             message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An
             unknown meter, and a rate of more than $1000 a unit, are refused.
         sku (str | Unset): The item's SKU. Absent keeps the one the item has, or gives a new item one made from its
-            modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps
-            the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400
-            sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+            modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor
+            renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else
+            400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
         tiers (list[PriceTier] | None | Unset): The vendor's cost for long prompts. Each tier rates every meter the
             entry does.
         version (str | Unset): Refused with invalid_price: an entry's version is the change that writes it.
@@ -51,6 +56,8 @@ class PriceEntryInput:
     modality: str
     model: str
     provider: str
+    region: str
+    byok: bool | Unset = UNSET
     free: bool | Unset = UNSET
     local: bool | Unset = UNSET
     price_tiers: list[PriceTier] | None | Unset = UNSET
@@ -68,6 +75,10 @@ class PriceEntryInput:
         model = self.model
 
         provider = self.provider
+
+        region = self.region
+
+        byok = self.byok
 
         free = self.free
 
@@ -122,8 +133,11 @@ class PriceEntryInput:
                 "modality": modality,
                 "model": model,
                 "provider": provider,
+                "region": region,
             }
         )
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if free is not UNSET:
             field_dict["free"] = free
         if local is not UNSET:
@@ -160,6 +174,10 @@ class PriceEntryInput:
         model = d.pop("model")
 
         provider = d.pop("provider")
+
+        region = d.pop("region")
+
+        byok = d.pop("byok", UNSET)
 
         free = d.pop("free", UNSET)
 
@@ -242,6 +260,8 @@ class PriceEntryInput:
             modality=modality,
             model=model,
             provider=provider,
+            region=region,
+            byok=byok,
             free=free,
             local=local,
             price_tiers=price_tiers,

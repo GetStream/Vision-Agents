@@ -113,12 +113,14 @@ type PriceTier struct {
 	Rates            map[string]PriceRate `json:"rates" doc:"By meter."`
 }
 
-// PriceItem is what is priced: a model of a provider in a modality, and the attributes that
-// choose between its entries.
+// PriceItem is what is priced: a model of a provider in a modality, in a region and with or
+// without the customer's own key, and the attributes that choose between its entries.
 type PriceItem struct {
 	Modality string            `json:"modality" doc:"Such as llm, stt, tts, sms or phone."`
 	Provider string            `json:"provider"`
 	Model    string            `json:"model"`
+	Region   string            `json:"region" pattern:"^[a-z][a-z0-9-]{0,31}$" doc:"Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's."`
+	BYOK     bool              `json:"byok" required:"false" doc:"Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false."`
 	When     map[string]string `json:"when,omitempty" doc:"The item attributes the entry applies to, such as {\"service_tier\": \"flex\"}. Absent is the item's default entry."`
 }
 
@@ -201,11 +203,11 @@ type PriceChangePage struct {
 // or its withdrawal.
 type PriceEntryInput struct {
 	PriceItem
-	SKU        string               `json:"sku,omitempty" maxLength:"255" pattern:"^[a-z0-9]+(-[a-z0-9]+)*$" doc:"The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed."`
+	SKU        string               `json:"sku,omitempty" maxLength:"255" pattern:"^[a-z0-9]+(-[a-z0-9]+)*$" doc:"The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed."`
 	Free       bool                 `json:"free,omitempty" doc:"The vendor charges nothing for it. A free entry has no price."`
 	Rates      map[string]PriceRate `json:"rates,omitempty" doc:"The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused."`
 	Tiers      []PriceTier          `json:"tiers,omitempty" doc:"The vendor's cost for long prompts. Each tier rates every meter the entry does."`
-	Prices     map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is."`
+	Prices     map[string]PriceRate `json:"prices,omitempty" doc:"What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is."`
 	PriceTiers []PriceTier          `json:"price_tiers,omitempty" doc:"What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch."`
 	Withdrawn  bool                 `json:"withdrawn,omitempty" doc:"Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU."`
 	Local      bool                 `json:"local,omitempty" doc:"Refused with invalid_price: a model is local when the routing config says so."`
@@ -556,7 +558,7 @@ func (s *Server) reloadPrices(ctx context.Context) {
 func confirmationRequired(items []PriceItem) APIError {
 	names := make([]string, 0, len(items))
 	for _, item := range items {
-		names = append(names, prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, When: item.When}))
+		names = append(names, priceItemName(item))
 	}
 	return APIError{Type: ErrorTypeConflict, Code: codeConfirmationRequired, Message: fmt.Sprintf(
 		"the change moves a price by a factor of %d or more, or leaves a routed model unpriced, "+
@@ -665,7 +667,8 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	add := func(entry pricing.Entry) {
 		if name := prices.Name(entry); !seen[name] {
 			seen[name] = true
-			items = append(items, pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, Attributes: entry.When})
+			items = append(items, pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model,
+				Region: entry.Region, BYOK: entry.BYOK, Attributes: entry.When})
 		}
 	}
 	for _, write := range writes {
@@ -681,7 +684,7 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	}
 	for _, item := range afterList.Unpriced(routing.Items(config)) {
 		if !wasUnpriced[itemName(item)] {
-			add(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model})
+			add(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK})
 		}
 	}
 
@@ -807,19 +810,23 @@ func isLocal(entry pricing.Entry, local []pricing.Item) bool {
 }
 
 func itemName(item pricing.Item) string {
-	return prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, When: item.Attributes})
+	return prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model,
+		Region: item.Region, BYOK: item.BYOK, When: item.Attributes})
 }
 
 func priceItemName(item PriceItem) string {
-	return prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, When: item.When})
+	return prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model,
+		Region: item.Region, BYOK: item.BYOK, When: item.When})
 }
 
 func priceItemOf(item pricing.Item) PriceItem {
-	return PriceItem{Modality: item.Modality, Provider: item.Provider, Model: item.Model, When: item.Attributes}
+	return PriceItem{Modality: item.Modality, Provider: item.Provider, Model: item.Model,
+		Region: item.Region, BYOK: item.BYOK, When: item.Attributes}
 }
 
 func priceItemOfEntry(entry pricing.Entry) PriceItem {
-	return PriceItem{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, When: entry.When}
+	return PriceItem{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model,
+		Region: entry.Region, BYOK: entry.BYOK, When: entry.When}
 }
 
 func renderPriceEntry(entry pricing.Entry, effectiveAt time.Time) PriceEntry {
@@ -891,6 +898,8 @@ func pricingEntryOf(entry PriceEntryInput) pricing.Entry {
 		Modality:   entry.Modality,
 		Provider:   entry.Provider,
 		Model:      entry.Model,
+		Region:     entry.Region,
+		BYOK:       entry.BYOK,
 		SKU:        entry.SKU,
 		Free:       entry.Free,
 		Rates:      pricingRates(entry.Rates),
@@ -959,9 +968,10 @@ func (s *Server) registerPriceLists(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/manage/price-lists/active",
 		Summary:     "Read the price list in force",
-		Description: "Every entry in force at `at` (default now): its SKU, which every row it prices records, the " +
-			"vendor's cost (`rates`, `tiers`) kept for reference, the price customers are charged (`prices`, " +
-			"`price_tiers`), and the change that wrote it, which is the `price_version` of every row it prices. " +
+		Description: "Every entry in force at `at` (default now): its item, `region` and `byok`, its SKU, which " +
+			"every row it prices records, the vendor's cost (`rates`, `tiers`) kept for reference, the price " +
+			"customers are charged (`prices`, `price_tiers`), and the change that wrote it, which is the " +
+			"`price_version` of every row it prices. " +
 			"`unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` " +
 			"the entries of the changes scheduled after `at`." + priceListNote,
 		Tags:      []string{staffTag},
@@ -1024,9 +1034,14 @@ func (s *Server) registerPriceLists(api huma.API) {
 			"`effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is " +
 			"later. Nothing ever changes an entry once written: a correction is a newer change, and a " +
 			"scheduled one can be cancelled.\n\n" +
+			"Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, " +
+			"and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. " +
+			"Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with " +
+			"no entry of its own is unpriced, never priced by another region's or the other `byok` state's.\n\n" +
 			"Every item has one SKU, kept across its price changes, which each row it prices records. An entry " +
-			"without `sku` keeps the item's, or gives a new item one made from its modality, provider, model " +
-			"and `when`, lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past " +
+			"without `sku` keeps the item's, or gives a new item one made from its modality, provider, model, " +
+			"`when`, `region` and `byok` (`llm-openai-gpt-6-luna-service-tier-flex-us`, " +
+			"`llm-openai-gpt-6-luna-us-byok`), lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past " +
 			"one another item has had. A new item may take another item's SKU, as a model its vendor renamed " +
 			"keeps the old name's, when that item is withdrawn by the same change or is no longer in force; " +
 			"else, or when a change scheduled later gives it to another item, the change is a 400 " +
