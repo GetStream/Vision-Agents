@@ -175,6 +175,9 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 		changed, err = b.store.FinishChannelInbound(recording, message, time.Now())
 	case (attempts <= len(b.inboundRetries) || optsOut(message.Message())) && !refusedForGood(err):
 		log.Info("an inbound message was not written into its thread channel and is written again", "attempts", attempts, "error", err)
+		if attempts > len(b.inboundRetries) {
+			log.Warn("an opt-out is still not recorded and is tried again", "attempts", attempts, "error", err)
+		}
 		wait := b.inboundRetries[min(attempts, len(b.inboundRetries))-1]
 		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(wait))
 	default:

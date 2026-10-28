@@ -441,6 +441,20 @@ func (s *InboundSuite) TestAStopPastItsWaitsIsDueAgainAfterTheLastWait() {
 	s.Equal(store.ChannelInboundQueued, row.State, "the STOP is not given up")
 	s.Equal(3, row.Attempts)
 	s.WithinDuration(time.Now().Add(time.Hour), row.NextAttemptAt, time.Minute, "it is due again after the last wait")
+	s.Equal(1, strings.Count(s.logs.String(), "level=WARN msg=\"an opt-out is still not recorded"), "past its waits it logs at WARN")
+}
+
+// A STOP is held for its opt-out channel (optsOut); a "stop" on a connector with none is not,
+// so it is given up after its waits like any other message.
+func (s *InboundSuite) TestAStopOnAConnectorWithNoOptOutChannelIsGivenUp() {
+	thread := s.thread("slack_bot")
+	s.chat.RateLimit("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "stop", nil)
+
+	s.bridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Millisecond}})
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundFailed }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(3, s.row(thread, "m-1").Attempts)
 }
 
 // A message whose delivery no destination would take, such as a reply that waited, is given up

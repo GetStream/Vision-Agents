@@ -69,8 +69,9 @@ const optOutSource = "keyword"
 // internal/channels answers, and it goes out past the sandbox gate: the confirmation is the
 // one message a person is still owed. A keyword the provider answered itself is not answered
 // again. A store that fails fails the worker's attempt, which runs the row again: an opt-out is
-// never lost, since the worker never gives its row up (optsOut). The answer is sent at most once, whatever the attempts: the row records it before
-// it is sent (store.MarkChannelInboundKeywordAnswered), as a reply is claimed before it is sent.
+// never lost, since the worker never gives its row up (optsOut). The answer is sent at most
+// once, whatever the attempts: the row records it before it is sent
+// (store.MarkChannelInboundKeywordAnswered), as a reply is claimed before it is sent.
 func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (bool, error) {
 	message := queued.Message()
 	source := episodeSources[message.ConnectorID]
