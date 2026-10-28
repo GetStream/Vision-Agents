@@ -39,8 +39,17 @@ const scheduledPeerPath = "/internal/scheduled-tasks/deliver"
 const scheduledWindow = 10 * time.Minute
 
 // scheduledPoll is how often a delivery waiting on the holding session
-// looks again: a call ending, a reply finishing.
+// looks again: a call ending, a busy conversation freeing up. A reply finishing
+// is looked for every replyPoll.
 const scheduledPoll = 2 * time.Second
+
+// replyPoll is how often a delivery reading back a follow-up's reply looks at it
+// again. A look reads the conversation held in memory
+// (conversation.Conversation.FollowUpReply: a lock and a map), so it costs
+// next to nothing; at scheduledPoll a reply that finished just after a look
+// waited up to 2 s to leave, and every thread task took 2 s at least. 100 ms
+// is not a delay a person waiting for a text notices.
+const replyPoll = 100 * time.Millisecond
 
 // scheduledReplySettle is how long the agent stays quiet, with nothing left
 // running, before what it said is taken as its answer: a channel's own
@@ -456,7 +465,7 @@ func readBackReply(ctx context.Context, found *session.Session, id string) (conv
 		if time.Now().After(deadline) {
 			return conversation.FinishedReply{}, undelivered(scheduling.ReasonNoReply, errors.New("the reply to this occurrence is still being written"))
 		}
-		if err := waitFor(ctx, scheduledPoll); err != nil {
+		if err := waitFor(ctx, replyPoll); err != nil {
 			return conversation.FinishedReply{}, err
 		}
 	}
