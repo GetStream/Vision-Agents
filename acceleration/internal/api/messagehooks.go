@@ -241,11 +241,19 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found := s.ownerOf(ctx, origin, event)
+	customerID, configID, found, err := s.ownerOf(ctx, origin, event)
+	if err != nil {
+		return false
+	}
 	if !found {
 		return true
 	}
-	if !s.mayWrite(ctx, origin, customerID) {
+	if may, err := s.mayStillWrite(ctx, origin, customerID); !may {
+		if err != nil {
+			s.logger.Error("not starting work for a customer whose app could not be read",
+				"channel", event.ChannelID, "customer", customerID, "error", err)
+			return false
+		}
 		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
 			"channel", event.ChannelID, "customer", customerID)
 		return true
@@ -307,21 +315,29 @@ const ConfigField = "agent_config_id"
 //
 // Both are looked for only within the app the hook came from: the channel's last call has to
 // have been in that app, and a config the channel names has to be the app's own customer's.
-func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool) {
-	if previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID); err == nil &&
-		(origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, true
+//
+// err is a read that failed, which a later try may get through: the queue's worker tries again.
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool, err error) {
+	previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID)
+	if err == nil && (origin.deployment || previous.CustomerID == origin.customer) {
+		return previous.CustomerID, previous.ConfigID, true, nil
+	}
+	// A hook answers from what the channel declares when its last call could not be read, as it
+	// always has. A queued delivery is tried again instead, so it is answered by the agent that
+	// actually ran there.
+	if origin.queued && err != nil && !errors.Is(err, store.ErrNoCall) && !errors.Is(err, store.ErrAmbiguousHook) {
+		s.logger.Error("could not read the last call on a queued message's channel", "channel", event.ChannelID, "error", err)
+		return "", "", false, err
 	}
 
 	declared, _ := event.ChannelCustom[ConfigField].(string)
 	if declared == "" {
 		s.logger.Debug("no agent has ever run on an arriving message's channel, and it names no config",
 			"channel", event.ChannelID, "field", ConfigField)
-		return "", "", false
+		return "", "", false, nil
 	}
 
 	var config store.AgentConfig
-	var err error
 	if owner, scoped := s.configOwnerOf(origin); scoped {
 		config, err = s.store.AgentConfig(ctx, owner, declared)
 	} else {
@@ -332,14 +348,14 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 	if errors.Is(err, store.ErrNoAgentConfig) {
 		s.logger.Info("an arriving message's channel names a config nobody in its app holds",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "customer", origin.customer)
-		return "", "", false
+		return "", "", false, nil
 	}
 	if err != nil {
 		s.logger.Error("could not read the config an arriving message's channel names",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
-		return "", "", false
+		return "", "", false, err
 	}
-	return config.CustomerID, config.ID, true
+	return config.CustomerID, config.ID, true, nil
 }
 
 // configOwnerOf is the only customer whose configs a channel in the hook's app may name: the

@@ -281,9 +281,20 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 // hook from the deployment's own app starts work only for a customer still writing there,
 // never for one whose work there is only to be read.
 func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer string) bool {
+	may, _ := s.mayStillWrite(ctx, origin, customer)
+	return may
+}
+
+// mayStillWrite is mayWrite, with the error when it could not tell: an answer from the app
+// that is not settled (streamapp.Settled), such as the deployment's app not known yet, which a
+// later try may get.
+func (s *Server) mayStillWrite(ctx context.Context, origin hookOrigin, customer string) (bool, error) {
 	if !origin.deployment || s.stream == nil || !s.stream.PerApp() {
-		return true
+		return true, nil
 	}
 	_, err := s.stream.ForApp(ctx, customer, origin.app)
-	return err == nil
+	if err != nil && !streamapp.Settled(err) {
+		return false, err
+	}
+	return err == nil, nil
 }

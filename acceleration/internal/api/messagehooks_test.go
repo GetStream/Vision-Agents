@@ -159,11 +159,12 @@ func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError()
 	cancel()
 	before := len(s.logged.String())
 
-	_, _, found := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+	_, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
 		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
 	})
 
 	s.False(found)
+	s.Error(err)
 	logged := s.logged.String()[before:]
 	s.Contains(logged, `level=ERROR msg="could not read the config an arriving message's channel names"`, logged)
 	s.NotContains(logged, `level=INFO msg="an arriving message's channel names a config nobody in its app holds"`)
