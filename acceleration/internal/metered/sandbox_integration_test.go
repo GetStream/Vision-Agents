@@ -146,7 +146,7 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	id := "sandbox-" + uuid.NewString()
 	at := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	running := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T10:00:00Z", At: at, Model: SandboxRunning,
-		Used: pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
+		Used:  pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
 		Class: "container"}
 	stopped := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T11:00:00Z", At: at.Add(time.Hour),
 		Model: SandboxStopped, Used: pricing.Quantities{pricing.DiskGBSeconds: 3 * 3600}, Class: "container", Orphan: true}
