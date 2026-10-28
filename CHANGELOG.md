@@ -145,6 +145,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### Go clients keep working with a region
+
+An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
+
 ### A scheduled task's reply cut off as its provider fails is run again
 
 When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
