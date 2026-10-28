@@ -151,9 +151,9 @@ final branch = await chat.fork(ForkOptions(responseId: turns.first.id));
 await branch.start();
 ```
 
-A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-cannot be rewound, since its transcript would bring the turns back; fork it at the response
-instead.
+A text or voice session is kept in Stream Chat unless it is `incognito`, and a conversation
+kept there cannot be rewound, since its transcript would bring the turns back; fork it at the
+response instead.
 
 ### Renaming a conversation
 

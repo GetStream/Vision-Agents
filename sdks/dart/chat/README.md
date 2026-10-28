@@ -9,7 +9,7 @@ final channel = await chat.chat();
 
 It opens on one `StreamChatClient` every session shares, connected with the agents' key, user
 and token, or on the app's own handed over with `agents.useChat(client)`. `agents.disconnect()`
-closes only the one built here. Only a text session that is not incognito keeps a channel.
+closes only the one built here. A text or voice session keeps a channel unless it is incognito.
 
 Pure Dart, so it runs anywhere the core does. `ChatTranscriptView` in `vision_agents_ui` renders
 the channel.
