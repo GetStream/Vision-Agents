@@ -648,6 +648,63 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Fish Audio's transcribe-stream-1, their realtime transcriber for voice agents. It
+    # ends a turn when the words read as finished rather than on a silence alone, and
+    # tells the caller's turns from noise and other voices, which are never reported. No
+    # benchmark line: Artificial Analysis have not measured it yet. On the shared fixture
+    # it settled about a second after the last word and got every word.
+    #
+    # The languages are the 29 it labels a transcript with.
+    #
+    # $0.36 an hour, billed for every second the session is open, idle time included.
+    - provider: fish
+      model: transcribe-stream-1
+      description: "Fish Audio's live transcriber: finds the turn's end from the words and ignores sounds that are not the caller."
+      languages:
+        [
+          ar,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fa,
+          fi,
+          fr,
+          hi,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          mk,
+          ms,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sv,
+          th,
+          tl,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # context.terms takes a hundred terms of up to thirty-two characters, and can be
+      # replaced on an open session. silence_timeout_ms is the silence after which a turn
+      # ends whatever its words say, at least three seconds in the mode a call runs in.
+      # The model can also diarize, which nothing here sends.
+      supports: [keyterms, endpointing]
+      # The same account and terms as the Fish voices: content may train their models on
+      # every self-serve tier and is kept for as long as the service has a use for it.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # Microsoft's MAI-Transcribe-2-Streaming, launched 2026-10-01 in public preview, so
     # without an SLA. Reached over the OpenAI Realtime-compatible socket of a Foundry
     # resource, which is AZURE_MAI_ENDPOINT, and the deployment named by

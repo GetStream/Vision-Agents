@@ -123,6 +123,7 @@
     {"modality":"stt","provider":"inworld","model":"inworld-stt-1","rates":{"audio_ms":{"usd":0.15,"per":3600000}}},
     {"modality":"stt","provider":"elevenlabs","model":"scribe_v2_realtime","rates":{"audio_ms":{"usd":0.39,"per":3600000}}},
     {"modality":"stt","provider":"assemblyai","model":"universal-3-6-pro","rates":{"audio_ms":{"usd":0.45,"per":3600000}}},
+    {"modality":"stt","provider":"fish","model":"transcribe-stream-1","rates":{"audio_ms":{"usd":0.36,"per":3600000}}},
     {"modality":"stt","provider":"microsoft","model":"MAI-Transcribe-2-Streaming","rates":{"audio_ms":{"usd":0.54,"per":3600000}}},
     {"modality":"stt","provider":"deepgram","model":"nova-3","rates":{"audio_ms":{"usd":0.258,"per":3600000}}},
     {"modality":"tts","provider":"cartesia","model":"sonic-preview","rates":{"characters":{"usd":50,"per":1000000}}},
