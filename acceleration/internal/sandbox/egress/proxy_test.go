@@ -1153,9 +1153,10 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 	}
 }
 
-// fillUntilBlocked writes conn small chunks until a write makes no progress for stall: the
-// buffers from conn to the end that reads nothing are full then, and the proxy's copy that
-// carries them is stuck in its write.
+// fillUntilBlocked writes conn small chunks until a write times out having accepted no byte at
+// all: a write that moves part of a chunk shows the tunnel still takes a trickle. The buffers from
+// conn to the end that reads nothing are full then, and the proxy's copy that carries them is
+// stuck in its write.
 func (s *ProxySuite) fillUntilBlocked(conn net.Conn, stall time.Duration) {
 	chunk := make([]byte, 32<<10)
 	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
@@ -1165,62 +1166,53 @@ func (s *ProxySuite) fillUntilBlocked(conn net.Conn, stall time.Duration) {
 		written += n
 		if err != nil {
 			s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the tunnel closed while it was being filled")
-			return
+			if n == 0 {
+				return
+			}
 		}
 	}
 	s.Require().Fail("the tunnel took a gigabyte nobody reads")
 }
 
-// closedByWriting is the time since from at which a write on conn fails for a reason other than
-// its own deadline: the proxy closed its end. Writes, not reads: a read would empty the buffers
-// the proxy is stuck on.
-func (s *ProxySuite) closedByWriting(conn net.Conn, from time.Time, within time.Duration) time.Duration {
-	for time.Since(from) < within {
-		s.Require().NoError(conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond)))
-		if _, err := conn.Write([]byte{0}); err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-			return time.Since(from)
-		}
-	}
-	s.Fail("the tunnel was not closed in time")
-	return time.Since(from)
-}
-
 // TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
 // buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
 // time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
+// The test touches its ends no more once they are full: a byte it sent would count as progress
+// and restart the idle timeout, so the close is read from the open-tunnels gauge. That a tunnel
+// is not closed before the idle timeout is held by
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
 	const (
 		idle = time.Second
-		// stall is how long a write may make no progress before the buffers count as full: far
-		// more than the proxy needs to move a chunk, and below idle so a full tunnel is still open.
+		// stall: how long a write may make no progress before the buffers count as full. Chosen,
+		// not measured: many scheduler turns on a loaded machine (load 115 here), and below idle.
 		stall = 200 * time.Millisecond
-		// margin is what the close may take past the idle timeout.
-		margin = 2 * time.Second
+		// margin: what the close may take past the idle timeout. Chosen: the idle timeout again,
+		// for the close and a loaded machine; there is no other timer on a hijacked tunnel.
+		margin = idle
+		// poll: the interval of the gauge reads, as in TestOpenTunnelsAreCountedUntilTheyClose.
+		poll = 20 * time.Millisecond
 	)
 	for _, stalled := range []struct {
 		name                    string
 		sandboxSends, hostSends bool
 	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
 		s.Run(stalled.name, func() {
+			before := s.tunnelsOpen()
 			sandbox, host := s.blindTunnel(idle)
-			var senders []net.Conn
+			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
+				5*time.Second, poll, "the tunnel opened")
 			if stalled.sandboxSends {
-				senders = append(senders, sandbox)
+				s.fillUntilBlocked(sandbox, stall)
 			}
 			if stalled.hostSends {
-				senders = append(senders, host)
-			}
-			for _, sender := range senders {
-				s.fillUntilBlocked(sender, stall)
+				s.fillUntilBlocked(host, stall)
 			}
 
 			// Every buffer is full and nothing moves from here: the last byte moved no later than
 			// now, so the tunnel is closed by idle after it at the latest.
-			full := time.Now()
-			for _, sender := range senders {
-				closed := s.closedByWriting(sender, full, idle+margin)
-				s.LessOrEqual(closed, idle+margin)
-			}
+			s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before },
+				idle+margin, poll, "the tunnel was not closed in time")
 		})
 	}
 }
