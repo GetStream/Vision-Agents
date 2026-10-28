@@ -1153,52 +1153,74 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 	}
 }
 
+// fillUntilBlocked writes conn small chunks until a write makes no progress for stall: the
+// buffers from conn to the end that reads nothing are full then, and the proxy's copy that
+// carries them is stuck in its write.
+func (s *ProxySuite) fillUntilBlocked(conn net.Conn, stall time.Duration) {
+	chunk := make([]byte, 32<<10)
+	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
+	for written := 0; written < 1<<30; {
+		s.Require().NoError(conn.SetWriteDeadline(time.Now().Add(stall)))
+		n, err := conn.Write(chunk)
+		written += n
+		if err != nil {
+			s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the tunnel closed while it was being filled")
+			return
+		}
+	}
+	s.Require().Fail("the tunnel took a gigabyte nobody reads")
+}
+
+// closedByWriting is the time since from at which a write on conn fails for a reason other than
+// its own deadline: the proxy closed its end. Writes, not reads: a read would empty the buffers
+// the proxy is stuck on.
+func (s *ProxySuite) closedByWriting(conn net.Conn, from time.Time, within time.Duration) time.Duration {
+	for time.Since(from) < within {
+		s.Require().NoError(conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond)))
+		if _, err := conn.Write([]byte{0}); err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			return time.Since(from)
+		}
+	}
+	s.Fail("the tunnel was not closed in time")
+	return time.Since(from)
+}
+
 // TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
 // buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
 // time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
-	const idle = 300 * time.Millisecond
+	const (
+		idle = time.Second
+		// stall is how long a write may make no progress before the buffers count as full: far
+		// more than the proxy needs to move a chunk, and below idle so a full tunnel is still open.
+		stall = 200 * time.Millisecond
+		// margin is what the close may take past the idle timeout.
+		margin = 2 * time.Second
+	)
 	for _, stalled := range []struct {
 		name                    string
 		sandboxSends, hostSends bool
 	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
 		s.Run(stalled.name, func() {
 			sandbox, host := s.blindTunnel(idle)
-			// macOS loopback buffers can absorb a whole 64 MiB write while the proxy still relays
-			// it (two plain loopback sockets that read nothing finished 7 of 80 such writes);
-			// 64 KiB receive buffers (a size picked by measurement: 0 of 80) keep the write blocked.
-			for _, end := range []net.Conn{sandbox, host} {
-				s.Require().NoError(end.(*net.TCPConn).SetReadBuffer(64 << 10))
-			}
-			stuck := time.Now()
-			// The test reads nothing: a flood's write returns only when the proxy closes its end,
-			// 5 s being past any idle timeout here.
-			flood := func(conn net.Conn) <-chan error {
-				ended := make(chan error, 1)
-				go func() {
-					// Far more than the socket buffers on the way hold (a few MiB on loopback).
-					_, err := conn.Write(make([]byte, 64<<20))
-					ended <- err
-				}()
-				return ended
-			}
-			var floods []<-chan error
+			var senders []net.Conn
 			if stalled.sandboxSends {
-				floods = append(floods, flood(sandbox))
+				senders = append(senders, sandbox)
 			}
 			if stalled.hostSends {
-				floods = append(floods, flood(host))
+				senders = append(senders, host)
+			}
+			for _, sender := range senders {
+				s.fillUntilBlocked(sender, stall)
 			}
 
-			for _, ended := range floods {
-				select {
-				case err := <-ended:
-					s.Error(err, "the bytes were read by no one, yet all went")
-				case <-time.After(5 * time.Second):
-					s.Fail("the tunnel was not closed in time")
-				}
+			// Every buffer is full and nothing moves from here: the last byte moved no later than
+			// now, so the tunnel is closed by idle after it at the latest.
+			full := time.Now()
+			for _, sender := range senders {
+				closed := s.closedByWriting(sender, full, idle+margin)
+				s.LessOrEqual(closed, idle+margin)
 			}
-			s.GreaterOrEqual(time.Since(stuck), idle)
 		})
 	}
 }
