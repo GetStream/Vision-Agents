@@ -226,8 +226,12 @@ func (d *chatDeliveries) message(app int64, configID, source string) string {
 		"message-"+strconv.FormatInt(time.Now().UnixNano(), 36), marked)
 }
 
-func (s *ChatDeliverySuite) config(customer string) string    { return deliveredConfig(&s.RouterSuite, customer) }
-func (s *ChatDeliveryAppSuite) config(customer string) string { return deliveredConfig(&s.RouterSuite, customer) }
+func (s *ChatDeliverySuite) config(customer string) string {
+	return deliveredConfig(&s.RouterSuite, customer)
+}
+func (s *ChatDeliveryAppSuite) config(customer string) string {
+	return deliveredConfig(&s.RouterSuite, customer)
+}
 
 func deliveredConfig(router *RouterSuite, customer string) string {
 	config := store.AgentConfig{CustomerID: customer, Name: "config-" + router.utils.uuid(), Mode: "text"}
