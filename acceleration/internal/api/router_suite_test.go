@@ -245,8 +245,7 @@ type RouterSuite struct {
 	router *Server
 	app    testApp
 	// handOffs, while a test holds them (holdHandOffs), and handedOver, the hand-offs and their
-	// turns running, are the inbound worker's hand-offs to the agent (answerQueued); handedOver
-	// counts the replies to a thread's turns being sent too (channelBridge).
+	// turns running, are the inbound worker's hand-offs to the agent (answerQueued).
 	handOffs   atomic.Pointer[chan struct{}]
 	handedOver atomic.Int32
 
@@ -792,13 +791,33 @@ func (s *RouterSuite) holdHandOffs() (release func()) {
 }
 
 // turnsEnded waits until the inbound worker is done with the test's messages and no hand-off
-// of it, turn it handed over, or reply to a thread's turn runs.
+// of it, turn it handed over, or reply the bridge sends runs: a reply that leaves later dials
+// the next test's provider (channelProvider) while its SetupTest replaces it.
 func (s *RouterSuite) turnsEnded() {
-	if _, built := s.bridge.(*channelbridge.Bridge); !built {
+	bridge, built := s.bridge.(*channelbridge.Bridge)
+	if !built {
 		return
 	}
-	s.Eventually(func() bool { return s.handedOver.Load() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor,
-		10*time.Millisecond, "the inbound worker, or a turn it handed over, still runs")
+	s.Eventually(func() bool {
+		return s.handedOver.Load() == 0 && bridge.Replying() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0
+	}, settleFor, 10*time.Millisecond, "the inbound worker, a turn it handed over or a reply still runs")
+}
+
+// Never is testify's Never with its condition run on the test's goroutine. testify runs each
+// check on a goroutine of its own and returns at the deadline without waiting for the last
+// one, which then reads the suite's fakes while the next test's SetupTest replaces them.
+func (s *RouterSuite) Never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	deadline := time.Now().Add(waitFor)
+	for {
+		if condition() {
+			return s.Fail("Condition satisfied", msgAndArgs...)
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(tick)
+	}
 }
 
 // channelBridge is the router's channel bridge over the suite's store, Stream Chat and
@@ -809,21 +828,8 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	bridge, err := channelbridge.New(s.channelBridgeOptions(logger))
 	s.Require().NoError(err)
 	s.T().Cleanup(bridge.Close)
-	// As cmd/router hands it the finished replies of the conversations on thread channels,
-	// but for the reply to a thread's turn (answerClaimed's follow-up, which nothing holds):
-	// that one is sent, as Reply sends one nobody holds, on a goroutine the suite counts, so
-	// no test ends while it dials the test's provider (turnsEnded).
-	s.conversations.OnFinishedReply(func(reply conversation.FinishedReply) {
-		if !strings.HasPrefix(reply.CommandID, "thread_") {
-			bridge.Reply(reply)
-			return
-		}
-		s.handedOver.Add(1)
-		go func() {
-			defer s.handedOver.Add(-1)
-			_ = bridge.Send(reply)
-		}()
-	})
+	// As cmd/router hands it the finished replies of the conversations on thread channels.
+	s.conversations.OnFinishedReply(bridge.Reply)
 	return bridge
 }
 

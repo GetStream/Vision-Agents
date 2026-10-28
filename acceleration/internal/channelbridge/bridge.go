@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -282,7 +283,9 @@ type Bridge struct {
 	cancel context.CancelFunc
 
 	working sync.WaitGroup
-	mu      sync.Mutex
+	// replying counts the replies Reply sends on goroutines of their own (Replying).
+	replying atomic.Int32
+	mu       sync.Mutex
 	// held are the replies callers send themselves (Hold), by the command they answer.
 	held map[string]chan conversation.FinishedReply
 }
@@ -492,8 +495,10 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 		return
 	}
 	b.working.Add(1)
+	b.replying.Add(1)
 	go func() {
 		defer b.working.Done()
+		defer b.replying.Add(-1)
 		// A reply nobody may be sent (refusesReply), or one whose thread is gone, is no
 		// failure to log.
 		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) &&
@@ -501,6 +506,12 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
+}
+
+// Replying is how many replies Reply is still sending. A test waits until it is zero, so no
+// reply of one test reaches the provider of the next (api's RouterSuite.turnsEnded).
+func (b *Bridge) Replying() int {
+	return int(b.replying.Load())
 }
 
 // Hold hands the reply that answers commandID to the caller instead of sending it, so the
