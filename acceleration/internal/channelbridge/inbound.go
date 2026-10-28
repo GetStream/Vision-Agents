@@ -176,14 +176,10 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(b.inboundRetries[attempts-1]))
 	default:
 		cause := err
-		var forward bool
-		changed, forward, err = b.store.FailChannelInbound(recording, message, time.Now())
-		if err == nil && changed {
+		changed, err = b.store.FailChannelInbound(recording, message, time.Now(), b.forwardUnanswered(message))
+		if changed {
 			log.Warn("gave up an inbound message: it was never written into its thread channel, so no agent answers it",
 				"attempts", attempts, "error", cause)
-		}
-		if err == nil && forward {
-			b.forwardUnanswered(recording, message)
 		}
 	}
 	switch {
@@ -228,11 +224,12 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 }
 
 // forwardUnanswered hands a given-up message's delivery to the customer's event destinations of
-// unhandled events (Options.Unanswered): only the first given-up message of a delivery does
-// (store.FailChannelInbound), so two of them are one forward.
-func (b *Bridge) forwardUnanswered(ctx context.Context, message store.ChannelInbound) {
-	if b.unanswered == nil {
-		return
+// unhandled events (Options.Unanswered), for store.FailChannelInbound to call: only the first
+// given-up message of a delivery whose forward is queued does, so two of them are one forward.
+// Nil without Options.Unanswered.
+func (b *Bridge) forwardUnanswered(message store.ChannelInbound) func(context.Context) error {
+	if b.unanswered == nil || message.Forward == nil {
+		return nil
 	}
 	event := eventforward.Event{
 		CustomerID: message.CustomerID, ConnectorID: message.ConnectorID, ID: message.Forward.ID,
@@ -241,9 +238,13 @@ func (b *Bridge) forwardUnanswered(ctx context.Context, message store.ChannelInb
 	if message.Forward.HeadersUntil != nil {
 		event.HeadersUntil = *message.Forward.HeadersUntil
 	}
-	if err := b.unanswered(ctx, event); err != nil {
-		b.logger.Error("could not forward a delivery no agent got", "connector", message.ConnectorID,
-			"customer", message.CustomerID, "error", err)
+	return func(ctx context.Context) error {
+		err := b.unanswered(ctx, event)
+		if err != nil {
+			b.logger.Error("could not forward a delivery no agent got", "connector", message.ConnectorID,
+				"customer", message.CustomerID, "error", err)
+		}
+		return err
 	}
 }
 

@@ -5,6 +5,7 @@ package channelbridge
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -306,6 +308,38 @@ func (s *InboundSuite) TestAMessageThatNeverGetsThroughIsGivenUpAndItsDeliveryFo
 	s.Equal(forward.Headers, deliveries[0].Headers)
 	s.Require().NotNil(deliveries[0].ProviderHeadersUntil)
 	s.True(until.Equal(*deliveries[0].ProviderHeadersUntil))
+}
+
+// A delivery whose forward fails when its first message is given up, as when the router stops
+// before it, is forwarded by its next message given up, once.
+func (s *InboundSuite) TestADeliveryWhoseForwardFailedIsForwardedByItsNextMessageGivenUp() {
+	forwarder, err := eventforward.New(eventforward.Options{Store: s.store, Secrets: s.sealer})
+	s.Require().NoError(err)
+	destination := s.destination(forwarder)
+	thread := s.thread("fake_line")
+	s.chat.RateLimit("/" + thread.ChannelID + "/message")
+	forward := &store.ChannelInboundForward{ID: "Ev0001"}
+	s.queue(thread, "m-1", "hello", forward)
+	s.queue(thread, "m-2", "again", forward)
+	s.queue(thread, "m-3", "and again", forward)
+	var calls atomic.Int32
+	unanswered := func(ctx context.Context, event eventforward.Event) error {
+		if calls.Add(1) == 1 {
+			return errors.New("synthetic forward failure")
+		}
+		return forwarder.ForwardUnanswered(ctx, event)
+	}
+
+	s.bridge(&Options{InboundRetries: []time.Duration{time.Millisecond}, Unanswered: unanswered})
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-3").State == store.ChannelInboundFailed }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(store.ChannelInboundFailed, s.row(thread, "m-1").State, "given up although its forward failed")
+	s.Contains(s.logs.String(), "synthetic forward failure")
+	var deliveries []store.EventDelivery
+	s.Require().NoError(s.store.DB().NewSelect().Model(&deliveries).Where("destination_id = ?", destination).Scan(s.ctx))
+	s.Require().Len(deliveries, 1)
+	s.Equal([]byte(`{"text":"again"}`), deliveries[0].Body, "the second message forwards it, the third does not")
+	s.Equal(int32(2), calls.Load())
 }
 
 // Stream Chat refusing a message with a 4xx other than 429 refuses it again: it is given up on

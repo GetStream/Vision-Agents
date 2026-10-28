@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -263,7 +264,7 @@ func (s *StoreSuite) TestAFailedInboundMessageLetsItsThreadGoOn() {
 	s.Require().NoError(err)
 	last := s.claimedOne(s.base.Add(time.Second), "1759740000.000100")
 
-	changed, _, err := s.store.FailChannelInbound(s.ctx, last, s.base.Add(2*time.Second))
+	changed, err := s.store.FailChannelInbound(s.ctx, last, s.base.Add(2*time.Second), nil)
 	s.Require().NoError(err)
 	s.True(changed)
 
@@ -296,7 +297,7 @@ func (s *StoreSuite) TestAWorkerWhoseLeaseWasTakenOverChangesNothing() {
 
 	retried, err := s.store.RetryChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
 	s.Require().NoError(err)
-	failed, _, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
+	failed, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute), nil)
 	s.Require().NoError(err)
 	finished, err := s.store.FinishChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
 	s.Require().NoError(err)
@@ -319,7 +320,7 @@ func (s *StoreSuite) TestAFinishedInboundMessageIsNotFinishedAgain() {
 	_, err := s.store.FinishChannelInbound(s.ctx, claimed, s.base)
 	s.Require().NoError(err)
 
-	failed, _, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
+	failed, err := s.store.FailChannelInbound(s.ctx, claimed, s.base, nil)
 
 	s.Require().NoError(err)
 	s.False(failed)
@@ -432,7 +433,7 @@ func (s *StoreSuite) TestNoInboundMessageIsNextOnceAllAreWrittenOrGivenUp() {
 			s.Require().NoError(err)
 			continue
 		}
-		_, _, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
+		_, err := s.store.FailChannelInbound(s.ctx, claimed, s.base, nil)
 		s.Require().NoError(err)
 	}
 
@@ -464,7 +465,7 @@ func (s *StoreSuite) TestPruningKeepsAWrittenMessageADayAndAGivenUpOneThirtyDays
 		if strings.HasPrefix(claimed.ProviderMessageID, "done") {
 			_, err = s.store.FinishChannelInbound(s.ctx, claimed, at)
 		} else {
-			_, _, err = s.store.FailChannelInbound(s.ctx, claimed, at)
+			_, err = s.store.FailChannelInbound(s.ctx, claimed, at, nil)
 		}
 		s.Require().NoError(err)
 	}
@@ -496,13 +497,22 @@ func (s *StoreSuite) TestAThreadChannelsInboundMessagesGoWithIt() {
 }
 
 // givenUp queues a message in a thread channel of its own, claims it and gives it up, and
-// returns whether its delivery is to be forwarded.
+// returns whether it forwarded its delivery.
 func (s *StoreSuite) givenUp(channelID string, change ...func(*ChannelInbound)) bool {
+	return s.givenUpForwarding(channelID, nil, change...)
+}
+
+// givenUpForwarding is givenUp with a forward that answers failure.
+func (s *StoreSuite) givenUpForwarding(channelID string, failure error, change ...func(*ChannelInbound)) bool {
 	s.inbound(channelID, "1759740000.000100", change...)
-	changed, forward, err := s.store.FailChannelInbound(s.ctx, s.claimedOne(s.base, "1759740000.000100"), s.base)
+	var forwarded bool
+	changed, err := s.store.FailChannelInbound(s.ctx, s.claimedOne(s.base, "1759740000.000100"), s.base, func(context.Context) error {
+		forwarded = true
+		return failure
+	})
 	s.Require().NoError(err)
 	s.Require().True(changed)
-	return forward
+	return forwarded
 }
 
 // forwarding gives a message the delivery forward id, and the body raw.
@@ -517,6 +527,16 @@ func (s *StoreSuite) TestOnlyTheFirstGivenUpMessageOfADeliveryForwardsIt() {
 	s.True(s.givenUp("thread-one", forwarding("Ev0001", `{"one":1}`)))
 	s.False(s.givenUp("thread-two", forwarding("Ev0001", `{"two":2}`)), "the provider's id keys the delivery")
 	s.True(s.givenUp("thread-three", forwarding("Ev0002", `{"one":1}`)), "another delivery")
+}
+
+// A forward that fails, as a router that stops before it does, leaves the delivery to the next
+// of its messages given up, which forwards it once.
+func (s *StoreSuite) TestADeliveryWhoseForwardFailedIsForwardedByItsNextMessageGivenUp() {
+	s.True(s.givenUpForwarding("thread-one", errors.New("synthetic forward failure"), forwarding("Ev0001", `{"one":1}`)))
+	s.True(s.givenUp("thread-two", forwarding("Ev0001", `{"two":2}`)), "the first one's forward failed")
+	s.False(s.givenUp("thread-three", forwarding("Ev0001", `{"three":3}`)), "the second one forwarded it")
+	state, _ := s.inboundState("thread-one", "1759740000.000100")
+	s.Equal(ChannelInboundFailed, state, "a message whose forward failed is given up all the same")
 }
 
 func (s *StoreSuite) TestADeliveryWithNoIdIsKeyedByItsBody() {
@@ -543,11 +563,15 @@ func (s *StoreSuite) TestAWorkerWhoseLeaseWasTakenOverForwardsNothing() {
 	stale := s.claimedOne(s.base, "1759740000.000100")
 	s.claimedOne(s.base.Add(time.Minute), "1759740000.000100")
 
-	changed, forward, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
+	var forwarded bool
+	changed, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute), func(context.Context) error {
+		forwarded = true
+		return nil
+	})
 
 	s.Require().NoError(err)
 	s.False(changed)
-	s.False(forward)
+	s.False(forwarded)
 }
 
 // Two messages of one delivery given up at once, as two routers do, forward it once.
@@ -563,9 +587,13 @@ func (s *StoreSuite) TestTwoMessagesOfADeliveryGivenUpAtOnceForwardItOnce() {
 		var wg sync.WaitGroup
 		for _, message := range claimed {
 			wg.Go(func() {
-				_, forward, err := s.store.FailChannelInbound(s.ctx, message, s.base)
+				forwarded := false
+				_, err := s.store.FailChannelInbound(s.ctx, message, s.base, func(context.Context) error {
+					forwarded = true
+					return nil
+				})
 				s.NoError(err)
-				forwards <- forward
+				forwards <- forwarded
 			})
 		}
 		wg.Wait()
