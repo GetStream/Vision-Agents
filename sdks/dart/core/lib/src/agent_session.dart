@@ -128,7 +128,7 @@ final class AgentSession {
     }
     final handshake = await _backend.socketHandshake(
       '/v1/agents/sessions/${Uri.encodeComponent(id)}/events',
-      {
+      query: {
         // Decisions arrive several times a second and are for somebody watching a call, not
         // for an app holding one.
         'decisions': 'false',

@@ -135,28 +135,36 @@ final class Backend {
     );
   }
 
-  /// What opening a socket under the router takes: its URL and the headers its handshake
-  /// carries, the token asked for once. It opens nothing.
+  /// The URL and handshake headers for a socket at [path] under the router, with [query]
+  /// added to the URL.
   ///
-  /// Where the handshake can carry headers ([inHeaders], everywhere but a browser) they are
-  /// [headers], as on every request, and the token stays out of the URL: a URL ends up in
-  /// every log it passes through.
+  /// It opens nothing: `SessionSocket` opens the socket with what it returns.
   ///
-  /// A browser cannot set headers, so there the credentials go in the query: the key and the
-  /// token, which a router verifying tokens reads, and the user. To Stream's hosted router the token goes again as `authorization` with
-  /// `stream-auth-type=jwt`, which is how its proxy reads a socket's credential; it refuses
-  /// one carrying only `token`. The router reads no auth type from a query, so a socket
-  /// cannot claim to be a backend.
+  /// [canSetHeaders] says whether the socket can send headers on its handshake, which is what
+  /// decides where the credentials go. It defaults to what this platform can do, so only a
+  /// test passes it.
+  ///
+  /// * When it can (iOS, Android, macOS, the VM), the headers are the same as on every
+  ///   request, and the URL carries the API key but never the token, since a URL ends up in
+  ///   every log it passes through.
+  /// * When it cannot (a browser), there are no headers, and the URL carries the API key, the
+  ///   token and the user. To Stream's hosted router it also carries the token as
+  ///   `authorization`, with `stream-auth-type=jwt`, which is how that router's proxy reads a
+  ///   socket's credentials.
+  ///
+  /// With a customer id rather than a key, the URL names the customer and the user either way.
+  ///
+  /// The token is asked for once.
   Future<({Uri uri, Map<String, String> headers})> socketHandshake(
-    String path, [
+    String path, {
     Map<String, String> query = const {},
-    bool inHeaders = handshakeHeaders,
-  ]) async {
-    final headers = inHeaders ? await this.headers() : const <String, String>{};
+    bool canSetHeaders = canSetSocketHeaders,
+  }) async {
+    final headers = canSetHeaders ? await this.headers() : const <String, String>{};
     final Map<String, String> credentials;
     if (_byCustomer) {
       credentials = {'customer_id': customerId, if (userId.isNotEmpty) 'user_id': userId};
-    } else if (inHeaders) {
+    } else if (canSetHeaders) {
       credentials = {'api_key': apiKey};
     } else {
       final token = await _token();

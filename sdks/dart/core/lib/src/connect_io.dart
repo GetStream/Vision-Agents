@@ -3,8 +3,8 @@ import 'dart:io' as io;
 import 'package:web_socket/io_web_socket.dart';
 import 'package:web_socket/web_socket.dart';
 
-/// Whether a socket's handshake carries headers, which it does everywhere but a browser.
-const handshakeHeaders = true;
+/// Whether a socket can send headers on its handshake, which it can everywhere but a browser.
+const canSetSocketHeaders = true;
 
 /// Opens [uri] with [headers] on the handshake, so the router reads the socket as the same
 /// caller as the requests: a device, not a backend.

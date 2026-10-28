@@ -126,9 +126,10 @@ void main() {
         customerId: 'acme',
       ).withUser('ada');
 
-      final handshake = await backend.socketHandshake('/v1/agents/sessions/s1/events', {
-        'decisions': 'false',
-      });
+      final handshake = await backend.socketHandshake(
+        '/v1/agents/sessions/s1/events',
+        query: {'decisions': 'false'},
+      );
 
       expect(handshake.uri.scheme, 'wss');
       expect(handshake.uri.path, '/base/v1/agents/sessions/s1/events');
@@ -159,8 +160,7 @@ void main() {
 
       final handshake = await backend.socketHandshake(
         '/v1/agents/sessions/s1/events',
-        const {},
-        false,
+        canSetHeaders: false,
       );
 
       expect(handshake.uri.queryParameters, {'api_key': 'key', 'token': 'tok', 'user_id': 'ada'});
@@ -175,8 +175,7 @@ void main() {
 
           final handshake = await backend.socketHandshake(
             '/v1/agents/sessions/s1/events',
-            const {},
-            false,
+            canSetHeaders: false,
           );
 
           expect(handshake.uri.queryParameters, {
