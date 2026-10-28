@@ -40,17 +40,17 @@ Out of the box the SDKs go to production in us-east4,
 `STREAM_ACCELERATION_REGION` sends them anywhere else. Staging is `https://accelerate-staging.gcp.stream-io-api.com`, and the load
 balancer in `GetStream/chat`'s `infra/dns/gcp-stream-io-api-com` tells them apart by hostname.
 
-The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) read the same variables to go
-anywhere else:
+The server SDKs (Python, JS, Go, Ruby, PHP, .NET and Rust) use these variables, with the
+Go authentication exception noted below:
 
 | Variable                           | What it does                                                                                   |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `STREAM_ACCELERATION_URL`          | The router's base URL. Unset is production in us-east4.                                        |
-| `STREAM_ACCELERATION_REGION`       | Production in another region, such as `europe-west4`. A URL, in code or here, wins over it.    |
-| `STREAM_ACCELERATION_CUSTOMER_ID`  | Who is billed, on a router with no proxy in front of it. Setting it turns authentication off.  |
+| `STREAM_ACCELERATION_REGION`       | Production in another region, such as `europe-west4`. An explicit URL or region wins over environment variables; `STREAM_ACCELERATION_URL` wins over this variable. |
+| `STREAM_ACCELERATION_CUSTOMER_ID`  | Who is billed on a local router with no proxy. Leave it unset for hosted environments. |
 | `STREAM_API_KEY`                   | The Stream app a router behind the proxy is reached as.                                        |
 | `STREAM_API_SECRET`                | That app's secret, which signs the token the proxy checks.                                     |
-| `STREAM_ACCELERATION_AUTHENTICATE` | `1` sends the key and a token through the proxy. On by itself only for production.            |
+| `STREAM_ACCELERATION_AUTHENTICATE` | In Python, JS, Ruby, PHP, .NET and Rust, `1` sends the key and a token through the proxy. Go does not read this variable. |
 
 Local, the router from `compose.yaml` above, which trusts the customer header and has no proxy:
 
@@ -71,10 +71,13 @@ STREAM_API_SECRET=...
 
 Without `STREAM_ACCELERATION_AUTHENTICATE=1` every SDK but Go sends staging its key the way a
 router with no proxy reads it, and the proxy refuses the request. Go authenticates whenever
-no customer id is set.
+no customer id is set. Unset `STREAM_ACCELERATION_CUSTOMER_ID` left over from local development
+before using staging with Go. Otherwise, set `stream.Backend{Authenticate: true}` or pass
+credentials explicitly in the backend; setting `STREAM_ACCELERATION_AUTHENTICATE=1` has no
+effect in Go.
 
-Production takes only the key and secret. Leave `STREAM_ACCELERATION_CUSTOMER_ID` unset
-there: a customer id left over from local turns authentication off.
+Production takes only the key and secret. Regional production URLs authenticate even when
+a local customer id is still set; the proxy derives the app from the credential.
 
 Each production region is `https://accelerate-<region>.gcp.stream-io-api.com`, and keeps a
 request in that region: it fails rather than spill into another when that region is full or
@@ -92,7 +95,8 @@ Production has no hostname without a region in it.
 The regions on offer are `local.accelerate_prod_regions` in `GetStream/chat`'s
 `infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`, today `us-east4`. The SDKs check
 only that a name looks like a region, so offering another needs no SDK release. In code it is
-the `region` option (`Region` in Go and .NET); passing a URL as well is refused.
+the `region` option (`Region` in Go and .NET). Go and Python also accept the region's own
+URL alongside it, so a resolved backend can be reused; a conflicting URL is refused.
 
 The Kotlin, Swift and Dart SDKs run on a phone and read no environment: pass the URL to
 their `Backend` (`Backend(url = ...)`, `Backend(apiKey:url:)`, `Backend(url: ...)`), which
