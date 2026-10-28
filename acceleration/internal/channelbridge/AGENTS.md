@@ -21,7 +21,8 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
     thread       store.LinkChannelThread: one thread channel per external thread;
                  the message that starts it takes the replies that waited
     claim        store.ClaimChannelThreadMessage: a retried delivery is dropped
-    keywords, gate (texting connectors)
+    admit        from the queue row's inputs and its thread channel: chat person
+                 and members (linq), keywords, gate (texting connectors)
     queue        store.QueueChannelInbound: the message, the config, and the
                  delivery's forward (null for a waited reply); wake the worker
   200
