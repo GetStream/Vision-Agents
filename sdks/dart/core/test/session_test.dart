@@ -37,6 +37,21 @@ void main() {
       await chat.close();
     });
 
+    test('opens the socket with a key as the proxy reads a device\'s credential', () async {
+      final keyed = VisionAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
+      final chat = await keyed.chat();
+
+      expect(router.upgrades.single.query, {
+        'decisions': 'false',
+        'api_key': 'key',
+        'token': 'tok',
+        'authorization': 'tok',
+        'stream-auth-type': 'jwt',
+      });
+      await chat.close();
+      keyed.close();
+    });
+
     test('shows what was asked at once, and asks with a request rather than a frame', () async {
       router.answer(
         'POST /v1/agents/sessions/s1/responses',

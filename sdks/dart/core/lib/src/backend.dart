@@ -30,7 +30,7 @@ final class StreamCredentials {
 /// is still reached by customer id.
 ///
 /// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests,
-/// and `stream-auth-type=jwt` in a socket's query by customer id, where nothing else says so.
+/// and `stream-auth-type=jwt` in a socket's query.
 final class Backend {
   Backend({
     Uri? url,
@@ -129,15 +129,26 @@ final class Backend {
   ///
   /// By customer id the socket declares a device as `stream-auth-type=jwt`, without which a
   /// router with no proxy in front takes it for a backend and never asks it to run this
-  /// device's tools. By key the token already says who is asking.
+  /// device's tools. By key the token also goes as `authorization` with `stream-auth-type=jwt`,
+  /// which is how Stream's proxy reads a socket's credential: it refuses one carrying only
+  /// `token`. The router itself reads `token` and ignores both.
   Future<Uri> socketUri(String path, [Map<String, String> query = const {}]) async {
-    final credentials = _byCustomer
-        ? {
-            'customer_id': customerId,
-            if (userId.isNotEmpty) 'user_id': userId,
-            'stream-auth-type': 'jwt',
-          }
-        : {'api_key': apiKey, 'token': await _token()};
+    final Map<String, String> credentials;
+    if (_byCustomer) {
+      credentials = {
+        'customer_id': customerId,
+        if (userId.isNotEmpty) 'user_id': userId,
+        'stream-auth-type': 'jwt',
+      };
+    } else {
+      final token = await _token();
+      credentials = {
+        'api_key': apiKey,
+        'token': token,
+        'authorization': token,
+        'stream-auth-type': 'jwt',
+      };
+    }
     return url.replace(
       scheme: url.scheme == 'https' ? 'wss' : 'ws',
       path: _join(url.path, path),

@@ -138,12 +138,23 @@ void main() {
       });
     });
 
-    test('puts only the key and token in a socket url by key', () async {
-      final backend = Backend(apiKey: 'key', token: () async => 'token');
+    test('puts the key, the token and a device\'s auth type in a socket url by key', () async {
+      for (final url in [
+        Uri.parse('http://localhost:8080'),
+        Backend.defaultUrl,
+        Backend.regionUrl('europe-west4'),
+      ]) {
+        final backend = Backend(url: url, apiKey: 'key', token: () async => 'token');
 
-      final url = await backend.socketUri('/v1/agents/sessions/s1/events');
+        final socket = await backend.socketUri('/v1/agents/sessions/s1/events');
 
-      expect(url.queryParameters, {'api_key': 'key', 'token': 'token'});
+        expect(socket.queryParameters, {
+          'api_key': 'key',
+          'token': 'token',
+          'authorization': 'token',
+          'stream-auth-type': 'jwt',
+        });
+      }
     });
   });
 
