@@ -434,6 +434,9 @@ type RouterSuite struct {
 	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
 	// the harness. Nil is every vendor the router knows, with no credentials.
 	phoneVendors *phone.Registry
+	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
+	// suite to set before it starts the harness. Off, a session with a number cannot open.
+	sessionTelephony bool
 	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
 	registrar10DLC *dlc.Service
 	// manageOff builds the router with no manage key, as a deployment that never set
@@ -576,14 +579,14 @@ func (s *RouterSuite) SetupSuite() {
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
 	s.transports = transports
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
+	s.phoneRecorder = s.telephonyRecorder(logger)
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	// Every text, call and number asks the same admission as a model, as in cmd/router.
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
-	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -1137,12 +1140,17 @@ func (s *RouterSuite) sessionManager(
 	if s.daytona != nil {
 		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
 	}
+	var telephony *phone.Service
+	if s.sessionTelephony {
+		telephony = s.telephony(logger)
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
 		Memory:        metering,
+		Phone:         telephony,
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,

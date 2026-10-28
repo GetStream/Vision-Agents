@@ -334,6 +334,7 @@ func (s *CallStatusSuite) SetupSuite() {
 		return telnyx.New(telnyx.Options{APIKey: "k"})
 	})
 	s.phoneVendors = registry
+	s.sessionTelephony = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -510,4 +511,51 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 
 	s.Require().Eventually(func() bool { return !s.manager.Running(opened.ID()) }, 10*time.Second, 20*time.Millisecond,
 		"the session waits for its start timeout")
+}
+
+// openPhoneSession opens the session id as the phone service opens one, by the manager: the
+// suite has no telephony to place a call with.
+func (s *CallStatusSuite) openPhoneSession(id string) *session.Session {
+	opened, err := s.manager.Create(context.Background(), session.Spec{ID: id, CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	return opened
+}
+
+func (s *CallStatusSuite) TestASessionOpenedAfterItsCallWasBusyEndsBeforeTheStartTimeout() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+
+	s.openPhoneSession(id)
+
+	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 5*time.Second, 20*time.Millisecond,
+		"the session waits for its start timeout")
+	var read Session
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &read) == http.StatusOK
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Require().NotNil(read.CallOutcome)
+	s.Equal(CallOutcomeBusy, value(read.CallOutcome.Outcome))
+}
+
+func (s *CallStatusSuite) TestASessionOpenedAfterItsCallCompletedIsNotEnded() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"completed"}}))
+
+	opened := s.openPhoneSession(id)
+	defer func() { _, _ = s.manager.Close(id, session.OwnerOf(opened.Spec())) }()
+
+	s.True(s.manager.Running(id))
+}
+
+func (s *CallStatusSuite) TestASessionOpenedWhileItsCallRingsIsNotEnded() {
+	id := s.utils.uuid()
+	s.placedFor(id)
+
+	opened := s.openPhoneSession(id)
+	defer func() { _, _ = s.manager.Close(id, session.OwnerOf(opened.Spec())) }()
+
+	s.True(s.manager.Running(id))
 }

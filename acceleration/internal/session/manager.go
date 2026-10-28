@@ -27,6 +27,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -941,11 +942,34 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	// A phone call's episode card, once the session holds the call (T41).
 	m.cards.started(created, stream)
+	m.endIfUnanswered(ctx, created)
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
 	return created, nil
+}
+
+// endIfUnanswered ends created when its placed call already went unanswered. A vendor can say
+// so before the session opens, when OnUnanswered found nothing to end; read only once the
+// session is held, so a status either lands before this read or finds the session.
+func (m *Manager) endIfUnanswered(ctx context.Context, created *Session) {
+	spec := created.Spec()
+	if spec.Phone == nil || m.options.Phone == nil || m.options.Phone.Outcomes() == nil {
+		return
+	}
+	call, err := m.options.Phone.Outcomes().Read(ctx, spec.CustomerID, created.id)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return
+	}
+	if err != nil {
+		m.logger.Warn("could not read whether a session's placed call went unanswered",
+			"session", created.id, "error", err)
+		return
+	}
+	if call.NobodyAnswered() {
+		m.EndUnanswered(spec.CustomerID, created.id)
+	}
 }
 
 // replaces reports whether a session being reopened may take the place of the one held under
