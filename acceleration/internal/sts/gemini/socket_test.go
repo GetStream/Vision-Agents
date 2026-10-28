@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
@@ -420,4 +422,62 @@ func (s *GeminiSocketSuite) TestABlockingSessionIsNotToldOfAnOpenCall() {
 	result := s.nextFrame(conn).ToolResponse.FunctionResponses[0]
 	s.Nil(result.WillContinue, "a blocking call's answer is as it always was")
 	s.Empty(result.Scheduling)
+}
+
+// invalidKeyText is how the Live API refused a made-up key on 2026-10-28: a close 1007 with
+// this reason, 50ms after the setup frame.
+const invalidKeyText = "API key not valid. Please pass a valid API key."
+
+// startRefused starts a provider on a key of its own against a Live API that reads the setup
+// frame and closes with code and reason, and returns how many invalid keys the pool counted
+// meanwhile and Start's error.
+func (s *GeminiSocketSuite) startRefused(code int, reason string) (float64, error) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+	provider, err := New(Options{
+		URL:              "ws://" + strings.TrimPrefix(server.URL, "http://"),
+		APIKey:           "AIza-" + rand.Text(),
+		HandshakeTimeout: 5 * time.Second,
+	})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = provider.Start(ctx)
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before, err
+}
+
+func (s *GeminiSocketSuite) TestAKeyRefusedByACloseAfterSetupIsCountedAsInvalid() {
+	counted, err := s.startRefused(websocket.CloseInvalidFramePayloadData, invalidKeyText)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), invalidKeyText)
+	s.Equal(1.0, counted)
+}
+
+func (s *GeminiSocketSuite) TestAnotherReasonOnTheSameCloseCodeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(websocket.CloseInvalidFramePayloadData, "Request contains an invalid argument.")
+
+	s.Require().Error(err)
+	s.Zero(counted)
+}
+
+func (s *GeminiSocketSuite) TestTheKeyTextOnAnotherCloseCodeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(websocket.ClosePolicyViolation, invalidKeyText)
+
+	s.Require().Error(err)
+	s.Zero(counted)
 }

@@ -143,7 +143,7 @@ func (s *Sandboxes) Labels(owner routing.Owner) map[string]string {
 	for name, value := range map[string]string{
 		LabelDeployment: s.options.Deployment, LabelEnv: s.options.Environment, LabelRouter: s.options.Router,
 		LabelOrganization: owner.OrganizationID,
-		LabelApp: owner.CustomerID, LabelSession: owner.SessionID,
+		LabelApp:          owner.CustomerID, LabelSession: owner.SessionID,
 	} {
 		if value != "" {
 			labels[name] = value

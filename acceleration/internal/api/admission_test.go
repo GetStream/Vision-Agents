@@ -677,6 +677,70 @@ func (s *ShadowAdmissionSuite) TestTelephonyIsAdmittedAndLoggedAsWouldRefuse() {
 	}
 }
 
+// knowledgeRequest fills the knowledge base namespace with one document, source.
+func (s *AdmissionSuite) knowledgeRequest(namespace, source string) map[string]any {
+	return map[string]any{
+		"namespace": namespace,
+		"documents": []map[string]string{{"source": source, "text": "# Refunds\n\nRefunds take thirty days."}},
+	}
+}
+
+// documents lists what the knowledge base namespace holds.
+func (s *AdmissionSuite) documents(namespace string) []IndexedKnowledgeDocument {
+	var listed []IndexedKnowledgeDocument
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents?namespace="+namespace, nil, &listed))
+	return listed
+}
+
+func (s *AdmissionSuite) TestAKnowledgeIngestWithNoCreditIsAPaymentRequiredAndWritesNothing() {
+	namespace := "namespace-" + s.utils.uuid()
+	s.refused(http.MethodPost, "/v1/agents/runs", s.run("echo/echo-model"))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge", s.knowledgeRequest(namespace, "refunds.md"))
+
+	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(codeInsufficientCredits, answered.Error.Code)
+	s.Empty(s.documents(namespace))
+}
+
+func (s *AdmissionSuite) TestAKnowledgeIngestForASuspendedAccountIsForbidden() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.usage.Suspend(s.T(), s.organization(), "fraud review "+s.utils.uuid())
+	s.refused(http.MethodPost, "/v1/agents/runs", s.run("echo/local-model"))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge",
+		s.knowledgeRequest("namespace-"+s.utils.uuid(), "refunds.md"))
+
+	s.Require().Equal(http.StatusForbidden, status, string(payload))
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(codeAccountSuspended, answered.Error.Code)
+}
+
+func (s *AdmissionSuite) TestADocumentIsDeletedPastASpentLimit() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	namespace := "namespace-" + s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",
+		s.knowledgeRequest(namespace, "refunds.md"), nil))
+	listed := s.documents(namespace)
+	s.Require().Len(listed, 1)
+	s.limitApp(usage.Daily, 10_000)
+	// Searches cost $0.005 each, so the second spends the limit.
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge", s.knowledgeRequest(namespace, "pricing.md"))
+	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
+	s.Contains(string(payload), "is spent")
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+
+	s.Empty(s.documents(namespace))
+	status, _ = s.serverClient.call(http.MethodPost, "/v1/agents/knowledge", s.knowledgeRequest(namespace, "pricing.md"))
+	s.Equal(http.StatusPaymentRequired, status, "the limit was in force for the delete")
+}
+
 // TestAMoneyRefusalIsTheCodeNotTheText makes sure moneyError reads what the policy wrapped,
 // however it was joined on the way.
 func (s *AdmissionSuite) TestAMoneyRefusalIsTheCodeNotTheText() {

@@ -86,8 +86,8 @@ func (s *OpenAISuite) TestAModelAcceptsImages() {
 	s.Contains(capabilitiesFor("gpt-6-astra").InputModalities, "image")
 }
 
-func (s *OpenAISuite) TestGPT6LunaAndSolCanBeToldNotToThink() {
-	for _, model := range []string{"gpt-6-luna", "gpt-6-sol"} {
+func (s *OpenAISuite) TestGPT6LunaSolAndTerraCanBeToldNotToThink() {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra"} {
 		provider, err := New(Options{APIKey: "k", Model: model})
 		s.Require().NoError(err)
 

@@ -17,10 +17,13 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	usageservice "github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // UsageCommandsSuite runs `router usage` on a database of its own that it empties first.
@@ -57,6 +60,21 @@ func (s *UsageCommandsSuite) SetupTest() {
 	s.settings.Postgres.DSN = own
 	// Nothing is sent from here: a usage service only makes the rows wait to be shipped.
 	s.settings.Usage = config.Usage{URL: "http://usage.invalid:8070", Token: "token"}
+}
+
+// quoted is what used of the item costs at the vendor's rates, and what a job charges for it at
+// the prices a first load writes, both read from vendor.json so a price change there leaves the
+// tests passing.
+func (s *UsageCommandsSuite) quoted(modality routing.Modality, provider, model string, attributes map[string]string,
+	used pricing.Quantities,
+) (base, cost int64) {
+	discard := slog.New(slog.DiscardHandler)
+	atCost, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), discard)
+	s.Require().NoError(err)
+	charged, err := prices.Embedded(nil, release, discard)
+	s.Require().NoError(err)
+	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Attributes: attributes}
+	return pricingtest.Micros(s.T(), atCost, item, used), pricingtest.Micros(s.T(), charged, item, used)
 }
 
 // lostLog is a router's log in which a writer that has closed lost one row, among other lines.

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
@@ -64,7 +62,7 @@ func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRe
 
 	read, passages, err := s.fillKnowledge(ctx, customerID, namespace, request.Body.Documents, request.Body.ChunkSize)
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 
 	s.logger.Info("filled a knowledge base",
@@ -196,7 +194,7 @@ func (s *Server) fillKnowledge(
 	for _, document := range documents {
 		source := strings.TrimSpace(document.Source)
 		if source == "" {
-			return 0, 0, stack.Wrap(errors.New("every document needs a source, which is what its passages are keyed by"))
+			return 0, 0, invalidRequest("every document needs a source, which is what its passages are keyed by")
 		}
 		// A document that is only whitespace is skipped rather than refused: a directory
 		// posted whole often has one in it, and failing the lot over it helps nobody.
@@ -215,7 +213,7 @@ func (s *Server) fillKnowledge(
 	}
 
 	if len(passages) == 0 {
-		return 0, 0, stack.Wrap(errors.New("there is nothing to read in these documents"))
+		return 0, 0, invalidRequest("there is nothing to read in these documents")
 	}
 	writer := s.knowledgeFor(ctx, customerID)
 	if err := writer.Upsert(ctx, namespace, passages); err != nil {

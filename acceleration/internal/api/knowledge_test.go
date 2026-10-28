@@ -66,6 +66,20 @@ func (s *KnowledgeSuite) TestADocumentReadsBackAsThePassagesItWasCutInto() {
 	s.Contains(passages[1].Text, "A day.")
 }
 
+func (s *KnowledgeSuite) TestAProviderFailureIsAServerErrorThatNamesNoInternalNamespace() {
+	s.knowledge.failWrites(true)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge", map[string]any{
+		"namespace": s.namespace,
+		"documents": []map[string]string{{"source": s.source, "text": "# Pricing\n\nA penny."}},
+	})
+
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), s.namespace)
+	s.NotContains(string(payload), "turbopuffer")
+}
+
 func (s *KnowledgeSuite) TestADocumentPostedShorterLeavesNoOldTailBehind() {
 	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
 	s.post("# Pricing\n\nTuppence.")

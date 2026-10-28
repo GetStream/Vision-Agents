@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
@@ -80,6 +81,13 @@ func (c *crawler) serve(text string, err error) {
 	defer c.mu.Unlock()
 	c.page.Text = text
 	c.err = err
+}
+
+// unpaid is a policy for a customer with no credit left.
+type unpaid struct{}
+
+func (unpaid) Admit(context.Context, routing.Owner) (routing.Admission, error) {
+	return routing.Admission{Spend: policy.ErrNoCredits}, nil
 }
 
 // base is a knowledge base kept in memory, keyed the way a real one is, billing each write
@@ -217,7 +225,7 @@ func (s *URLsSuite) SetupTest() {
 	// A small chunk so a page cuts into several passages without needing a long fixture,
 	// which is what the tests about orphans and removal depend on.
 	service, err := New(Options{
-		Store: s.store, Redis: s.redis, Reader: s.reader, Knowledge: metered.NewKnowledge(s.base, s.recorder),
+		Store: s.store, Redis: s.redis, Reader: s.reader, Knowledge: metered.NewKnowledge(s.base, s.recorder, nil),
 		ChunkSize: 200, Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond, RefreshInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
@@ -432,6 +440,22 @@ func (s *URLsSuite) TestAPageThatCouldNotBeReadIsKeptWithTheReason() {
 	s.Empty(s.base.ids(), "a page that could not be read writes nothing")
 }
 
+func (s *URLsSuite) TestAPageOfACustomerWhoMayNotPayIsNeverRead() {
+	s.Require().NoError(s.service.Close())
+	service, err := New(Options{Store: s.store, Redis: s.redis, Reader: s.reader,
+		Knowledge: metered.NewKnowledge(s.base, s.recorder, unpaid{}), Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond})
+	s.Require().NoError(err)
+	s.service = service
+	s.Require().NoError(service.Start())
+
+	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+
+	s.Equal(store.KnowledgeURLFailed, page.State, "every retry was refused")
+	s.Contains(page.Error, policy.ErrNoCredits.Error())
+	s.Zero(s.readsMade(), "a read nobody can be billed for is never made")
+	s.Empty(s.base.ids())
+}
+
 func (s *URLsSuite) TestAPageThatFailedCanBeReadAgainOnceItIsBack() {
 	s.reader.serve("", errors.New("CRAWL_NOT_FOUND"))
 	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
@@ -460,7 +484,7 @@ func (s *URLsSuite) TestAPageRemovedBeforeItWasReadWritesNothing() {
 	// Nothing is reading until the page is gone, so the read finds nothing to read into.
 	s.Require().NoError(s.service.Close())
 	service, err := New(Options{Store: s.store, Redis: s.redis, Reader: s.reader,
-		Knowledge: metered.NewKnowledge(s.base, s.recorder), Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond})
+		Knowledge: metered.NewKnowledge(s.base, s.recorder, nil), Limits: ingest.DefaultLimits, CheckInterval: 10 * time.Millisecond})
 	s.Require().NoError(err)
 	s.service = service
 

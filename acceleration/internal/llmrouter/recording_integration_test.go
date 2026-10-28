@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -212,9 +213,10 @@ func (s *RecordingSuite) TestCacheWritesAndServiceTierReachTheRow() {
 	s.Equal(pricing.Quantities{pricing.CacheWriteInputTokens: 2_386}, row.Meters)
 	s.Equal(map[string]string{"service_tier": "flex", "reasoning_tokens": "7"}, row.Attributes)
 	s.EqualValues(2_389, row.InputTokens, "the input stays the whole prompt")
-	// Half of OpenAI's 6,235 µ$ at the default tier: 3 fresh tokens, 2,386 written at 1.25
-	// times input and 22 generated.
-	s.EqualValues(3_118, row.CostMicros)
+	// 3 fresh tokens, 2,386 written and 22 generated, at the flex tier's rates.
+	flex := pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-5.6-terra", Attributes: map[string]string{"service_tier": "flex"}}
+	s.Equal(pricingtest.Micros(s.T(), s.prices, flex, pricing.Quantities{pricing.InputTokens: 3,
+		pricing.CacheWriteInputTokens: 2_386, pricing.OutputTokens: 22}), row.CostMicros)
 	s.Equal(row.CostMicros, told, "the caller is told what the row costs")
 	repriced := s.prices.Quote(routing.ItemOf(routing.LLM, s.builtIn("openai/gpt-5.6-terra"), row.Attributes), row.Quantities())
 	s.Equal(row.CostMicros, repriced.CostMicros, "the row alone prices to what it was charged")
@@ -228,7 +230,8 @@ func (s *RecordingSuite) TestAResponseWithNothingBeyondItsTokensStoresNoMeters()
 
 	s.Empty(row.Meters)
 	s.Empty(row.Attributes)
-	s.EqualValues(3, row.CostMicros)
+	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt-6-luna"},
+		pricing.Quantities{pricing.InputTokens: 9, pricing.OutputTokens: 5}), row.CostMicros)
 }
 
 // counted is what the router's counter of that name has counted for the series with those

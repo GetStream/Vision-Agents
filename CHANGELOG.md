@@ -131,7 +131,39 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 `knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
+### GPT-6.1 Terra is `openai/gpt-6.1-terra`
+
+OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
+
+### Fish Audio S2.1 Pro is `fish/s2.1-pro`
+
+Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH_API_KEY` and voices, at $15 per 1M characters. `fish/s2-pro` is still served, and a `fish` target that names no model still gets `drama-3`.
+
+### Fish Audio's live transcriber is `fish/transcribe-stream-1`
+
+The router now streams to `fish/transcribe-stream-1`, reachable by name or by any shortcut whose terms it satisfies. It needs `FISH_API_KEY`, covers 29 languages, and declares `keyterms`, which can change on an open stream, and `endpointing`; `silence_ms` is its `silence_timeout_ms`, at least 3000 in its own turn detection. It ends a turn when the words read as finished, and a turn the server judges is not the caller's (noise, a television, another voice) is never reported. Sound tags such as `[laughter]` are taken out of the text. `eager_end_of_turn` turns on its early guess. `overwrites` takes `mode` (`auto`, `vad`) and `silence_timeout_ms`. $0.36 an audio hour.
+
 ## Bug Fixes
+
+### A scheduled task's reply cut off as its provider fails is run again
+
+When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
+
+### A bad key a provider refuses after accepting the websocket handshake is counted as refused
+
+`router_keypool_refused_attempts_total` now counts, with `status` `invalid_key`, a key a provider accepts at the websocket handshake and refuses right after, once per connection: Gemini Live's close 1007 "API key not valid", OpenAI Realtime's and Together's `invalid_api_key` frame, AssemblyAI's Error 1008 "Invalid API key" or "API key is disabled", ElevenLabs Scribe's `auth_error`, ElevenLabs speech's `invalid_api_key` and Inworld's code 7 "API key does not exist or was deleted" or "Invalid authorization credentials". AssemblyAI's 1008 "Insufficient funds" and "No metronome account found" frames are counted with status `402`. Any other frame or close is not counted, and the key is not rested. OpenAI Realtime and Together Nemotron now report the provider's reason for refusing a session, not "expected session.created" (AI-2164).
+
+### ElevenLabs voices are priced at their current rates
+
+`eleven_flash_v2_5` and `eleven_v3_conversational` are $40, and `eleven_multilingual_v2` and `eleven_v3` $80, per 1M characters in `prices/vendor.json`, ElevenLabs' current API rates. A deployment whose database already holds these four keeps its prices until they are edited there.
+
+### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
+
+`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
+
+### A key refused while voices are listed or cloned is counted
+
+The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a key the pool rests on them (a 429, a spent quota) rests for calls too. They still send on the provider's first key and never move to another, so a cloned voice is listed and deleted on the account that made it. Before, they sent on the first key outside the pool, so a refused key went uncounted there.
 
 ### Every 401 and 402 on a pooled key is counted as refused
 
@@ -168,6 +200,10 @@ Only the first 128 bytes of a heading, cut between characters, are now repeated 
 ### A knowledge base can have any name
 
 A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
+
+### A knowledge write is refused when its organization may not pay for it
+
+`POST /v1/agents/knowledge`, a directory sync with knowledge and the URL crawler are admitted as a model call is before they write: a suspended organization is a 403 `account_suspended`, no credit or a spent limit a 402, one end user's spent limit a 429 with Retry-After. Nothing is written. Deleting a document is never refused for money. The URL crawler does not read a page for an organization that is refused: the page fails with the reason and is retried like any other. A provider failure while writing is now a 500 "something went wrong" rather than a 400 carrying the provider's response (AI-1990).
 
 ### The agent tells people apart in a group text chat
 
