@@ -72,6 +72,21 @@ func (s *SearchSuite) TestATargetNothingAnswersToIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *SearchSuite) TestAModelNamedOutsideTheOptionsIsRefused() {
+	for _, model := range []any{"nobody/nothing", "", 5, map[string]any{}, []string{"nobody/nothing"}} {
+		request := map[string]any{"query": "how much does a call cost"}
+		request["model"] = model
+		s.assertTopLevelModelRefused("/v1/search", request)
+	}
+}
+
+func (s *SearchSuite) TestANullModelIsServedAsNoModel() {
+	request := map[string]any{"query": "how much does a call cost"}
+	request["model"] = nil
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", request)
+	s.Equal(http.StatusOK, status, string(payload))
+}
+
 func (s *SearchSuite) TestACostLabelThatIsNotOneIsRefused() {
 	status, _ := s.serverClient.failure(http.MethodPost, "/v1/search", SearchRequest{
 		Query: "how much does a call cost", Tags: &map[string]string{"not a key": "x"}})

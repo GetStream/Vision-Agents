@@ -37,6 +37,9 @@ func (s *Server) detect(ctx context.Context, request *detectRequest) (*detectRes
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
+	if request.Body.Model != nil {
+		return nil, errTopLevelModel
+	}
 	body := request.Body
 	sent := value(body.Options)
 	looking := detection.Request{
@@ -149,6 +152,9 @@ type DetectionRequest struct {
 	Image   []byte             `json:"image" doc:"The image, base64. A JPEG or PNG of at most 4 MB and 4096 pixels a side; a video frame scaled to 1024 wide is plenty." format:"byte" nullable:"false"`
 	Options *DetectionOptions  `json:"options,omitempty"`
 	Tags    *map[string]string `json:"tags,omitempty"`
+
+	// Model is never accepted: it is read only to refuse it (errTopLevelModel).
+	Model any `json:"model,omitempty" hidden:"true"`
 }
 
 // DetectionOptions is the DetectionOptions schema.
