@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,6 +244,136 @@ func (s *EventForwardingSuite) TestAMessageTheStoreFailsToQueueIsNotClaimed() {
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM channel_thread_messages WHERE channel_id = ? AND kind = ?", s.threadChannel(), store.ClaimInbound).Scan(&claims))
 	s.Zero(claims)
+}
+
+// A provider that hangs up while its message is queued cancels the request's context
+// (net/http). The message is queued all the same, so the provider's retry, dropped as one, loses
+// nothing.
+func (s *EventForwardingSuite) TestAMessageWhoseRequestEndsWhileItIsQueuedIsWritten() {
+	s.answering(s.connectedBot())
+	s.trigger("slow_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'", "PERFORM pg_sleep(1);")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().NoError(err)
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A message the store fails to queue after its provider hung up still releases its claim, so the
+// provider's retry queues it.
+func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIsNotClaimed() {
+	s.answering(s.connectedBot())
+	drop := s.trigger("failing_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'",
+		"PERFORM pg_sleep(1); RAISE EXCEPTION 'synthetic queue failure';")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	s.Zero(s.inboundClaims())
+	drop()
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A queue insert that hangs is cut short by its bound, and the claim is released on a bound of
+// its own, so the provider gets its error in time and its retry queues the message.
+func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNotClaimed() {
+	s.answering(s.connectedBot())
+	drop := s.trigger("hanging_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'", "PERFORM pg_sleep(3);")
+	bounded := s.boundedRouter(200 * time.Millisecond)
+
+	started := time.Now()
+	_, err := bounded.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().Error(err)
+	s.Less(time.Since(started), 2*time.Second, "the insert was not cut short")
+	s.Zero(s.inboundClaims())
+	drop()
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A release that hangs after the queue failed is cut short by its bound too: the provider gets
+// its error in time. The claim stays then, until the claim and the queue are one transaction
+// (AI-2150).
+func (s *EventForwardingSuite) TestAMessageWhoseReleaseHangsIsAnsweredInTime() {
+	s.answering(s.connectedBot())
+	s.trigger("hanging_inbound_release", "channel_thread_messages", "DELETE",
+		"OLD.channel_id IN (SELECT channel_id FROM channel_threads WHERE customer_id = '"+s.customerID()+"')", "PERFORM pg_sleep(3);")
+	bounded := s.boundedRouter(200 * time.Millisecond)
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+
+	started := time.Now()
+	_, err := bounded.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+
+	s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the release's failure is answered")
+	s.Less(time.Since(started), 2*time.Second, "the release was not cut short")
+}
+
+// deliverHangingUp delivers message on a request whose provider hangs up once the message is
+// claimed, as net/http cancels the request's context, and answers what Deliver did.
+func (s *EventForwardingSuite) deliverHangingUp(message core.InboundMessage) error {
+	ctx, hangUp := context.WithCancel(context.Background())
+	defer hangUp()
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.bridge.Deliver(ctx, s.app, []core.InboundMessage{message}, nil)
+		done <- err
+	}()
+	s.Require().Eventually(func() bool { return s.inboundClaims() == 1 }, settleFor, 5*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // the insert is in its trigger
+	hangUp()
+	return <-done
+}
+
+// inboundClaims is how many inbound messages the bridge claimed in the test customer's thread
+// channels.
+func (s *EventForwardingSuite) inboundClaims() int {
+	var claims int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_messages m JOIN channel_threads t USING (channel_id) WHERE t.customer_id = ? AND m.kind = ?",
+		s.customerID(), store.ClaimInbound).Scan(&claims))
+	return claims
+}
+
+// trigger runs body before each op on table for a row where when holds, until the test ends or
+// drop. The table is in the suite's own database (database), and when names the test's
+// customer, so no other test's rows meet it.
+func (s *EventForwardingSuite) trigger(name, table, op, when, body string) (drop func()) {
+	db := s.store.DB()
+	_, err := db.ExecContext(context.Background(), "CREATE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
+		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
+	s.Require().NoError(err)
+	var once sync.Once
+	drop = func() {
+		once.Do(func() {
+			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+			s.Require().NoError(err)
+			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS "+name+"()")
+			s.Require().NoError(err)
+		})
+	}
+	s.T().Cleanup(drop)
+	return drop
+}
+
+// boundedRouter is another router's bridge whose store writes off the request are bounded by
+// timeout, its worker not started.
+func (s *EventForwardingSuite) boundedRouter(timeout time.Duration) *channelbridge.Bridge {
+	options := s.channelBridgeOptions(slog.New(slog.DiscardHandler))
+	options.QueueTimeout = timeout
+	bridge, err := channelbridge.New(options)
+	s.Require().NoError(err)
+	return bridge
 }
 
 // One thread's messages are given up minutes apart, after the first one's forward was sent and

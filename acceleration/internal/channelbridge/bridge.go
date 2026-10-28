@@ -69,6 +69,13 @@ const writeTimeout = 30 * time.Second
 // after a refused credential (core.Transports).
 const sendTimeout = 20 * time.Second
 
+// defaultQueueTimeout bounds each store write Deliver finishes off the request (detached): the
+// queue insert of a claimed message, and the release of its claim or the return of the
+// replies it took when that fails. It is chatlog's writeTimeout for one write, 10 s; the
+// provider, which waits a few seconds, may have hung up by then, and its retry finds the
+// message queued or unclaimed.
+const defaultQueueTimeout = 10 * time.Second
+
 // maxAnswerBytes caps what of a provider's answer to a reply is read, to check it was sent.
 // chat.postMessage answers the posted message (https://docs.slack.dev/reference/methods/chat.postMessage),
 // so 1 MiB is far over its size; the cap a 401's body is read with in core.Transports.
@@ -196,6 +203,9 @@ type Options struct {
 	// InboundPoll is the shortest wait between looks for queued inbound messages while some are
 	// queued. Zero is defaultInboundPoll. Tests shorten it.
 	InboundPoll time.Duration
+	// QueueTimeout bounds each store write Deliver finishes off the request (detached). Zero
+	// is defaultQueueTimeout. Tests shorten it.
+	QueueTimeout time.Duration
 	// Unanswered queues a delivery for the customer's event destinations of unhandled events
 	// (eventforward.Forwarder.ForwardUnanswered), for a queued message the worker gave up. Nil
 	// forwards nothing.
@@ -229,6 +239,8 @@ type Bridge struct {
 	inboundRetries []time.Duration
 	inboundPoll    time.Duration
 	unanswered     func(ctx context.Context, event eventforward.Event) error
+	// queueTimeout bounds each store write Deliver finishes off the request (Options).
+	queueTimeout time.Duration
 	// kick wakes the worker: a message was queued, or a slot freed.
 	kick chan struct{}
 	// slots holds one token for each queued message being written.
@@ -266,6 +278,10 @@ func New(options Options) (*Bridge, error) {
 	if inboundPoll <= 0 {
 		inboundPoll = defaultInboundPoll
 	}
+	queueTimeout := options.QueueTimeout
+	if queueTimeout <= 0 {
+		queueTimeout = defaultQueueTimeout
+	}
 	cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream})
 	if err != nil {
 		return nil, err
@@ -286,6 +302,7 @@ func New(options Options) (*Bridge, error) {
 		inboundRetries: inboundRetries,
 		inboundPoll:    inboundPoll,
 		unanswered:     options.Unanswered,
+		queueTimeout:   queueTimeout,
 		kick:           make(chan struct{}, 1),
 		slots:          make(chan struct{}, inboundInFlight),
 		ctx:            ctx,
@@ -370,13 +387,17 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		}
 		// After the claim, so a retried delivery queues nothing; the worker opens the episode,
 		// so a message the gate held back opens no card. A store that fails releases the claim,
-		// so the provider's retry queues it.
-		if _, err := b.store.QueueChannelInbound(ctx, store.ChannelInbound{
+		// so the provider's retry queues it. Off the request, so a provider that hangs up meanwhile
+		// leaves the message queued, or unclaimed, not claimed with no row.
+		queuing, cancel := b.detached(ctx)
+		_, err = b.store.QueueChannelInbound(queuing, store.ChannelInbound{
 			ChannelID: thread.ChannelID, ProviderMessageID: message.ProviderMessageID, CustomerID: thread.CustomerID,
 			ConnectorID: message.ConnectorID, ProviderUnitID: message.ProviderUnitID, ThreadKey: message.ThreadKey,
 			ConfigID: config.ID, ConfigName: config.Name, AuthorID: message.AuthorID, Text: message.Text,
 			Media: message.Media, Raw: message.Raw, Forward: failed, NextAttemptAt: time.Now(),
-		}); err != nil {
+		})
+		cancel()
+		if err != nil {
 			return false, b.unclaim(ctx, thread, message, err)
 		}
 		b.wake()

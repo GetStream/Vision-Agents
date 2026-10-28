@@ -184,7 +184,16 @@ func telnyxAnswered(raw []byte) bool {
 
 // unclaim releases a message's inbound claim after err, so its next delivery is taken again.
 func (b *Bridge) unclaim(ctx context.Context, thread store.ChannelThread, message core.InboundMessage, err error) error {
-	return errors.Join(err, b.store.ReleaseChannelThreadMessage(ctx, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID))
+	releasing, cancel := b.detached(ctx)
+	defer cancel()
+	return errors.Join(err, b.store.ReleaseChannelThreadMessage(releasing, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID))
+}
+
+// detached is ctx without its cancellation, bounded by queueTimeout, for a store write Deliver
+// finishes whatever the request does: a provider that hangs up cancels the request's context
+// (net/http), and a claim left with no queued row drops the provider's retry as a retry.
+func (b *Bridge) detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), b.queueTimeout)
 }
 
 // useCase is the 10DLC use case a thread's line sends as, whose texts answer a keyword
