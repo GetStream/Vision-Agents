@@ -40,9 +40,8 @@ type Cartesia struct {
 
 // NewCartesia validates the options and returns a cloner.
 func NewCartesia(options CartesiaOptions) (*Cartesia, error) {
-	if options.APIKey == "" {
-		options.APIKey = keypool.FromEnv("", "CARTESIA_API_KEY").Peek()
-	}
+	keys := keypool.FromEnv(options.APIKey, "CARTESIA_API_KEY")
+	options.APIKey = keys.Peek()
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set CARTESIA_API_KEY)")
 	}
@@ -52,7 +51,7 @@ func NewCartesia(options CartesiaOptions) (*Cartesia, error) {
 	if options.Language == "" {
 		options.Language = "en"
 	}
-	return &Cartesia{options: options, client: client(options.Timeout)}, nil
+	return &Cartesia{options: options, client: client(keys, keypool.Bearer, options.Timeout)}, nil
 }
 
 // Prepare uploads the first recording and returns the voice id sessions ask for. Cartesia
