@@ -300,7 +300,7 @@ func (s *InboundSuite) TestAMessageThatNeverGetsThroughIsGivenUpAndItsDeliveryFo
 	s.Require().Eventually(func() bool { return s.row(thread, "m-2").State == store.ChannelInboundFailed }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(store.ChannelInboundFailed, s.row(thread, "m-1").State)
 	s.Equal(3, s.row(thread, "m-1").Attempts, "the first attempt and the two waits")
-	s.Equal(2, strings.Count(s.logs.String(), "level=WARN msg=\"gave up an inbound message"))
+	s.Equal(2, strings.Count(s.logs.String(), "level=WARN msg=\"gave up an inbound message: it was never written into its thread channel or handed to the agent, so no agent answers it\""))
 	var deliveries []store.EventDelivery
 	s.Require().NoError(s.store.DB().NewSelect().Model(&deliveries).Where("destination_id = ?", destination).Scan(s.ctx))
 	s.Require().Len(deliveries, 1)
@@ -763,6 +763,7 @@ func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain()
 	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(1, s.row(thread, "m-1").Attempts)
 	s.Len(s.chat.Stored(thread.ChannelID), 1)
+	s.Contains(s.logs.String(), `msg="an inbound message was not written into its thread channel or not handed to the agent, and is tried again"`)
 }
 
 // A message whose turn was claimed before, by an attempt whose router stopped before it
