@@ -169,11 +169,19 @@ or Bandwidth then knows only the join and leave, and an unanswered one is `unkno
 
 A busy, unanswered, failed or canceled call ends its session at once, rather than leaving the
 agent to wait out its start timeout. It is ended off the vendor's request, on this router or
-on the node holding the session. A status that arrives before the session opens, as a busy
-often does, refuses the session instead: opening it answers 409 `call_unanswered`, naming the
-outcome, before the agent joins the call. A campaign contact refused this way is `done`, and
-a scheduled task's call `not_answered`. A session
-whose phone joined is never ended this way.
+on the node holding the session. A session whose phone joined is never ended this way.
+
+A status that arrives before the session opens, as a busy often does, refuses the session:
+opening it answers 409 `call_unanswered`, naming the outcome. Read before the agent joins the
+call, it leaves no session and no call row behind. Read again once the session is held, for a
+status that came during the join, it ends the session just opened: the agent has joined, the
+session row is kept as ended, and opening the id again answers `session_exists`. A session
+that ended unanswered is not carried on in writing: watching it or writing to it answers the
+same 409.
+
+A campaign contact refused this way is `done` with its `call_id` set and its `outcome` read
+from `phone_calls`; when no session ever opened, that `call_id` names no session or call row.
+A scheduled task's call refused this way is `not_answered`.
 
 A dial the vendor refuses keeps nothing: the call never rang, so it has no outcome.
 
@@ -189,6 +197,8 @@ from and to which number, when the phone joined and left, and the outcome with t
 own word for it. The status token is cleared once the longest call could be over, plus an
 hour; a post after that is a 404, and the outcome stays. A session reads it as
 `call_outcome`: the outcome, `answered_at` and `duration_seconds`, from the join to the leave.
+A call whose session was refused before it opened has no session to read it on; a campaign
+contact shows it as `outcome`.
 
 Phone is recorded but not routed: there is one vendor per number, chosen by the customer, so
 the provider and route paths do not serve the modality while the statistics paths do.

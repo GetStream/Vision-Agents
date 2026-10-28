@@ -181,6 +181,9 @@ type Manager struct {
 	conversations *persistent.Service
 	options       ManagerOptions
 	logger        *slog.Logger
+	// outcomes is how each call the router placed ended, which a phone session is refused
+	// on when nobody answered. Nil without a store.
+	outcomes *outcome.Keeper
 	// calls records conversations so they can be found after this process is gone. Nil
 	// without a store, in which case a call is only ever what is happening now.
 	calls *callRecorder
@@ -267,6 +270,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now)
 		written = newSessionRecorder(options.Store, options.Logger)
 		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
@@ -946,10 +950,21 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
 	}
 	// Asked again now the session is held: a status that came while the call was being
-	// joined found no session to end, and one that comes after this finds it.
-	if err := m.unanswered(ctx, spec); err != nil {
+	// joined found no session to end, and one that comes after this finds it. The session
+	// has joined by now, so a refusal here ends it rather than never opening it.
+	err = m.unanswered(ctx, spec)
+	m.mu.Lock()
+	ended := m.sessions[created.id] != created
+	m.mu.Unlock()
+	if err != nil || ended {
 		opened = true
 		m.end(created, TimeoutUnanswered)
+		// A status that ended it before the hold above found no claim to take back, so the
+		// hold would otherwise be renewed for a session nobody holds.
+		m.release(created.id)
+		if err == nil {
+			err = stack.Wrap(errors.New("session: the session ended as it opened"))
+		}
 		return nil, err
 	}
 	// A phone call's episode card, once the session holds the call (T41).
@@ -974,10 +989,10 @@ func (e *CallUnansweredError) Error() string {
 // unanswered is the CallUnansweredError a phone session is refused with, or nil. A call it
 // cannot read is opened as before.
 func (m *Manager) unanswered(ctx context.Context, spec Spec) error {
-	if spec.Phone == nil || m.options.Phone == nil || m.options.Phone.Outcomes() == nil {
+	if spec.Phone == nil || m.outcomes == nil {
 		return nil
 	}
-	call, err := m.options.Phone.Outcomes().Read(ctx, spec.CustomerID, spec.ID)
+	call, err := m.outcomes.Read(ctx, spec.CustomerID, spec.ID)
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return nil
 	}

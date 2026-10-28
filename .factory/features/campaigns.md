@@ -35,7 +35,9 @@ trunks, so a second call from a number no longer fails while the first is up. Se
 Listing a campaign's contacts gives each one rung the `outcome` of its call, read by its
 `call_id` from [telephony](telephony.md#how-a-placed-call-ended). The `state` says only whether
 they were rung: a contact nobody answered is `done`, with `outcome` `no_answer`. Nobody is rung
-again for it.
+again for it. A call reported busy, failed or canceled before its session opened is `done`
+the same way, but its session was never opened, so its `call_id` names no session or call
+row: the outcome is on the contact only.
 
 ## Contacts are claimed, not handed out
 

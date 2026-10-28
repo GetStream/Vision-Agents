@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -597,6 +599,31 @@ func (s *ScheduledTasksSuite) TestACallThatWasPlacedIsNotGivenBackWhenItFails() 
 	s.Len(s.sink.to(rung), 1, "an attempt after the one that rang rings nobody")
 }
 
+func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() {
+	s.placingCalls()
+	reported := make(chan error, 1)
+	s.sink.mu.Lock()
+	s.sink.dialled = func(statusURL string) {
+		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Busy, "busy")
+		reported <- err
+	}
+	s.sink.mu.Unlock()
+	s.T().Cleanup(func() {
+		s.sink.mu.Lock()
+		s.sink.dialled = nil
+		s.sink.mu.Unlock()
+	})
+	task := s.silentTask([]string{"phone"})
+	run := s.runOf(task, time.Now(), "")
+
+	_, _, err := s.router.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
+
+	s.Require().NoError(<-reported)
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonNotAnswered, failure.Reason)
+	s.True(failure.Final, "the user was rung already")
+}
+
 // placingCalls has the router place calls for the test: Telnyx is the suite's
 // channel sink, which takes the call, and the trunk and rule the call rings
 // into are made at the suite's Stream.
@@ -620,8 +647,10 @@ func (s *ScheduledTasksSuite) placingCalls() {
 		Registry: registry,
 		Store:    s.store,
 		Gate:     s.gate,
-		Stream:   phone.NewStreamFromClient(bound.Client),
-		Logger:   slog.New(slog.DiscardHandler),
+		// So the vendor is sent a status URL, which the sink can report a call's end to.
+		PublicURL: "https://router.test",
+		Stream:    phone.NewStreamFromClient(bound.Client),
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	kept := s.router.phone

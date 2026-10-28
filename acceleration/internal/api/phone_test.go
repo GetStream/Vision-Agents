@@ -501,8 +501,8 @@ func (s *CallStatusSuite) TestADeviceIsNotShownTheCallOutcome() {
 }
 
 func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
-	// The suite has no telephony to place a call with, so the session is opened as the phone
-	// service opens one, by the manager.
+	// The suite's vendors have no credentials to place a call with, so the session is opened
+	// as the phone service opens one, by the manager.
 	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
 		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
@@ -540,7 +540,7 @@ func (s *CallStatusSuite) TestOpeningASessionAfterItsCallWasBusyIsRefused() {
 	s.Equal(outcome.Busy, s.read(id).Outcome)
 }
 
-func (s *CallStatusSuite) TestASessionOpenedAfterItsCallCompletedIsNotEnded() {
+func (s *CallStatusSuite) TestASessionOpensAfterItsCallCompleted() {
 	id := s.utils.uuid()
 	token, _ := s.placedFor(id)
 	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"completed"}}))
@@ -552,7 +552,7 @@ func (s *CallStatusSuite) TestASessionOpenedAfterItsCallCompletedIsNotEnded() {
 	s.True(s.manager.Running(id))
 }
 
-func (s *CallStatusSuite) TestASessionOpenedWhileItsCallRingsIsNotEnded() {
+func (s *CallStatusSuite) TestASessionOpensWhileItsCallRings() {
 	id := s.utils.uuid()
 	s.placedFor(id)
 
@@ -561,4 +561,18 @@ func (s *CallStatusSuite) TestASessionOpenedWhileItsCallRingsIsNotEnded() {
 
 	s.Equal(http.StatusCreated, status, answered.Error.Message)
 	s.True(s.manager.Running(id))
+}
+
+func (s *CallStatusSuite) TestASessionEndedUnansweredIsNotCarriedOnWhenWatched() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, answered := s.openPhoneSession(id)
+	s.Require().Equal(http.StatusCreated, status, answered.Error.Message)
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 5*time.Second, 20*time.Millisecond)
+
+	_, watched := s.serverClient.watch("/v1/agents/sessions/" + id + "/events")
+
+	s.Equal(http.StatusConflict, watched)
+	s.False(s.manager.Running(id), "the session was carried on in writing")
 }

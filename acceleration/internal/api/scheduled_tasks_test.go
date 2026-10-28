@@ -2493,6 +2493,9 @@ type channelSink struct {
 	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
 	// to a number outside the US and Canada.
 	refusingMedia map[string]bool
+	// dialled, when set, is told the status URL of every call placed, before the call is
+	// answered as placed.
+	dialled func(statusURL string)
 }
 
 // refuseMedia has the provider refuse every file sent to number, and take its words.
@@ -2517,11 +2520,18 @@ func (c *channelSink) fail(number string, times int) {
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To    string          `json:"to"`
-		Text  json.RawMessage `json:"text"`
-		Media []string        `json:"media_urls"`
+		To             string          `json:"to"`
+		Text           json.RawMessage `json:"text"`
+		Media          []string        `json:"media_urls"`
+		StatusCallback string          `json:"StatusCallback"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	c.mu.Lock()
+	dialled := c.dialled
+	c.mu.Unlock()
+	if dialled != nil && body.StatusCallback != "" {
+		dialled(body.StatusCallback)
+	}
 	text := ""
 	var meta struct {
 		Body string `json:"body"`

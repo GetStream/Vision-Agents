@@ -280,22 +280,26 @@ func (r *Runner) ring(
 	}
 
 	created, err := r.sessions.Create(ctx, spec)
-	if _, unanswered := errors.AsType[*session.CallUnansweredError](err); unanswered {
-		// Done, as a call nobody answered is once its session ends.
-		finished.CallID = spec.ID
-		r.finish(ctx, finished)
-		return
-	}
 	if err != nil {
-		finished.State = store.Failed
-		finished.Error = err.Error()
-		r.finish(ctx, finished)
+		r.finish(ctx, unopened(finished, spec.ID, err))
 		return
 	}
 	finished.CallID = created.ID()
 
 	r.hold(ctx, created)
 	r.finish(ctx, finished)
+}
+
+// unopened is what became of contact when the session of its call, callID, did not open. One
+// nobody answered is done, as a call that rang out is, its outcome read by callID.
+func unopened(contact store.Contact, callID string, err error) store.Contact {
+	if _, unanswered := errors.AsType[*session.CallUnansweredError](err); unanswered {
+		contact.CallID = callID
+		return contact
+	}
+	contact.State = store.Failed
+	contact.Error = err.Error()
+	return contact
 }
 
 // placing is the call one contact is rung on. The answered leg is routed into the call of
