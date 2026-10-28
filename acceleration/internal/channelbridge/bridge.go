@@ -67,6 +67,9 @@ type Written struct {
 	// Author is the Stream user the person writes as (AuthorUserID).
 	Author      string
 	Attachments []getstream.Attachment
+	// bounced is a message Stream Chat answered with type "error", as a moderation block does:
+	// it sends no message.new for one, so the agent is not handed it either.
+	bounced bool
 }
 
 // Answer hands the agent a message the worker wrote into thread (api.Server.AnswerQueued). It
@@ -828,7 +831,8 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		return Written{}, stack.Wrap(err)
 	}
 	stored := sent.Data.Message
-	return Written{ID: stored.ID, Text: stored.Text, Author: stored.User.ID, Attachments: stored.Attachments}, nil
+	return Written{ID: stored.ID, Text: stored.Text, Author: stored.User.ID, Attachments: stored.Attachments,
+		bounced: stored.Type == "error"}, nil
 }
 
 // rewritten is the message an attempt whose write Stream Chat refused as already done wrote

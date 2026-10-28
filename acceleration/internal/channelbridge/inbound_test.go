@@ -722,6 +722,24 @@ func (s *InboundSuite) TestAMessageStreamChatAlreadyHoldsIsHandedToTheAgentFromI
 	s.Equal(0, s.row(thread, "m-1").Attempts)
 }
 
+// Stream Chat bounces a message it does not keep, as a moderation block does: its answer has
+// type error, and Stream Chat sends no message.new for it, so the agent is not handed it
+// either. The message is done.
+func (s *InboundSuite) TestAMessageStreamChatBouncesIsNotHandedToTheAgent() {
+	thread := s.thread("fake_line")
+	id := inboundMessageID(thread.ChannelID, "m-1")
+	s.queue(thread, "m-1", "hello", nil)
+	s.answerWith("/"+thread.ChannelID+"/message", http.StatusCreated,
+		`{"message":{"id":"`+id+`","type":"error","text":"Message was blocked by moderation policies","user":{"id":"`+
+			AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE")+`"}},"duration":"1ms"}`)
+	handed := s.handedTo(nil)
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Empty(handed, "the agent is handed nothing")
+	s.Contains(s.logs.String(), `msg="an inbound message Stream Chat bounced is not handed to the agent" connector=fake_line customer=`+
+		s.customer+" channel="+thread.ChannelID)
+}
+
 // The agent's claim of the turn failing is the attempt failing: the message stays queued, and
 // the next attempt, refused by Stream Chat as written, hands it over again, then it is done.
 func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain() {

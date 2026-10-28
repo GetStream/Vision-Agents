@@ -250,6 +250,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if b.answer == nil {
 		return nil
 	}
+	if written.bounced {
+		log.Info("an inbound message Stream Chat bounced is not handed to the agent", "message", id)
+		return nil
+	}
 	turn, err := b.answer(ctx, thread, written)
 	if err != nil || turn == nil {
 		return err
