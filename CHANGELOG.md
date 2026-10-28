@@ -149,6 +149,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
 
+### A deleted agent's scheduled tasks are paused when its caller hangs up after the delete
+
+`DELETE /v1/agents/configs/{id}` now pauses the deleted config's scheduled tasks even if the caller hangs up after the delete is made. Before, those tasks could stay active, and every occurrence failed because the config was gone (AI-2183).
+
 ### An audit row is kept when its caller hangs up after the change
 
 A caller that hangs up right after a change is made no longer loses the change's audit row. In `GET /v1/agents/connector-audit` this is the `grant_revoked` row of a delete (a connection's, a user's or a connector's) and the `grant_created` row of a consent or a credentials save. In `POST /v1/audit/query` it is every configuration change. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
