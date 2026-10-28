@@ -257,6 +257,10 @@ func (s *Store) ClaimChannelInbound(ctx context.Context, now time.Time, limit in
 // on it again («the second updater ... re-evaluates its WHERE condition»: Read Committed
 // Isolation Level, https://www.postgresql.org/docs/16/transaction-iso.html). Without the
 // check in due, a row another router just leased is leased again.
+//
+// RETURNING names ChannelInbound's columns rather than cti.*: bun refuses a column the model
+// lacks, so after a later migration adds one, a build rolled back to this one would lease rows
+// and fail to read them.
 const claimChannelInboundQuery = `
 WITH head AS (
     SELECT DISTINCT ON (cti.channel_id) cti.seq
@@ -275,7 +279,9 @@ UPDATE channel_thread_inbound AS cti
 SET next_attempt_at = ?
 FROM due
 WHERE cti.seq = due.seq
-RETURNING cti.*`
+RETURNING cti.seq, cti.channel_id, cti.provider_message_id, cti.customer_id, cti.connector_id, cti.provider_unit_id,
+    cti.thread_key, cti.config_id, cti.config_name, cti.author_id, cti.text, cti.media, cti.raw, cti.forward, cti.state,
+    cti.keyword_answered, cti.attempts, cti.next_attempt_at, cti.created_at, cti.finished_at`
 
 // claimChannelInbound runs query, ClaimChannelInbound's statement or a test's variant of it
 // with a pause in it, with ClaimChannelInbound's arguments.
