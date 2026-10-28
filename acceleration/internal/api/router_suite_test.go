@@ -76,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -806,6 +807,15 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)
 	return recorder
+}
+
+// vendorPriced is what the row's work costs at the vendor list's rates, as telephonyRecorder
+// prices it, read from vendor.json so a price change there leaves the tests passing.
+func (s *RouterSuite) vendorPriced(row store.Request) int64 {
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	item := pricing.Item{Modality: row.Modality, Provider: row.Provider, Model: row.Model, Attributes: row.Attributes}
+	return pricingtest.Micros(s.T(), list, item, row.Quantities())
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.

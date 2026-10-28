@@ -388,12 +388,12 @@ func (s *DLCSuite) TestARegisteredBrandAndCampaignAreBilledOnce() {
 	time.Sleep(500 * time.Millisecond)
 	read()
 	s.Require().Len(fees[dlc.ModelBrand], 1)
-	s.Equal(int64(4_500_000), fees[dlc.ModelBrand][0].CostMicros)
+	s.Equal(s.vendorPriced(fees[dlc.ModelBrand][0]), fees[dlc.ModelBrand][0].CostMicros)
 	s.Equal(dlc.OriginFees, fees[dlc.ModelBrand][0].APIKey, "Stream's review is no request of the app's")
 	s.Require().Len(fees[dlc.ModelCampaign], 1)
-	s.Equal(int64(15_000_000), fees[dlc.ModelCampaign][0].CostMicros, "the carriers' review")
+	s.Equal(s.vendorPriced(fees[dlc.ModelCampaign][0]), fees[dlc.ModelCampaign][0].CostMicros, "the carriers' review")
 	for _, month := range fees[dlc.ModelCampaignMonth] {
-		s.Equal(int64(10_000_000), month.CostMicros, "a customer care campaign's month")
+		s.Equal(s.vendorPriced(month), month.CostMicros, "a customer care campaign's month")
 		s.True(month.Billable)
 	}
 }
