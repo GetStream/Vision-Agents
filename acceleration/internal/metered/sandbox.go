@@ -71,7 +71,14 @@ const (
 	LabelSession      = "stream.session"
 	// LabelRegion is the region the sandbox runs in, such as eu: the owner's policies' region.
 	LabelRegion = "stream.region"
+	// LabelAccount is SandboxAccountCustomer on a sandbox made in the owner's own Daytona
+	// organization, on the key they keep for its region, and absent on one in the deployment's.
+	LabelAccount = "stream.account"
 )
+
+// SandboxAccountCustomer is LabelAccount's value on a sandbox made in its owner's own
+// organization.
+const SandboxAccountCustomer = "customer"
 
 // SandboxSecretsBroker is the code_sandbox.broker setting that keeps a sandbox's connector
 // credentials with Daytona (SandboxSecrets).
@@ -96,6 +103,10 @@ type SandboxesOptions struct {
 	Targets map[string]string
 	// Regions says which region an owner's sandbox runs in. Nil is the default region.
 	Regions routing.Regioner
+	// Keys are the keys customers keep for their own Daytona organizations: an owner who keeps
+	// one for their region has their sandboxes made there. Nil makes every one in the
+	// deployment's.
+	Keys routing.CustomerKeys
 	// Every is how long a slice of a sandbox's time runs. Zero is routing.SliceEvery.
 	Every  time.Duration
 	Logger *slog.Logger
@@ -137,6 +148,10 @@ type SandboxSpec struct {
 // organization, so one labelled with no app is nobody's to bill or tell apart, and one with no
 // session is deleted by the sweep while it runs. So is an owner whose policies keep their work
 // in a region no Daytona target serves: their code is never run in another.
+//
+// An owner who keeps a Daytona key for their region has the sandbox made in their own
+// organization on it, on the same target, labelled LabelAccount, its secrets kept there too, and
+// its time priced at the BYOK entry.
 func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
 	switch {
 	case owner.CustomerID == "":
@@ -157,11 +172,34 @@ func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxS
 	}
 	labels := s.Labels(owner)
 	labels[LabelRegion] = region
+	key, byok, err := s.customerKey(ctx, owner.CustomerID, region)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, broker := s.options.APIKey, spec.Broker
+	if byok {
+		apiKey, labels[LabelAccount] = key, SandboxAccountCustomer
+		if secrets, ok := broker.(*daytona.Secrets); ok {
+			if broker, err = secrets.WithAPIKey(key); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return daytona.New(daytona.Options{
-		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Target: target, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
+		APIKey: apiKey, APIURL: s.options.APIURL, Target: target, Config: spec.Config, Grants: spec.Grants, Broker: broker,
 		Labels: labels, Lifecycle: s.options.Lifecycle, Logger: s.options.Logger, Slots: spec.Slots,
-		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment, region: region},
+		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment,
+			region: region, byok: byok},
 	})
+}
+
+// customerKey is the key a customer keeps for their own Daytona organization in region, and
+// false when they keep none or nothing reaches a customer's organization here.
+func (s *Sandboxes) customerKey(ctx context.Context, customerID, region string) (string, bool, error) {
+	if s.options.Keys == nil {
+		return "", false, nil
+	}
+	return s.options.Keys.CustomerKey(ctx, customerID, daytona.Provider, region)
 }
 
 // Labels are what a sandbox of owner's is made with. An id owner does not have is left off.
@@ -211,6 +249,8 @@ type sandboxMeter struct {
 	every      time.Duration
 	deployment string
 	region     string
+	// byok is a sandbox in its owner's own organization.
+	byok bool
 
 	mu     sync.Mutex
 	slices *routing.Slices
@@ -240,7 +280,7 @@ func (m *sandboxMeter) Created(reserved daytona.Reserved) {
 	}
 	m.slices = routing.StartSlices(routing.SliceOptions{
 		Recorder: m.recorder,
-		Config:   routing.ProviderConfig{Provider: daytona.Provider, Model: SandboxRunning, Region: m.region},
+		Config:   routing.ProviderConfig{Provider: daytona.Provider, Model: SandboxRunning, Region: m.region, BYOK: m.byok},
 		Owner:    m.owner,
 		Kind:     SandboxKind,
 		ID:       reserved.ID,
@@ -296,6 +336,8 @@ type SandboxGap struct {
 	// Region is where the sandbox ran, which prices the gap. Empty, as for a sandbox made
 	// before regions, is the default region.
 	Region string
+	// BYOK is a sandbox of its owner's own organization, whose gap is priced at the BYOK entry.
+	BYOK bool
 	// Orphan is time after the sandbox's session closed.
 	Orphan bool
 }
@@ -319,7 +361,7 @@ func (s *Sandboxes) Reconcile(gap SandboxGap) error {
 	}
 	return routing.Settle(routing.Meter{
 		Recorder:    s.options.Recorder,
-		Config:      routing.ProviderConfig{Provider: daytona.Provider, Model: gap.Model, Region: gap.Region},
+		Config:      routing.ProviderConfig{Provider: daytona.Provider, Model: gap.Model, Region: gap.Region, BYOK: gap.BYOK},
 		Owner:       gap.Owner,
 		UsageID:     routing.UsageID(SandboxReconciledKind, gap.SandboxID, gap.Key),
 		BilledAt:    gap.At,

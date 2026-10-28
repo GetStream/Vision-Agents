@@ -1069,7 +1069,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if directory != nil {
 		defer directory.Close()
 	}
-	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, logger); err != nil {
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, customerDaytonaKeys(pgStore, secrets), logger); err != nil {
 		return err
 	}
 
@@ -1090,7 +1090,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessionConnectors.Resolver = connectorResolver
 	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, prices, policies, logger)
+		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
 	}
@@ -1870,6 +1870,7 @@ func buildSessions(
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
+	keys routing.CustomerKeys,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1920,7 +1921,7 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
-	options.Sandboxes = newSandboxes(settings, usageWriter, prices, policies, logger)
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, policies, keys, logger)
 	options.SandboxLimits = policies
 	options.ResumeHistories = policies
 	return session.NewManager(options)

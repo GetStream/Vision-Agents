@@ -226,3 +226,67 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 
 // daytonaProvider is the provider sandbox rows are billed under.
 const daytonaProvider = "daytona"
+
+// customerDaytonaKey is the key the test's customer keeps for their own Daytona organization.
+const customerDaytonaKey = "dtn_customer_0123456789abcdef"
+
+func (s *MeteredSuite) TestASandboxOfAnOwnerWhoKeepsADaytonaKeyIsMadeInTheirOrganizationAndBilledAtTheBYOKFee() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	server := daytonatest.Start(s.T())
+	owner := s.sandboxOwner()
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", APIKey: "key-1", APIURL: server.APIURL(),
+		Every: time.Hour, Keys: keptKeys{owner.CustomerID + "/daytona/us": customerDaytonaKey}, Logger: slog.New(slog.DiscardHandler)})
+
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+
+	s.NotEmpty(server.Keys())
+	for _, key := range server.Keys() {
+		s.Equal(customerDaytonaKey, key, "every call made on the customer's key, never the deployment's")
+	}
+	held, _ := server.Sandbox("sandbox-1")
+	s.Equal(SandboxAccountCustomer, held.Labels[LabelAccount], "the sandbox says it is in the customer's organization")
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-us-byok", rows[0].SKU)
+	s.Zero(rows[0].BaseCostMicros, "Daytona bills the customer")
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionUS, true), rows[0].Meters), rows[0].CostMicros)
+}
+
+func (s *MeteredSuite) TestAnotherRegionsDaytonaKeyLeavesTheSandboxInTheDeploymentsOrganization() {
+	server := daytonatest.Start(s.T())
+	owner := s.sandboxOwner()
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour,
+		Keys: keptKeys{owner.CustomerID + "/daytona/eu": customerDaytonaKey}, Logger: slog.New(slog.DiscardHandler)})
+
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+
+	s.Equal("key-1", server.Keys()[0])
+	held, _ := server.Sandbox("sandbox-1")
+	s.Empty(held.Labels[LabelAccount])
+}
+
+func (s *MeteredSuite) TestAGapOfASandboxInTheCustomersOrganizationIsPricedAtTheBYOKFee() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", Logger: slog.New(slog.DiscardHandler)})
+	used := pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}
+
+	s.Require().NoError(sandboxes.Reconcile(SandboxGap{Owner: s.owner, SandboxID: "sandbox-" + uuid.NewString(), Key: "2026-10-21",
+		At: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC), Model: SandboxRunning, Used: used, Class: "container",
+		Region: pricing.RegionUS, BYOK: true}))
+
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-us-byok", rows[0].SKU)
+	s.Zero(rows[0].BaseCostMicros)
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionUS, true), used), rows[0].CostMicros)
+}
