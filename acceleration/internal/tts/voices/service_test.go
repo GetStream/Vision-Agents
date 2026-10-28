@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,6 +38,8 @@ type ServiceSuite struct {
 	service  *Service
 	resolver *Resolver
 	recorder *routing.Recorder
+	// prices is the list the recorder bills with: vendor.json at cost.
+	prices *pricing.List
 	// reply is what the fake provider hands back when asked to clone.
 	reply  string
 	status int
@@ -104,6 +107,7 @@ func (s *ServiceSuite) SetupTest() {
 	s.Require().NoError(err)
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
+	s.prices = list
 	s.recorder = routing.NewRecorder(routing.TTS, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.recorder.Close)
 
@@ -151,7 +155,13 @@ func (s *ServiceSuite) TestHearingAVoiceIsBilledTheCharactersItSays() {
 	s.Equal("tts", line.Modality)
 	s.Equal("eleven_flash_v2_5", line.Model, "the model the provider speaks the line with")
 	s.EqualValues(22, line.Characters)
-	s.EqualValues(1_100, line.CostMicros, "22 characters at ElevenLabs' $50 a million")
+	// The rate is read from vendor.json, so a price change there does not break the test.
+	entry, ok := s.prices.Entry(pricing.Item{Modality: "tts", Provider: "elevenlabs", Model: "eleven_flash_v2_5"})
+	s.Require().True(ok, "vendor.json prices eleven_flash_v2_5")
+	rate := entry.Prices[pricing.Characters]
+	s.Require().Positive(rate.Per)
+	s.Equal(int64(math.Round(22*rate.USD*1e6/float64(rate.Per))), line.CostMicros,
+		"22 characters at ElevenLabs' $%v per %d", rate.USD, rate.Per)
 }
 
 func (s *ServiceSuite) TestALineTooLongToHearIsRefusedBeforeTheProvider() {
