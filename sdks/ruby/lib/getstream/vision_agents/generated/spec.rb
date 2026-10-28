@@ -1304,6 +1304,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "receiveChatDelivery" => {
+          method: :post, path: "/v1/chat/internal/messages",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveConnectionEvent" => {
           method: :post, path: "/v1/connectors/mcp-events/{token}",
           path_params: %w[token].freeze, query: [].freeze,
