@@ -22,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -148,6 +149,17 @@ type schedulingModel struct {
 	failing int
 	// held, when set, keeps a scheduled turn's words back until it is closed.
 	held chan struct{}
+	// breaking, when set, breaks the next held scheduled turn (breakHeld).
+	breaking func()
+}
+
+// breakHeld has the next held scheduled turn fail with a provider error once it is cancelled,
+// as a connection that broke as the turn was cut off does, and run closing when the agent
+// closes its stream.
+func (m *schedulingModel) breakHeld(closing func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.breaking = closing
 }
 
 // failScheduled has the provider fail the next times a scheduled task comes due.
@@ -190,6 +202,10 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	if !scheduled {
 		held = nil
 	}
+	var breaking func()
+	if held != nil {
+		breaking, m.breaking = m.breaking, nil
+	}
 	m.mu.Unlock()
 
 	// A turn somebody started runs what the test queued; the round a tool's
@@ -210,6 +226,10 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		script.Fail(errors.New("the provider is down"), "scheduling")
 		return script.Stream(), nil
 	}
+	if breaking != nil {
+		script.FailOnCancel(ctx, errors.New("connection reset by peer"))
+		script.OnClose(breaking)
+	}
 	if held != nil {
 		go func() {
 			select {
@@ -217,6 +237,9 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 				script.OutputText("Done.")
 				script.Done()
 			case <-ctx.Done():
+				if breaking != nil {
+					return
+				}
 				// A reply cancelled while it waited ends as a provider's would, with nothing
 				// written. Answering it anyway raced the turn being torn down, so a router
 				// stopped mid-turn could read back a reply it never got. It ends cancelled, not
@@ -3197,6 +3220,37 @@ func (s *ScheduledTasksSuite) TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetr
 	run := s.manualRun(task)
 	_, err := s.cutOff(s.router, task, run, found.Interrupt)
 	s.Equal(scheduling.ReasonNoReply, scheduling.ReasonOf(err), "%v", err)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("whatsapp", deliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal(2, s.scheduledTurns(), "the retry ran the cancelled turn again")
+}
+
+// A provider failure that arrives while the user cuts the turn off belongs to a turn already
+// given up on: the reply ends cancelled, not failed, and runs again on the retry.
+func (s *ScheduledTasksSuite) TestATurnWhoseProviderBrokeAsItWasCancelledRunsAgainOnTheRetry() {
+	writer := s.writerNumber()
+	task, found := s.onWhatsApp(writer, "whatsapp")
+	run := s.manualRun(task)
+	command := conversation.ReadBackPrefix + run.ID
+	// The interruption is held between the agent giving the reply up and the conversation
+	// cancelling it until the failure has finished the reply, the order the race can take. A
+	// failure that is dropped never does, so the hold ends after two seconds.
+	s.model().breakHeld(func() {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+			if state, _, _ := found.FollowUpReply(command); state == "failed" {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	_, err := s.cutOff(s.router, task, run, found.Interrupt)
+	s.Equal(scheduling.ReasonNoReply, scheduling.ReasonOf(err), "%v", err)
+	state, _, _ := found.FollowUpReply(command)
+	s.Equal("cancelled", state)
 
 	deliveredTo, err := s.deliverRun(task, run)
 
