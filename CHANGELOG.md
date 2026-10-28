@@ -173,6 +173,10 @@ Every turn's instructions end with the date and the hour in UTC, and in the user
 
 `Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. With a request id, a conversation kept in Stream Chat takes its images as data URIs only, so an `https` image that one without a user used to accept is now refused, as it is from Swift and Kotlin (FLU-1126).
 
+### The greeting is said when somebody joins the call, not when the agent does
+
+An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
+
 ### Go clients keep working with a region
 
 An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
