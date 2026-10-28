@@ -126,28 +126,30 @@ void main() {
         customerId: 'acme',
       ).withUser('ada');
 
-      final socket = await backend.socket('/v1/agents/sessions/s1/events', {'decisions': 'false'});
+      final handshake = await backend.socketHandshake('/v1/agents/sessions/s1/events', {
+        'decisions': 'false',
+      });
 
-      expect(socket.uri.scheme, 'wss');
-      expect(socket.uri.path, '/base/v1/agents/sessions/s1/events');
-      expect(socket.uri.queryParameters, {
+      expect(handshake.uri.scheme, 'wss');
+      expect(handshake.uri.path, '/base/v1/agents/sessions/s1/events');
+      expect(handshake.uri.queryParameters, {
         'decisions': 'false',
         'customer_id': 'acme',
         'user_id': 'ada',
       });
-      expect(socket.headers, await backend.headers());
+      expect(handshake.headers, await backend.headers());
     });
 
     test('keeps a token out of a socket url where the handshake can carry it', () async {
       final backend = Backend(apiKey: 'key', token: () async => 'tok');
 
-      final socket = await backend.socket('/v1/agents/sessions/s1/events');
+      final handshake = await backend.socketHandshake('/v1/agents/sessions/s1/events');
 
-      expect(socket.uri.queryParameters, {'api_key': 'key'});
-      expect(socket.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
+      expect(handshake.uri.queryParameters, {'api_key': 'key'});
+      expect(handshake.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
     });
 
-    test('puts a browser socket\'s credentials in its url, as the JavaScript SDK does', () async {
+    test('puts a browser socket\'s credentials in its url', () async {
       final backend = Backend(
         url: Uri.parse('http://localhost:8080'),
         apiKey: 'key',
@@ -155,10 +157,14 @@ void main() {
         token: () async => 'tok',
       );
 
-      final socket = await backend.socket('/v1/agents/sessions/s1/events', const {}, false);
+      final handshake = await backend.socketHandshake(
+        '/v1/agents/sessions/s1/events',
+        const {},
+        false,
+      );
 
-      expect(socket.uri.queryParameters, {'api_key': 'key', 'token': 'tok', 'user_id': 'ada'});
-      expect(socket.headers, isEmpty);
+      expect(handshake.uri.queryParameters, {'api_key': 'key', 'token': 'tok', 'user_id': 'ada'});
+      expect(handshake.headers, isEmpty);
     });
 
     test(
@@ -167,9 +173,13 @@ void main() {
         for (final url in [Backend.defaultUrl, Backend.regionUrl('europe-west4')]) {
           final backend = Backend(url: url, apiKey: 'key', userId: 'ada', token: () async => 'tok');
 
-          final socket = await backend.socket('/v1/agents/sessions/s1/events', const {}, false);
+          final handshake = await backend.socketHandshake(
+            '/v1/agents/sessions/s1/events',
+            const {},
+            false,
+          );
 
-          expect(socket.uri.queryParameters, {
+          expect(handshake.uri.queryParameters, {
             'api_key': 'key',
             'token': 'tok',
             'authorization': 'tok',
@@ -180,7 +190,7 @@ void main() {
       },
     );
 
-    test('sends a native socket to the hosted router as Swift and Kotlin do', () async {
+    test('keeps a token out of a native socket url to the hosted router too', () async {
       final backend = Backend(
         url: Backend.defaultUrl,
         apiKey: 'key',
@@ -188,10 +198,10 @@ void main() {
         token: () async => 'tok',
       );
 
-      final socket = await backend.socket('/v1/agents/sessions/s1/events');
+      final handshake = await backend.socketHandshake('/v1/agents/sessions/s1/events');
 
-      expect(socket.uri.queryParameters, {'api_key': 'key'});
-      expect(socket.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
+      expect(handshake.uri.queryParameters, {'api_key': 'key'});
+      expect(handshake.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
     });
   });
 

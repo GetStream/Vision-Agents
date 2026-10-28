@@ -88,8 +88,7 @@ final class Backend {
   bool get _byCustomer => customerId.isNotEmpty;
 
   /// Whether [url] is Stream's hosted router, which every hosted deployment reaches through
-  /// Stream's proxy. Read off the URL as the JavaScript SDK reads it: the default router or
-  /// one [regionUrl] names.
+  /// Stream's proxy: the default router or one [regionUrl] names.
   bool get _hosted {
     const prefix = 'https://accelerate-', suffix = '.gcp.stream-io-api.com';
     final named = '$url'.replaceFirst(RegExp(r'/+$'), '');
@@ -136,20 +135,19 @@ final class Backend {
     );
   }
 
-  /// The URL of a socket under the router and the headers its handshake carries, the token
-  /// asked for once.
+  /// What opening a socket under the router takes: its URL and the headers its handshake
+  /// carries, the token asked for once. It opens nothing.
   ///
   /// Where the handshake can carry headers ([inHeaders], everywhere but a browser) they are
-  /// [headers], as on every request, and the token stays out of the URL, as Swift's and
-  /// Kotlin's sockets keep it: a URL ends up in every log it passes through.
+  /// [headers], as on every request, and the token stays out of the URL: a URL ends up in
+  /// every log it passes through.
   ///
-  /// A browser cannot set headers, so there the credentials go in the query as the
-  /// JavaScript SDK sends them: the key and the token, which a router verifying tokens reads,
-  /// and the user. To Stream's hosted router the token goes again as `authorization` with
+  /// A browser cannot set headers, so there the credentials go in the query: the key and the
+  /// token, which a router verifying tokens reads, and the user. To Stream's hosted router the token goes again as `authorization` with
   /// `stream-auth-type=jwt`, which is how its proxy reads a socket's credential; it refuses
   /// one carrying only `token`. The router reads no auth type from a query, so a socket
   /// cannot claim to be a backend.
-  Future<({Uri uri, Map<String, String> headers})> socket(
+  Future<({Uri uri, Map<String, String> headers})> socketHandshake(
     String path, [
     Map<String, String> query = const {},
     bool inHeaders = handshakeHeaders,

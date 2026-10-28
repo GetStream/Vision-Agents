@@ -126,13 +126,16 @@ final class AgentSession {
     if (_socket != null) {
       return;
     }
-    final target = await _backend.socket('/v1/agents/sessions/${Uri.encodeComponent(id)}/events', {
-      // Decisions arrive several times a second and are for somebody watching a call, not
-      // for an app holding one.
-      'decisions': 'false',
-      if (interim) 'interim': 'true',
-    });
-    final socket = SessionSocket(target.uri, headers: target.headers);
+    final handshake = await _backend.socketHandshake(
+      '/v1/agents/sessions/${Uri.encodeComponent(id)}/events',
+      {
+        // Decisions arrive several times a second and are for somebody watching a call, not
+        // for an app holding one.
+        'decisions': 'false',
+        if (interim) 'interim': 'true',
+      },
+    );
+    final socket = SessionSocket(handshake.uri, headers: handshake.headers);
     _socket = socket;
 
     final Stream<AgentEvent> events;
