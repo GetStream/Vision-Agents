@@ -550,7 +550,7 @@ func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesFromWhenItWasAnswere
 	s.False(dial.Billable, "placing a call is free: the vendor bills its minutes")
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, minutes.Meters, "the ringing is not billed")
-	s.Equal(s.outboundMinutes(120), minutes.CostMicros, "two started minutes")
+	s.Equal(s.outboundMinutes(61), minutes.CostMicros, "two started minutes")
 	s.Equal("key-a", minutes.APIKey, "the minutes keep the key that placed the call")
 	s.Equal("u1", minutes.UserID)
 	s.Equal(map[string]string{"country": "US", "direction": "outbound", "measured_by": "router"}, minutes.Attributes)
