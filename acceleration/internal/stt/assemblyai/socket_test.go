@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -199,6 +200,31 @@ func (s *AssemblyAISocketSuite) TestARefusedSessionIsReportedFromStart() {
 
 	s.ErrorContains(err, "Invalid API key")
 	s.ErrorContains(err, "code 1008")
+}
+
+// refusedOn is how many invalid keys ASSEMBLYAI_API_KEY's pool counted while a provider
+// started against a server that greets it with this frame.
+func (s *AssemblyAISocketSuite) refusedOn(greeting string) float64 {
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+	s.Require().Error(s.startAgainst(greeting, Options{}))
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before
+}
+
+func (s *AssemblyAISocketSuite) TestAnInvalidKeyFrameIsCountedAsAnInvalidKey() {
+	s.Equal(1.0, s.refusedOn("error_invalid_key.json"))
+}
+
+func (s *AssemblyAISocketSuite) TestAnotherErrorFrameIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_input_duration.json"))
+}
+
+// The two frames below are made up, each with only one half of the invalid key's signal.
+func (s *AssemblyAISocketSuite) TestAnotherUnauthorizedConnectionIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_unauthorized_other.json"))
+}
+
+func (s *AssemblyAISocketSuite) TestTheKeyTextUnderAnotherCodeIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_invalid_key_other_code.json"))
 }
 
 func (s *AssemblyAISocketSuite) TestASessionOpenedOnAnotherModelIsRefused() {

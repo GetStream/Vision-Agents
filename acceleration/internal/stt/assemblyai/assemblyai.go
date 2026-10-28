@@ -47,6 +47,10 @@ const DefaultModel = "universal-3-6-pro"
 // region.
 const DefaultURL = "wss://streaming.assemblyai.com/v3/ws"
 
+// codeUnauthorized is the error_code of an Error frame that refuses the connection's
+// credentials, and the code the socket then closes with.
+const codeUnauthorized = 1008
+
 // apiKeyEnvVar holds the credentials when Options does not.
 const apiKeyEnvVar = "ASSEMBLYAI_API_KEY"
 
@@ -374,6 +378,9 @@ func (s *STT) handshake() error {
 	switch message.Type {
 	case eventBegin:
 	case eventError:
+		if message.refusesKey() {
+			s.keys.InvalidKey()
+		}
 		return stack.Wrap(fmt.Errorf("assemblyai: session refused: %s", message.failure()))
 	default:
 		return stack.Wrap(fmt.Errorf("assemblyai: expected %q, got %q", eventBegin, message.Type))
@@ -548,6 +555,13 @@ func (m serverMessage) failure() string {
 		return fmt.Sprintf("error %d", m.ErrorCode)
 	}
 	return fmt.Sprintf("%s (code %d)", m.Error, m.ErrorCode)
+}
+
+// refusesKey reports whether an Error frame is the one the server sent, right after accepting
+// the handshake, on a made-up key on 2026-10-28. Code 1008 alone is any unauthorized
+// connection.
+func (m serverMessage) refusesKey() bool {
+	return m.ErrorCode == codeUnauthorized && strings.Contains(m.Error, "Invalid API key")
 }
 
 // chunkBytes is how many bytes of audio last this long, at two bytes a sample.
