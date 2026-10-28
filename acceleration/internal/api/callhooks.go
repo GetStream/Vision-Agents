@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -278,6 +279,11 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 // answerWithAgent opens a session of the number's agent on the arriving call. It ends on its
 // own once the caller hangs up, as any phone session does (Session.observe).
 func (s *Server) answerWithAgent(r *http.Request, origin hookOrigin, event callEvent, number store.PhoneNumber, callType, callID string) {
+	if s.sessions == nil {
+		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to a number with an agent on a router that runs no sessions",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
+		return
+	}
 	config, err := s.configs.AgentConfig(r.Context(), number.CustomerID, number.ConfigID)
 	if err != nil {
 		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to a number whose agent is gone",
@@ -294,18 +300,28 @@ func (s *Server) answerWithAgent(r *http.Request, origin hookOrigin, event callE
 	// agent's memory of another.
 	spec.Phone = &session.PhoneSpec{Number: number.E164}
 	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound}
-	spec.Tags = number.Tags
+	// The number's tags over the config's, as a campaign's over its config's.
+	tags := routing.Tags{}
+	maps.Copy(tags, spec.Tags)
+	maps.Copy(tags, number.Tags)
+	spec.Tags = tags
 	// Before Create: the manager picks the Stream app the agent joins in from this pin.
 	s.pinHook(origin, number.CustomerID, event.CallCid)
 	// The agent joins before Create returns, so Stream giving up on the hook must not
 	// leave it half-joined.
 	created, err := s.sessions.Create(context.WithoutCancel(r.Context()), spec)
+	if errors.Is(err, session.ErrSessionExists) {
+		// Delivered again: deployment mode acts on every delivery. Refusing would hang up
+		// on the agent already answering.
+		s.logger.Debug("an arriving call is already answered", "call", event.CallCid, "number", number.E164)
+		return
+	}
 	if err != nil {
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "config", number.ConfigID, "error", err)
 		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call its agent could not answer",
-			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 		return
 	}
 	s.logger.Info("an agent answered an arriving call",
