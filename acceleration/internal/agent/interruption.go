@@ -58,12 +58,12 @@ type interruption struct {
 }
 
 // interrupted closes a turn whose reply was abandoned, and says why: one line in the log,
-// router_agent_interruptions_total and the turn's span. A turn already told about is only
-// closed, which it already is.
+// router_agent_interruptions_total and the turn's span, all from the first report. A turn
+// already told about is left to the report that told it, so a second cause never reaches the
+// span.
 func (a *Agent) interrupted(turnID string, participant stt.Participant, why interruption) {
 	share, compared := echoShare(why.words, why.reply)
 	why.echo = echoBucket(share, compared)
-	playedMs := a.turns.interrupt(turnID, why)
 	a.mu.Lock()
 	_, told := a.toldInterrupts[turnID]
 	a.toldInterrupts[turnID] = struct{}{}
@@ -71,6 +71,7 @@ func (a *Agent) interrupted(turnID string, participant stt.Participant, why inte
 	if told {
 		return
 	}
+	playedMs := a.turns.interrupt(turnID, why)
 	ruler := cmp.Or(string(why.ruler), "none")
 	interruptions.WithLabelValues(why.cause, ruler, why.echo).Inc()
 	fields := []any{

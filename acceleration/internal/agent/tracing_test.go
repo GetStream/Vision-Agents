@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -135,6 +136,21 @@ func (s *TurnTracingSuite) TestAnInterruptionNoModelRuledOnSaysNone() {
 
 	s.Subset(s.attributes(), []string{"turn.interrupt.cause=api", "turn.interrupt.ruler=none"})
 	s.Zero(played, "none of the reply went out")
+}
+
+func (s *TurnTracingSuite) TestATurnTheFirstReportToldTakesNoOtherCauseInItsSpan() {
+	tracker := newTurnTracker(s.owner, nil)
+	agent := &Agent{logger: slog.New(slog.DiscardHandler), turns: tracker,
+		toldInterrupts: map[string]struct{}{"turn-1": {}}}
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+
+	// The first report has claimed the turn and is about to close it with its own cause.
+	agent.interrupted("turn-1", stt.Participant{ID: "caller"}, interruption{cause: causeAPI})
+	s.Empty(s.recorded.Ended(), "the second report does not close the turn with its cause")
+
+	tracker.interrupt("turn-1", interruption{cause: causeTalking})
+	s.Subset(s.attributes(), []string{"turn.interrupt.cause=talking"})
 }
 
 func (s *TurnTracingSuite) TestATurnNobodyInterruptedSaysNoCause() {
