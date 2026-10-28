@@ -252,9 +252,8 @@ func (s *Server) savePolicy(ctx context.Context, scope store.PolicyScope, id str
 	if message, ok := toolOutputRetentionComplaint("tool_output_retention", document.ToolOutputRetention); !ok {
 		return Policy{}, stack.Wrap(errors.New(message))
 	}
-	if !document.DataPolicy.Valid() {
-		return Policy{}, stack.Wrap(fmt.Errorf("retention is none or a duration such as 30d, not %q",
-			document.DataPolicy.Retention))
+	if err := document.DataPolicy.Validate(); err != nil {
+		return Policy{}, err
 	}
 	if err := routing.Tags(sent.Tags).Validate(); err != nil {
 		return Policy{}, err
