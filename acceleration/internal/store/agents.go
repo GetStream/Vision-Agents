@@ -677,9 +677,6 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}
 	}
-	if config.VisibleTools == nil {
-		config.VisibleTools = []string{}
-	}
 	if config.Tags == nil {
 		config.Tags = map[string]string{}
 	}

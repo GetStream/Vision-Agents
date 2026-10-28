@@ -63,6 +63,7 @@ final readonly class AgentConfig
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
+        // Tools whose steps end users see on a persistent conversation's replies. Absent when the config never set it...
         /** @var list<string>|null */
         public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...

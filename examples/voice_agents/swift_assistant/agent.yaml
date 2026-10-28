@@ -19,3 +19,6 @@ connectors:
     tools: [search_threads, get_thread, get_message, list_labels, list_drafts, create_draft]
   - name: linear
     tools: [list_*, get_*, search_*]
+# The tools whose steps a reply shows. Naming any replaces the default of search and
+# web_search, so those are named again beside the phone's own and the connectors'.
+visible_tools: [search, web_search, get_location, list_events, add_reminder, send_email, gmail__*, linear__*]

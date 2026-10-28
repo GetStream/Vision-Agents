@@ -134,6 +134,33 @@ func (s *DisplaySuite) TestWithoutAConfigOnlySearchIsShown() {
 	s.Equal("web_search", metadata.Tools[1].Name)
 }
 
+func (s *DisplaySuite) TestAConfigShowingNoToolShowsNotEvenSearch() {
+	metadata, err := metadataOf(Message{State: "completed", Tools: []Tool{
+		{ID: "call-1", Name: "search", Status: "completed"},
+		{ID: "call-2", Name: "web_search", Status: "completed"},
+	}}, []string{})
+
+	s.Require().NoError(err)
+	s.Empty(metadata.Tools)
+}
+
+func (s *DisplaySuite) TestAConversationShowingNoToolKeepsSearchOffItsReply() {
+	c := s.open("athena")
+	c.ShowTools([]string{})
+	receipt, err := c.BeginCommand("command-a", "Look it up", "")
+	s.Require().NoError(err)
+
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "search", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "call-1", Tool: "search", Result: `{"status":"answered","citations":[{"id":"one","title":"Reference","url":"https://docs.example.com/"}]}`})
+	c.Observe(agent.ResponseDelta{Text: "Answer."})
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	stored := s.stored(receipt.AssistantMessageID)
+	s.Empty(stored.Tools)
+	s.Empty(stored.Sources)
+}
+
 func (s *DisplaySuite) TestAConfiguredPatternShowsMatchingToolsWithTheirTiming() {
 	started := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	finished := started.Add(1500 * time.Millisecond)

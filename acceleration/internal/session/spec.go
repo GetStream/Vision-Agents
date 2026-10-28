@@ -215,7 +215,7 @@ type Spec struct {
 	// A provider that cannot be told about vocabulary ignores them.
 	Keyterms []string
 	// VisibleTools are the tools whose steps end users see on a persistent conversation's
-	// replies, as names or path.Match patterns. Empty shows search and web_search.
+	// replies, as names or path.Match patterns. Nil shows search and web_search; empty shows none.
 	VisibleTools []string
 	MaxTokens    int
 	Tasks        int

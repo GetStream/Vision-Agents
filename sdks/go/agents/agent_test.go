@@ -1118,6 +1118,33 @@ func TestSyncOfAnEmptyConnectorListClearsThem(t *testing.T) {
 	}
 }
 
+func TestSyncSendsTheVisibleToolsOnlyWhenTheFileNamesThem(t *testing.T) {
+	for declared, want := range map[string]string{
+		"":                                "",
+		"visible_tools: []\n":             `"visible_tools":[]`,
+		"visible_tools: [lookup_order]\n": `"visible_tools":["lookup_order"]`,
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", "name: concierge\n"+declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		body := string(router.syncRaw[0])
+		router.mu.Unlock()
+		if want == "" && strings.Contains(body, `"visible_tools"`) {
+			t.Errorf("%q sent %s", declared, body)
+		}
+		if want != "" && !strings.Contains(body, want) {
+			t.Errorf("%q sent %s", declared, body)
+		}
+	}
+}
+
 func TestSyncResolvesAConnectionIdBeforeItsLabel(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: acct\n")

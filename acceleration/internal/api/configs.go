@@ -1974,7 +1974,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		keyterms := config.Keyterms
 		rendered.Keyterms = &keyterms
 	}
-	if len(config.VisibleTools) > 0 {
+	if config.VisibleTools != nil {
 		visible := config.VisibleTools
 		rendered.VisibleTools = &visible
 	}
@@ -2231,7 +2231,7 @@ type AgentConfigRequest struct {
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
-	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Left out, the agent shows search and web_search; an empty list shows no tool." maxItems:"64"`
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
 }
 
@@ -2273,7 +2273,7 @@ type AgentConfig struct {
 	Tts                *string                  `json:"tts,omitempty"`
 	UpdatedAt          time.Time                `json:"updated_at"`
 	Video              *SessionVideo            `json:"video,omitempty"`
-	VisibleTools       *[]string                `json:"visible_tools,omitempty"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies. Absent when the config never set it, which shows search and web_search; an empty list shows no tool."`
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 }
 

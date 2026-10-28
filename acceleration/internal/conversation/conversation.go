@@ -160,8 +160,9 @@ type ledger struct {
 	Owner    string
 	Current  *Message
 	// VisibleTools are the agent config's visible_tools, kept so a write retried after a
-	// restart shows end users what the agent shows them.
-	VisibleTools []string `json:",omitempty"`
+	// restart shows end users what the agent shows them. Not omitempty: an empty list shows no
+	// tool, where nil shows the defaults.
+	VisibleTools []string
 	// StreamApp is the app the conversation is kept in, its pin: zero for the deployment's
 	// own. Every write and read for it is made there.
 	StreamApp int64 `json:",omitempty"`
@@ -1222,7 +1223,11 @@ func (c *Conversation) CheckCaller(ctx context.Context, caller string) error {
 func (c *Conversation) ShowTools(patterns []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data.VisibleTools = append([]string(nil), patterns...)
+	if patterns == nil {
+		c.data.VisibleTools = nil
+		return
+	}
+	c.data.VisibleTools = append([]string{}, patterns...)
 }
 
 // AcceptLogins sets the servers whose tool results may ask somebody to log in.

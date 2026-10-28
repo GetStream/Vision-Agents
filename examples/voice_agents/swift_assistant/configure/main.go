@@ -47,26 +47,23 @@ func run(ctx context.Context, dir string) error {
 	}
 	fmt.Printf("agent      %s (config %s)\n", config.Name, config.Id)
 
-	// agent.yaml cannot say which tools' steps a reply shows, or which skills the agent has,
-	// so both are patched on after the sync, which leaves a field it does not mention as it
-	// is. Naming any tools replaces the default of search and web_search, so those are named
-	// again beside the phone's own; naming skills replaces the built-in think, recall and
-	// explain, so those stay beside vision, which looks through the phone's camera on a call.
+	// agent.yaml cannot say which skills the agent has, so they are patched on after the
+	// sync, which leaves a field it does not mention as it is. Naming skills replaces the
+	// built-in think, recall and explain, so those stay beside vision, which looks through
+	// the phone's camera on a call.
 	client, err := agent.Client()
 	if err != nil {
 		return err
 	}
-	visible := []string{"search", "web_search", "get_location", "list_events", "add_reminder", "send_email", "gmail__*", "linear__*"}
 	skills := []string{"think", "recall", "explain", "vision"}
 	patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
-		acceleration.PatchAgentConfigJSONRequestBody{VisibleTools: &visible, Skills: &skills})
+		acceleration.PatchAgentConfigJSONRequestBody{Skills: &skills})
 	if err != nil {
 		return err
 	}
 	if patched.JSON200 == nil {
-		return fmt.Errorf("the router refused the visible tools: %s", patched.Status())
+		return fmt.Errorf("the router refused the skills: %s", patched.Status())
 	}
-	fmt.Printf("visible    %v\n", visible)
 	fmt.Printf("skills     %v\n", skills)
 	fmt.Printf("\nnext       STREAM_API_SECRET=<the router's> go run ./backend\n")
 	fmt.Printf("           open examples/voice_agents/swift_assistant/app/SwiftAssistant.xcodeproj and run it\n")

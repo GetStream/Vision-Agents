@@ -117,6 +117,9 @@ class SyncAgentRequest:
                 is kept.
             tts (str | Unset):
             video (SessionVideo | Unset):
+            visible_tools (list[str] | Unset): The tools agent.yaml shows end users the steps of, as tool names or
+                path.Match patterns such as athena_*. Sent, they replace the stored ones, an empty list showing no tool. Left
+                out, the stored ones are left alone, and a config that never set them shows search and web_search.
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
                 one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
                 voice name instead.
@@ -157,6 +160,7 @@ class SyncAgentRequest:
     tools: AgentTools | Unset = UNSET
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
+    visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -310,6 +314,10 @@ class SyncAgentRequest:
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
 
+        visible_tools: list[str] | Unset = UNSET
+        if not isinstance(self.visible_tools, Unset):
+            visible_tools = self.visible_tools
+
         voice = self.voice
 
         field_dict: dict[str, Any] = {}
@@ -386,6 +394,8 @@ class SyncAgentRequest:
             field_dict["tts"] = tts
         if video is not UNSET:
             field_dict["video"] = video
+        if visible_tools is not UNSET:
+            field_dict["visible_tools"] = visible_tools
         if voice is not UNSET:
             field_dict["voice"] = voice
 
@@ -631,6 +641,8 @@ class SyncAgentRequest:
         else:
             video = SessionVideo.from_dict(_video)
 
+        visible_tools = cast(list[str], d.pop("visible_tools", UNSET))
+
         voice = d.pop("voice", UNSET)
 
         sync_agent_request = cls(
@@ -669,6 +681,7 @@ class SyncAgentRequest:
             tools=tools,
             tts=tts,
             video=video,
+            visible_tools=visible_tools,
             voice=voice,
         )
 

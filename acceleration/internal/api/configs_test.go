@@ -817,6 +817,34 @@ func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEndUsersSee() {
 	s.Equal([]string{"web_search"}, value(patched.VisibleTools))
 }
 
+func (s *ConfigsSuite) TestAConfigThatNeverSetVisibleToolsIsNotOneShowingNone() {
+	unset := s.createConfig(map[string]any{"name": "support"})
+	none := s.createConfig(map[string]any{"name": "concierge", "visible_tools": []string{}})
+
+	s.Nil(unset.VisibleTools, "left out, the config shows search and web_search")
+	s.Require().NotNil(none.VisibleTools)
+	s.Empty(*none.VisibleTools)
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+none.Id, nil, &read))
+	s.Require().NotNil(read.VisibleTools, "the empty list survives being stored")
+	s.Empty(*read.VisibleTools)
+}
+
+func (s *ConfigsSuite) TestPatchingVisibleToolsToAnEmptyListShowsNone() {
+	created := s.createConfig(map[string]any{"name": "support", "visible_tools": []string{"athena_*"}})
+
+	var cleared, untouched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"visible_tools": []string{}}, &cleared))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"llm": "llm-fast"}, &untouched))
+
+	s.Require().NotNil(cleared.VisibleTools)
+	s.Empty(*cleared.VisibleTools)
+	s.Require().NotNil(untouched.VisibleTools, "a patch that leaves them out keeps them")
+	s.Empty(*untouched.VisibleTools)
+}
+
 func (s *ConfigsSuite) TestAVisibleToolPatternThatCannotMatchIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "support", "visible_tools": []string{"athena_[*"}})

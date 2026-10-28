@@ -99,7 +99,8 @@ class AgentConfig:
             is kept.
         tts (str | Unset):
         video (SessionVideo | Unset):
-        visible_tools (list[str] | Unset):
+        visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies.
+            Absent when the config never set it, which shows search and web_search; an empty list shows no tool.
         voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
             one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
             voice name instead.

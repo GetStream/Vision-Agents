@@ -165,6 +165,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 `Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. With a request id, a conversation kept in Stream Chat takes its images as data URIs only, so an `https` image that one without a user used to accept is now refused, as it is from Swift and Kotlin (FLU-1126).
 
+### `agent.yaml` declares `visible_tools`
+
+`agent.yaml` takes `visible_tools`, the tools whose steps end users see on a reply, which the Go SDK refused as an unexpected key although the config API has it. Left out, a sync keeps what is stored, and a config that never set it shows `search` and `web_search`; `visible_tools: []` shows no tool. The same goes for the config API: an empty `visible_tools` on a create, update or patch now shows no tool rather than the defaults, and a config reads back without `visible_tools` until it sets one. Configs stored with an empty list, which meant the defaults, keep them. The other SDKs' folder loaders follow.
+
 ### Go clients keep working with a region
 
 An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.

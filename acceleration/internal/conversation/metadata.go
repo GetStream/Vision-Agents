@@ -27,7 +27,8 @@ const (
 
 var displayID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 
-// DefaultVisibleTools are the tools whose steps end users see when an agent config names none.
+// DefaultVisibleTools are the tools whose steps end users see when an agent config does not
+// set visible_tools. A config that sets it to an empty list shows none.
 var DefaultVisibleTools = []string{"search", "web_search"}
 
 // ValidVisibleTool reports whether pattern is a tool name or a path.Match pattern a config
@@ -39,8 +40,9 @@ func ValidVisibleTool(pattern string) bool {
 
 // ToolVisible reports whether a tool's name and outcome may reach chat clients. Anything a
 // config does not name, connector operations and arbitrary skills above all, stays hidden.
+// Nil patterns are a config that never set visible_tools, and show DefaultVisibleTools.
 func ToolVisible(patterns []string, name string) bool {
-	if len(patterns) == 0 {
+	if patterns == nil {
 		patterns = DefaultVisibleTools
 	}
 	for _, pattern := range patterns {

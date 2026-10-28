@@ -725,6 +725,31 @@ func TestAnEmptyConnectorListIsNotTheSameAsNone(t *testing.T) {
 	}
 }
 
+func TestAnEmptyVisibleToolListIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "agent.yaml", "name: concierge\nvisible_tools: []\n")
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "agent.yaml", "name: concierge\nvisible_tools: [athena_*, lookup_order]\n")
+	named, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.Settings.VisibleTools != nil || empty.Settings.VisibleTools == nil || len(empty.Settings.VisibleTools) != 0 {
+		t.Errorf("without = %#v, empty = %#v", without.Settings.VisibleTools, empty.Settings.VisibleTools)
+	}
+	if !reflect.DeepEqual(named.Settings.VisibleTools, []string{"athena_*", "lookup_order"}) {
+		t.Errorf("named = %#v", named.Settings.VisibleTools)
+	}
+}
+
 func TestASkillFolderBringsItsNestedFiles(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\nsandbox: daytona\n")

@@ -4310,6 +4310,7 @@ export type components = {
             /** Format: date-time */
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description Tools whose steps end users see on a persistent conversation's replies. Absent when the config never set it, which shows search and web_search; an empty list shows no tool. */
             readonly visible_tools?: readonly string[];
             /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
@@ -4362,7 +4363,7 @@ export type components = {
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
-            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. Left out, the stored ones stay; an empty list shows no tool. */
             readonly visible_tools?: readonly string[];
             /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
@@ -4428,7 +4429,7 @@ export type components = {
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
-            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
+            /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Left out, the agent shows search and web_search; an empty list shows no tool. */
             readonly visible_tools?: readonly string[];
             /** @description The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI. */
             readonly voice?: string;
@@ -9326,6 +9327,8 @@ export type components = {
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
+            /** @description The tools agent.yaml shows end users the steps of, as tool names or path.Match patterns such as athena_*. Sent, they replace the stored ones, an empty list showing no tool. Left out, the stored ones are left alone, and a config that never set them shows search and web_search. */
+            readonly visible_tools?: readonly string[];
             /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
         };

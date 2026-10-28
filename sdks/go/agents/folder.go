@@ -193,9 +193,14 @@ type Settings struct {
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
 	Keyterms   []string            `yaml:"keyterms"`
-	Tags       map[string]string   `yaml:"tags"`
-	Video      *VideoSettings      `yaml:"video"`
-	Dispatch   *DispatchSettings   `yaml:"dispatch"`
+	// VisibleTools are the tools whose steps end users see on the agent's replies, as names
+	// or path.Match patterns such as athena_*. Nil when the declaration says nothing, which
+	// leaves the stored ones, search and web_search on a config that never set them; empty
+	// when the file lists none, which shows no tool.
+	VisibleTools []string          `yaml:"visible_tools"`
+	Tags         map[string]string `yaml:"tags"`
+	Video        *VideoSettings    `yaml:"video"`
+	Dispatch     *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`

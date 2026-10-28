@@ -81,6 +81,9 @@ final readonly class SyncAgentRequest
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
+        // The tools agent.yaml shows end users the steps of, as tool names or path.Match patterns such as athena_*. S...
+        /** @var list<string>|null */
+        public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
     ) {
@@ -127,6 +130,7 @@ final readonly class SyncAgentRequest
             tools: array_key_exists('tools', $data) && $data['tools'] !== null ? AgentTools::fromArray(Json::object($data, 'tools')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
+            visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
         );
     }
@@ -239,6 +243,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->video !== null) {
             $out['video'] = $this->video->toArray();
+        }
+        if ($this->visibleTools !== null) {
+            $out['visible_tools'] = $this->visibleTools;
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
