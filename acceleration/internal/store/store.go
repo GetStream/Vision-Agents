@@ -1662,7 +1662,11 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
-	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+	update := s.db.NewUpdate().Model((*PhoneNumber)(nil))
+	if attached.ConfigID != "" {
+		update.Set("config_id = ?", attached.ConfigID)
+	}
+	result, err := update.
 		Set("stream_trunk_id = ?", attached.TrunkID).
 		Set("stream_route_id = ?", nullable(attached.RouteID)).
 		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
@@ -1698,6 +1702,8 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
+	// ConfigID is the agent the number keeps answering with. Empty leaves its agent as it is.
+	ConfigID string
 	// BridgeURI and BridgeUsername are the trunk's address, kept whenever a number is attached.
 	// The sealed password is empty for a service with no key to seal it under.
 	BridgeURI                string
