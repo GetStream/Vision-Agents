@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -74,6 +75,13 @@ func (s *MeteredSuite) SetupTest() {
 	s.owner = routing.Owner{CustomerID: uuid.NewString(), Attribution: routing.Attribution{APIKey: "key-a"}}
 }
 
+// priced is what the row's work costs at the vendor list's rates, read from vendor.json so a
+// price change there leaves the tests passing.
+func (s *MeteredSuite) priced(row store.Request) int64 {
+	item := pricing.Item{Modality: row.Modality, Provider: row.Provider, Model: row.Model, Attributes: row.Attributes}
+	return pricingtest.Micros(s.T(), s.prices, item, row.Quantities())
+}
+
 // rows drains the recorder and returns the test customer's rows, oldest first.
 func (s *MeteredSuite) rows() []store.Request {
 	s.recorder.Close()
@@ -114,14 +122,13 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 	for i, want := range []struct {
 		model string
 		used  pricing.Quantities
-		cost  int64
 	}{
-		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: passage}, 20},
+		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: passage}},
 		{KnowledgeLookup, pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: turbopuffertest.MinimumQueried,
-			pricing.BytesReturned: passage, pricing.Results: 1}, 1},
+			pricing.BytesReturned: passage, pricing.Results: 1}},
 		{KnowledgeLookup, pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: turbopuffertest.MinimumQueried,
-			pricing.BytesReturned: passage, pricing.Results: 1}, 1},
-		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: int64(len("pricing.md#0"))}, 20},
+			pricing.BytesReturned: passage, pricing.Results: 1}},
+		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: int64(len("pricing.md#0"))}},
 	} {
 		row := rows[i]
 		s.Equal("knowledge", row.Modality, "row %d", i)
@@ -131,7 +138,7 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 		s.True(row.Success)
 		s.Equal(want.used, row.Quantities(), "row %d", i)
 		s.True(row.Billable, "row %d is priced", i)
-		s.EqualValues(want.cost, row.CostMicros, "row %d at the vendor list's rate", i)
+		s.Equal(s.priced(row), row.CostMicros, "row %d at the vendor list's rate", i)
 		s.NotEmpty(row.Attributes[routing.AttributeProviderCostMicros], "row %d keeps what it cost under turbopuffer's formula", i)
 	}
 	s.Equal("1.282", rows[1].Attributes[routing.AttributeProviderCostMicros],
@@ -155,7 +162,7 @@ func (s *MeteredSuite) TestALookupOnALargeNamespaceSellsAtTheMinimumAndKeepsWhat
 	lookup := rows[1]
 	s.Equal(KnowledgeLookup, lookup.Model)
 	s.EqualValues(10_000_000_000, lookup.Quantities()[pricing.BytesQueried], "the bytes turbopuffer billed are on the row")
-	s.EqualValues(1, lookup.CostMicros, "priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
+	s.Equal(s.priced(lookup), lookup.CostMicros, "priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
 	s.Equal("10.002", lookup.Attributes[routing.AttributeProviderCostMicros],
 		"10 GB queried at $1 a PB, and 43 bytes returned: what shows a namespace costing more than it pays")
 }
@@ -221,7 +228,7 @@ func (s *MeteredSuite) TestAnHourOfStorageIsBilledOnceHoweverOftenItIsSampled() 
 	s.Equal(hour.Add(time.Hour), rows[1].StartedAt.UTC())
 	s.Equal(KnowledgeStorage, rows[0].Model)
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 2_000_000_000}, rows[0].Quantities())
-	s.EqualValues(904, rows[0].CostMicros, "2 GB for an hour at $0.33 a GB-month of 730 hours")
+	s.Equal(s.priced(rows[0]), rows[0].CostMicros, "2 GB for an hour at the vendor list's rate")
 	s.Equal(routing.MeasuredByRouter, rows[0].Attributes[routing.AttributeMeasuredBy])
 }
 
@@ -298,15 +305,12 @@ func (s *MeteredSuite) TestEachMemoryCallIsARowOfItsRequests() {
 
 	rows := s.rows()
 	s.Require().Len(rows, 3)
-	for i, want := range []struct {
-		model string
-		cost  int64
-	}{{MemorySearch, 2_490}, {MemoryAdd, 249}, {MemoryForget, 0}} {
+	for i, model := range []string{MemorySearch, MemoryAdd, MemoryForget} {
 		s.Equal("memory", rows[i].Modality)
 		s.Equal("mem0", rows[i].Provider)
-		s.Equal(want.model, rows[i].Model, "row %d", i)
+		s.Equal(model, rows[i].Model, "row %d", i)
 		s.Equal(pricing.Quantities{pricing.Requests: 1}, rows[i].Quantities(), "row %d is one request", i)
-		s.EqualValues(want.cost, rows[i].CostMicros, "row %d", i)
+		s.Equal(s.priced(rows[i]), rows[i].CostMicros, "row %d", i)
 	}
 	s.True(rows[0].Billable, "$2.49 a thousand searches")
 	s.True(rows[1].Billable, "$0.249 a thousand adds")

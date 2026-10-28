@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -68,8 +69,7 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	s.Equal(map[string]string{AttributeSandboxID: "sandbox-1", AttributeSandboxClass: "container", AttributeSandboxCPU: "2",
 		AttributeSandboxMemoryGB: "4", AttributeSandboxDiskGB: "10", routing.AttributeMeasuredBy: routing.MeasuredByRouter,
 		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a"}, row.Attributes)
-	perSecond := (2*0.0504 + 4*0.0162 + 10*0.000108) / 3600 * 1e6
-	s.InDelta(perSecond*float64(seconds), float64(row.CostMicros), 1, "at Daytona's rates")
+	s.Equal(s.priced(row), row.CostMicros, "at Daytona's rates")
 	s.True(row.Billable)
 	s.Equal([]string{"sandbox-1"}, server.Deleted())
 	held, _ := server.Sandbox("sandbox-1")
@@ -92,7 +92,7 @@ func (s *MeteredSuite) TestAnIdleSandboxIsMeteredAsStopped() {
 	s.Equal(pricing.Quantities{pricing.VCPUSeconds: 1, pricing.MemoryGBSeconds: 1, pricing.DiskGBSeconds: 3}, rows[0].Meters,
 		"a second running at Daytona's default size")
 	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 6}, rows[1].Meters, "then its disk alone")
-	s.Zero(rows[1].CostMicros, "6 GiB-seconds of disk is 0.18 micro-dollars, rounded half up to none")
+	s.Equal(s.priced(rows[1]), rows[1].CostMicros, "6 GiB-seconds of disk at Daytona's rate, rounded half up")
 	s.True(rows[1].Billable)
 }
 
@@ -158,8 +158,12 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	s.Require().Len(rows, 2, "a gap recorded twice is billed once")
 	s.Equal(routing.UsageID(SandboxReconciledKind, id, "2026-10-21T10:00:00Z"), rows[0].UsageID)
 	s.Equal(at, rows[0].StartedAt.UTC(), "dated to the period it bills")
-	s.EqualValues(66_924, rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
-	s.EqualValues(324, rows[1].CostMicros, "an hour of its 3 GiB disk")
+	gap := func(g SandboxGap) int64 {
+		item := pricing.Item{Modality: string(routing.Sandbox), Provider: daytonaProvider, Model: g.Model, Attributes: map[string]string{AttributeSandboxClass: g.Class}}
+		return pricingtest.Micros(s.T(), s.prices, item, g.Used)
+	}
+	s.Equal(gap(running), rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
+	s.Equal(gap(stopped), rows[1].CostMicros, "an hour of its 3 GiB disk")
 	s.Equal(map[string]string{AttributeSandboxID: id, AttributeSource: daytonaProvider, AttributeSandboxClass: "container",
 		AttributeDeployment: "deploy-a"}, rows[0].Attributes, "the deployment's, so only its own job reads it")
 	s.Equal("true", rows[1].Attributes[AttributeOrphan])

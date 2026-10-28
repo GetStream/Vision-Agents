@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -104,7 +105,8 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Require().Len(rows, 2)
 	s.EqualValues(15, rows[0].Characters, "the runes handed to the voice, not the 17 the adapter counted")
 	s.Equal("u1", rows[0].OperationID)
-	s.EqualValues(75, rows[0].CostMicros, "15 characters at $5 a million")
+	s.Equal(pricingtest.Micros(s.T(), s.prices, routing.ItemOf(routing.TTS, s.inworld(), nil), pricing.Quantities{pricing.Characters: 15}),
+		rows[0].CostMicros, "15 characters at Inworld's rate")
 	s.EqualValues(4, rows[1].Characters, "an adapter that counted nothing is billed what it was sent")
 	s.Equal(named, rows[1].OperationID)
 	s.Contains(logs.String(), "level=WARN msg=\"the voice counted characters other than those it was sent")

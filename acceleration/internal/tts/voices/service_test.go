@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -155,13 +155,9 @@ func (s *ServiceSuite) TestHearingAVoiceIsBilledTheCharactersItSays() {
 	s.Equal("tts", line.Modality)
 	s.Equal("eleven_flash_v2_5", line.Model, "the model the provider speaks the line with")
 	s.EqualValues(22, line.Characters)
-	// The rate is read from vendor.json, so a price change there does not break the test.
-	entry, ok := s.prices.Entry(pricing.Item{Modality: "tts", Provider: "elevenlabs", Model: "eleven_flash_v2_5"})
-	s.Require().True(ok, "vendor.json prices eleven_flash_v2_5")
-	rate := entry.Prices[pricing.Characters]
-	s.Require().Positive(rate.Per)
-	s.Equal(int64(math.Round(22*rate.USD*1e6/float64(rate.Per))), line.CostMicros,
-		"22 characters at ElevenLabs' $%v per %d", rate.USD, rate.Per)
+	flash := pricing.Item{Modality: "tts", Provider: "elevenlabs", Model: "eleven_flash_v2_5"}
+	s.Equal(pricingtest.Micros(s.T(), s.prices, flash, pricing.Quantities{pricing.Characters: 22}), line.CostMicros,
+		"22 characters at ElevenLabs' rate")
 }
 
 func (s *ServiceSuite) TestALineTooLongToHearIsRefusedBeforeTheProvider() {

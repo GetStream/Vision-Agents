@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -521,27 +521,13 @@ func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
 	timing := <-timings
 	s.EqualValues(100_000, timing.InputTokens, "the whole prompt, cached and written parts included")
 	s.EqualValues(90_000, timing.CachedInputTokens)
-	// 1k fresh, 90k read, 9k written and 10 out, each at the rate of the list the router prices
-	// with (vendor.json's), times the factor, so a price change there does not break the test.
+	// 1k fresh, 90k read, 9k written and 10 out, at the prices the router bills with: the
+	// vendor list's rates times the factor.
 	list, err := routing.Prices(config, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	entry, ok := list.Entry(pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5"})
-	s.Require().True(ok, "the list prices claude-opus-5-5")
-	var micros float64
-	for _, used := range []struct {
-		meter  pricing.Meter
-		tokens int64
-	}{
-		{pricing.InputTokens, 1_000},
-		{pricing.CachedInputTokens, 90_000},
-		{pricing.CacheWriteInputTokens, 9_000},
-		{pricing.OutputTokens, 10},
-	} {
-		rate := entry.Rates[used.meter]
-		s.Require().Positive(rate.Per, used.meter)
-		micros += float64(used.tokens) * rate.USD * 1e6 / float64(rate.Per)
-	}
-	s.Equal(int64(math.Round(micros*pricing.PriceFactorBps/10_000)), timing.CostMicros)
+	opus := pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5"}
+	s.Equal(pricingtest.Micros(s.T(), list, opus, pricing.Quantities{pricing.InputTokens: 1_000,
+		pricing.CachedInputTokens: 90_000, pricing.CacheWriteInputTokens: 9_000, pricing.OutputTokens: 10}), timing.CostMicros)
 }
 
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
