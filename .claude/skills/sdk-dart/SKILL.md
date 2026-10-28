@@ -86,11 +86,10 @@ stream property. Answering a tool call does not depend on anybody listening: it 
 `package:web_socket`, one read loop per connection.
 
 - Opened by `connect` (`src/connect.dart`). Natively it is `dart:io`'s socket with the request
-  headers on the handshake, as Swift's and Kotlin's are, and `Backend.socket` keeps the token out
-  of the URL; without them a router with no proxy in front reads the socket as a backend and
-  never asks it the device's tools. In a browser there are no headers, so the credentials go in
-  the URL as the JavaScript SDK sends them: `token`, and to the hosted router `authorization`
-  and `stream-auth-type=jwt` too.
+  headers on the handshake, and `Backend.socket` keeps the token out of the URL; without them a
+  router with no proxy in front reads the socket as a backend and never asks it the device's
+  tools. In a browser there are no headers, so the credentials go in the URL: `token`, and to the
+  hosted router `authorization` and `stream-auth-type=jwt` too.
 
 - A close with 1000 (the router's "the session ended") or one we asked for finishes the stream;
   anything else throws `SocketClosedException` with the code.
