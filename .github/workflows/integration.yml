@@ -45,6 +45,7 @@ jobs:
           - internal/agent
           - internal/api
           - internal/appconfig
+          - internal/channelbridge
           - internal/channels
           - internal/concurrency
           - internal/connectors/core
