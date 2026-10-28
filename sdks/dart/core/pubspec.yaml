@@ -3,7 +3,7 @@ description: >-
   The state layer and client for Stream's Vision Agents: open a conversation with an agent,
   follow it as it happens, answer its tool calls on the device, and look something up.
 version: 0.1.0
-repository: https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart/core
+repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/core
 topics: [ai, agents, voice, stream]
 
 # Pure Dart, so it runs on the VM, in Flutter on every platform and in a browser, and is

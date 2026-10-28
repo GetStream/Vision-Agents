@@ -73,11 +73,12 @@ GuestUser guestOf(api.GuestUser wire) => GuestUser(
 );
 
 /// The request for a session. [agent] is the name to open it against when the options name
-/// no config of their own.
+/// no config of their own, and [userId] whose memories it reads.
 api.CreateSessionRequest createRequestOf(
   SessionOptions options, {
   required bool startVoice,
   String? agent,
+  String userId = '',
 }) => api.CreateSessionRequest(
   id: _set(options.id),
   startVoice: startVoice ? true : null,
@@ -118,6 +119,16 @@ api.CreateSessionRequest createRequestOf(
         ],
   tags: options.tags.isEmpty ? null : options.tags,
   returnUrl: _set(options.returnUrl),
+  // The router remembers only for a user id, and a device only ever means its own user.
+  memory: switch (options.memory) {
+    null => null,
+    final memory => api.SessionMemory(
+      appId: _set(memory.appId),
+      filter: memory.filter.isEmpty ? null : memory.filter,
+      userId: _set(userId),
+    ),
+  },
+  timezone: _set(options.timezone),
 );
 
 api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequest(

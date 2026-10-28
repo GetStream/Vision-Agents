@@ -90,6 +90,10 @@ goes back to the dashboard, as before. `AgentSession.declineLogin(toolCallId)` a
 sign-in with Not now: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### Dart sessions remember the user, and are listed by when they started
+
+`SessionOptions.memory` in the Dart SDK (a `SessionMemory` with `filter` and `appId`) has the agent remember the user the client was built for, as Swift's and Kotlin's `memory` do: it is sent with the client's own user id, and a client with no user id remembers nothing. `SessionOptions.timezone` is the zone the agent reads dates in. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort` (`SessionSort.updatedAt` or `relevance`). Each pubspec's `repository` points at the `accelerate` branch, and the README shows the `dependency_overrides` an app needs until the packages are on pub.dev (FLU-1126).
+
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.

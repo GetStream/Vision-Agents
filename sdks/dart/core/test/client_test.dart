@@ -174,6 +174,50 @@ void main() {
       expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
     });
 
+    test("memory is the signed-in user's, narrowed by the labels asked for", () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+      final ada = agents.withUser('ada');
+
+      await ada.sessions.create(
+        const SessionOptions(
+          memory: SessionMemory(filter: {'topic': 'billing'}, appId: 'web'),
+          timezone: 'Europe/Amsterdam',
+        ),
+      );
+      final narrowed = router.last('POST /v1/agents/sessions').json;
+      await ada
+          .agent('docs')
+          .sessions
+          .create(const SessionOptions(memory: SessionMemory(), incognito: true));
+
+      expect(narrowed, {
+        'memory': {
+          'app_id': 'web',
+          'filter': {'topic': 'billing'},
+          'user_id': 'ada',
+        },
+        'timezone': 'Europe/Amsterdam',
+      });
+      // The router keeps nothing of an incognito session, so the two are sent as asked and it
+      // decides.
+      expect(router.last('POST /v1/agents/sessions').json, {
+        'agent': 'docs',
+        'incognito': true,
+        'memory': {'user_id': 'ada'},
+      });
+    });
+
+    test('remembering with nobody named sends no user, and no memory is none at all', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      await agents.sessions.create(const SessionOptions(memory: SessionMemory()));
+      final remembering = router.last('POST /v1/agents/sessions').json;
+      await agents.withUser('ada').sessions.create(const SessionOptions(timezone: ''));
+
+      expect(remembering, {'memory': <String, Object?>{}});
+      expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
+    });
+
     test('a voice session asks to start voice and is on its own call', () async {
       router.answer(
         'POST /v1/agents/sessions',
@@ -278,6 +322,46 @@ void main() {
       expect(page.hasMore, isTrue);
       expect(page.nextCursor, 'c2');
     });
+
+    test(
+      'narrows a query to when a conversation started and its labels, in the order asked',
+      () async {
+        router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
+
+        await agents.sessions.query(
+          SessionQuery(
+            createdSince: DateTime.utc(2026, 10, 1),
+            createdBefore: DateTime.utc(2026, 10, 8),
+            custom: const {'topic': 'billing'},
+            sort: SessionSort.updatedAt,
+          ),
+        );
+        final ranged = router.last('POST /v1/agents/sessions/query').json;
+        await agents.sessions.search(
+          'refund',
+          SessionQuery(createdSince: DateTime.utc(2026, 10, 1), sort: SessionSort.relevance),
+        );
+
+        expect(ranged, {
+          'filter': {
+            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z', r'$lt': '2026-10-08T00:00:00.000Z'},
+            'custom': {'topic': 'billing'},
+          },
+          'sort': [
+            {'field': 'updated_at'},
+          ],
+        });
+        expect(router.last('POST /v1/agents/sessions/query').json, {
+          'filter': {
+            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z'},
+            'text': {r'$q': 'refund'},
+          },
+          'sort': [
+            {'field': 'relevance'},
+          ],
+        });
+      },
+    );
 
     test('a query with nothing to narrow it sends no filter', () async {
       router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
