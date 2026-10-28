@@ -2,6 +2,7 @@
 
 ## Features
 
+<<<<<<< HEAD
 ### Juno on Flutter
 
 `examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no session until it is first written to. The chat is `AIConversationView`, with the reply's reasoning and steps, copy and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview, and says which part of the agent failed, as the Android app does. Each new conversation's session names `io.getstream.visionagents.flutterassistant:/connected` as its `return_url`. The sign-in card, sharing a reply and an install id wait on the Flutter AI components, and the camera seen by the agent on the Dart SDK.
@@ -9,6 +10,15 @@
 ### An iMessage photo reaches the agent
 
 A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).
+=======
+### An iMessage photo reaches the agent
+
+A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).
+
+### Juno on Flutter
+
+`examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no session until it is first written to. The chat is `AIConversationView`, with the reply's reasoning and steps, copy and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview, and says which part of the agent failed, as the Android app does. Connector sign-in, the camera seen by the agent, sharing a reply and an install id wait on the Dart SDK and the Flutter AI components.
+>>>>>>> origin/claude/flutter-assistant-07d9ef
 
 ### A photo in a thread channel reaches the agent
 
