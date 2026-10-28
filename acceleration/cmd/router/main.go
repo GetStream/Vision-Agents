@@ -56,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -1044,7 +1045,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, logger)
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, pgStore, logger)
 	if base != nil {
 		defer base.Close()
 	}
@@ -1910,7 +1911,7 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
-	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, policies, logger)
 	options.SandboxLimits = policies
 	options.ResumeHistories = policies
 	return session.NewManager(options)
@@ -1967,15 +1968,45 @@ func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
 	return asynq.RedisClientOpt{Addr: redis.Addr, Username: redis.Username, Password: redis.Password}
 }
 
-// newKnowledge is the knowledge base every lookup and write goes through, recorded by
-// recorder and each write admitted by gate, or nil without a turbopuffer key.
-func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, logger *slog.Logger) *metered.Knowledge {
-	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
+// newKnowledge is the knowledge base every lookup and write goes through, a backend in each
+// region the settings map, recorded by recorder, each write admitted by gate, and the region
+// each base is kept in recorded in pgStore; nil without a turbopuffer key.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, pgStore *store.Store, logger *slog.Logger) *metered.Knowledge {
+	backends, err := knowledgeBackends(settings.Knowledge, 0, logger)
 	if err != nil {
 		logger.Debug("nothing will be looked up or written down", "error", err)
 		return nil
 	}
-	return metered.NewKnowledge(backend, recorder, gate)
+	// A nil *store.Store in the interface would not be a nil interface.
+	var regions metered.NamespaceRegions
+	if pgStore != nil {
+		regions = pgStore
+	}
+	return metered.NewRegionalKnowledge(backends, recorder, gate, regions)
+}
+
+// knowledgeBackends is a turbopuffer store in each region knowledge.regions maps to one of
+// turbopuffer's, each bounding a call by timeout (zero is a lookup's). The default region is
+// always served: where the setting names none for it, at TURBOPUFFER_REGION, then
+// gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
+// every turbopuffer region.
+func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	backends := make(map[string]knowledge.Backend, len(mapped))
+	for region, theirs := range mapped {
+		backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings), Region: theirs, Timeout: timeout, Logger: logger})
+		if err != nil {
+			return nil, err
+		}
+		backends[region] = backend
+	}
+	return backends, nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.

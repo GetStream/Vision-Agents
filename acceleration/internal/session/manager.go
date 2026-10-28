@@ -1613,7 +1613,7 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 		}
 		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	box, err := m.options.Sandboxes.Open(owner(spec), asked)
+	box, err := m.options.Sandboxes.Open(ctx, owner(spec), asked)
 	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
 		return box, err
 	}

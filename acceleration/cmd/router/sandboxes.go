@@ -75,15 +75,18 @@ func sandboxRouter(settings config.Config) string {
 	return cmp.Or(settings.Shard, routing.Unsharded)
 }
 
-// newSandboxes makes the sessions' sandboxes, labelled with the deployment and shard and
-// billed through the process's writer.
-func newSandboxes(settings config.Config, writer *routing.Writer, prices pricing.Pricer, logger *slog.Logger) *metered.Sandboxes {
+// newSandboxes makes the sessions' sandboxes, labelled with the deployment and shard, each on
+// the Daytona target of the region its owner's policies name, and billed through the process's
+// writer.
+func newSandboxes(settings config.Config, writer *routing.Writer, prices pricing.Pricer, regions routing.Regioner, logger *slog.Logger) *metered.Sandboxes {
 	return metered.NewSandboxes(metered.SandboxesOptions{
 		Recorder:    routing.NewRecorderOn(routing.Sandbox, writer, prices, logger),
 		Deployment:  settings.CodeSandbox.Deployment,
 		Environment: sandboxEnvironment(),
 		Router:      sandboxRouter(settings),
 		Lifecycle:   sandbox.Lifecycle{IdleStop: settings.CodeSandbox.IdleStop, StoppedDelete: settings.CodeSandbox.StoppedDelete},
+		Targets:     settings.CodeSandbox.Targets,
+		Regions:     regions,
 		Logger:      logger,
 	})
 }
@@ -295,7 +298,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 			continue
 		}
 		ours := recorded[used.SandboxID]
-		owner, class, known, err := j.owner(ctx, used.SandboxID, ours)
+		owner, class, region, known, err := j.owner(ctx, used.SandboxID, ours)
 		switch {
 		case err != nil:
 			j.logger.Error("could not read a sandbox Daytona billed, so it is not reconciled", "sandbox", used.SandboxID, "error", err)
@@ -325,7 +328,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 		} else {
 			matched++
 		}
-		gaps, err := j.gaps(ctx, used.SandboxID, owner, class, daytonas, have, ours.Rows == 0, from, to)
+		gaps, err := j.gaps(ctx, used.SandboxID, owner, class, region, daytonas, have, ours.Rows == 0, from, to)
 		if err != nil {
 			j.logger.Error("could not record what a sandbox was billed short", "sandbox", used.SandboxID, "day", dayText, "error", err)
 			unread = append(unread, used.SandboxID)
@@ -359,40 +362,41 @@ const (
 	ownerUnknown
 )
 
-// owner is whose a sandbox Daytona billed was, and what class of sandbox: the organization,
-// app and session on its rows, when this shard recorded some under this deployment, or on its
-// labels. A sandbox labelled by no router is made by hand; one without this deployment and
-// shard on its labels, such as one made by a router with no code_sandbox.deployment, is
-// another's.
-func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (routing.Owner, string, int, error) {
+// owner is whose a sandbox Daytona billed was, what class of sandbox and the region it ran in:
+// the organization, app, session and region on its rows, when this shard recorded some under
+// this deployment, or on its labels. A sandbox labelled by no router is made by hand; one
+// without this deployment and shard on its labels, such as one made by a router with no
+// code_sandbox.deployment, is another's. Every Daytona target of the organization is listed, so
+// a sandbox in any region is reconciled.
+func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (owner routing.Owner, class, region string, known int, err error) {
 	owned := func(app, organization, session string) routing.Owner {
 		return routing.Owner{CustomerID: app, Attribution: routing.Attribution{
 			OrganizationID: organization, APIKey: sandboxOrigin, SessionID: session,
 		}}
 	}
 	if recorded.Rows > 0 {
-		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), recorded.Class, ownerOurs, nil
+		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), recorded.Class, recorded.Region, ownerOurs, nil
 	}
 	box, found, err := j.fleet.Sandbox(ctx, id)
 	switch {
 	case err != nil:
-		return routing.Owner{}, "", ownerUnknown, err
+		return routing.Owner{}, "", "", ownerUnknown, err
 	case !found:
-		return routing.Owner{}, "", ownerUnknown, nil
+		return routing.Owner{}, "", "", ownerUnknown, nil
 	case box.Labels[metered.LabelEnv] == "" && box.Labels[metered.LabelDeployment] == "":
-		return routing.Owner{}, "", ownerHandMade, nil
+		return routing.Owner{}, "", "", ownerHandMade, nil
 	case !j.ours(box.Labels) || box.Labels[metered.LabelApp] == "":
-		return routing.Owner{}, "", ownerTheirs, nil
+		return routing.Owner{}, "", "", ownerTheirs, nil
 	}
 	labels := box.Labels
 	return owned(labels[metered.LabelApp], labels[metered.LabelOrganization], labels[metered.LabelSession]), box.Class,
-		ownerOurs, nil
+		labels[metered.LabelRegion], ownerOurs, nil
 }
 
 // gaps records what a sandbox was billed short of Daytona's records over the day, and says how
 // many rows that took: nothing billed at all is recorded a Daytona period at a time; billed
 // short, the day's difference on each meter in one row.
-func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, class string, daytonas, have tally,
+func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, class, region string, daytonas, have tally,
 	unmetered bool, from, to time.Time) (int, error) {
 	closed := j.closedAt(ctx, owner.SessionID)
 	if !unmetered {
@@ -401,7 +405,7 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, c
 			return 0, nil
 		}
 		return 1, j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: from.Format(time.DateOnly), At: from,
-			Model: model(short), Used: short.used(), Class: class, Orphan: closed != nil && closed.Before(from)})
+			Model: model(short), Used: short.used(), Class: class, Region: region, Orphan: closed != nil && closed.Before(from)})
 	}
 	periods, err := j.fleet.Periods(ctx, id, from, to)
 	if err != nil {
@@ -426,7 +430,7 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, c
 		// Keyed by where the period starts within the day, so a period across midnight is a gap
 		// on each day it covers.
 		err := j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: start.UTC().Format(time.RFC3339Nano),
-			At: start, Model: model(used), Used: used.used(), Class: class, Orphan: closed != nil && !start.Before(*closed)})
+			At: start, Model: model(used), Used: used.used(), Class: class, Region: region, Orphan: closed != nil && !start.Before(*closed)})
 		if err != nil {
 			return recorded, err
 		}

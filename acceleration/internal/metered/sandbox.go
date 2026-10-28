@@ -1,7 +1,9 @@
 package metered
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strconv"
@@ -50,6 +52,9 @@ const (
 	// AttributeDeployment is the deployment whose sandbox it was, as its LabelDeployment says.
 	// The sandbox job reads only its own deployment's rows.
 	AttributeDeployment = "deployment"
+	// AttributeSandboxRegion is the region the sandbox ran in, as its LabelRegion says, which
+	// the daily reconciliation prices what it records of it in.
+	AttributeSandboxRegion = "region"
 )
 
 // The labels every sandbox is made with: which deployment and shard made it, so the hourly
@@ -64,6 +69,8 @@ const (
 	LabelOrganization = "stream.organization"
 	LabelApp          = "stream.app"
 	LabelSession      = "stream.session"
+	// LabelRegion is the region the sandbox runs in, such as eu: the owner's policies' region.
+	LabelRegion = "stream.region"
 )
 
 // SandboxSecretsBroker is the code_sandbox.broker setting that keeps a sandbox's connector
@@ -83,6 +90,12 @@ type SandboxesOptions struct {
 	Lifecycle sandbox.Lifecycle
 	// APIKey and APIURL reach Daytona. Empty are DAYTONA_API_KEY and Daytona's own API.
 	APIKey, APIURL string
+	// Targets maps each region sandboxes are made in to the Daytona target they are made on.
+	// The default region is always served: on its target here, else on DAYTONA_TARGET or
+	// Daytona's own default. A region with no target is refused.
+	Targets map[string]string
+	// Regions says which region an owner's sandbox runs in. Nil is the default region.
+	Regions routing.Regioner
 	// Every is how long a slice of a sandbox's time runs. Zero is routing.SliceEvery.
 	Every  time.Duration
 	Logger *slog.Logger
@@ -90,7 +103,7 @@ type SandboxesOptions struct {
 
 // Sandboxes makes the sandboxes sessions run code in. A sandbox comes only from Open, which
 // needs an owner, so none is made that nobody is billed for: from when Daytona makes it until
-// it is deleted, by the state it is in, a slice at a time.
+// it is deleted, by the state it is in, a slice at a time, priced in the region it runs in.
 type Sandboxes struct {
 	options SandboxesOptions
 }
@@ -116,24 +129,38 @@ type SandboxSpec struct {
 	Slots sandbox.Slots
 }
 
-// Open is the sandbox owner's session runs code in, labelled with whose it is. Nothing is made
-// until code first runs; from then on its time is billed to owner, the session the owner's
-// attribution names.
+// Open is the sandbox owner's session runs code in, labelled with whose it is and the region it
+// runs in. Nothing is made until code first runs; from then on its time is billed to owner, the
+// session the owner's attribution names.
 //
 // An owner with no app or no session is refused: every customer's sandboxes share one Daytona
 // organization, so one labelled with no app is nobody's to bill or tell apart, and one with no
-// session is deleted by the sweep while it runs.
-func (s *Sandboxes) Open(owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
+// session is deleted by the sweep while it runs. So is an owner whose policies keep their work
+// in a region no Daytona target serves: their code is never run in another.
+func (s *Sandboxes) Open(ctx context.Context, owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
 	switch {
 	case owner.CustomerID == "":
 		return nil, stack.Wrap(errors.New("metered: a sandbox needs the app it is for, sandboxes are never shared"))
 	case owner.SessionID == "":
 		return nil, stack.Wrap(errors.New("metered: a sandbox needs the session it runs for"))
 	}
+	region := pricing.DefaultRegion
+	if s.options.Regions != nil {
+		var err error
+		if region, err = s.options.Regions.Region(ctx, owner.CustomerID); err != nil {
+			return nil, err
+		}
+	}
+	target, ok := s.options.Targets[region]
+	if !ok && region != pricing.DefaultRegion {
+		return nil, routing.Refused(stack.Wrap(fmt.Errorf("metered: this deployment runs no sandboxes in region %s", region)))
+	}
+	labels := s.Labels(owner)
+	labels[LabelRegion] = region
 	return daytona.New(daytona.Options{
-		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
-		Labels: s.Labels(owner), Lifecycle: s.options.Lifecycle, Logger: s.options.Logger, Slots: spec.Slots,
-		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment},
+		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Target: target, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
+		Labels: labels, Lifecycle: s.options.Lifecycle, Logger: s.options.Logger, Slots: spec.Slots,
+		Meter: &sandboxMeter{recorder: s.options.Recorder, owner: owner, every: s.options.Every, deployment: s.options.Deployment, region: region},
 	})
 }
 
@@ -183,6 +210,7 @@ type sandboxMeter struct {
 	owner      routing.Owner
 	every      time.Duration
 	deployment string
+	region     string
 
 	mu     sync.Mutex
 	slices *routing.Slices
@@ -207,9 +235,12 @@ func (m *sandboxMeter) Created(reserved daytona.Reserved) {
 	if m.deployment != "" {
 		attributes[AttributeDeployment] = m.deployment
 	}
+	if m.region != "" {
+		attributes[AttributeSandboxRegion] = m.region
+	}
 	m.slices = routing.StartSlices(routing.SliceOptions{
 		Recorder: m.recorder,
-		Config:   routing.ProviderConfig{Provider: daytona.Provider, Model: SandboxRunning},
+		Config:   routing.ProviderConfig{Provider: daytona.Provider, Model: SandboxRunning, Region: m.region},
 		Owner:    m.owner,
 		Kind:     SandboxKind,
 		ID:       reserved.ID,
@@ -262,6 +293,9 @@ type SandboxGap struct {
 	// Class is the sort of sandbox it was, which its price depends on. Empty is unknown, and
 	// leaves the gap unpriced.
 	Class string
+	// Region is where the sandbox ran, which prices the gap. Empty, as for a sandbox made
+	// before regions, is the default region.
+	Region string
 	// Orphan is time after the sandbox's session closed.
 	Orphan bool
 }
@@ -277,12 +311,15 @@ func (s *Sandboxes) Reconcile(gap SandboxGap) error {
 	if gap.Class != "" {
 		attributes[AttributeSandboxClass] = gap.Class
 	}
+	if gap.Region != "" {
+		attributes[AttributeSandboxRegion] = gap.Region
+	}
 	if s.options.Deployment != "" {
 		attributes[AttributeDeployment] = s.options.Deployment
 	}
 	return routing.Settle(routing.Meter{
 		Recorder:    s.options.Recorder,
-		Config:      routing.ProviderConfig{Provider: daytona.Provider, Model: gap.Model},
+		Config:      routing.ProviderConfig{Provider: daytona.Provider, Model: gap.Model, Region: gap.Region},
 		Owner:       gap.Owner,
 		UsageID:     routing.UsageID(SandboxReconciledKind, gap.SandboxID, gap.Key),
 		BilledAt:    gap.At,

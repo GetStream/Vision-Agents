@@ -978,6 +978,59 @@ func (s *ConfigSuite) TestAShardIsReadFromTheEnvironment() {
 		"written back the way it is read")
 }
 
+func (s *ConfigSuite) TestKnowledgeAndSandboxRegionsAreReadFromAFile() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte(`
+knowledge:
+  regions:
+    eu: aws-eu-central-1
+code_sandbox:
+  targets:
+    eu: eu
+`), 0o600))
+
+	config, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal(map[string]string{"eu": "aws-eu-central-1"}, config.Knowledge.Regions)
+	s.Equal(map[string]string{"eu": "eu"}, config.CodeSandbox.Targets)
+}
+
+func (s *ConfigSuite) TestKnowledgeAndSandboxRegionsAreReadFromTheEnvironment() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "us=gcp-us-east4, eu=aws-eu-central-1")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_TARGETS", "eu=eu")
+
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Equal(map[string]string{"us": "gcp-us-east4", "eu": "aws-eu-central-1"}, config.Knowledge.Regions)
+	s.Equal(map[string]string{"eu": "eu"}, config.CodeSandbox.Targets)
+	s.Equal("eu=aws-eu-central-1,us=gcp-us-east4", os.Getenv("ROUTER_KNOWLEDGE_REGIONS"), "written back the way it is read")
+}
+
+func (s *ConfigSuite) TestADeploymentThatSaysNothingKeepsKnowledgeAndSandboxesAsBefore() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Empty(config.Knowledge.Regions)
+	s.Empty(config.CodeSandbox.Targets)
+}
+
+func (s *ConfigSuite) TestARegionMappedToNothingIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "eu=")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, `knowledge.regions (ROUTER_KNOWLEDGE_REGIONS)`)
+	s.ErrorContains(err, `got eu=""`)
+}
+
+func (s *ConfigSuite) TestATargetForARegionOfAnotherFormIsRefused() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_TARGETS", "EU=eu")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, `code_sandbox.targets (ROUTER_CODE_SANDBOX_TARGETS)`)
+}
+
 func (s *ConfigSuite) TestAShardDatabaseWithoutTheSharedOneIsRefused() {
 	path := filepath.Join(s.T().TempDir(), "router.yaml")
 	s.Require().NoError(os.WriteFile(path, []byte("postgres:\n  dsn: \"\"\n  shard_dsn: postgres://usw/router\n"), 0o600))
