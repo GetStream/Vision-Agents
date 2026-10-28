@@ -292,9 +292,9 @@ func (s *RecordingsSuite) TestOnlyTheAppsOwnBackendMayTranscribeARecording() {
 	})
 }
 
-// assertTopLevelModelRefused sends a recording with a top-level model and expects the 400
+// assertTopLevelModelRefused sends a request with a top-level model and expects the 400
 // that names where the model goes.
-func (s *RecordingsSuite) assertTopLevelModelRefused(path string, request map[string]any) {
+func (s *RouterSuite) assertTopLevelModelRefused(path string, request map[string]any) {
 	status, payload := s.serverClient.call(http.MethodPost, path, request)
 	s.Require().Equal(http.StatusBadRequest, status, "%s %v: %s", path, request, payload)
 	var answered ErrorResponse

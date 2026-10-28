@@ -30,9 +30,9 @@ var errNoRecordings = notConfigured("this deployment does not run recordings")
 var errNoRecordingStore = notConfigured("recordings are not available: no database configured")
 
 // errTopLevelModel refuses a model named beside the options rather than in them. The body
-// takes unknown fields, so without it the job would be served, and billed, by the default
-// model the caller never asked for.
-var errTopLevelModel = invalidRequest("a recording takes no top-level model: name it in options.target")
+// takes unknown fields, so without it the request would be served, and billed, by the
+// default model the caller never asked for.
+var errTopLevelModel = invalidRequest("a request takes no top-level model: name it in options.target")
 
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
