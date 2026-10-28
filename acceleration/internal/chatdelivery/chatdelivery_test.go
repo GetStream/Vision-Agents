@@ -208,6 +208,14 @@ func (s *ChatDeliverySuite) TestASignatureThatIsNotBase64IsRefused() {
 	s.ErrorIs(chatdelivery.Verify(s.keys, header, body, s.now), chatdelivery.ErrUnsigned)
 }
 
+func (s *ChatDeliverySuite) TestASignatureWithAStrayCharacterAfterItIsRefused() {
+	body := []byte(`{"type":"message.new"}`)
+	header := s.signed(body, s.current)
+	header.Set(chatdelivery.SignatureHeader, header.Get(chatdelivery.SignatureHeader)+"!")
+
+	s.ErrorIs(chatdelivery.Verify(s.keys, header, body, s.now), chatdelivery.ErrUnsigned)
+}
+
 func (s *ChatDeliverySuite) TestASignatureOfTheWrongLengthIsRefused() {
 	body := []byte(`{"type":"message.new"}`)
 	header := s.signed(body, s.current)
@@ -270,6 +278,14 @@ func (s *ChatDeliverySuite) TestAKeyThatIsNotBase64IsRefused() {
 
 	s.ErrorContains(err, "delivery key 2 is not")
 	s.NotContains(err.Error(), "not*base64", "the error names the key's place, not its value")
+}
+
+// Base64 decodes up to the first byte it cannot read, so a key with a stray character after it
+// still yields its 32 bytes, and only the decoding error tells it apart.
+func (s *ChatDeliverySuite) TestAKeyWithAStrayCharacterAfterItIsRefused() {
+	_, err := chatdelivery.ParsePublicKeys([]string{s.written(s.current) + "!"})
+
+	s.ErrorContains(err, "delivery key 1 is not")
 }
 
 func (s *ChatDeliverySuite) TestAKeyOfTheWrongSizeIsRefused() {
