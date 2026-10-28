@@ -1004,6 +1004,66 @@ name (`routing.Regioner`, which `policy.Enforcer` is):
 
 `GET /v1/{modality}/providers` lists a model once per instance, each with its `region`.
 
+### Customers' own provider keys (BYOK)
+
+A customer may keep a key for their own account at a vendor, one per vendor and region:
+`PUT /v1/agents/provider-keys` with `provider`, `region` (`us` when left out) and `api_key`,
+`GET /v1/agents/provider-keys` to list them and `DELETE /v1/agents/provider-keys/{provider}?region=`
+to forget one, all server-side only and audited as `provider_key`. A key is taken for an LLM
+vendor the deployment routes whose factory builds with an instance's own key
+(`routing.OverrideAPIKey`: OpenAI, Anthropic, Gemini, xAI and DeepSeek today), for `turbopuffer`
+and for `daytona`; any other is a 400 `provider_takes_no_key` naming the ones that are. Only a key
+is taken, never an endpoint: the deployment's own is used.
+
+Keys are kept in `provider_keys` (migration `20261202130000_provider_keys`), sealed with the
+deployment's keyring (`auth.Sealer`, as the other customer secrets are) and bound to the customer,
+the vendor and the region, so a sealed key copied to another row does not open. A key is never
+returned, logged or put in an error: the API lists its last four characters (`key_hint`, empty for a
+key under 16 characters), and its audit entries show no more. A key holding a space, a comma or a
+control character is refused. Without a keyring a put is refused, and without a database there are
+no keys.
+
+- **Routing.** For each candidate whose vendor the customer keeps a key for in the candidate's
+  region, the router inserts the customer's own instance immediately before it: a copy of the
+  instance with `BYOK` set, at the deployment's endpoint, built with the customer's key. The order
+  between models stays the priority list's or the ranking's, and each model is tried on the
+  customer's key first. When that fails, as it is built or when the vendor refuses the request, the
+  walk and the LLM fallback move on to the deployment's instance of the model as to any next
+  candidate. A key for `eu` is used
+  only for `eu` instances, and a key for `us` only for `us` ones. A model the deployment holds no key
+  for is still served on the customer's. Keys are read through the appconfig cache (Redis, and the
+  copy rueidis keeps in each process, dropped on every replica when a key is put or deleted) and
+  opened, one AES-GCM open, when work is routed.
+- **Health.** Work on a customer's key is counted for the customer and kept out of the vendor and
+  model's live health and its fatal mark, so one customer's revoked key never marks the model down
+  for everyone. `router_requests_total` counts its failures under `outcome="customer_key"`, never
+  `error` or `timeout`. A 401 or 403 from the vendor on the customer's key is `error_code`
+  `key_refused` on its request row, with a message naming the vendor and region, which the customer
+  sees on their usage events and call timelines; the deployment's instance is asked next.
+- **Billing.** Work on a customer's key is priced at its item's BYOK entry (see Prices): a SKU ending
+  in `-byok`, a fee of 20% of the work at the vendor's rates, `base_cost_micros` 0. A customer who may
+  not spend money is refused it as any billable work is.
+- **Knowledge.** With a `turbopuffer` key for the owner's region, a knowledge base first written from
+  then on is kept in the customer's own turbopuffer account, at the turbopuffer region of the
+  deployment's own backend there, read and written on their key and priced at
+  `knowledge-turbopuffer-*-byok`. `knowledge_namespaces.account` records the account, `stream` for
+  every base written before. A base stays in the account of its first write: one in the deployment's
+  stays there when its owner puts a key, and one in theirs whose key was deleted is refused, a 400
+  naming the base and the region, rather than read from the deployment's account. `router usage
+  storage` samples each base kept in a customer's account on their key, at the BYOK price, and counts
+  apart, not as missed, one whose key is gone.
+- **Sandboxes.** With a `daytona` key for the owner's region, the session's sandbox is made in the
+  customer's own Daytona organization, on the same target, labelled `stream.account=customer`, and its
+  time is priced at `sandbox-daytona-*-byok`. Under the `daytona` broker its secrets are kept in that
+  organization too, and the hourly secret sweep covers every customer organization a key is kept
+  for. `router usage sandboxes` deletes the orphans and reconciles Daytona's records in each customer
+  organization on its key, as it does in the deployment's (its lines start `a customer's
+  organization:`), pricing a gap at the BYOK entry. A sandbox labelled for a customer's organization
+  is never the deployment organization's, even where one key reaches both.
+
+`router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
+as the router, so their CronJobs need its variables too.
+
 ## Run
 
 ```bash
@@ -1939,7 +1999,7 @@ a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2
 tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
 BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
 `cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
-(`routing.ProviderConfig.BYOK`, never read from a file). No price file writes BYOK entries:
+(`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
 reading any of them, `vendor.json` included, adds a BYOK twin of each `llm`, `knowledge` and
 `sandbox` entry that is not BYOK (`pricing.WithBYOK`, for `pricing.BYOKModalities`). The twin has
 the same item, region and `when`, the same rates, tiers and free flag, and no price or SKU of
