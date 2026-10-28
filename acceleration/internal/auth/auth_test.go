@@ -98,6 +98,19 @@ func TestNoAuth(t *testing.T) {
 		require.ErrorIs(t, err, ErrUnauthenticated)
 	})
 
+	t.Run("ignores the query auth type, which only a proxy's socket reads", func(t *testing.T) {
+		for _, declared := range []string{"jwt", "anonymous"} {
+			r := httptest.NewRequest(http.MethodGet,
+				"/v1/dispatch?customer_id=examples&stream-auth-type="+declared, nil)
+
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			require.Equal(t, Principal{
+				AppID: "examples", Kind: KindServer, ServerSide: true, APIKey: NoAuthKey,
+			}, principal, declared)
+		}
+	})
+
 	t.Run("ignores the headers a proxy would have set", func(t *testing.T) {
 		// This is the whole reason the mode was split out of the one behind a proxy.
 		// Nothing here verified any of these, so believing them would let a caller on
@@ -216,6 +229,14 @@ func TestProxy(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, KindAnonymous, principal.Kind)
 		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("reads the query auth type through the spaces around it", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?customer_id=examples&stream-auth-type=%20jwt%20", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
 	})
 
 	t.Run("reads the query auth type whatever its case", func(t *testing.T) {
@@ -519,6 +540,27 @@ func TestAPIKey(t *testing.T) {
 			httptest.NewRequest(http.MethodGet, target, nil))
 		require.NoError(t, err)
 		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("ignores the query auth type, the token alone says who the caller is", func(t *testing.T) {
+		// The keyed URL a Dart socket opens: the token twice and a declaration of its own.
+		token := signedClaims(t, secret, jwt.MapClaims{"user_id": "user-1"})
+		target := "/v1/dispatch?api_key=" + key + "&token=" + token +
+			"&authorization=" + token + "&" + AuthTypeParam + "=anonymous"
+
+		principal, err := authenticator.Authenticate(context.Background(),
+			httptest.NewRequest(http.MethodGet, target, nil))
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("takes no token from an authorization parameter", func(t *testing.T) {
+		target := "/v1/dispatch?api_key=" + key + "&authorization=" + signed(t, secret, time.Hour)
+
+		_, err := authenticator.Authenticate(context.Background(),
+			httptest.NewRequest(http.MethodGet, target, nil))
+		require.ErrorIs(t, err, ErrUnauthenticated)
 	})
 
 	t.Run("takes the key and token off a socket's query string", func(t *testing.T) {

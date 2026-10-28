@@ -79,9 +79,10 @@ const (
 	// AuthTypeHeader names which kind of credential the caller believes it is presenting.
 	AuthTypeHeader = "Stream-Auth-Type"
 	// AuthTypeParam is the same declaration in the query, for a socket, because a browser
-	// WebSocket cannot set a header; a plain request may send it too. Only Proxy mode without declared kinds reads it, and only as AuthTypeJWT
-	// or AuthTypeAnonymous: there it can only make a caller weaker than the backend saying
-	// nothing makes it, so a socket still has no way to claim to be a backend.
+	// WebSocket cannot set a header; a plain request may send it too. Only Proxy mode
+	// without declared kinds reads it, and only as AuthTypeJWT or AuthTypeAnonymous: there
+	// it can only make a caller weaker than the backend saying nothing makes it, so a
+	// socket still has no way to claim to be a backend.
 	AuthTypeParam = "stream-auth-type"
 	// APIKeyParam and TokenParam carry the same two values on a socket, because a browser
 	// WebSocket cannot set a header.
