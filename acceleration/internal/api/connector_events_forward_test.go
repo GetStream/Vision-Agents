@@ -266,6 +266,24 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedIsWrittenWhenItsMentionFailsT
 		[]any{s.chat.Stored(channel)[0]["id"], s.chat.Stored(channel)[1]["id"]})
 }
 
+// A reply that waited and itself fails to queue waits again too, for the mention's retry.
+func (s *EventForwardingSuite) TestAReplyThatWaitedAndFailsToQueueIsWrittenWhenItsMentionIsRetried() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	drop := s.trigger("failing_waited_queue", "channel_thread_inbound", "INSERT",
+		"NEW.customer_id = '"+s.customerID()+"' AND NEW.provider_message_id = '1759740000.000200'", "RAISE EXCEPTION 'synthetic queue failure';")
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	drop()
+
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+}
+
 // A provider that hangs up while its message is queued cancels the request's context
 // (net/http). The message is queued all the same, so the provider's retry, dropped as one, loses
 // nothing.
