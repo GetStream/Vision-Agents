@@ -30,7 +30,7 @@ final class StreamCredentials {
 /// is still reached by customer id.
 ///
 /// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests,
-/// and no auth type at all on a socket, which the router reads the same way.
+/// and `stream-auth-type=jwt` in a socket's query by customer id, where nothing else says so.
 final class Backend {
   Backend({
     Uri? url,
@@ -126,11 +126,17 @@ final class Backend {
   ///
   /// In the query because a browser WebSocket cannot set headers, and one URL shape for every
   /// platform is worth more than keeping a token out of a URL the VM could have avoided.
-  /// There is deliberately no auth type here: the spec gives it no query counterpart, so a
-  /// socket cannot claim to be a backend.
+  ///
+  /// By customer id the socket declares a device as `stream-auth-type=jwt`, without which a
+  /// router with no proxy in front takes it for a backend and never asks it to run this
+  /// device's tools. By key the token already says who is asking.
   Future<Uri> socketUri(String path, [Map<String, String> query = const {}]) async {
     final credentials = _byCustomer
-        ? {'customer_id': customerId, if (userId.isNotEmpty) 'user_id': userId}
+        ? {
+            'customer_id': customerId,
+            if (userId.isNotEmpty) 'user_id': userId,
+            'stream-auth-type': 'jwt',
+          }
         : {'api_key': apiKey, 'token': await _token()};
     return url.replace(
       scheme: url.scheme == 'https' ? 'wss' : 'ws',

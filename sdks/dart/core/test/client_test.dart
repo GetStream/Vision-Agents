@@ -120,7 +120,7 @@ void main() {
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
-    test('puts credentials in a socket url and no auth type, which has no query form', () async {
+    test('puts credentials and a device\'s auth type in a socket url by customer id', () async {
       final backend = Backend(
         url: Uri.parse('https://router.example/base'),
         customerId: 'acme',
@@ -130,7 +130,20 @@ void main() {
 
       expect(url.scheme, 'wss');
       expect(url.path, '/base/v1/agents/sessions/s1/events');
-      expect(url.queryParameters, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
+      expect(url.queryParameters, {
+        'decisions': 'false',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+        'stream-auth-type': 'jwt',
+      });
+    });
+
+    test('puts only the key and token in a socket url by key', () async {
+      final backend = Backend(apiKey: 'key', token: () async => 'token');
+
+      final url = await backend.socketUri('/v1/agents/sessions/s1/events');
+
+      expect(url.queryParameters, {'api_key': 'key', 'token': 'token'});
     });
   });
 
