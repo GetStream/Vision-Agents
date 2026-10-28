@@ -35,6 +35,11 @@ const inFlight = 64
 // schedule, the last one ten minutes after the one before.
 var defaultRetries = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}
 
+// pruneEvery is how often a worker deletes the rows past their keep: a day for an answered
+// message, 30 days for a given-up one (store.PruneChatDeliveries), so an hour late is nothing.
+// A choice, the channel bridge's.
+const pruneEvery = time.Hour
+
 // recordTimeout bounds writing what came of an attempt.
 const recordTimeout = 10 * time.Second
 
@@ -68,7 +73,9 @@ type Worker struct {
 	// kick wakes the loop: a slot freed.
 	kick chan struct{}
 	// slots holds one token for each answer running.
-	slots   chan struct{}
+	slots chan struct{}
+	// pruned is when the loop last deleted the rows past their keep.
+	pruned  time.Time
 	ctx     context.Context
 	cancel  context.CancelFunc
 	working sync.WaitGroup
@@ -141,6 +148,7 @@ func (w *Worker) Close() {
 // ending answer needs to wake the loop: every slot is taken. After Close the claim fails on
 // the cancelled context and the loop returns.
 func (w *Worker) answerDue() (wait time.Duration, again bool) {
+	w.prune()
 	free := cap(w.slots) - len(w.slots)
 	if free == 0 {
 		return 0, false
@@ -179,6 +187,18 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 		return look, true
 	}
 	return min(max(time.Until(next), w.poll), look), true
+}
+
+// prune deletes the rows past their keep, once every pruneEvery. Only the loop's goroutine
+// calls it.
+func (w *Worker) prune() {
+	if time.Since(w.pruned) < pruneEvery {
+		return
+	}
+	w.pruned = time.Now()
+	if _, err := w.store.PruneChatDeliveries(w.ctx, w.pruned); err != nil && w.ctx.Err() == nil {
+		w.logger.Error("could not delete the chat deliveries past their keep", "error", err)
+	}
 }
 
 // attempt answers a claimed message once and records what came of it: answered, due again

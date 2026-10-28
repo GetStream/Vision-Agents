@@ -279,6 +279,33 @@ func (s *WorkerSuite) TestALookThatFailedIsTriedAgainAPollOn() {
 	s.Equal(30*time.Millisecond, wait)
 }
 
+// With nothing queued a worker looks again a look later, for a message another router queues.
+func (s *WorkerSuite) TestAWorkerWithNothingQueuedLooksAgainALookLater() {
+	worker, err := NewWorker(Options{Store: s.store, Answer: (&answers{}).answer(nil), Poll: 30 * time.Millisecond})
+	s.Require().NoError(err)
+
+	wait, again := worker.answerDue()
+
+	s.True(again)
+	s.Equal(look, wait)
+}
+
+// A worker deletes the rows past their keep at its first look, and not again within the hour.
+func (s *WorkerSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
+	worker, err := NewWorker(Options{Store: s.store, Answer: (&answers{}).answer(nil)})
+	s.Require().NoError(err)
+	first := s.finished(s.queue(), 25*time.Hour)
+
+	worker.answerDue()
+
+	s.False(s.exists(first), "an answered message's row is kept a day")
+	second := s.finished(s.queue(), 25*time.Hour)
+
+	worker.answerDue()
+
+	s.True(s.exists(second), "the next prune is an hour after the first")
+}
+
 // queue queues a delivery due now and returns its message id.
 func (s *WorkerSuite) queue() string {
 	id := "message-" + uuid.NewString()
@@ -301,6 +328,21 @@ func (s *WorkerSuite) start(options Options) *Worker {
 	worker.Start()
 	s.T().Cleanup(worker.Close)
 	return worker
+}
+
+// finished records a queued delivery answered ago, and returns its message id.
+func (s *WorkerSuite) finished(messageID string, ago time.Duration) string {
+	_, err := s.store.DB().NewUpdate().Model((*store.ChatDelivery)(nil)).
+		Set("state = ?", store.ChatDeliveryDone).Set("finished_at = ?", time.Now().Add(-ago)).
+		Where("message_id = ?", messageID).Exec(s.ctx)
+	s.Require().NoError(err)
+	return messageID
+}
+
+func (s *WorkerSuite) exists(messageID string) bool {
+	exists, err := s.store.DB().NewSelect().Model((*store.ChatDelivery)(nil)).Where("message_id = ?", messageID).Exists(s.ctx)
+	s.Require().NoError(err)
+	return exists
 }
 
 func (s *WorkerSuite) row(messageID string) store.ChatDelivery {
