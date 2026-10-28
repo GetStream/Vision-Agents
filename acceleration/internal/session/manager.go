@@ -2044,7 +2044,7 @@ func (m *Manager) LoginFinished(state string) {
 		return
 	}
 	text := name + " is connected now. Carry on with what I asked for before you needed it."
-	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text); err != nil {
+	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text, nil); err != nil {
 		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
 	}
 }

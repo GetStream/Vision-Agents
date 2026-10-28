@@ -81,11 +81,17 @@ func (s *PolicySuite) SetupSuite() {
 }
 
 // quick is how fast a test's enforcer reads money: a pass every 50 ms, an account trusted for
-// 200 ms, and whatever goes unused or unacked dropped well inside a test.
+// 200 ms, and whatever goes unacked dropped well inside a test. What goes unused is kept for a
+// minute: a test that waits without an admission, or on another router, keeps what it read
+// however long a loaded machine pauses it. A test of Idle sets its own (idle).
 var quick = Settings{
 	Fresh: 50 * time.Millisecond, SpendEvery: 20 * time.Millisecond, SumEvery: 50 * time.Millisecond,
-	MaxStale: 200 * time.Millisecond, Idle: 100 * time.Millisecond, PendingTTL: 300 * time.Millisecond,
+	MaxStale: 200 * time.Millisecond, Idle: time.Minute, PendingTTL: 300 * time.Millisecond,
 }
+
+// idle is how soon a test of Idle has what goes unused dropped: well past a read of the
+// policies under load, which the decision's idle time starts before (decide).
+func idle(settings *Settings) { settings.Idle = time.Second }
 
 // ownerOf is work an app's backend asked for, with no key, user or category of its own.
 func ownerOf(appID string) routing.Owner { return routing.Owner{CustomerID: appID} }

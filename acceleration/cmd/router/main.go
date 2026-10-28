@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -55,6 +56,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -523,7 +525,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	priceFiles, err := loadPriceFiles(settings)
+	priceFiles, err := loadPriceFiles(settings, logger)
 	if err != nil {
 		return err
 	}
@@ -672,6 +674,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// and app, so a deployment without a database enforces none of them, and may run only
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
+	warnKnowledgeLimits(settings, logger)
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -1041,7 +1044,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), logger)
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, logger)
 	if base != nil {
 		defer base.Close()
 	}
@@ -1155,7 +1158,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
 	// Missing any of those, the url paths say so rather than storing a subscription
 	// nothing would ever honour.
-	pages, err := buildKnowledgeURLs(pgStore, settings.Redis.Addr, base, logger)
+	pages, err := buildKnowledgeURLs(pgStore, settings.Redis, holds, base, knowledgeLimits(settings.Knowledge), logger)
 	if err != nil {
 		return err
 	}
@@ -1407,6 +1410,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 	options.Knowledge = base
+	options.KnowledgeLimits = knowledgeLimits(settings.Knowledge)
 	// A channel's provider credentials are sealed under the same keyring as the other
 	// secrets the router holds. Without one the channel paths refuse to hold them, which is
 	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
@@ -1925,13 +1929,15 @@ func buildSessions(
 // nobody is listening to can take as long as it takes.
 func buildKnowledgeURLs(
 	pgStore *store.Store,
-	redisAddress string,
+	redis config.Redis,
+	shared rueidis.Client,
 	base *metered.Knowledge,
+	limits ingest.Limits,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
-	if pgStore == nil || redisAddress == "" || base == nil {
+	if pgStore == nil || shared == nil || base == nil {
 		logger.Debug("not serving knowledge urls",
-			"database", pgStore != nil, "redis", redisAddress != "", "knowledge", base != nil)
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil)
 		return nil, nil
 	}
 
@@ -1943,22 +1949,33 @@ func buildKnowledgeURLs(
 
 	return urls.New(urls.Options{
 		Store:     pgStore,
-		Redis:     asynq.RedisClientOpt{Addr: redisAddress},
+		Redis:     queueRedis(redis, shared),
 		Reader:    reader,
 		Knowledge: base,
+		Limits:    limits,
 		Logger:    logger,
 	})
 }
 
+// queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find
+// out for itself whether that is a cluster, and a client of one node is answered MOVED for
+// every key another shard holds, so it is told what rueidis found when it connected.
+func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
+	if shared.Mode() == rueidis.ClientModeCluster {
+		return asynq.RedisClusterClientOpt{Addrs: []string{redis.Addr}, Username: redis.Username, Password: redis.Password}
+	}
+	return asynq.RedisClientOpt{Addr: redis.Addr, Username: redis.Username, Password: redis.Password}
+}
+
 // newKnowledge is the knowledge base every lookup and write goes through, recorded by
-// recorder, or nil without a turbopuffer key.
-func newKnowledge(settings config.Config, recorder *routing.Recorder, logger *slog.Logger) *metered.Knowledge {
+// recorder and each write admitted by gate, or nil without a turbopuffer key.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, logger *slog.Logger) *metered.Knowledge {
 	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
 	if err != nil {
 		logger.Debug("nothing will be looked up or written down", "error", err)
 		return nil
 	}
-	return metered.NewKnowledge(backend, recorder)
+	return metered.NewKnowledge(backend, recorder, gate)
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.
@@ -1968,6 +1985,32 @@ func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
 		cost[pricing.Meter(meter)] = rate
 	}
 	return cost
+}
+
+// knowledgeLimits are how documents are cut into passages, as the settings name them.
+func knowledgeLimits(settings config.Knowledge) ingest.Limits {
+	return ingest.Limits{MinChunk: settings.MinChunk, MaxHeading: settings.MaxHeading}
+}
+
+// maxKnowledgeSizeMultiple is how many times larger than a document its passages may be before
+// the router warns of it at startup.
+const maxKnowledgeSizeMultiple = 4
+
+// warnKnowledgeLimits says at startup when the knowledge limits let one ingest request write
+// many times what it sent.
+func warnKnowledgeLimits(settings config.Config, logger *slog.Logger) {
+	multiple := knowledgeLimits(settings.Knowledge).SizeMultiple()
+	switch {
+	case math.IsInf(multiple, 1):
+		logger.Warn("knowledge has no minimum chunk, so nothing limits the size of the passages of a document",
+			"set", "ROUTER_KNOWLEDGE_MIN_CHUNK")
+	case multiple > maxKnowledgeSizeMultiple:
+		logger.Warn("the knowledge limits let the passages of a document be many times its size: lower the "+
+			"heading limit or raise the minimum chunk",
+			"size_multiple", fmt.Sprintf("%.1f", multiple),
+			"request_bytes", api.MaxKnowledgeBody, "written_bytes", int64(multiple*api.MaxKnowledgeBody),
+			"set", "ROUTER_KNOWLEDGE_MAX_HEADING or ROUTER_KNOWLEDGE_MIN_CHUNK")
+	}
 }
 
 // buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
@@ -2038,9 +2081,9 @@ func buildVoices(
 }
 
 // newPrices is the price list of the price files the router loads (the deployment's own over
-// the embedded vendor.json), at the vendors' rates with no markup, with the models the
-// routing config runs itself marked local: every row is priced by it on a router with no
-// database, and until the database is read on one with. A price: block in the
+// the embedded vendor.json), priced as a first load prices them, with the models the routing
+// config runs itself marked local: every row is priced by it on a router with no database,
+// and until the database is read on one with. A price: block in the
 // routing config is no longer read, which is said at start, and so is billable work the
 // list has no price for, so it can be priced before a row of it is recorded at nothing.
 func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
@@ -2049,12 +2092,13 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
 			"providers", ignored)
 	}
-	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), 0, logger)
+	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
 	if err != nil {
 		return nil, err
 	}
 	for _, item := range list.Unpriced(routing.Items(capabilities)) {
-		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
+			"region", item.Region, "byok", item.BYOK)
 	}
 	return list, nil
 }
@@ -2062,8 +2106,8 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 // newActivePrices is the price list every row is priced by on a router with a database: the
 // one in force in it, read every interval and at each scheduled change, with the models the
 // routing config runs itself marked local. Until a read answers any entry it prices with
-// fallback, which has no markup, so a deployment with its own price file (requireEntries)
-// reports not ready until then rather than serve on it.
+// fallback, which has none of the prices staff set since, so a deployment with its own price
+// file (requireEntries) reports not ready until then rather than serve on it.
 func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
 	requireEntries bool, interval time.Duration, logger *slog.Logger) *pricing.Active {
 	return pricing.NewActive(ctx, pricing.ActiveOptions{

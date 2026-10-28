@@ -15,16 +15,26 @@ final readonly class PriceEntryInput
         public string $modality,
         public string $model,
         public string $provider,
-        // The vendor charges nothing for it.
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
+        // The vendor charges nothing for it. A free entry has no price.
         public ?bool $free = null,
         // Refused with invalid_price: a model is local when the routing config says so.
         public ?bool $local = null,
-        // The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
-        public ?int $markupBps = null,
-        // The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, c...
+        // What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its mete...
+        /** @var list<PriceTier>|null */
+        public ?array $priceTiers = null,
+        // What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required...
+        /** @var array<string, mixed>|null */
+        public ?array $prices = null,
+        // The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_token...
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
-        // Rates for long prompts. Each tier rates every meter the entry does.
+        // The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider...
+        public ?string $sku = null,
+        // The vendor's cost for long prompts. Each tier rates every meter the entry does.
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
         // Refused with invalid_price: an entry's version is the change that writes it.
@@ -46,10 +56,14 @@ final readonly class PriceEntryInput
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
             local: array_key_exists('local', $data) && $data['local'] !== null ? Json::bool($data, 'local') : null,
-            markupBps: array_key_exists('markup_bps', $data) && $data['markup_bps'] !== null ? Json::int($data, 'markup_bps') : null,
+            priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
+            prices: array_key_exists('prices', $data) && $data['prices'] !== null ? Json::object($data, 'prices') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             version: array_key_exists('version', $data) && $data['version'] !== null ? Json::string($data, 'version') : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
@@ -68,17 +82,27 @@ final readonly class PriceEntryInput
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
+        }
         if ($this->free !== null) {
             $out['free'] = $this->free;
         }
         if ($this->local !== null) {
             $out['local'] = $this->local;
         }
-        if ($this->markupBps !== null) {
-            $out['markup_bps'] = $this->markupBps;
+        if ($this->priceTiers !== null) {
+            $out['price_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->priceTiers);
+        }
+        if ($this->prices !== null) {
+            $out['prices'] = Json::objectValue($this->prices);
         }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tiers !== null) {
             $out['tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->tiers);

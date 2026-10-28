@@ -114,6 +114,9 @@ type task struct {
 	// failure is what the provider reported for this task, which turns its completion
 	// into a failure rather than an answer.
 	failure error
+	// retried says the task has already been asked again after its provider failed
+	// part way through an answer.
+	retried bool
 	// instructions and messages are what the task was asked, kept so that running code
 	// can be followed by asking again with what the code said.
 	instructions string
@@ -616,6 +619,29 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		running.rounds++
 		m.mu.Unlock()
 		return m.resume(running, response)
+	}
+	// A provider that fails part way through an answer for a reason of its own, overloaded,
+	// rate limited or with its stream dropped, has failed this attempt, not the work: nothing
+	// of it reached the caller, who hears only the settled answer, so the same question is
+	// put once more while the task is still wanted. Its deadline is not restarted and bounds
+	// the second attempt too, and a second failure settles the task as failed. A failure the
+	// request itself caused, or one nothing classifies, would only fail again and is paid
+	// for each time, so it settles the task at once.
+	if running.failure != nil && response.Status == llm.StatusFailed && llm.Transient(running.failure) &&
+		running.live() && !running.retried && !m.closed {
+		failed := running.failure
+		running.retried, running.failure = true, nil
+		messages := running.messages
+		m.mu.Unlock()
+		m.logger.Info("asking a subagent again after its provider failed mid-answer",
+			"skill", running.skill, "task", running.id, "error", failed)
+		stream, err := m.ask(running, messages)
+		if err != nil {
+			m.report(running, Result{State: Failed, Err: errors.Join(failed, err)})
+			return nil, false
+		}
+		m.hold(running, stream)
+		return stream, true
 	}
 	reason, failure, broken := running.reason, running.failure, running.broken
 	m.mu.Unlock()

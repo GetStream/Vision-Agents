@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -48,7 +50,11 @@ func (s *MeteringSuite) SetupSuite() {
 
 	s.config, err = routing.DefaultConfig()
 	s.Require().NoError(err)
-	s.prices, err = routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	listed, err := routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.Require().NoError(err)
+	// At the vendors' rates, so each cost below is what a vendor's published rate makes of the
+	// characters it took.
+	s.prices, err = pricing.NewList("vendor", pricing.AllAtCost(listed.Entries()), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
 
@@ -100,11 +106,68 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Require().Len(rows, 2)
 	s.EqualValues(15, rows[0].Characters, "the runes handed to the voice, not the 17 the adapter counted")
 	s.Equal("u1", rows[0].OperationID)
-	s.EqualValues(75, rows[0].CostMicros, "15 characters at $5 a million")
+	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "tts", Provider: "inworld", Model: "inworld-tts-2-flash", Region: pricing.RegionUS}, pricing.Quantities{pricing.Characters: 15}),
+		rows[0].CostMicros, "15 characters at Inworld's rate")
 	s.EqualValues(4, rows[1].Characters, "an adapter that counted nothing is billed what it was sent")
 	s.Equal(named, rows[1].OperationID)
 	s.Contains(logs.String(), "level=WARN msg=\"the voice counted characters other than those it was sent")
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	s.Empty(session.sent, "text for a settled utterance is not counted, so nothing is left waiting for a completion")
+}
+
+// rows reads back what the session recorded for a customer, once it and its recorder have
+// closed.
+func (s *MeteringSuite) rows(customer string) []store.Request {
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Order("id").Scan(s.ctx))
+	return rows
+}
+
+func (s *MeteringSuite) TestAnUtteranceAVoiceReportsFinishedTwiceIsBilledOnce() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := newStubTTS()
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Hello there.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12, AudioDurationMs: 900})
+	s.completed(session)
+	// The same final frame again, as a voice that repeats it would send.
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12, AudioDurationMs: 900})
+	s.completed(session)
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 1, "one utterance is one row, however often the voice reports it finished")
+	s.EqualValues(12, rows[0].Characters)
+	s.Equal("u1", rows[0].OperationID)
+}
+
+func (s *MeteringSuite) TestAnUtteranceAVoiceStartsAgainAfterItSettledIsBilledAgain() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := newStubTTS()
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Hello there.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12})
+	s.completed(session)
+	// A voice that opens a settled utterance again for more text speaks it, and starts it
+	// over to say so.
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Again.", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 6})
+	s.completed(session)
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 2)
+	s.EqualValues(12, rows[0].Characters)
+	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed what the voice counted")
+	s.Equal("u1", rows[1].OperationID)
 }

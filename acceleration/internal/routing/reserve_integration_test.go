@@ -237,10 +237,11 @@ func (s *ReserveSuite) TestALeaseHoldsAMinuteUntilItStops() {
 func (s *ReserveSuite) TestASlicedRunLeasesAtItsRowsPrice() {
 	s.credit(2_000_000)
 	var logs bytes.Buffer
-	prices, err := pricing.NewList("sandbox", []pricing.Entry{{
-		Modality: string(routing.Sandbox), Provider: "daytona", Model: "running", When: map[string]string{"class": "container"},
+	prices, err := pricing.NewList("sandbox", pricing.AllAtCost([]pricing.Entry{{
+		Modality: string(routing.Sandbox), Provider: "daytona", Model: "running", Region: pricing.DefaultRegion,
+		When:  map[string]string{"class": "container"},
 		Rates: map[pricing.Meter]pricing.Rate{pricing.VCPUSeconds: {USD: 3, Per: 60}},
-	}}, 0, slog.New(slog.NewTextHandler(&logs, nil)))
+	}}), slog.New(slog.NewTextHandler(&logs, nil)))
 	s.Require().NoError(err)
 	recorder := routing.NewRecorderOn(routing.Sandbox, s.writer, prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
 

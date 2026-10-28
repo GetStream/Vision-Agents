@@ -652,7 +652,7 @@ module GetStream
         }.freeze,
         "getPrices" => {
           method: :get, path: "/v1/prices",
-          path_params: [].freeze, query: %w[modality].freeze,
+          path_params: [].freeze, query: %w[modality region].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
@@ -2480,19 +2480,19 @@ module GetStream
           required: %w[digits vendor].freeze, open: false
         }.freeze,
         "Price" => {
-          properties: %w[change description effective_at free local modality model provider rates tiers when withdrawn].freeze,
-          required: %w[free local modality provider model].freeze, open: false
+          properties: %w[byok change description effective_at free local modality model provider rates region sku tiers when withdrawn].freeze,
+          required: %w[free local modality provider model region].freeze, open: false
         }.freeze,
         "PriceChange" => {
-          properties: %w[cancel_reason cancelled_at cancelled_by created_at created_by effective_at entries kind markup_bps name reason source].freeze,
+          properties: %w[cancel_reason cancelled_at cancelled_by created_at created_by effective_at entries kind name reason source].freeze,
           required: %w[name kind reason source effective_at created_by created_at].freeze, open: false
         }.freeze,
         "PriceChangeEntry" => {
-          properties: %w[free markup_bps modality model provider rates tiers when withdrawn].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok free modality model price_tiers prices provider rates region sku tiers when withdrawn].freeze,
+          required: %w[sku modality provider model region].freeze, open: false
         }.freeze,
         "PriceChangeInput" => {
-          properties: %w[confirm effective_at entries markup_bps name reason source].freeze,
+          properties: %w[confirm effective_at entries name reason source].freeze,
           required: %w[name reason source].freeze, open: false
         }.freeze,
         "PriceChangePage" => {
@@ -2500,28 +2500,28 @@ module GetStream
           required: %w[items has_more].freeze, open: false
         }.freeze,
         "PriceEntry" => {
-          properties: %w[charged_markup_bps charged_rates charged_tiers effective_at free local markup_bps modality model provider rates tiers version when].freeze,
-          required: %w[charged_markup_bps modality provider model].freeze, open: false
+          properties: %w[byok effective_at free local modality model price_tiers prices provider rates region sku tiers version when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceEntryInput" => {
-          properties: %w[free local markup_bps modality model provider rates tiers version when withdrawn].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok free local modality model price_tiers prices provider rates region sku tiers version when withdrawn].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceItem" => {
-          properties: %w[modality model provider when].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok modality model provider region when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceList" => {
-          properties: %w[at entries markup_bps unpriced upcoming].freeze,
-          required: %w[at markup_bps entries unpriced upcoming].freeze, open: false
+          properties: %w[at entries unpriced upcoming].freeze,
+          required: %w[at entries unpriced upcoming].freeze, open: false
         }.freeze,
         "PricePreview" => {
-          properties: %w[confirmation_required effective_at items markup_bps_after markup_bps_before needs_confirmation].freeze,
-          required: %w[effective_at markup_bps_before markup_bps_after items confirmation_required].freeze, open: false
+          properties: %w[confirmation_required effective_at items needs_confirmation].freeze,
+          required: %w[effective_at items confirmation_required].freeze, open: false
         }.freeze,
         "PricePreviewItem" => {
-          properties: %w[after before markup_factor modality model needs_confirmation provider rate_factors unpriced when].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[after before byok modality model needs_confirmation price_factors provider region unpriced when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceRate" => {
           properties: %w[increment minimum per usd].freeze,
@@ -2532,8 +2532,8 @@ module GetStream
           required: %w[above_input_tokens rates].freeze, open: false
         }.freeze,
         "PricedEntry" => {
-          properties: %w[charged_rates charged_tiers free local markup_bps rates tiers version].freeze,
-          required: %w[markup_bps].freeze, open: false
+          properties: %w[free local price_tiers prices rates sku tiers version].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "Prices" => {
           properties: %w[at entries upcoming].freeze,
@@ -2932,8 +2932,8 @@ module GetStream
           required: %w[agent_id audio_out_ms_total bucket interrupted_count turn_count].freeze, open: false
         }.freeze,
         "UpcomingPriceEntry" => {
-          properties: %w[charged_markup_bps charged_rates charged_tiers effective_at free local markup_bps modality model provider rates reason tiers version when withdrawn].freeze,
-          required: %w[reason charged_markup_bps modality provider model].freeze, open: false
+          properties: %w[byok effective_at free local modality model price_tiers prices provider rates reason region sku tiers version when withdrawn].freeze,
+          required: %w[reason modality provider model region].freeze, open: false
         }.freeze,
         "UpdateScheduledTaskRequest" => {
           properties: %w[deliver_to instructions next quiet_hours schedule title].freeze,
@@ -2948,7 +2948,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "UsageEvent" => {
-          properties: %w[agent_id api_key app_id attributes billable call_id cost_micros error_code meter model occurred_at provider purpose quantities session_id success tags team usage_categories usage_id user_id].freeze,
+          properties: %w[agent_id api_key app_id attributes billable call_id cost_micros error_code meter model occurred_at provider purpose quantities session_id sku success tags team usage_categories usage_id user_id].freeze,
           required: %w[usage_id occurred_at app_id api_key usage_categories meter quantities cost_micros billable success].freeze, open: false
         }.freeze,
         "UsageEventPage" => {

@@ -27,7 +27,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -468,6 +467,9 @@ type Agent struct {
 	// scheduled says that last thing was a turn a scheduled task fired, kept the same way,
 	// so neither it nor the replies that finish it are counted on an end user's day.
 	scheduled bool
+	// turnImages are the images that last thing came with, kept the same way, so the reply
+	// after a tool still sees what it was asked about. The next turn drops them.
+	turnImages []llm.ImagePart
 
 	joined bool
 	closed bool
@@ -669,7 +671,7 @@ func New(options Options) (*Agent, error) {
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
 			options.Knowledge.For(owner),
-			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
+			options.KnowledgeNamespace,
 			options.KnowledgeLimit,
 		)
 	}
@@ -854,7 +856,12 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				metadata, _ := json.Marshal(described)
 				parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 			}
-			if _, err := current.Delegate(ctx, visionSkill, text, id, parts, nil); err != nil {
+			// The skill is handed no work without a prompt, and a photo sent alone asks something.
+			prompt := text
+			if strings.TrimSpace(prompt) == "" {
+				prompt = imagesAlone
+			}
+			if _, err := current.Delegate(ctx, visionSkill, prompt, id, parts, nil); err != nil {
 				return "", err
 			}
 			typed()
@@ -869,6 +876,19 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	id := replyPrefix + turnStamp()
 	typed()
 	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
+}
+
+// imagesAlone is what the vision skill is asked about images sent with no text.
+const imagesAlone = "The caller sent these images without a message. Describe what they show."
+
+// SeesImages reports whether a turn's images reach something that looks at them: a vision
+// skill, or a conversation model that accepts images. RespondTo refuses a turn with images
+// with ErrCannotSeeImages when neither is there.
+func (a *Agent) SeesImages() bool {
+	a.mu.Lock()
+	current, model := a.harness, a.llm
+	a.mu.Unlock()
+	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1931,6 +1951,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.owedTurn = ""
 	instructions := a.instructions()
 	asked := a.asked
+	images := a.turnImages
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindTool)
@@ -1941,6 +1962,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
+		Images:       images,
 		AfterTool:    true,
 		Answers:      answers,
 		Asked:        asked,
@@ -1973,7 +1995,7 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text)
+	a.keepTurnLocked(said, text, images)
 	history := a.replayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
@@ -2052,9 +2074,11 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 }
 
 // keepTurnLocked adds a turn being answered to the conversation and counts who said it.
-// What tools showed the model before it stand as a note from here on (toolPicturesSeen).
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string) {
+// What tools showed the model before it stand as a note from here on (toolPicturesSeen),
+// and only this turn's images go with its replies.
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, images []llm.ImagePart) {
 	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+	a.turnImages = images
 	if a.missed.participant == participant.ID {
 		a.missed = unheardReply{}
 	}
@@ -2567,6 +2591,13 @@ func (a *Agent) handle(event llm.Event) {
 		}
 
 	case llm.ResponseFailed:
+		// A reply the agent gave up on is over already, and its stream breaking as it was cut
+		// off is part of the cut. Reported, it would end as failed whatever the conversation
+		// is on, before the interruption ends it as cancelled.
+		if a.abandonedTurn(typed.ResponseID) {
+			a.logger.Debug("a reply failed after it was abandoned", "turn", typed.ResponseID, "error", typed.Err)
+			return
+		}
 		a.fail(typed.Err, "llm")
 
 	case llm.ResponseCompleted:

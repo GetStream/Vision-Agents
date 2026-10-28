@@ -69,12 +69,12 @@ func (s *SlicesSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.prices, err = pricing.NewList("slices", []pricing.Entry{
-		{Modality: string(Runtime), Provider: "stream", Model: "voice", Rates: map[pricing.Meter]pricing.Rate{
+	s.prices, err = pricing.NewList("slices", pricing.AllAtCost([]pricing.Entry{
+		{Modality: string(Runtime), Provider: "stream", Model: "voice", Region: pricing.DefaultRegion, Rates: map[pricing.Meter]pricing.Rate{
 			pricing.Seconds: {USD: 0.06, Per: 60},
 		}},
-		{Modality: string(Runtime), Provider: "stream", Model: "text", Free: true},
-	}, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		{Modality: string(Runtime), Provider: "stream", Model: "text", Region: pricing.DefaultRegion, Free: true},
+	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
 

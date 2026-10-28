@@ -11,17 +11,18 @@ use GetStream\VisionAgents\Json;
 final readonly class PricedEntry
 {
     public function __construct(
-        // The markup it is sold at.
-        public int $markupBps,
-        /** @var array<string, mixed>|null */
-        public ?array $chargedRates = null,
-        /** @var list<PriceTier>|null */
-        public ?array $chargedTiers = null,
         public ?bool $free = null,
         public ?bool $local = null,
-        // The vendor's rates.
+        /** @var list<PriceTier>|null */
+        public ?array $priceTiers = null,
+        // What customers are charged.
+        /** @var array<string, mixed>|null */
+        public ?array $prices = null,
+        // The vendor's cost, for reference.
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
+        // The SKU it is priced under.
+        public ?string $sku = null,
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
         // The change that wrote it. Absent for the change previewed.
@@ -35,12 +36,12 @@ final readonly class PricedEntry
     public static function fromArray(array $data): self
     {
         return new self(
-            markupBps: Json::int($data, 'markup_bps'),
-            chargedRates: array_key_exists('charged_rates', $data) && $data['charged_rates'] !== null ? Json::object($data, 'charged_rates') : null,
-            chargedTiers: array_key_exists('charged_tiers', $data) && $data['charged_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'charged_tiers')) : null,
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
             local: array_key_exists('local', $data) && $data['local'] !== null ? Json::bool($data, 'local') : null,
+            priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
+            prices: array_key_exists('prices', $data) && $data['prices'] !== null ? Json::object($data, 'prices') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             version: array_key_exists('version', $data) && $data['version'] !== null ? Json::string($data, 'version') : null,
         );
@@ -54,21 +55,23 @@ final readonly class PricedEntry
     public function toArray(): array
     {
         $out = [];
-        $out['markup_bps'] = $this->markupBps;
-        if ($this->chargedRates !== null) {
-            $out['charged_rates'] = Json::objectValue($this->chargedRates);
-        }
-        if ($this->chargedTiers !== null) {
-            $out['charged_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->chargedTiers);
-        }
         if ($this->free !== null) {
             $out['free'] = $this->free;
         }
         if ($this->local !== null) {
             $out['local'] = $this->local;
         }
+        if ($this->priceTiers !== null) {
+            $out['price_tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->priceTiers);
+        }
+        if ($this->prices !== null) {
+            $out['prices'] = Json::objectValue($this->prices);
+        }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tiers !== null) {
             $out['tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->tiers);

@@ -9,7 +9,7 @@ speech, voice and language providers, which reach no vendor and bill nothing. So
 measures the router — its audio path, its turn taking and its database — and nothing else.
 
 ```bash
-CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench run -target staging -max 64 -out out/before
+CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench run -target benchmark -max 64 -out out/before
 CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench compare out/before out/after
 ```
 

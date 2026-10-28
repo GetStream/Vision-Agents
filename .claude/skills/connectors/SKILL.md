@@ -214,6 +214,17 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
   carries `drive.file`, so code can also create files and change files the app opened. A
   `session` Drive binding of a user with no connection gets a late grant (below).
+- Linear has a block on `linear_app` from revision 2 (`LINEAR_ACCESS_TOKEN`, hosts `api.linear.app`
+  and `uploads.linear.app`; AI-2082): code sends `Authorization: Bearer $LINEAR_ACCESS_TOKEN`,
+  and under the proxy broker a POST to `/graphql` passes only with queries; a mutation gets 403.
+  Its connections of revision 1 give the sandbox nothing until reconnected. `linear` (DCR) has
+  no block: its token, issued for `mcp.linear.app`, gets 401 from `api.linear.app/graphql`
+  (probe 2026-10-27).
+- BigQuery has a block from revision 4 (`BIGQUERY_TOKEN`, host `bigquery.googleapis.com`; AI-2114):
+  code reads with GETs and with jobs.query (`client.query_and_wait`), and under the proxy broker a
+  POST to `/bigquery/v2/projects/*/queries` passes only when BigQuery's dry run of it says
+  `SELECT`; a script, DML, DDL, `EXPORT DATA` and jobs.insert (`client.query()`) get 403. Its
+  connections of revisions 1-3 give the sandbox nothing until reconnected.
 - A `session` binding whose user has not connected yet, in a chat they can log in in, gets a late
   grant: the env var is there from the start, built from the connector's latest `sandbox` block,
   and a request with it gets a 401 (the proxy's «gives no token», or the host's own under Daytona).
@@ -253,6 +264,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `POST github.com/<owner>/<repo>.git/git-upload-pack`, so clone and fetch work; push is refused).
   A read with `graphql: true` takes a POST whose every GraphQL operation is a query (GitHub
   revision 9: `POST api.github.com/graphql`, so `gh`'s queries work and its mutations get the 403).
+  A read with `sql: true` takes a POST whose dry run the host says is one SELECT (BigQuery
+  revision 4: jobs.query).
   Connections pinned to an earlier revision get the reads without a reconnect. Allowed domains
   take any method. Under the Daytona broker nothing checks methods: code can write with the token
   (`internal/sandbox/egress/AGENTS.md`, «Read-only»).

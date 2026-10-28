@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -61,7 +62,7 @@ func (s *UsageCommandsSuite) TestTheRentalJobBillsEachMonthAfterThePurchaseOnce(
 		s.True(month.Billable)
 	}
 	costs := []int64{months[0].CostMicros, months[1].CostMicros}
-	s.ElementsMatch([]int64{1_000_000, 0}, costs, "a number with no price is billable work with no price")
+	s.ElementsMatch([]int64{1_200_000, 0}, costs, "the vendor's 1,000,000 resold at the factor; a number with no price is billable work with no price")
 }
 
 func (s *UsageCommandsSuite) TestTheRentalJobBillsNothingThatBeganBeforeFrom() {
@@ -102,6 +103,9 @@ func (s *UsageCommandsSuite) TestTheDLCJobBillsACampaignsMonthsFromItsRegistrati
 	s.Contains(out.String(), "1 months of 10DLC campaigns billed", "this month only: last month was before it was registered")
 	months := s.telephonyRows(dlc.ModelCampaignMonth)
 	s.Require().Len(months, 1)
-	s.Equal(int64(1_500_000), months[0].CostMicros, "a low-volume campaign's month, whatever case its type was saved in")
+	base, cost := s.quoted(routing.Phone, "telnyx", dlc.ModelCampaignMonth, map[string]string{dlc.AttributeUseCaseType: "LOW_VOLUME"},
+		pricing.Quantities{pricing.Requests: 1})
+	s.Equal(base, months[0].BaseCostMicros, "a low-volume campaign's month, whatever case its type was saved in")
+	s.Equal(cost, months[0].CostMicros, "resold at the factor")
 	s.Equal(dlc.OriginFees, months[0].APIKey)
 }

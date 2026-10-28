@@ -10,13 +10,16 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
@@ -97,4 +100,15 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 func TestAnIdleRouterHoldsTheDrainForNothing(t *testing.T) {
 	require.Zero(t, running(nil, nil))
 	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil)))
+}
+
+// TestKnowledgeURLsAreNotServedWithoutRedis: with a database, a knowledge base and a crawler
+// key but no Redis, the url paths are off rather than queueing on nothing.
+func TestKnowledgeURLsAreNotServedWithoutRedis(t *testing.T) {
+	t.Setenv("EXA_API_KEY", "exa-key")
+
+	pages, err := buildKnowledgeURLs(&store.Store{}, config.Redis{}, nil, &metered.Knowledge{}, ingest.Limits{}, slog.New(slog.DiscardHandler))
+
+	require.NoError(t, err)
+	require.Nil(t, pages)
 }

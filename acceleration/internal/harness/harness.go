@@ -146,9 +146,9 @@ type Turn struct {
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It is not remembered past the reply it shapes.
 	Note string
-	// Images go with the last message of History for this reply alone, the way Note does.
-	// The conversation the harness keeps, and hands a colleague who may not see, stays as
-	// it was said.
+	// Images go with the caller's last message in History for this reply alone, the way
+	// Note does. The conversation the harness keeps, and hands a colleague who may not see,
+	// stays as it was said.
 	Images []llm.ImagePart
 	// AfterTool says the reply follows a tool result rather than the caller.
 	AfterTool bool
@@ -399,14 +399,8 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	// A reply to a tool result is given a little thinking. The caller was told to wait
 	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
 	// answers a free table with "may I book it?" instead of booking it.
-	//
-	// A reply to the caller gets the same floor when the model would otherwise not think
-	// at all: at none GPT-6 Sol can commit to an answer in its first word and reason its
-	// way to the opposite after it, or ask the caller to confirm what it could have done.
-	// The thinking delays the first word, so a session or turn that names an effort,
-	// none included, still wins.
 	var reasoning llm.ReasoningParams
-	if slices.Contains(model.ReasoningEfforts, toolReplyEffort) && (turn.AfterTool || model.DefaultEffort == "none") {
+	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
 		reasoning.Effort = toolReplyEffort
 	}
 
@@ -518,17 +512,22 @@ func answerable(history []llm.Message) []llm.Message {
 		llm.Message{Role: llm.User, Content: resumption})
 }
 
-// withImages puts images on the last message of history, after its words and each beside
-// its caption.
+// withImages puts images on the caller's last message in history, after its words and each
+// beside its caption. That is the last message of a reply to the caller, and comes before
+// the tool calls and results a reply to a tool follows.
 func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
-	if len(images) == 0 || len(history) == 0 {
+	at := len(history) - 1
+	for at >= 0 && history[at].Role != llm.User {
+		at--
+	}
+	if len(images) == 0 || at < 0 {
 		return history
 	}
 	out := append([]llm.Message(nil), history...)
-	last := out[len(out)-1]
-	parts := append([]llm.ContentPart(nil), last.Parts...)
+	asked := out[at]
+	parts := append([]llm.ContentPart(nil), asked.Parts...)
 	if len(parts) == 0 {
-		parts = llm.TextParts(last.Content)
+		parts = llm.TextParts(asked.Content)
 	}
 	for _, image := range images {
 		if image.Caption != "" {
@@ -536,8 +535,8 @@ func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 		}
 		parts = append(parts, llm.ContentPart{Image: &image})
 	}
-	last.Content, last.Parts = "", parts
-	out[len(out)-1] = last
+	asked.Content, asked.Parts = "", parts
+	out[at] = asked
 	return out
 }
 

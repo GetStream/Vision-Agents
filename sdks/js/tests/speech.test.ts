@@ -48,6 +48,30 @@ describe("Speech", () => {
     mock.timers.reset();
   });
 
+  it("says a reply is awaited from when it is written until its voice starts", () => {
+    assert.equal(speech.awaiting, false);
+    writing("turn-1");
+    assert.equal(speech.awaiting, true);
+    speaking("turn-1", "turn-1", "Hello");
+    assert.equal(speech.awaiting, false);
+  });
+
+  it("stops awaiting a reply that says nothing, or whose voice never starts", () => {
+    writing("turn-1");
+    speech.observe({ type: "responded", turn_id: "turn-1", text: "" });
+    assert.equal(speech.awaiting, false);
+
+    writing("turn-2");
+    wait(SPEECH_GRACE_MS);
+    assert.equal(speech.awaiting, false);
+  });
+
+  it("awaits nothing for a reply in writing", () => {
+    voice = false;
+    writing("turn-1");
+    assert.equal(speech.awaiting, false);
+  });
+
   it("knows nothing of a turn the voice has not reached", () => {
     assert.equal(speech.get(), undefined);
     assert.equal(speech.heard("turn-1"), undefined);

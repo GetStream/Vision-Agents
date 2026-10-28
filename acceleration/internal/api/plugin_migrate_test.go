@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginmigrate"
@@ -59,6 +60,9 @@ func (s *PluginMigrateSuite) SetupSuite() {
 	s.connectorHTTP = s.provider.Client()
 	s.RouterSuite.SetupSuite()
 	s.token = issuedToken(&s.RouterSuite, s.provider)
+	// The built-ins as a router start seeds them: the BesideNessy tests bind nessy, whose
+	// manifest says sensitive, and a binding with no definition is not checked at all.
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 	s.seedConnectors()
 }
 

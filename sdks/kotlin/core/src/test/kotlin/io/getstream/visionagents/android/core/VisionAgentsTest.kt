@@ -52,7 +52,21 @@ class VisionAgentsTest {
     fun `naming no router reaches the hosted one`() {
         VisionAgents(apiKey = "key").use { hosted ->
             assertEquals(Backend.DEFAULT_URL, hosted.backend.url)
-            assertEquals("https://accelerate.gcp.stream-io-api.com", hosted.backend.url)
+            assertEquals("https://accelerate-us-east4.gcp.stream-io-api.com", hosted.backend.url)
+        }
+    }
+
+    @Test
+    fun `a region is the hosted router there`() {
+        assertEquals("https://accelerate-us-east4.gcp.stream-io-api.com", Backend.regionUrl("us-east4"))
+        assertEquals("https://accelerate-europe-west4.gcp.stream-io-api.com", Backend.regionUrl("europe-west4"))
+    }
+
+    @Test
+    fun `anything but a region name is refused`() {
+        for (name in listOf("", "US-EAST4", "us-east4.evil.com/x", "us-east4\n", "us_east4", "useast4", "us-east")) {
+            val refused = assertFailsWith<IllegalArgumentException>(name) { Backend.regionUrl(name) }
+            assertTrue(name in refused.message.orEmpty(), refused.message)
         }
     }
 
@@ -177,6 +191,45 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a session names the user's timezone only when one is given`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+
+        agents.sessions.create(SessionOptions(timezone = "Europe/Skopje"))
+        agents.sessions.create(SessionOptions())
+
+        val (zoned, plain) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
+        assertEquals(JsonPrimitive("Europe/Skopje"), zoned["timezone"])
+        assertEquals(null, plain["timezone"])
+    }
+
+    @Test
+    fun `memory is the signed-in user's, narrowed by the labels asked for`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+        agents.setUser(User("jlahey"), "unused")
+
+        agents.sessions.create(
+            SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"), appId = "web")),
+        )
+        agents.sessions.create(SessionOptions(memory = SessionOptions.Memory(), incognito = true))
+
+        val (narrowed, incognito) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
+        assertEquals("""{"app_id":"web","filter":{"topic":"billing"},"user_id":"jlahey"}""", narrowed["memory"].toString())
+        // The router keeps nothing of an incognito session, so the two are sent as asked and it decides.
+        assertEquals(setOf("incognito", "memory"), incognito.keys)
+        assertEquals("""{"user_id":"jlahey"}""", incognito["memory"].toString())
+    }
+
+    @Test
+    fun `a session without memory sends none, whoever is signed in`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+        agents.setUser(User("jlahey"), "unused")
+
+        agents.sessions.create()
+
+        assertEquals("{}", router.requests.single().body)
+    }
+
+    @Test
     fun `a modality the SDK never heard of is unknown, and cannot be asked for`() = runTest {
         router.answer = { Reply(200, sessionJson(modality = "telepathy")) }
 
@@ -232,6 +285,31 @@ class VisionAgentsTest {
         assertEquals(Session.Modality.Voice, found.items.single().modality)
         assertTrue(found.hasMore)
         assertEquals("c2", found.nextCursor)
+    }
+
+    @Test
+    fun `listing by date, labels and order sends the range, the pairs and the field to sort by`() = runTest {
+        router.answer = { Reply(200, EMPTY_PAGE) }
+
+        agents.sessions.query(
+            SessionQuery(
+                createdSince = Instant.parse("2026-10-20T00:00:00Z"),
+                createdBefore = Instant.parse("2026-10-27T12:30:00.5Z"),
+                custom = mapOf("ticket" to "4721"),
+                sort = SessionQuery.Sort.UpdatedAt,
+            ),
+        )
+        agents.sessions.query(SessionQuery(createdBefore = Instant.parse("2026-10-27T00:00:00Z")))
+        agents.sessions.search("pricing", SessionQuery(sort = SessionQuery.Sort.Relevance))
+
+        val (filtered, before, searched) = router.requests.map { it.body }
+        assertEquals(
+            """{"filter":{"created_at":{"${'$'}gte":"2026-10-20T00:00:00Z","${'$'}lt":"2026-10-27T12:30:00.500Z"},""" +
+                """"custom":{"ticket":"4721"}},"sort":[{"field":"updated_at"}]}""",
+            filtered,
+        )
+        assertEquals("""{"filter":{"created_at":{"${'$'}lt":"2026-10-27T00:00:00Z"}}}""", before)
+        assertEquals("""{"filter":{"text":{"${'$'}q":"pricing"}},"sort":[{"field":"relevance"}]}""", searched)
     }
 
     @Test

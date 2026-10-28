@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -36,6 +37,7 @@ type MeteringSuite struct {
 	store    *store.Store
 	redis    rueidis.Client
 	recorder *routing.Recorder
+	prices   *pricing.List
 	service  *Service
 	vendor   *stub
 	clock    *meteringClock
@@ -69,8 +71,9 @@ func (s *MeteringSuite) SetupTest() {
 // withSandbox builds the service over a fresh customer, a gate holding them to sandbox, and a
 // recorder written out before the test reads.
 func (s *MeteringSuite) withSandbox(sandbox dlc.Sandbox) {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
+	s.prices = list
 	s.recorder = routing.NewRecorder(routing.Phone, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.recorder.Close)
 	s.clock = &meteringClock{at: time.Now().UTC().Truncate(time.Second)}
@@ -518,6 +521,14 @@ func (s *MeteringSuite) TestTheSweepDeletesEveryRowKeptForADayInBatches() {
 	s.Zero(s.kept(callID))
 }
 
+// outboundMinutes is what seconds of an outbound US call cost at the vendor list's rates, read
+// from vendor.json so a price change there leaves the tests passing.
+func (s *MeteringSuite) outboundMinutes(seconds int64) int64 {
+	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: ModelCallMinutes, Region: pricing.DefaultRegion,
+		Attributes: map[string]string{"country": "US", "direction": "outbound"}}
+	return pricingtest.Micros(s.T(), s.prices, item, pricing.Quantities{pricing.CallSeconds: seconds})
+}
+
 // kept is how many joins and leaves of the call are kept for a leg yet to open.
 func (s *MeteringSuite) kept(callID string) int {
 	count, err := s.store.ShardDB().NewSelect().Model((*store.CallParticipant)(nil)).
@@ -539,7 +550,7 @@ func (s *MeteringSuite) TestAPlacedCallIsBilledForItsMinutesFromWhenItWasAnswere
 	s.False(dial.Billable, "placing a call is free: the vendor bills its minutes")
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, minutes.Meters, "the ringing is not billed")
-	s.Equal(int64(14_000), minutes.CostMicros, "two started minutes at $0.007")
+	s.Equal(s.outboundMinutes(61), minutes.CostMicros, "two started minutes")
 	s.Equal("key-a", minutes.APIKey, "the minutes keep the key that placed the call")
 	s.Equal("u1", minutes.UserID)
 	s.Equal(map[string]string{"country": "US", "direction": "outbound", "measured_by": "router"}, minutes.Attributes)
@@ -595,7 +606,7 @@ func (s *MeteringSuite) TestATransferIsALegOfTheCallItJoins() {
 
 	minutes := s.row(ModelCallMinutes)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 180}, minutes.Meters)
-	s.Equal(int64(21_000), minutes.CostMicros)
+	s.Equal(s.outboundMinutes(180), minutes.CostMicros)
 }
 
 func (s *MeteringSuite) TestALegLeftOpenIsClosedAtFourHoursAndNotBilled() {
@@ -612,7 +623,8 @@ func (s *MeteringSuite) TestALegLeftOpenIsClosedAtFourHoursAndNotBilled() {
 	s.Equal(pricing.Quantities{pricing.CallSeconds: int64(MaxCallLength / time.Second)}, minutes.Meters)
 	s.False(minutes.Billable, "nothing says how long it really lasted")
 	s.Zero(minutes.CostMicros)
-	s.Equal("1680000", minutes.Attributes[routing.AttributeFreeCostMicros], "priced, at 240 minutes")
+	s.Equal(strconv.FormatInt(s.outboundMinutes(int64(MaxCallLength/time.Second)), 10), minutes.Attributes[routing.AttributeFreeCostMicros],
+		"priced, at 240 minutes")
 	s.Equal(store.LegSwept, minutes.Attributes[AttributeEndedBy])
 	time.Sleep(300 * time.Millisecond)
 	s.Len(s.rows(ModelCallMinutes), 1)
@@ -725,7 +737,8 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
-	s.Equal(int64(1_000_000), month.CostMicros, "the price the vendor quoted")
+	s.Equal(int64(1_200_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
+	s.Equal(int64(1_000_000), month.BaseCostMicros, "the price the vendor quoted")
 	s.True(month.Billable)
 	s.Equal("key-a", month.APIKey, "the month it was bought in is the buyer's")
 	s.Equal(bought.PurchasedAt, month.StartedAt.UTC())
@@ -740,7 +753,7 @@ func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() 
 	s.Require().NoError(err)
 
 	s.Equal(int64(1_500_000), bought.MonthlyCostMicros, "the number's own offer")
-	s.Equal(int64(1_500_000), s.row(ModelNumber).CostMicros)
+	s.Equal(int64(1_800_000), s.row(ModelNumber).CostMicros)
 }
 
 func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {

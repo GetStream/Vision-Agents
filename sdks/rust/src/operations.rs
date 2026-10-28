@@ -4574,6 +4574,9 @@ pub struct GetPricesQuery {
     /// Only this modality's items, such as llm, stt, tts, sms or phone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modality: Option<String>,
+    /// Only this region's items, such as us or eu.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
 }
 /// The query string `listLimits` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

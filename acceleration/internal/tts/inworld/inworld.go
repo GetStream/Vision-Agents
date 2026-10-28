@@ -56,6 +56,9 @@ const reconnectDelay = time.Second
 // keepAlivePeriod is how often a ping is sent so an idle call does not lose its voice.
 const keepAlivePeriod = 30 * time.Second
 
+// codePermissionDenied is gRPC's PERMISSION_DENIED, the code of a frame that refuses the key.
+const codePermissionDenied = 7
+
 // Options configures the provider. APIKey falls back to INWORLD_API_KEY and VoiceID to
 // INWORLD_VOICE_ID.
 type Options struct {
@@ -521,6 +524,7 @@ func (t *TTS) keepAlive() {
 }
 
 func (t *TTS) readLoop(conn *websocket.Conn) {
+	refused := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -533,8 +537,26 @@ func (t *TTS) readLoop(conn *websocket.Conn) {
 			t.logger.Debug("undecodable frame", "error", err)
 			continue
 		}
+		if refusesKey(message.Error) && !refused {
+			refused = true
+			t.keys.InvalidKey()
+		}
 		t.handleMessage(message)
 	}
+}
+
+// refusesKey reports whether a frame's error is the one the server sends, right after
+// accepting the handshake, on a key it does not take: gRPC code 7 (PERMISSION_DENIED) with one
+// of these texts. Code 7 alone is any permission the key lacks.
+func refusesKey(frameError any) bool {
+	fields, ok := frameError.(map[string]any)
+	if !ok {
+		return false
+	}
+	message, _ := fields["message"].(string)
+	return fields["code"] == float64(codePermissionDenied) &&
+		(strings.Contains(message, "API key does not exist or was deleted") ||
+			strings.Contains(message, "Invalid authorization credentials"))
 }
 
 func (t *TTS) handleReadError(conn *websocket.Conn, err error) {

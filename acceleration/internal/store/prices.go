@@ -32,27 +32,34 @@ const (
 // ErrNoPriceChange is a price change nobody wrote.
 var ErrNoPriceChange = errors.New("store: there is no such price change")
 
-// PriceEntry is one vendor price, as a change wrote it. Rows are only ever added: the entry
+// PriceEntry is one item's price, as a change wrote it. Rows are only ever added: the entry
 // in force for an item is the newest whose EffectiveAt has passed under a change that was not
 // cancelled, and a newer row replaces an older one whole.
 type PriceEntry struct {
-	bun.BaseModel `bun:"table:price_entries,alias:pe"`
+	bun.BaseModel `bun:"table:price_list_entries,alias:pe"`
 
 	ID     int64  `bun:"id,pk,autoincrement"`
 	Change string `bun:"change,notnull"`
-	// Modality, Provider and Model are the item; Attributes is the entry's When: the item
-	// attributes it applies to, such as {"service_tier": "flex"}. Empty is the default entry.
+	// SKU names the item across every change of its price (AssignSKUs).
+	SKU string `bun:"sku,notnull"`
+	// Modality, Provider, Model, Region and BYOK are the item; Attributes is the entry's When:
+	// the item attributes it applies to, such as {"service_tier": "flex"}. Empty is the default
+	// entry.
 	Modality   string            `bun:"modality,notnull"`
 	Provider   string            `bun:"provider,notnull"`
 	Model      string            `bun:"model,notnull"`
+	Region     string            `bun:"region,notnull"`
+	BYOK       bool              `bun:"byok,notnull"`
 	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
 	Free       bool              `bun:"free,notnull"`
-	// Rates are the vendor's. What a customer pays is these plus the markup in force.
+	// Rates are the vendor's, for reference: nothing is charged from them.
 	Rates map[pricing.Meter]pricing.Rate `bun:"rates,type:jsonb,nullzero"`
-	// Tiers are the context tiers: a longer prompt priced at other rates, whole.
+	// Tiers are the vendor's context tiers: a longer prompt costed at other rates, whole.
 	Tiers []pricing.Tier `bun:"tiers,type:jsonb,nullzero"`
-	// MarkupBps replaces the list's markup for this entry; nil takes the list's.
-	MarkupBps *int64 `bun:"markup_bps"`
+	// Prices are what the work is charged, by the meters of Rates; PriceTiers are its context
+	// tiers, at the thresholds of Tiers.
+	Prices     map[pricing.Meter]pricing.Rate `bun:"prices,type:jsonb,nullzero"`
+	PriceTiers []pricing.Tier                 `bun:"price_tiers,type:jsonb,nullzero"`
 	// Withdrawn stops pricing the item under these Attributes from EffectiveAt on; its
 	// entries under other Attributes are untouched.
 	Withdrawn bool `bun:"withdrawn,notnull"`
@@ -62,17 +69,26 @@ type PriceEntry struct {
 	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+// priceEntryColumns are PriceEntry's columns, read and returned by name rather than as *, so
+// a column a later release adds or drops does not break the read.
+const priceEntryColumns = "id, change, sku, modality, provider, model, region, byok, attributes, free, rates, tiers, prices, " +
+	"price_tiers, withdrawn, effective_at, created_at"
+
 // Entry is the row as a price list prices with it, its Version the change that wrote it.
 func (e PriceEntry) Entry() pricing.Entry {
 	entry := pricing.Entry{
-		Modality:  e.Modality,
-		Provider:  e.Provider,
-		Model:     e.Model,
-		Free:      e.Free,
-		Rates:     e.Rates,
-		Tiers:     e.Tiers,
-		MarkupBps: e.MarkupBps,
-		Version:   e.Change,
+		Modality:   e.Modality,
+		Provider:   e.Provider,
+		Model:      e.Model,
+		Region:     e.Region,
+		BYOK:       e.BYOK,
+		SKU:        e.SKU,
+		Free:       e.Free,
+		Rates:      e.Rates,
+		Tiers:      e.Tiers,
+		Prices:     e.Prices,
+		PriceTiers: e.PriceTiers,
+		Version:    e.Change,
 	}
 	if len(e.Attributes) > 0 {
 		entry.When = e.Attributes
@@ -83,6 +99,12 @@ func (e PriceEntry) Entry() pricing.Entry {
 	if len(e.Tiers) == 0 {
 		entry.Tiers = nil
 	}
+	if len(e.Prices) == 0 {
+		entry.Prices = nil
+	}
+	if len(e.PriceTiers) == 0 {
+		entry.PriceTiers = nil
+	}
 	return entry
 }
 
@@ -91,14 +113,18 @@ func (e PriceEntry) Entry() pricing.Entry {
 func priceEntryOf(change string, entry pricing.Entry) PriceEntry {
 	return PriceEntry{
 		Change:     change,
+		SKU:        entry.SKU,
 		Modality:   entry.Modality,
 		Provider:   entry.Provider,
 		Model:      entry.Model,
+		Region:     entry.Region,
+		BYOK:       entry.BYOK,
 		Attributes: entry.When,
 		Free:       entry.Free,
 		Rates:      entry.Rates,
 		Tiers:      entry.Tiers,
-		MarkupBps:  entry.MarkupBps,
+		Prices:     entry.Prices,
+		PriceTiers: entry.PriceTiers,
 	}
 }
 
@@ -114,10 +140,8 @@ type PriceChange struct {
 	Reason string `bun:"reason,notnull"`
 	// Source is the vendor's page and the date it was read, the operator's decision, or the
 	// files and release a load came from.
-	Source      string    `bun:"source,notnull"`
-	EffectiveAt time.Time `bun:"effective_at,notnull"`
-	// MarkupBps is the list's markup from EffectiveAt on; nil leaves it as it was.
-	MarkupBps      *int64     `bun:"markup_bps"`
+	Source         string     `bun:"source,notnull"`
+	EffectiveAt    time.Time  `bun:"effective_at,notnull"`
 	CreatedBy      string     `bun:"created_by,notnull"`
 	IdempotencyKey string     `bun:"idempotency_key,nullzero"`
 	CreatedAt      time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp"`
@@ -126,12 +150,17 @@ type PriceChange struct {
 	CancelReason   string     `bun:"cancel_reason,nullzero"`
 }
 
+// priceChangeColumns are PriceChange's columns, returned by name as priceEntryColumns are.
+const priceChangeColumns = "name, kind, reason, source, effective_at, created_by, idempotency_key, created_at, " +
+	"cancelled_at, cancelled_by, cancel_reason"
+
 // PriceLoad is what a router's start loads into the price list: its price files, merged.
 type PriceLoad struct {
-	// Entries are every file's, the first file's entry winning for an item and When.
+	// Entries are every file's, the first file's entry winning for an item, region, BYOK state
+	// and When. One with no price is priced at its vendor rates times pricing.PriceFactorBps,
+	// or pricing.BYOKFeeBps for a BYOK one, as it is written, and one with no SKU is given one
+	// (AssignSKUs).
 	Entries []pricing.Entry
-	// MarkupBps is the first file's markup. Only a database's first load reads it.
-	MarkupBps *int64
 	// Source names the files, for the change's source.
 	Source string
 	// Release is the router's, for the change's name and author.
@@ -153,11 +182,11 @@ func (s *Store) PricesToLoad(ctx context.Context, entries []pricing.Entry) (bool
 }
 
 // SyncPrices loads the router's price files into the price list, in one transaction. A
-// database with no change yet gets them all, with the first file's markup, as its seed.
-// Otherwise only the entries for an item and When no change that stands has ever priced are
-// added, as one release change: an item the database has priced keeps its rates, its
-// withdrawal and the list's markup, whatever the files say now. It reports the change it
-// wrote, the entries in it, and whether it wrote one.
+// database with no change yet gets them all as its seed. Otherwise only the entries for an
+// item, region, BYOK state and When no change that stands has ever priced are added, as one
+// release change: an item the database has priced keeps its price and its withdrawal, whatever
+// the files say now. It reports the change it wrote, the entries in it as written, and whether
+// it wrote one.
 func (s *Store) SyncPrices(ctx context.Context, load PriceLoad) (PriceChange, []pricing.Entry, bool, error) {
 	var change PriceChange
 	var added []pricing.Entry
@@ -206,29 +235,36 @@ func syncPrices(ctx context.Context, tx bun.Tx, load PriceLoad) (PriceChange, []
 	stamp := now.UTC().Format("20060102150405")
 	if seed {
 		change.Name, change.Kind, change.Reason = stamp+"_seed", PriceChangeSeed, "The first price list"
-		change.MarkupBps = load.MarkupBps
 	} else {
 		change.Name, change.Kind = stamp+"_release_"+ReleaseName(load.Release), PriceChangeRelease
 		change.Reason = "Items new in " + load.Release
 	}
+	history, err := priceSKUs(ctx, tx)
+	if err != nil {
+		return PriceChange{}, nil, err
+	}
+	writes := make([]PriceEntryWrite, 0, len(entries))
+	for _, entry := range entries {
+		writes = append(writes, PriceEntryWrite{Entry: pricing.Priced(entry)})
+	}
+	if writes, err = AssignSKUs(history, now, writes); err != nil {
+		return PriceChange{}, nil, err
+	}
 	if _, err := tx.NewInsert().Model(&change).Exec(ctx); err != nil {
 		return PriceChange{}, nil, err
 	}
-	rows := make([]PriceEntry, 0, len(entries))
-	for _, entry := range entries {
-		rows = append(rows, priceEntryOf(change.Name, entry))
+	rows := make([]PriceEntry, 0, len(writes))
+	entries = make([]pricing.Entry, 0, len(writes))
+	names := make([]string, 0, len(writes))
+	for _, write := range writes {
+		rows = append(rows, priceEntryOf(change.Name, write.Entry))
+		entries = append(entries, write.Entry)
+		names = append(names, prices.Name(write.Entry))
 	}
 	if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
 		return PriceChange{}, nil, err
 	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, prices.Name(entry))
-	}
 	changes := []AuditChange{{Field: "entries", After: names}}
-	if change.MarkupBps != nil {
-		changes = append(changes, AuditChange{Field: "markup_bps", After: *change.MarkupBps})
-	}
 	err = recordAuditEntry(ctx, tx, &AuditEntry{
 		ResourceType: AuditResourcePriceList,
 		ResourceID:   change.Name,
@@ -254,9 +290,8 @@ type PriceReload struct {
 	// in force among them. Entries is how many entries they wrote.
 	Changes []PriceChange
 	Entries int
-	// Active and MarkupBps are the list in force at At, before the reload.
-	Active    []PriceEntry
-	MarkupBps int64
+	// Active is the list in force at At, before the reload.
+	Active []PriceEntry
 	// Seed is the change the reload wrote and Loaded its entries; both are empty on a dry run.
 	Seed   PriceChange
 	Loaded []pricing.Entry
@@ -264,8 +299,8 @@ type PriceReload struct {
 
 // ReloadPrices empties the price list and seeds it from load, as a router's first start on a
 // fresh database does, in one transaction under the lock every load takes. Every change goes:
-// those scheduled, cancelled or setting a markup with the rest, so the list holds what the
-// files say and nothing else. TRUNCATE is what removes them, because the tables' triggers
+// those scheduled and cancelled with the rest, so the list holds what the files say and
+// nothing else. TRUNCATE is what removes them, because the tables' triggers
 // refuse a DELETE; no table references either one. The audit log keeps its rows, and gains
 // one saying what the reload removed. dryRun reads the list under the lock and writes nothing.
 //
@@ -293,13 +328,10 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 		if reload.Active, err = activePriceEntries(ctx, tx, reload.At); err != nil {
 			return err
 		}
-		if reload.MarkupBps, err = activeMarkup(ctx, tx, reload.At); err != nil {
-			return err
-		}
 		if dryRun {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, "TRUNCATE price_entries, price_changes"); err != nil {
+		if _, err := tx.ExecContext(ctx, "TRUNCATE price_list_entries, price_changes"); err != nil {
 			return err
 		}
 		// The removal is recorded before the seed, under a name of its own, so the log reads
@@ -336,7 +368,8 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 }
 
 // pricesToLoad is whether the database has no change yet, and the entries a load would add:
-// all of them to an empty one, else those for an item and When no change that stands wrote.
+// all of them to an empty one, else those for an item, region, BYOK state and When no change
+// that stands wrote.
 func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (bool, []pricing.Entry, error) {
 	var changes int
 	if err := db.NewSelect().Model((*PriceChange)(nil)).ColumnExpr("count(*)").Scan(ctx, &changes); err != nil {
@@ -347,7 +380,7 @@ func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (boo
 	}
 	var priced []PriceEntry
 	err := db.NewSelect().Model(&priced).
-		ColumnExpr("pe.modality, pe.provider, pe.model, pe.attributes").
+		ColumnExpr("pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes").
 		Join("JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL").
 		Distinct().
 		Scan(ctx)
@@ -356,7 +389,7 @@ func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (boo
 	}
 	known := make(map[string]bool, len(priced))
 	for _, row := range priced {
-		known[prices.Name(pricing.Entry{Modality: row.Modality, Provider: row.Provider, Model: row.Model, When: row.Attributes})] = true
+		known[prices.Name(row.Entry())] = true
 	}
 	var added []pricing.Entry
 	for _, entry := range entries {
@@ -375,9 +408,9 @@ func ReleaseName(release string) string {
 	return notInName.ReplaceAllString(strings.ToLower(release), "_")
 }
 
-// ActivePriceEntries is the entry in force at at for every item and When: the newest that has
-// taken effect under a change not cancelled, ties going to the later change. An item whose
-// newest entry withdrew it is left out.
+// ActivePriceEntries is the entry in force at at for every item, region, BYOK state and When:
+// the newest that has taken effect under a change not cancelled, ties going to the later
+// change. An item whose newest entry withdrew it is left out.
 func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEntry, error) {
 	return activePriceEntries(ctx, s.db, at)
 }
@@ -385,11 +418,11 @@ func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEn
 func activePriceEntries(ctx context.Context, db bun.IDB, at time.Time) ([]PriceEntry, error) {
 	var newest []PriceEntry
 	err := db.NewRaw(`
-SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.attributes) pe.*
-FROM price_entries AS pe
+SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes) `+qualified("pe", priceEntryColumns)+`
+FROM price_list_entries AS pe
 JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL
 WHERE pe.effective_at <= ?
-ORDER BY pe.modality, pe.provider, pe.model, pe.attributes, pe.effective_at DESC, pe.change DESC, pe.id DESC`, at).
+ORDER BY pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes, pe.effective_at DESC, pe.change DESC, pe.id DESC`, at).
 		Scan(ctx, &newest)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: active price entries: %w", err))
@@ -403,28 +436,13 @@ ORDER BY pe.modality, pe.provider, pe.model, pe.attributes, pe.effective_at DESC
 	return active, nil
 }
 
-// ActiveMarkup is the list's markup in basis points at at: the one the newest change in force
-// that set one says, or 0 when none has.
-func (s *Store) ActiveMarkup(ctx context.Context, at time.Time) (int64, error) {
-	return activeMarkup(ctx, s.db, at)
-}
-
-func activeMarkup(ctx context.Context, db bun.IDB, at time.Time) (int64, error) {
-	var markup int64
-	err := db.NewSelect().Model((*PriceChange)(nil)).Column("markup_bps").
-		Where("cancelled_at IS NULL").
-		Where("effective_at <= ?", at).
-		Where("markup_bps IS NOT NULL").
-		Order("effective_at DESC", "name DESC").
-		Limit(1).
-		Scan(ctx, &markup)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+// qualified is a list of columns each prefixed with the table's alias.
+func qualified(alias, columns string) string {
+	names := strings.Split(columns, ", ")
+	for i, name := range names {
+		names[i] = alias + "." + name
 	}
-	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: active markup: %w", err))
-	}
-	return markup, nil
+	return strings.Join(names, ", ")
 }
 
 // NextPriceChangeAt is when the next change not cancelled takes effect after after, and
@@ -540,7 +558,7 @@ type VendorCostRow struct {
 
 // vendorCosts is every row since a time whose vendor reported what it charged, with the list's
 // cost at the vendor's rates: base_cost_micros once something writes it, else cost_micros,
-// which is the same figure for a row priced with no markup. A malformed figure is skipped,
+// which is the same figure for a row priced before either was written. A malformed figure is skipped,
 // never cast, so one bad row cannot fail the read. %s is the usage id's expression.
 const vendorCosts = `
 SELECT id, %s, modality, provider, model, started_at, vendor, base

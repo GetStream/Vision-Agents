@@ -22,6 +22,9 @@ STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
 
+Unset, the hosted router in us-east4 is used. For another region, set
+`STREAM_ACCELERATION_REGION=europe-west4` (or pass `region="europe-west4"`) instead of a URL.
+
 ## The whole pipeline, remotely
 
 ```python
@@ -44,6 +47,47 @@ async def weather(city: str) -> str:
 
 `register_function` works as it does with any other LLM. The model asks for the function
 over the session's socket, this plugin runs it here and sends back what it returned.
+
+What the model is told a function takes is its signature, read by Pydantic: a parameter can
+be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit.
+A function that takes one Pydantic model is given the model's fields as its arguments:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class BookFlight(BaseModel):
+    flight_id: str = Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")
+    seats: int = Field(ge=1, le=9)
+    cabin: Literal["economy", "business", "first"] = "economy"
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(booking: BookFlight) -> str:
+    return await bookings.book(booking.flight_id, booking.seats, booking.cabin)
+```
+
+```python
+from typing import Annotated
+
+from pydantic import Field
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(
+    flight_id: Annotated[str, Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")],
+    seats: Annotated[int, Field(ge=1, le=9)],
+) -> str:
+    return await bookings.book(flight_id, seats)
+```
+
+The arguments the model sends are checked and converted before the function runs, so
+`booking` is a `BookFlight` and `seats` an `int`. Arguments that do not fit are refused with
+a `ToolArgumentsError` naming each one and why, which the model is told so it can ask again.
+`parameters_schema=` still takes a JSON Schema as it is, for a function that reads its own
+arguments.
 
 A function can say how the backend treats its calls, and read the call it is running for:
 

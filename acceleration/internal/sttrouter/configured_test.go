@@ -17,6 +17,7 @@ var configuration = map[string]string{
 	"CARTESIA_API_KEY":   "key",
 	"DEEPGRAM_API_KEY":   "key",
 	"ELEVENLABS_API_KEY": "key",
+	"FISH_API_KEY":       "key",
 	"GOOGLE_API_KEY":     "key",
 	"INWORLD_API_KEY":    "key",
 	"META_API_KEY":       "key",

@@ -32,16 +32,15 @@ type Fish struct {
 
 // NewFish validates the options and returns a cloner.
 func NewFish(options FishOptions) (*Fish, error) {
-	if options.APIKey == "" {
-		options.APIKey = keypool.FromEnv("", "FISH_API_KEY").Peek()
-	}
+	keys := keypool.FromEnv(options.APIKey, "FISH_API_KEY")
+	options.APIKey = keys.Peek()
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set FISH_API_KEY)")
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = fishBaseURL
 	}
-	return &Fish{options: options, client: client(options.Timeout)}, nil
+	return &Fish{options: options, client: client(keys, keypool.Bearer, options.Timeout)}, nil
 }
 
 // Prepare creates the model and returns the reference id sessions ask for: one clone.

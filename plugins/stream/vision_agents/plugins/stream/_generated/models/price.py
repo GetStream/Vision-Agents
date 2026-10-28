@@ -21,8 +21,9 @@ T = TypeVar("T", bound="Price")
 
 @_attrs_define
 class Price:
-    """What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of
-    its work is debited at, which X-Stream-Cost-Micros reports.
+    """What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or
+    without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros
+    reports. A byok price is a fee: the vendor bills the customer for the work itself.
 
         Attributes:
             free (bool): The work costs nothing.
@@ -30,11 +31,17 @@ class Price:
             modality (str): Such as llm, stt, tts, sms or phone.
             model (str):
             provider (str):
+            region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+                priced only by an entry of its own region, never another region's.
+            byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+                by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
             change (str | Unset): The price change that set it: on an entry in force, the price_version of every row it
                 prices. Absent for a model the deployment runs itself that no change prices.
             description (str | Unset): In upcoming: why the change is made.
             effective_at (datetime.datetime | Unset): When it took effect, or takes effect. Absent when no change set it.
             rates (PriceRates | Unset): What a customer is charged, by meter.
+            sku (str | Unset): The item's SKU, the same across its price changes, which every usage event of its work
+                records. Absent for a model the deployment runs itself that no change prices.
             tiers (list[PriceTier] | None | Unset): What a customer is charged for long prompts.
             when (PriceWhen | Unset): The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is
                 the item's default entry.
@@ -46,10 +53,13 @@ class Price:
     modality: str
     model: str
     provider: str
+    region: str
+    byok: bool | Unset = UNSET
     change: str | Unset = UNSET
     description: str | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
     rates: PriceRates | Unset = UNSET
+    sku: str | Unset = UNSET
     tiers: list[PriceTier] | None | Unset = UNSET
     when: PriceWhen | Unset = UNSET
     withdrawn: bool | Unset = UNSET
@@ -66,6 +76,10 @@ class Price:
 
         provider = self.provider
 
+        region = self.region
+
+        byok = self.byok
+
         change = self.change
 
         description = self.description
@@ -77,6 +91,8 @@ class Price:
         rates: dict[str, Any] | Unset = UNSET
         if not isinstance(self.rates, Unset):
             rates = self.rates.to_dict()
+
+        sku = self.sku
 
         tiers: list[dict[str, Any]] | None | Unset
         if isinstance(self.tiers, Unset):
@@ -105,8 +121,11 @@ class Price:
                 "modality": modality,
                 "model": model,
                 "provider": provider,
+                "region": region,
             }
         )
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if change is not UNSET:
             field_dict["change"] = change
         if description is not UNSET:
@@ -115,6 +134,8 @@ class Price:
             field_dict["effective_at"] = effective_at
         if rates is not UNSET:
             field_dict["rates"] = rates
+        if sku is not UNSET:
+            field_dict["sku"] = sku
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if when is not UNSET:
@@ -141,6 +162,10 @@ class Price:
 
         provider = d.pop("provider")
 
+        region = d.pop("region")
+
+        byok = d.pop("byok", UNSET)
+
         change = d.pop("change", UNSET)
 
         description = d.pop("description", UNSET)
@@ -158,6 +183,8 @@ class Price:
             rates = UNSET
         else:
             rates = PriceRates.from_dict(_rates)
+
+        sku = d.pop("sku", UNSET)
 
         def _parse_tiers(data: object) -> list[PriceTier] | None | Unset:
             if data is None:
@@ -196,10 +223,13 @@ class Price:
             modality=modality,
             model=model,
             provider=provider,
+            region=region,
+            byok=byok,
             change=change,
             description=description,
             effective_at=effective_at,
             rates=rates,
+            sku=sku,
             tiers=tiers,
             when=when,
             withdrawn=withdrawn,

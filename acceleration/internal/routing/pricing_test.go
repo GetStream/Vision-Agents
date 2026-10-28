@@ -16,6 +16,12 @@ func quoted(pricer pricing.Pricer, modality Modality, provider ProviderConfig, u
 	return quote(pricer, modality, provider, nil, row(modality, provider, Stat{Usage: usage}).Quantities())
 }
 
+// atCost is a config's price entries each priced at its vendor rates, so what a rate charges
+// is what it costs.
+func atCost(config Config) []pricing.Entry {
+	return pricing.AllAtCost(PriceEntries(config))
+}
+
 func (s *RoutingSuite) TestPriceEntriesExpandServiceAndContextTiers() {
 	provider := ProviderConfig{Provider: "openai", Model: "gpt", Price: Price{
 		PerMillionInputTokens:  2,
@@ -36,11 +42,70 @@ func (s *RoutingSuite) TestPriceEntriesExpandServiceAndContextTiers() {
 	tiers := func(input, output float64) []pricing.Tier {
 		return []pricing.Tier{{AboveInputTokens: 272_000, Rates: rates(input, output)}}
 	}
-	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Rates: rates(2, 8), Tiers: tiers(4, 12)}, entries[0])
-	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", When: map[string]string{"service_tier": "fast"},
+	us := pricing.DefaultRegion
+	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Region: us, Rates: rates(2, 8), Tiers: tiers(4, 12)}, entries[0])
+	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Region: us, When: map[string]string{"service_tier": "fast"},
 		Rates: rates(4, 16), Tiers: tiers(8, 24)}, entries[1])
-	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", When: map[string]string{"service_tier": "flex"},
+	s.Equal(pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Region: us, When: map[string]string{"service_tier": "flex"},
 		Rates: rates(1, 4), Tiers: tiers(2, 6)}, entries[2])
+}
+
+// TestAPriceEntryIsInItsProvidersRegion: a config's price: block prices its own region's work,
+// and the work of an instance on the customer's key BYOK.
+func (s *RoutingSuite) TestAPriceEntryIsInItsProvidersRegion() {
+	eu := ProviderConfig{Provider: "openai", Model: "gpt", Region: pricing.RegionEU, Price: Price{PerMillionInputTokens: 2}}
+	byok := ProviderConfig{Provider: "openai", Model: "own-key", BYOK: true, Price: Price{PerMillionInputTokens: 2}}
+
+	entries := PriceEntries(Config{LLM: {Providers: []ProviderConfig{eu, byok}}})
+
+	s.Require().Len(entries, 2)
+	s.Equal(pricing.RegionEU, entries[0].Region)
+	s.False(entries[0].BYOK)
+	s.Equal(pricing.DefaultRegion, entries[1].Region)
+	s.True(entries[1].BYOK)
+}
+
+// TestItemOfCarriesTheRegionAndBYOK: an instance's work is priced in its region, the default
+// one when its config names none, as one built in code for metering does not, and BYOK when
+// it was built with the customer's own key.
+func (s *RoutingSuite) TestItemOfCarriesTheRegionAndBYOK() {
+	attributes := map[string]string{"service_tier": "flex"}
+
+	s.Equal(pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt", Region: pricing.RegionEU, Attributes: attributes},
+		ItemOf(LLM, ProviderConfig{Provider: "openai", Model: "gpt", Region: pricing.RegionEU}, attributes))
+	s.Equal(pricing.Item{Modality: "knowledge", Provider: "turbopuffer", Model: "write", Region: pricing.DefaultRegion},
+		ItemOf(Knowledge, ProviderConfig{Provider: "turbopuffer", Model: "write"}, nil))
+	s.Equal(pricing.Item{Modality: "llm", Provider: "openai", Model: "gpt", Region: pricing.DefaultRegion, BYOK: true},
+		ItemOf(LLM, ProviderConfig{Provider: "openai", Model: "gpt", BYOK: true}, nil))
+}
+
+// TestABYOKInstanceIsPricedAtItsBYOKEntry: its rows are priced by the BYOK twin vendor.json's
+// entry has, at a fifth of the vendor's rates, and cost the operator nothing.
+func (s *RoutingSuite) TestABYOKInstanceIsPricedAtItsBYOKEntry() {
+	_, list := s.defaultPrices()
+	haiku := ProviderConfig{Provider: "anthropic", Model: "claude-haiku-5-5"}
+	byok := haiku
+	byok.BYOK = true
+
+	plain := quoted(list, LLM, haiku, Usage{InputTokens: 1_000_000})
+	own := quoted(list, LLM, byok, Usage{InputTokens: 1_000_000})
+
+	s.Equal("llm-anthropic-claude-haiku-5-5-us", plain.SKU)
+	s.Equal("llm-anthropic-claude-haiku-5-5-us-byok", own.SKU)
+	s.Equal(plain.BaseCostMicros*2/10, own.CostMicros)
+	s.Zero(own.BaseCostMicros)
+}
+
+// TestAnEUInstanceWithNoEUEntryIsUnpriced: vendor.json is all us, and an instance in the eu is
+// never priced at a us price.
+func (s *RoutingSuite) TestAnEUInstanceWithNoEUEntryIsUnpriced() {
+	_, list := s.defaultPrices()
+
+	quote := quoted(list, LLM, ProviderConfig{Provider: "anthropic", Model: "claude-haiku-5-5", Region: pricing.RegionEU},
+		Usage{InputTokens: 1_000_000})
+
+	s.True(quote.Unpriced)
+	s.Zero(quote.CostMicros)
 }
 
 func (s *RoutingSuite) TestAServiceTierThePriceListDoesNotNameIsPricedAtTheDefaultRates() {
@@ -48,7 +113,7 @@ func (s *RoutingSuite) TestAServiceTierThePriceListDoesNotNameIsPricedAtTheDefau
 		PerMillionInputTokens: 2,
 		ServiceTiers:          map[string]float64{"flex": 0.5},
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
+	list, err := pricing.NewList("config", atCost(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
 	s.Require().NoError(err)
 	used := row(LLM, provider, Stat{Usage: Usage{InputTokens: 1_000_000}}).Quantities()
 
@@ -61,7 +126,7 @@ func (s *RoutingSuite) TestATierThePriceListDoesNotNameIsLoggedOnce() {
 		PerMillionInputTokens: 2,
 		ServiceTiers:          map[string]float64{"flex": 0.5},
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
+	list, err := pricing.NewList("config", atCost(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
 	s.Require().NoError(err)
 	logs := &bytes.Buffer{}
 	// Its writer runs no stage, so every stat stays in the queue rather than being written.
@@ -120,13 +185,60 @@ func (s *RoutingSuite) TestTheSelfHostedModelsAreMarkedLocal() {
 	local := LocalItems(config)
 
 	for _, item := range []pricing.Item{
-		{Modality: "stt", Provider: "parakeet", Model: "parakeet-tdt-0.6b-v3"},
-		{Modality: "tts", Provider: "s2pro", Model: "s2-pro"},
-		{Modality: "tts", Provider: "breeze", Model: "breeze-tts-2"},
-		{Modality: "llm", Provider: "gemma", Model: "gemma-4-26B-A4B-it"},
+		{Modality: "stt", Provider: "parakeet", Model: "parakeet-tdt-0.6b-v3", Region: pricing.RegionUS},
+		{Modality: "tts", Provider: "s2pro", Model: "s2-pro", Region: pricing.RegionUS},
+		{Modality: "tts", Provider: "breeze", Model: "breeze-tts-2", Region: pricing.RegionUS},
+		{Modality: "llm", Provider: "gemma", Model: "gemma-4-26B-A4B-it", Region: pricing.RegionUS},
 	} {
 		s.Contains(local, item)
 	}
+}
+
+// TestRouterYamlRunsEveryProviderInTheUS: it names no region, and parsing gives each provider
+// the default one, so a parsed config never leaves a region empty.
+func (s *RoutingSuite) TestRouterYamlRunsEveryProviderInTheUS() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for modality, section := range config {
+		for _, provider := range section.Providers {
+			s.Equal(pricing.RegionUS, provider.Region, "%s %s", modality, provider.Name())
+			s.False(provider.BYOK, "%s %s", modality, provider.Name())
+		}
+	}
+}
+
+func (s *RoutingSuite) TestAConfigKeepsTheRegionItNames() {
+	config, err := parseConfig([]byte(`llm:
+  providers:
+    - {provider: openai, model: gpt, languages: [en], region: eu}
+    - {provider: openai, model: other, languages: [en]}
+`))
+	s.Require().NoError(err)
+
+	s.Equal(pricing.RegionEU, config[LLM].Providers[0].Region)
+	s.Equal(pricing.DefaultRegion, config[LLM].Providers[1].Region)
+}
+
+func (s *RoutingSuite) TestAConfigNamingARegionOfAnotherFormIsRefused() {
+	_, err := parseConfig([]byte(`llm:
+  providers:
+    - {provider: openai, model: gpt, languages: [en], region: EU West}
+`))
+
+	s.ErrorContains(err, `openai/gpt declares the region "EU West"`)
+}
+
+// TestAConfigCannotSayAnInstanceIsBYOK: only an instance built with the customer's own key is,
+// so a file saying so is not read.
+func (s *RoutingSuite) TestAConfigCannotSayAnInstanceIsBYOK() {
+	config, err := parseConfig([]byte(`llm:
+  providers:
+    - {provider: openai, model: gpt, languages: [en], byok: true}
+`))
+	s.Require().NoError(err)
+
+	s.False(config[LLM].Providers[0].BYOK)
 }
 
 // defaultPrices is the built-in config and the price list it is priced by: the vendor list
@@ -168,22 +280,25 @@ func (s *RoutingSuite) TestADefaultListTakesTheConfigsOwnRateThenTheVendorFile()
 	s.Require().NoError(err)
 
 	fromConfig := quoted(list, LLM, own, Usage{InputTokens: 1_000_000})
-	s.EqualValues(3_000_000, fromConfig.CostMicros)
+	s.EqualValues(3_000_000, fromConfig.CostMicros, "the config's own rate is charged as it is written")
 	s.Equal("config", fromConfig.Version)
 	found, ok := list.Entry(ItemOf(Modality(vendor.Modality), listed, nil))
 	s.Require().True(ok)
 	s.Equal(vendor.Rates, found.Rates)
+	s.Equal(vendor.Prices, found.Prices, "the vendor file's entry is priced as the file is read, at the factor")
+	s.Equal(pricing.Priced(pricing.Entry{Rates: vendor.Rates, Tiers: vendor.Tiers}).Prices, found.Prices)
 	s.Equal("embedded", quoted(list, Modality(vendor.Modality), listed, Usage{InputTokens: 1_000_000}).Version)
 }
 
 func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {
 	own := ProviderConfig{Provider: CustomProvider, Model: "mine", Price: Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}}
-	list, err := pricing.NewList("config", nil, 0, nil)
+	list, err := pricing.NewList("config", nil, nil)
 	s.Require().NoError(err)
 
 	quote := quoted(list, LLM, own, Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000})
 
-	s.EqualValues(3_000_000, quote.CostMicros)
+	s.EqualValues(3_000_000, quote.CostMicros, "at what the customer's host bills, with nothing added")
+	s.EqualValues(3_000_000, quote.BaseCostMicros)
 	s.EqualValues(2_000_000, quote.OutputCostMicros)
 	s.False(quote.Billable, "the customer pays their own host")
 	s.False(quote.Unpriced)
@@ -191,7 +306,7 @@ func (s *RoutingSuite) TestACustomersOwnModelIsPricedFromItsOwnConfig() {
 
 func (s *RoutingSuite) TestACustomersOwnModelWithNoRatesIsFree() {
 	logs := &bytes.Buffer{}
-	list, err := pricing.NewList("config", nil, 0, slog.New(slog.NewTextHandler(logs, nil)))
+	list, err := pricing.NewList("config", nil, slog.New(slog.NewTextHandler(logs, nil)))
 	s.Require().NoError(err)
 
 	quote := quoted(list, LLM, ProviderConfig{Provider: CustomProvider, Model: "mine"}, Usage{InputTokens: 1_000, OutputTokens: 1_000})
@@ -208,7 +323,7 @@ func (s *RoutingSuite) TestARowPricesTheMetersItStores() {
 		PerMillionCacheWriteInputTokens: 2.5,
 		PerMegapixel:                    0.02,
 	}}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0, nil)
+	list, err := pricing.NewList("config", atCost(Config{LLM: {Providers: []ProviderConfig{provider}}}), nil)
 	s.Require().NoError(err)
 
 	request := row(LLM, provider, Stat{
@@ -303,7 +418,7 @@ func (s *RoutingSuite) TestCostPricesASearchByTheRequest() {
 // costOf is what a row with that usage costs on a provider with that price.
 func (s *RoutingSuite) costOf(price Price, usage Usage) int64 {
 	provider := ProviderConfig{Provider: "vendor", Model: "model", Price: price}
-	list, err := pricing.NewList("config", PriceEntries(Config{LLM: {Providers: []ProviderConfig{provider}}}), 0,
+	list, err := pricing.NewList("config", atCost(Config{LLM: {Providers: []ProviderConfig{provider}}}),
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 	return quoted(list, LLM, provider, usage).CostMicros

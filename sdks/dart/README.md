@@ -38,7 +38,8 @@ await voice.join();
 await agents.disconnect();
 ```
 
-`VisionAgents(apiKey: ...)` reaches Stream's hosted router; pass `url:` for another. A router
+`VisionAgents(apiKey: ...)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+region, pass `url: Backend.regionUrl('europe-west4')`. A router
 running locally with nothing in front of it is reached by customer id instead:
 `VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
 `userId` and `token` beside it and the key is Stream's alone, so chat and video connect on a
@@ -94,6 +95,19 @@ final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]))
 `displayTitle` is what the people in a conversation kept in Stream Chat see while it runs, and
 `ToolExecutor.client` shows the call as waiting on this person's device. Leave either out and
 the router decides.
+
+### A connector's sign-in
+
+A connector call that needs the person to sign in waits on its step, `awaiting_authorization`.
+`returnUrl` names where the sign-in comes back to: the app's own scheme in reverse domain form,
+since the dashboard, where it goes otherwise, cannot be opened on a phone. "Not now" is
+`declineLogin`, which the router answers itself: the call runs nothing and the agent is told the
+person did not connect.
+
+```dart
+final chat = await agents.chat(SessionOptions(returnUrl: 'com.example.app:/connected'));
+chat.declineLogin(toolCallId);
+```
 
 ### Going back, and branching off
 

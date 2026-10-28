@@ -3632,7 +3632,7 @@ export type paths = {
         };
         /**
          * Read the price list
-         * @description Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+         * @description Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
          */
         readonly get: operations["getPrices"];
         readonly put?: never;
@@ -6639,7 +6639,7 @@ export type components = {
             readonly passages: number;
         };
         readonly IngestKnowledgeRequest: {
-            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. */
+            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it. */
             readonly chunk_size?: number;
             readonly documents: readonly components["schemas"]["KnowledgeDocument"][];
             /**
@@ -7201,7 +7201,7 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
-            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure. */
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health. */
             readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
@@ -7593,8 +7593,10 @@ export type components = {
             /** @description Who is carrying the call, e.g. "telnyx". */
             readonly vendor: string;
         };
-        /** @description What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. */
+        /** @description What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself. */
         readonly Price: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices. */
             readonly change?: string;
             /** @description In upcoming: why the change is made. */
@@ -7616,6 +7618,10 @@ export type components = {
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices. */
+            readonly sku?: string;
             /** @description What a customer is charged for long prompts. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
@@ -7639,31 +7645,34 @@ export type components = {
             /** @description The entries it wrote. Absent from a list of changes. */
             readonly entries?: readonly components["schemas"]["PriceChangeEntry"][] | null;
             readonly kind: components["schemas"]["PriceChangeKind"];
-            /**
-             * Format: int64
-             * @description The list's markup from effective_at on. Absent left it as it was.
-             */
-            readonly markup_bps?: number;
             /** @description <UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price. */
             readonly name: string;
             readonly reason: string;
             readonly source: string;
         };
         readonly PriceChangeEntry: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             readonly free?: boolean;
-            /**
-             * Format: int64
-             * @description The entry's own markup in basis points. Absent takes the list's.
-             */
-            readonly markup_bps?: number;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
+            /** @description What customers are charged for long prompts. */
+            readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description What customers are charged, by meter. */
+            readonly prices?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
             readonly provider: string;
-            /** @description The vendor's rates, by meter. */
+            /** @description The vendor's cost, by meter, for reference. */
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing. */
+            readonly sku: string;
+            /** @description The vendor's cost for long prompts, for reference. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
             readonly when?: {
@@ -7680,13 +7689,8 @@ export type components = {
              * @description When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
              */
             readonly effective_at?: string;
-            /** @description Each replaces its item's entry under its when whole: every rate, tier and markup it has. */
+            /** @description Each replaces its item's entry under its when whole: its cost, its price and every tier of both. */
             readonly entries?: readonly components["schemas"]["PriceEntryInput"][] | null;
-            /**
-             * Format: int64
-             * @description The list's markup in basis points from effective_at on. Absent leaves it.
-             */
-            readonly markup_bps?: number;
             /** @description 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it. */
             readonly name: string;
             /** @description What changed, from what to what. At least one sentence; trimmed, and refused when blank. */
@@ -7706,37 +7710,26 @@ export type components = {
             readonly next_cursor?: string;
         };
         readonly PricedEntry: {
-            readonly charged_rates?: {
-                readonly [key: string]: components["schemas"]["PriceRate"];
-            };
-            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
             readonly free?: boolean;
             readonly local?: boolean;
-            /**
-             * Format: int64
-             * @description The markup it is sold at.
-             */
-            readonly markup_bps: number;
-            /** @description The vendor's rates. */
+            readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description What customers are charged. */
+            readonly prices?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
+            /** @description The vendor's cost, for reference. */
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description The SKU it is priced under. */
+            readonly sku?: string;
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description The change that wrote it. Absent for the change previewed. */
             readonly version?: string;
         };
         readonly PriceEntry: {
-            /**
-             * Format: int64
-             * @description The markup the entry is sold at: its own, else the list's.
-             */
-            readonly charged_markup_bps: number;
-            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
-            readonly charged_rates?: {
-                readonly [key: string]: components["schemas"]["PriceRate"];
-            };
-            /** @description What customers are charged for long prompts. */
-            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /**
              * Format: date-time
              * @description When the entry took effect, or takes effect.
@@ -7744,22 +7737,27 @@ export type components = {
             readonly effective_at?: string;
             /** @description The vendor charges nothing for it. */
             readonly free?: boolean;
-            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no price costs nothing. */
             readonly local?: boolean;
-            /**
-             * Format: int64
-             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-             */
-            readonly markup_bps?: number;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
+            /** @description What customers are charged for long prompts, at the thresholds of tiers. */
+            readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description What customers are charged, by the meters of rates. */
+            readonly prices?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
             readonly provider: string;
-            /** @description The vendor's rates, by meter. */
+            /** @description The vendor's cost, by meter, for reference: nothing is charged from it. */
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
-            /** @description The vendor's rates for long prompts. */
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices. */
+            readonly sku?: string;
+            /** @description The vendor's cost for long prompts, for reference. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
             readonly version?: string;
@@ -7769,24 +7767,31 @@ export type components = {
             };
         };
         readonly PriceEntryInput: {
-            /** @description The vendor charges nothing for it. */
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
+            /** @description The vendor charges nothing for it. A free entry has no price. */
             readonly free?: boolean;
             /** @description Refused with invalid_price: a model is local when the routing config says so. */
             readonly local?: boolean;
-            /**
-             * Format: int64
-             * @description The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
-             */
-            readonly markup_bps?: number;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
+            /** @description What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch. */
+            readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is. */
+            readonly prices?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
             readonly provider: string;
-            /** @description The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused. */
+            /** @description The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused. */
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
-            /** @description Rates for long prompts. Each tier rates every meter the entry does. */
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed. */
+            readonly sku?: string;
+            /** @description The vendor's cost for long prompts. Each tier rates every meter the entry does. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description Refused with invalid_price: an entry's version is the change that writes it. */
             readonly version?: string;
@@ -7794,14 +7799,18 @@ export type components = {
             readonly when?: {
                 readonly [key: string]: string;
             };
-            /** @description Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate. */
+            /** @description Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU. */
             readonly withdrawn?: boolean;
         };
         readonly PriceItem: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
             readonly provider: string;
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
             readonly when?: {
                 readonly [key: string]: string;
@@ -7814,11 +7823,6 @@ export type components = {
              */
             readonly at: string;
             readonly entries: readonly components["schemas"]["PriceEntry"][];
-            /**
-             * Format: int64
-             * @description The list's markup in basis points, added to every entry with none of its own.
-             */
-            readonly markup_bps: number;
             /** @description The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free. */
             readonly unpriced: readonly components["schemas"]["PriceItem"][];
             /** @description The entries of the changes not cancelled that take effect after at, soonest first. */
@@ -7833,10 +7837,6 @@ export type components = {
              */
             readonly effective_at: string;
             readonly items: readonly components["schemas"]["PricePreviewItem"][];
-            /** Format: int64 */
-            readonly markup_bps_after: number;
-            /** Format: int64 */
-            readonly markup_bps_before: number;
             /** @description The items that make it so. */
             readonly needs_confirmation?: readonly components["schemas"]["PriceItem"][] | null;
         };
@@ -7845,21 +7845,20 @@ export type components = {
             readonly after?: components["schemas"]["PricedEntry"];
             /** @description How it is priced before the change. Absent when nothing prices it. */
             readonly before?: components["schemas"]["PricedEntry"];
-            /**
-             * Format: double
-             * @description The factor the markup it is sold at moves by. Absent when either is 0.
-             */
-            readonly markup_factor?: number;
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
             readonly needs_confirmation?: boolean;
-            readonly provider: string;
-            /** @description By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after. */
-            readonly rate_factors?: {
+            /** @description By meter, the factor its price moves by. Absent for a meter with no price before or after. */
+            readonly price_factors?: {
                 readonly [key: string]: number;
             };
-            /** @description It is priced before the change and billable with no rate after. */
+            readonly provider: string;
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description It is priced before the change and billable with no price after. */
             readonly unpriced?: boolean;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
             readonly when?: {
@@ -7894,7 +7893,7 @@ export type components = {
              * @description The moment the list is read at.
              */
             readonly at: string;
-            /** @description Every item priced now, by modality, provider and model. */
+            /** @description Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK. */
             readonly entries: readonly components["schemas"]["Price"][];
             /** @description What the changes scheduled after at will set, soonest first. */
             readonly upcoming: readonly components["schemas"]["Price"][];
@@ -7985,7 +7984,7 @@ export type components = {
             readonly word_error_rate?: number;
         };
         readonly ProviderHealth: {
-            /** @description False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
+            /** @description False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses. */
             readonly available: boolean;
             /** Format: double */
             readonly error_rate: number;
@@ -8597,7 +8596,7 @@ export type components = {
             readonly filter?: {
                 readonly [key: string]: string;
             };
-            /** @description Who the memories belong to. Empty means the customer. */
+            /** @description Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users. */
             readonly user_id?: string;
         };
         /**
@@ -9847,17 +9846,8 @@ export type components = {
             readonly turn_count: number;
         };
         readonly UpcomingPriceEntry: {
-            /**
-             * Format: int64
-             * @description The markup the entry is sold at: its own, else the list's.
-             */
-            readonly charged_markup_bps: number;
-            /** @description What customers are charged: each rate with the markup added, to 12 significant digits. */
-            readonly charged_rates?: {
-                readonly [key: string]: components["schemas"]["PriceRate"];
-            };
-            /** @description What customers are charged for long prompts. */
-            readonly charged_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /**
              * Format: date-time
              * @description When the entry took effect, or takes effect.
@@ -9865,24 +9855,29 @@ export type components = {
             readonly effective_at?: string;
             /** @description The vendor charges nothing for it. */
             readonly free?: boolean;
-            /** @description The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing. */
+            /** @description The deployment runs the model itself, as its routing config says. Local work with no price costs nothing. */
             readonly local?: boolean;
-            /**
-             * Format: int64
-             * @description The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-             */
-            readonly markup_bps?: number;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
+            /** @description What customers are charged for long prompts, at the thresholds of tiers. */
+            readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
+            /** @description What customers are charged, by the meters of rates. */
+            readonly prices?: {
+                readonly [key: string]: components["schemas"]["PriceRate"];
+            };
             readonly provider: string;
-            /** @description The vendor's rates, by meter. */
+            /** @description The vendor's cost, by meter, for reference: nothing is charged from it. */
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
             /** @description The change's reason. */
             readonly reason: string;
-            /** @description The vendor's rates for long prompts. */
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices. */
+            readonly sku?: string;
+            /** @description The vendor's cost for long prompts, for reference. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
             /** @description The price change that wrote the entry, which every row it prices names as its price_version. */
             readonly version?: string;
@@ -9986,6 +9981,8 @@ export type components = {
             };
             /** @description The session the work was done in. */
             readonly session_id?: string;
+            /** @description The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for work recorded before SKUs were. */
+            readonly sku?: string;
             /** @description Whether the work succeeded. */
             readonly success: boolean;
             /** @description The cost labels the request carried. */
@@ -18779,6 +18776,8 @@ export interface operations {
             readonly query?: {
                 /** @description Only this modality's items, such as llm, stt, tts, sms or phone. */
                 readonly modality?: string;
+                /** @description Only this region's items, such as us or eu. */
+                readonly region?: string;
             };
             readonly header?: never;
             readonly path?: never;

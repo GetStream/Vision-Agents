@@ -357,14 +357,27 @@ type auditRecord struct {
 //
 // A failure is logged rather than returned, the way recordUser's is: the change the caller
 // asked for has already been made, and refusing to report a write that happened would be
-// the wrong trade. A record with no changes writes nothing: a save that moved nothing is
-// not a change, and a log full of them is a log nobody reads.
+// the wrong trade. For the same reason the row is written detached: nothing writes a row lost
+// to a caller who hung up once the change was made (AI-2163). A record with no changes writes
+// nothing: a save that moved nothing is not a change, and a log full of them is a log nobody
+// reads.
 func (s *Server) audit(ctx context.Context, record auditRecord) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return
 	}
 	s.auditAs(ctx, customerID, record)
+}
+
+// auditWriteTimeout bounds the write of one audit row, which runs after the change it records
+// committed and must outlive a caller that hung up. database/sql waits for a free pool
+// connection without a limit, so a row detached from its request is bounded here, as the
+// resolver bounds its own (resolver.auditWriteTimeout) on the same table.
+const auditWriteTimeout = 5 * time.Second
+
+// detachedWrite is ctx without its cancellation, bounded by auditWriteTimeout.
+func detachedWrite(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 }
 
 // auditAs is audit under customerID, for a change no customer's own request made, as staff's
@@ -384,6 +397,8 @@ func (s *Server) auditAs(ctx context.Context, customerID string, record auditRec
 		Source: actor.Source, ActorID: actor.ID, ActorName: actor.Name,
 		RequestID: RequestIDFrom(ctx), Changes: record.Changes,
 	}
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
 	if err := s.store.RecordAuditEntry(ctx, &entry); err != nil {
 		s.logger.Error("could not record a configuration change",
 			"customer", customerID, "resource", record.ResourceType, "id", record.ResourceID,

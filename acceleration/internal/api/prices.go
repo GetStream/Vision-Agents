@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,9 +19,11 @@ import (
 // pricesTag puts the price list customers read in the SDKs.
 const pricesTag = "Prices"
 
-// Price is what one item costs a customer: the rates every row of its work is debited at.
+// Price is what one item costs a customer: the price every row of its work is debited at. The
+// vendor's cost is never shown.
 type Price struct {
 	PriceItem
+	SKU         string               `json:"sku,omitempty" doc:"The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices."`
 	Free        bool                 `json:"free" doc:"The work costs nothing."`
 	Local       bool                 `json:"local" doc:"The deployment runs the model itself; with no rates it costs nothing."`
 	Rates       map[string]PriceRate `json:"rates,omitempty" doc:"What a customer is charged, by meter."`
@@ -32,8 +35,10 @@ type Price struct {
 }
 
 func (*Price) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What one item costs: a model of a provider in a modality, under the attributes " +
-		"in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports."
+	schema.Description = "What one item costs: a model of a provider in a modality, in a region, with the " +
+		"customer's own key (byok) or without, under the attributes in when, at the rates every row of its " +
+		"work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the " +
+		"customer for the work itself."
 	return schema
 }
 
@@ -41,12 +46,13 @@ func (*Price) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema
 // customers are charged.
 type Prices struct {
 	At       time.Time `json:"at" doc:"The moment the list is read at."`
-	Entries  []Price   `json:"entries" nullable:"false" doc:"Every item priced now, by modality, provider and model."`
+	Entries  []Price   `json:"entries" nullable:"false" doc:"Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK."`
 	Upcoming []Price   `json:"upcoming" nullable:"false" doc:"What the changes scheduled after at will set, soonest first."`
 }
 
 type getPricesRequest struct {
 	Modality string `query:"modality" doc:"Only this modality's items, such as llm, stt, tts, sms or phone."`
+	Region   string `query:"region" doc:"Only this region's items, such as us or eu."`
 }
 
 type pricesResponse struct{ Body Prices }
@@ -57,7 +63,10 @@ func (s *Server) registerPrices(api huma.API) {
 		Summary: "Read the price list",
 		Description: "Every item this router prices, at the rates a customer is charged, which are what every " +
 			"answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, " +
-			"and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will " +
+			"and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and " +
+			"work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills " +
+			"the customer; neither falls back to another region's price or the other `byok` state's. Then " +
+			"what the changes scheduled later will " +
 			"set, soonest first, with their reason, an item they withdraw included. The list is the one in " +
 			"memory, so reading it costs no query; a change made on another router shows within 30 seconds. " +
 			"Prices are the same for everyone, so any caller may read them.",
@@ -70,10 +79,9 @@ func (s *Server) registerPrices(api huma.API) {
 func (s *Server) getPrices(_ context.Context, request *getPricesRequest) (*pricesResponse, error) {
 	var list *pricing.List
 	var upcoming []pricing.UpcomingEntry
-	var markups []pricing.UpcomingMarkup
 	switch {
 	case s.prices != nil:
-		list, upcoming, markups = s.prices.List(), s.prices.Upcoming(), s.prices.UpcomingMarkups()
+		list, upcoming = s.prices.List(), s.prices.Upcoming()
 	default:
 		own, ok := s.pricer.(*pricing.List)
 		if !ok {
@@ -82,29 +90,28 @@ func (s *Server) getPrices(_ context.Context, request *getPricesRequest) (*price
 		list = own
 	}
 	local := routing.LocalItems(s.routedConfig())
-	wanted := func(entry pricing.Entry) bool { return request.Modality == "" || entry.Modality == request.Modality }
-	markup := list.MarkupBps()
+	wanted := func(item PriceItem) bool {
+		return (request.Modality == "" || item.Modality == request.Modality) && (request.Region == "" || item.Region == request.Region)
+	}
 	answer := Prices{At: time.Now().UTC(), Entries: []Price{}, Upcoming: []Price{}}
-	inForce := list.Entries()
-	for _, entry := range inForce {
-		if wanted(entry) {
-			answer.Entries = append(answer.Entries, priceOf(entry, markup, entry.EffectiveAt))
+	for _, entry := range list.Entries() {
+		if price := priceOf(entry, entry.EffectiveAt); wanted(price.PriceItem) {
+			answer.Entries = append(answer.Entries, price)
 		}
 	}
-	for _, price := range upcomingPrices(inForce, markup, upcoming, markups, local) {
-		if request.Modality == "" || price.Modality == request.Modality {
+	for _, price := range upcomingPrices(upcoming, local) {
+		if wanted(price.PriceItem) {
 			answer.Upcoming = append(answer.Upcoming, price)
 		}
 	}
 	return &pricesResponse{Body: answer}, nil
 }
 
-// priceOf is an entry at the rates a customer is charged under a list with that markup.
-func priceOf(entry pricing.Entry, listMarkupBps int64, effectiveAt time.Time) Price {
-	charged := pricing.Charged(entry, listMarkupBps)
+// priceOf is an entry at the price a customer is charged: never the vendor's cost.
+func priceOf(entry pricing.Entry, effectiveAt time.Time) Price {
 	price := Price{
-		PriceItem: priceItemOfEntry(entry), Free: entry.Free, Local: entry.Local,
-		Rates: priceRates(charged.Rates), Tiers: priceTiers(charged.Tiers), Change: entry.Version,
+		PriceItem: priceItemOfEntry(entry), SKU: entry.SKU, Free: entry.Free, Local: entry.Local,
+		Rates: priceRates(entry.Prices), Tiers: priceTiers(entry.PriceTiers), Change: entry.Version,
 	}
 	if !effectiveAt.IsZero() {
 		at := effectiveAt.UTC()
@@ -113,45 +120,18 @@ func priceOf(entry pricing.Entry, listMarkupBps int64, effectiveAt time.Time) Pr
 	return price
 }
 
-// upcomingPrices is what the scheduled changes will set, soonest first, each at the markup in
-// force once it takes effect: every entry a change writes or withdraws, and for a change of
-// the markup, every entry in force then whose charged rates it moves. Changes taking effect at
-// one moment apply in the order of their names, as the list in force reads them.
-func upcomingPrices(inForce []pricing.Entry, markup int64, upcoming []pricing.UpcomingEntry, markups []pricing.UpcomingMarkup, local []pricing.Item) []Price {
-	current := make(map[string]pricing.Entry, len(inForce))
-	for _, entry := range inForce {
-		current[prices.Name(entry)] = entry
-	}
+// upcomingPrices is what the scheduled changes will set, soonest first: every entry a change
+// writes or withdraws. Of two changes taking effect at one moment and writing one item, the
+// later name's entry is the one in force, as the list in force reads them.
+func upcomingPrices(upcoming []pricing.UpcomingEntry, local []pricing.Item) []Price {
 	moments := map[int64]time.Time{}
 	for _, entry := range upcoming {
 		moments[entry.EffectiveAt.UnixMicro()] = entry.EffectiveAt
 	}
-	for _, change := range markups {
-		moments[change.EffectiveAt.UnixMicro()] = change.EffectiveAt
-	}
-	order := slices.Sorted(func(yield func(int64) bool) {
-		for moment := range moments {
-			if !yield(moment) {
-				return
-			}
-		}
-	})
 	var answer []Price
-	for _, moment := range order {
+	for _, moment := range slices.Sorted(maps.Keys(moments)) {
 		at := moments[moment]
-		var markedBy *pricing.UpcomingMarkup
-		for i := range markups {
-			if markups[i].EffectiveAt.UnixMicro() == moment && (markedBy == nil || markups[i].Change > markedBy.Change) {
-				markedBy = &markups[i]
-			}
-		}
-		next := markup
-		if markedBy != nil {
-			next = markedBy.MarkupBps
-		}
 		var set []Price
-		// written is where each item a change writes at this moment is in set: of two changes
-		// writing one item, the later name's entry is the one in force.
 		written := map[string]int{}
 		for _, entry := range upcoming {
 			if entry.EffectiveAt.UnixMicro() != moment {
@@ -159,13 +139,10 @@ func upcomingPrices(inForce []pricing.Entry, markup int64, upcoming []pricing.Up
 			}
 			name := prices.Name(entry.Entry)
 			entry.Local = isLocal(entry.Entry, local)
-			price := priceOf(entry.Entry, next, at)
+			price := priceOf(entry.Entry, at)
 			price.Withdrawn, price.Description = entry.Withdrawn, entry.Reason
 			if entry.Withdrawn {
 				price.Rates, price.Tiers = nil, nil
-				delete(current, name)
-			} else {
-				current[name] = entry.Entry
 			}
 			if i, ok := written[name]; ok {
 				set[i] = price
@@ -174,22 +151,11 @@ func upcomingPrices(inForce []pricing.Entry, markup int64, upcoming []pricing.Up
 			written[name] = len(set)
 			set = append(set, price)
 		}
-		if next != markup && markedBy != nil {
-			for name, entry := range current {
-				if _, ok := written[name]; ok || entry.MarkupBps != nil || (len(entry.Rates) == 0 && len(entry.Tiers) == 0) {
-					continue
-				}
-				price := priceOf(entry, next, at)
-				price.Change, price.Description = markedBy.Change, markedBy.Reason
-				set = append(set, price)
-			}
-		}
 		slices.SortStableFunc(set, func(a, b Price) int {
 			return cmp.Or(strings.Compare(a.Modality, b.Modality), strings.Compare(a.Provider, b.Provider),
 				strings.Compare(a.Model, b.Model), strings.Compare(priceItemName(a.PriceItem), priceItemName(b.PriceItem)))
 		})
 		answer = append(answer, set...)
-		markup = next
 	}
 	return answer
 }

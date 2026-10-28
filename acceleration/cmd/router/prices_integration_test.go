@@ -96,7 +96,7 @@ func (s *PriceSyncSuite) startRouter(pgStore *store.Store) {
 // startPrices starts the price list as a router's start does, retrying a failed load every
 // retry, and reading the list again every hour, so only a retry's load reads it sooner.
 func (s *PriceSyncSuite) startPrices(ctx context.Context, pgStore *store.Store, retry time.Duration) *pricing.Active {
-	load, err := loadPriceFiles(s.settings)
+	load, err := loadPriceFiles(s.settings, s.logger)
 	s.Require().NoError(err)
 	fallback, err := newPrices(routing.Config{}, load, pricesVersion(s.settings), s.logger)
 	s.Require().NoError(err)
@@ -109,14 +109,14 @@ func (s *PriceSyncSuite) changes(pgStore *store.Store) []store.PriceChange {
 	return changes
 }
 
-// ownEntry is an item vendor.json does not have.
-const ownEntry = `{"modality": "llm", "provider": "own", "model": "own-model", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}`
+// ownEntry is an item vendor.json does not have. Read, it has its BYOK twin beside it.
+const ownEntry = `{"modality": "llm", "provider": "own", "model": "own-model", "region": "us", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}`
 
 func (s *PriceSyncSuite) TestStartupSyncsAndAudits() {
 	s.releasedAs("v1.3.0")
 	vendor := prices.Vendor().Entries[0]
-	override, err := json.Marshal(pricing.Entry{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model, When: vendor.When,
-		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: 99, Per: 1_000_000}}})
+	override, err := json.Marshal(pricing.Entry{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model,
+		Region: vendor.Region, When: vendor.When, Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: 99, Per: 1_000_000}}})
 	s.Require().NoError(err)
 	s.ownFile(`{"markup_bps": 1500, "entries": [` + ownEntry + `, ` + string(override) + `]}`)
 	pgStore := s.started()
@@ -129,15 +129,20 @@ func (s *PriceSyncSuite) TestStartupSyncsAndAudits() {
 	s.Equal(store.PriceChangeSeed, seed.Kind)
 	s.Equal(s.settings.PricesFile+", vendor.json, router v1.3.0", seed.Source)
 	s.Equal("router v1.3.0", seed.CreatedBy)
-	markup, err := pgStore.ActiveMarkup(s.ctx, time.Now())
-	s.Require().NoError(err)
-	s.EqualValues(1_500, markup)
 	active, err := pgStore.ActivePriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
-	s.Len(active, len(prices.Vendor().Entries)+1)
+	s.Len(active, len(prices.Vendor().Entries)+2, "the file's own item and its BYOK twin")
 	for _, row := range active {
 		if row.Modality == vendor.Modality && row.Provider == vendor.Provider && row.Model == vendor.Model && len(row.Attributes) == 0 {
 			s.InDelta(99.0, row.Rates[pricing.InputTokens].USD, 1e-12, "the deployment's own file wins over vendor.json")
+			s.InDelta(118.8, row.Prices[pricing.InputTokens].USD, 1e-12, "priced at the factor, as the seed writes it, the file's markup_bps ignored")
+		}
+		if row.Model == "own-model" && !row.BYOK {
+			s.Equal("llm-own-own-model-us", row.SKU)
+		}
+		if row.Model == "own-model" && row.BYOK {
+			s.Equal("llm-own-own-model-us-byok", row.SKU)
+			s.InDelta(0.2, row.Prices[pricing.InputTokens].USD, 1e-12, "a fifth of its rate")
 		}
 	}
 	var audits []store.AuditEntry
@@ -164,17 +169,33 @@ func (s *PriceSyncSuite) TestTheNextReleaseAddsOnlyItsNewItems() {
 	s.Equal("Items new in v1.4.0", changes[0].Reason)
 	_, entries, err := pgStore.PriceChange(s.ctx, changes[0].Name)
 	s.Require().NoError(err)
-	s.Require().Len(entries, 1)
+	s.Require().Len(entries, 2)
 	s.Equal("own-model", entries[0].Model)
-	markup, err := pgStore.ActiveMarkup(s.ctx, time.Now())
-	s.Require().NoError(err)
-	s.Zero(markup, "only the first load reads a markup")
+	s.InDelta(1.2, entries[0].Prices[pricing.InputTokens].USD, 1e-12, "an item new in a release is priced at the factor")
+	s.Equal("llm-own-own-model-us", entries[0].SKU)
+	s.True(entries[1].BYOK)
+	s.InDelta(0.2, entries[1].Prices[pricing.InputTokens].USD, 1e-12, "and its BYOK twin at the fee")
+	s.Equal("llm-own-own-model-us-byok", entries[1].SKU)
+}
+
+// TestSyncDryRunNamesEachItemsRegionAndBYOK: what the next start would add says which region
+// each item is in and which is the BYOK twin.
+func (s *PriceSyncSuite) TestSyncDryRunNamesEachItemsRegionAndBYOK() {
+	pgStore := s.started()
+	s.startRouter(pgStore)
+	s.ownFile(`{"entries": [` + ownEntry + `]}`)
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesSync(s.ctx, []string{"--dry-run"}, s.settings, &out))
+
+	s.Contains(out.String(), "the next start adds 2 items new in dev")
+	s.Contains(out.String(), "  llm/own/own-model (us)\n  llm/own/own-model (us, byok)\n")
 }
 
 // TestRoutersStartingAtOnceLoadOnce: routers that start together on an empty database each
 // migrate and load the price files, and between them write the seed once.
 func (s *PriceSyncSuite) TestRoutersStartingAtOnceLoadOnce() {
-	load, err := loadPriceFiles(s.settings)
+	load, err := loadPriceFiles(s.settings, s.logger)
 	s.Require().NoError(err)
 	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
@@ -233,13 +254,29 @@ func (s *PriceSyncSuite) TestShowSaysTheListInForce() {
 
 	var shown shownList
 	s.Require().NoError(json.Unmarshal(out.Bytes(), &shown))
-	s.EqualValues(1_500, shown.MarkupBps)
 	s.Len(shown.Entries, len(prices.Vendor().Entries))
 	s.Empty(shown.Unpriced, "every model router.yaml routes is priced or local")
 	priced := shown.Entries[0]
+	s.NotEmpty(priced.SKU)
 	for meter, rate := range priced.Rates {
-		s.InDelta(rate.USD*1.15, priced.Charged[meter].USD, 1e-12)
+		s.InDelta(rate.USD*1.2, priced.Prices[meter].USD, 1e-12)
 	}
+	for _, entry := range shown.Entries {
+		s.Equal(pricing.RegionUS, entry.Region, prices.Name(entry.Entry))
+		if !entry.BYOK || entry.Free {
+			continue
+		}
+		for meter, rate := range entry.Rates {
+			s.InDelta(rate.USD*0.2, entry.Prices[meter].USD, 1e-12, prices.Name(entry.Entry))
+		}
+	}
+	s.Contains(out.String(), `"region": "us"`)
+	s.Contains(out.String(), `"byok": true`)
+	s.NotContains(out.String(), "markup")
+	out.Reset()
+	s.Require().NoError(runPricesShow(s.ctx, nil, s.settings, &out))
+	s.Contains(out.String(), "llm/anthropic/claude-haiku-5-5 (us)  [llm-anthropic-claude-haiku-5-5-us, ")
+	s.Contains(out.String(), "llm/anthropic/claude-haiku-5-5 (us, byok)  [llm-anthropic-claude-haiku-5-5-us-byok, ")
 	out.Reset()
 	s.Require().NoError(runPricesShow(s.ctx, []string{"--unpriced"}, s.settings, &out))
 	s.Empty(out.String())
@@ -260,18 +297,19 @@ func (s *PriceSyncSuite) TestShowListsWhatIsUnpriced() {
 
 	s.Require().NoError(runPricesShow(s.ctx, []string{"--unpriced"}, s.settings, &out))
 
-	s.Equal("llm/nobody/unpriced\n", out.String())
+	s.Equal("llm/nobody/unpriced (us)\n", out.String())
 }
 
 // changePrice writes a change through the management API's store call: the rate a meter of
-// entry charges, taking effect at effectiveAt, or now when that is nil.
-func (s *PriceSyncSuite) changePrice(pgStore *store.Store, name string, entry pricing.Entry, usd float64, markup *int64, effectiveAt *time.Time) store.PriceChange {
+// entry costs and charges, taking effect at effectiveAt, or now when that is nil.
+func (s *PriceSyncSuite) changePrice(pgStore *store.Store, name string, entry pricing.Entry, usd float64, effectiveAt *time.Time) store.PriceChange {
 	entry.Rates = map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: usd, Per: 1_000_000}}
-	entry.Tiers, entry.Version = nil, ""
+	entry.Prices = entry.Rates
+	entry.Tiers, entry.PriceTiers, entry.Version, entry.SKU = nil, nil, "", ""
 	change, _, _, err := pgStore.CreatePriceChange(s.ctx, store.PriceChangeWrite{
-		Name: name, Reason: "A test's change", Source: "the test", EffectiveAt: effectiveAt, MarkupBps: markup,
+		Name: name, Reason: "A test's change", Source: "the test", EffectiveAt: effectiveAt,
 		Entries: []store.PriceEntryWrite{{Entry: entry}}, ActorID: "tester", ActorName: "tester",
-	}, func(store.PriceListAt) error { return nil })
+	}, func(store.PriceListAt, []store.PriceEntryWrite) error { return nil })
 	s.Require().NoError(err)
 	return change
 }
@@ -300,7 +338,7 @@ func (s *PriceSyncSuite) rateOf(pgStore *store.Store, entry pricing.Entry) float
 	return 0
 }
 
-// TestReloadPutsTheFilesPricesBack: rates changed in the database, a markup and a change
+// TestReloadPutsTheFilesPricesBack: rates and prices changed in the database and a change
 // scheduled for later all give way to what the files say, as one seed, and the rows priced
 // before keep their price_version.
 func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
@@ -308,13 +346,12 @@ func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
 	pgStore := s.started()
 	s.startRouter(pgStore)
 	vendor := s.tokenPriced()
-	own := pricing.Entry{Modality: "llm", Provider: "own", Model: "own-model"}
+	own := pricing.Entry{Modality: "llm", Provider: "own", Model: "own-model", Region: pricing.RegionUS}
 	fileRate := s.rateOf(pgStore, vendor)
-	markup := int64(1_500)
-	fixed := s.changePrice(pgStore, "vendor_rate_fix", vendor, fileRate*3, &markup, nil)
-	s.changePrice(pgStore, "own_rate_fix", own, 5, nil, nil)
+	fixed := s.changePrice(pgStore, "vendor_rate_fix", vendor, fileRate*3, nil)
+	s.changePrice(pgStore, "own_rate_fix", own, 5, nil)
 	later := time.Now().Add(time.Hour)
-	s.changePrice(pgStore, "own_later", own, 7, nil, &later)
+	s.changePrice(pgStore, "own_later", own, 7, &later)
 	s.Require().InDelta(fileRate*3, s.rateOf(pgStore, vendor), 1e-12)
 	s.Require().InDelta(5.0, s.rateOf(pgStore, own), 1e-12)
 	s.Require().NoError(pgStore.RecordRequest(s.ctx, &store.Request{
@@ -335,12 +372,9 @@ func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
 	upcoming, err := pgStore.UpcomingPriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
 	s.Empty(upcoming, "the scheduled change went with the rest")
-	markupNow, err := pgStore.ActiveMarkup(s.ctx, time.Now())
-	s.Require().NoError(err)
-	s.Zero(markupNow, "the price file sets no markup")
 	active, err := pgStore.ActivePriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
-	s.Len(active, len(prices.Vendor().Entries)+1)
+	s.Len(active, len(prices.Vendor().Entries)+2)
 
 	var audits []store.AuditEntry
 	s.Require().NoError(pgStore.DB().NewSelect().Model(&audits).Where("resource_type = ?", store.AuditResourcePriceList).
@@ -364,7 +398,6 @@ func (s *PriceSyncSuite) TestReloadPutsTheFilesPricesBack() {
 		"where it is pointed comes first")
 	s.NotContains(text, "postgres:postgres")
 	s.Contains(text, "removed 4 price changes (1 not yet in force, 0 cancelled)")
-	s.Contains(text, "the markup in force was 1500 basis points")
 	s.Contains(text, "seeded the price list from "+s.settings.PricesFile+", vendor.json: change "+seed.Name)
 	s.Contains(text, "2 items priced differently by the files:\n")
 	s.Contains(text, "  "+prices.Name(vendor)+"\n")
@@ -376,7 +409,7 @@ func (s *PriceSyncSuite) TestReloadDryRunWritesNothing() {
 	pgStore := s.started()
 	s.startRouter(pgStore)
 	vendor := s.tokenPriced()
-	s.changePrice(pgStore, "vendor_rate_fix", vendor, 42, nil, nil)
+	s.changePrice(pgStore, "vendor_rate_fix", vendor, 42, nil)
 	var out bytes.Buffer
 
 	s.Require().NoError(runPricesReload(s.ctx, []string{"--development", "--dry-run"}, s.settings, &out))
@@ -472,9 +505,9 @@ func (s *PriceSyncSuite) TestARouterWhoseFirstLoadLostTheLockGoesReadyRightAfter
 	s.Eventually(func() bool { return active.Ready() == nil }, 2*time.Second, 10*time.Millisecond,
 		"ready right after the seed")
 	s.Less(time.Since(seeded), 2*time.Second)
-	s.NotEqual(prices.EmbeddedVersion("dev"), active.Quote(pricing.Item{Modality: prices.Vendor().Entries[0].Modality,
-		Provider: prices.Vendor().Entries[0].Provider, Model: prices.Vendor().Entries[0].Model,
-		Attributes: prices.Vendor().Entries[0].When}, pricing.Quantities{pricing.InputTokens: 1}).Version,
+	vendor := prices.Vendor().Entries[0]
+	s.NotEqual(prices.EmbeddedVersion("dev"), active.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider,
+		Model: vendor.Model, Region: vendor.Region, Attributes: vendor.When}, pricing.Quantities{pricing.InputTokens: 1}).Version,
 		"priced from the database, not the files")
 }
 

@@ -73,6 +73,9 @@ type Options struct {
 	Knowledge *metered.Knowledge
 	// ChunkSize is how much of a page goes in one passage. Zero is the ingest default.
 	ChunkSize int
+	// Limits bound how much larger a page's passages can be than the page, as the router's
+	// settings name them.
+	Limits ingest.Limits
 	// CheckInterval is how often the worker looks for reads that are due, and how long a
 	// failed one waits before it is tried again. Zero is asynq's defaults: a second between
 	// checks and exponential backoff between retries.
@@ -97,6 +100,7 @@ type Service struct {
 	reader    search.Reader
 	knowledge *metered.Knowledge
 	chunkSize int
+	limits    ingest.Limits
 	sweep     time.Duration
 	logger    *slog.Logger
 	// stop ends the sweep, and swept is closed once it has. Both are nil until Start.
@@ -152,6 +156,7 @@ func New(options Options) (*Service, error) {
 		reader:    options.Reader,
 		knowledge: options.Knowledge,
 		chunkSize: options.ChunkSize,
+		limits:    options.Limits,
 		sweep:     every,
 		logger:    options.Logger,
 	}, nil
@@ -238,7 +243,7 @@ func (s *Service) Add(ctx context.Context, customerID string, wanted Subscriptio
 			return store.KnowledgeURL{}, err
 		}
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // List returns the pages a knowledge base is filled from, newest first. An empty namespace
@@ -263,9 +268,8 @@ func (s *Service) Remove(ctx context.Context, customerID, id string) error {
 		return err
 	}
 
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
 	owner := routing.Owner{CustomerID: page.CustomerID, Attribution: routing.AttributionFrom(ctx)}
-	if err := s.knowledge.For(owner).Delete(ctx, base, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
+	if err := s.knowledge.For(owner).Delete(ctx, page.Namespace, ingest.IDs(page.URL, 0, page.Passages)); err != nil {
 		return err
 	}
 	return s.store.DeleteKnowledgeURL(ctx, customerID, page.ID)
@@ -278,7 +282,7 @@ func (s *Service) Reindex(ctx context.Context, customerID, id string) (store.Kno
 	if err != nil {
 		return store.KnowledgeURL{}, err
 	}
-	return page, s.enqueue(ctx, page)
+	return page, s.readAgain(ctx, page)
 }
 
 // refresh queues a read of every page due one, each sweep, until Close. Every router runs
@@ -333,12 +337,21 @@ func (p indexPayload) owner() routing.Owner {
 }
 
 // enqueue queues a read of the page, for whoever ctx says asked. A read of it already waiting
-// is enough: the task id is the page, so asking twice before the worker gets to it reads it
-// once. A read already under way is not: it may have fetched the page before this was asked,
-// and it holds the page's id until asynq lets go of it, after the page shows it read. One
-// more read is queued behind it, under an id of its own so that asking again meanwhile still
-// reads the page once more rather than once per ask.
+// or under way is enough: the task id is the page, so asking twice before the worker gets to
+// it reads it once. That is what a scheduled refresh wants: the page read, by any read.
 func (s *Service) enqueue(ctx context.Context, page store.KnowledgeURL) error {
+	if err := s.enqueueAs(ctx, page, page.ID); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return err
+	}
+	return nil
+}
+
+// readAgain queues a read someone asked for, by adding the page or adding it again, or by
+// reindexing it, after whatever the page last showed. A read of it still waiting is enough. A read already under way is not: it may have fetched the page
+// before this was asked, and it holds the page's id until asynq lets go of it, after the page
+// shows it read. One more read is queued behind it, under an id of its own so that asking
+// again meanwhile still reads the page once more rather than once per ask.
+func (s *Service) readAgain(ctx context.Context, page store.KnowledgeURL) error {
 	err := s.enqueueAs(ctx, page, page.ID)
 	if !errors.Is(err, asynq.ErrTaskIDConflict) {
 		return err
@@ -404,9 +417,15 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	}
 
 	written := page.Passages
-	read, err := s.reader.Read(ctx, page.URL)
+	owned := s.knowledge.For(payload.owner())
+	// A read is paid for, so a customer whose write would be refused is not read for.
+	var read search.Page
+	err = owned.Admit(ctx)
 	if err == nil {
-		err = s.write(ctx, s.knowledge.For(payload.owner()), &page, read)
+		read, err = s.reader.Read(ctx, page.URL)
+	}
+	if err == nil {
+		err = s.write(ctx, owned, &page, read)
 	}
 	last := false
 	if err != nil {
@@ -442,18 +461,17 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 // past the end of this one. Writing first means a lookup landing mid-update reads the new
 // passages or the old ones rather than a gap.
 func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *store.KnowledgeURL, read search.Page) error {
-	passages := ingest.Split(page.URL, read.Text, s.chunkSize)
+	passages := ingest.Split(page.URL, read.Text, s.chunkSize, s.limits)
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}
-	base := knowledge.Scoped(page.CustomerID, page.Namespace)
-	if err := writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, page.Namespace, passages); err != nil {
 		return err
 	}
 	// A page that got shorter would otherwise leave its old tail behind, still findable
 	// and no longer on the page it claims to come from.
 	stale := ingest.IDs(page.URL, len(passages), page.Passages)
-	if err := writer.Delete(ctx, base, stale); err != nil {
+	if err := writer.Delete(ctx, page.Namespace, stale); err != nil {
 		return err
 	}
 

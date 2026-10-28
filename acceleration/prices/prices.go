@@ -20,8 +20,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
-// vendorJSON is the vendors' published list prices and nothing else: no markup and no
-// negotiated figure, since this repository is public.
+// vendorJSON is the vendors' published list prices and nothing else: no price of the
+// operator's and no negotiated figure, since this repository is public.
 //
 //go:embed vendor.json
 var vendorJSON []byte
@@ -31,11 +31,14 @@ const VendorFile = "vendor.json"
 
 // File is a price list as JSON: vendor.json, or a deployment's own file.
 type File struct {
-	// MarkupBps is the operator's markup on every entry, in basis points (1500 is 15%).
-	// Only the first load of a database reads it; after that a markup changes in the
-	// database.
+	// MarkupBps is read and ignored: a price is written per entry, and an older file that
+	// still has a markup is loaded as though it had none. The router warns when it is set.
 	MarkupBps *int64 `json:"markup_bps,omitempty"`
-	// Entries are vendor rates, one per item and When.
+	// Entries are one per item, region, BYOK state and When: the vendor's rates and, when the
+	// file sets them, the price and the SKU. Reading the file adds the BYOK twin of each entry
+	// of a modality in pricing.BYOKModalities that has none (pricing.WithBYOK), and prices an
+	// entry the file gives no price at its rates times pricing.PriceFactorBps, or
+	// pricing.BYOKFeeBps for a BYOK one, which is what a load writes for it.
 	Entries []pricing.Entry `json:"entries"`
 }
 
@@ -58,10 +61,46 @@ func Load(path string) (File, error) {
 	return Parse(path, data)
 }
 
+// LoadDeployment is Load for a deployment's own file, ROUTER_PRICES_FILE: an entry that names
+// no region is read as pricing.DefaultRegion, which is logged. A router built before regions
+// refuses a region field, and every router of a deployment reads the same file at its start,
+// so the file can name regions only once none of them is that old.
+func LoadDeployment(path string, logger *slog.Logger) (File, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return File{}, fmt.Errorf("prices: %w", err)
+	}
+	file, err := decode(path, data)
+	if err != nil {
+		return File{}, err
+	}
+	var unnamed []string
+	for i, entry := range file.Entries {
+		if entry.Region == "" {
+			unnamed = append(unnamed, Name(entry))
+			file.Entries[i].Region = pricing.DefaultRegion
+		}
+	}
+	if len(unnamed) > 0 {
+		logger.Warn("price file entries name no region and are read as "+pricing.DefaultRegion+
+			"; name one on every entry once every router reading the file is built with regions",
+			"file", path, "entries", unnamed)
+	}
+	return file.finish(path)
+}
+
 // Parse reads a price file and checks it builds a price list. name is what an error says
 // the file is. A field nobody reads is refused rather than dropped, so a misspelt rate is
 // an error and never a price of zero.
 func Parse(name string, data []byte) (File, error) {
+	file, err := decode(name, data)
+	if err != nil {
+		return File{}, err
+	}
+	return file.finish(name)
+}
+
+func decode(name string, data []byte) (File, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var file File
@@ -71,17 +110,27 @@ func Parse(name string, data []byte) (File, error) {
 	if _, err := decoder.Token(); err != io.EOF {
 		return File{}, fmt.Errorf("prices: %s: more than one JSON value", name)
 	}
+	return file, nil
+}
+
+// finish checks a decoded file, adds its BYOK twins and prices it, and checks it builds a
+// price list.
+func (file File) finish(name string) (File, error) {
 	if err := file.check(); err != nil {
+		return File{}, fmt.Errorf("prices: %s: %w", name, err)
+	}
+	file.Entries = pricing.PricedAll(pricing.WithBYOK(file.Entries))
+	if _, err := pricing.NewList("check", file.Entries, slog.New(slog.DiscardHandler)); err != nil {
 		return File{}, fmt.Errorf("prices: %s: %w", name, err)
 	}
 	return file, nil
 }
 
 func (f File) check() error {
-	if f.MarkupBps != nil && !pricing.ValidMarkup(*f.MarkupBps) {
-		return fmt.Errorf("a markup of %d basis points, outside 0 to %d", *f.MarkupBps, pricing.MaxMarkupBps)
-	}
 	for _, entry := range f.Entries {
+		if entry.Region == "" {
+			return fmt.Errorf("%s names no region: every entry names its region, such as %s", Name(entry), pricing.RegionUS)
+		}
 		// A database keeps neither: local says how a deployment runs a model, which is its
 		// routing config's to say, and a version is the change that wrote the entry.
 		if entry.Local {
@@ -91,18 +140,34 @@ func (f File) check() error {
 			return fmt.Errorf("%s sets a version, which only the price list's changes have", Name(entry))
 		}
 	}
-	var markup int64
-	if f.MarkupBps != nil {
-		markup = *f.MarkupBps
-	}
-	_, err := pricing.NewList("check", f.Entries, markup, slog.New(slog.DiscardHandler))
-	return err
+	return nil
 }
 
-// Name is the item an entry prices, as logs and errors write it: modality/provider/model,
-// and its When when it has one.
+// IgnoredMarkup warns that a file's markup_bps is not read, naming the file, so a deployment
+// still passing one sees that its prices come from the entries.
+func IgnoredMarkup(logger *slog.Logger, name string, file File) {
+	if file.MarkupBps != nil {
+		logger.Warn("markup_bps in a price file is ignored: each entry carries its price, and an entry without one "+
+			"is priced at its vendor rates times the default factor when it is first loaded",
+			"file", name, "markup_bps", *file.MarkupBps, "factor_bps", pricing.PriceFactorBps)
+	}
+}
+
+// Name is the item an entry prices, as logs and errors write it and as a load tells one item
+// from another: modality/provider/model, its region and byok for a BYOK entry, and its When
+// when it has one, as in llm/anthropic/claude-haiku-5-5 (us, byok) when service_tier=flex.
 func Name(entry pricing.Entry) string {
+	var qualifiers []string
+	if entry.Region != "" {
+		qualifiers = append(qualifiers, entry.Region)
+	}
+	if entry.BYOK {
+		qualifiers = append(qualifiers, "byok")
+	}
 	name := entry.Modality + "/" + entry.Provider + "/" + entry.Model
+	if len(qualifiers) > 0 {
+		name += " (" + strings.Join(qualifiers, ", ") + ")"
+	}
 	if len(entry.When) > 0 {
 		name += " when " + When(entry.When)
 	}
@@ -118,8 +183,8 @@ func When(when map[string]string) string {
 	return strings.Join(pairs, ",")
 }
 
-// Merge lays the files over each other: for one item and When, the first file with an
-// entry for it wins, so a deployment's own file goes before vendor.json.
+// Merge lays the files over each other: for one item, region, BYOK state and When, the first
+// file with an entry for it wins, so a deployment's own file goes before vendor.json.
 func Merge(files ...File) []pricing.Entry {
 	var merged []pricing.Entry
 	seen := map[string]bool{}
@@ -134,8 +199,9 @@ func Merge(files ...File) []pricing.Entry {
 	return merged
 }
 
-// WithLocal marks the items a deployment runs itself: each of their entries is local, and an
-// item with none gets one with no rate, so its work is free rather than unpriced.
+// WithLocal marks the items a deployment runs itself: each of their entries is local, in every
+// region and BYOK or not, and an item with none in its own region gets one there with no rate,
+// so its work is free rather than unpriced.
 func WithLocal(entries []pricing.Entry, local []pricing.Item) []pricing.Entry {
 	return pricing.WithLocal(entries, local)
 }
@@ -149,8 +215,8 @@ func EmbeddedVersion(release string) string {
 	return "embedded:" + release
 }
 
-// Embedded is the price list of the vendor list embedded in the binary, at the vendors'
-// rates with no markup, with the items the deployment runs itself marked local.
+// Embedded is the price list of the vendor list embedded in the binary, priced as a first load
+// prices it, with the items the deployment runs itself marked local.
 func Embedded(local []pricing.Item, release string, logger *slog.Logger) (*pricing.List, error) {
-	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), 0, logger)
+	return pricing.NewList(EmbeddedVersion(release), WithLocal(Vendor().Entries, local), logger)
 }

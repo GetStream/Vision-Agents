@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -34,6 +35,7 @@ type TextMeteringSuite struct {
 	ctx      context.Context
 	store    *store.Store
 	service  *Service
+	prices   *pricing.List
 	customer string
 }
 
@@ -53,8 +55,9 @@ func (s *TextMeteringSuite) SetupSuite() {
 }
 
 func (s *TextMeteringSuite) SetupTest() {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
+	s.prices = list
 	recorder := routing.NewRecorder(routing.Phone, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(recorder.Close)
 	s.service = &Service{store: s.store, recorder: recorder, logger: slog.New(slog.DiscardHandler)}
@@ -87,7 +90,7 @@ func (s *TextMeteringSuite) TestAReplyThatFailedPartwayIsBilledForWhatWentOut() 
 	s.True(row.Success)
 	s.True(row.Billable)
 	s.Equal(pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1}, row.Meters, "the words, which went out")
-	s.Equal(int64(7_800), row.CostMicros)
+	s.Equal(s.sms("outbound", row.Meters), row.CostMicros)
 }
 
 // A sandboxed app's day counts a reply whose words went out and whose file the provider refused:
@@ -132,7 +135,15 @@ func (s *TextMeteringSuite) TestAnMMSThatArrivedIsBilledAsOne() {
 
 	row := s.row()
 	s.Equal(pricing.Quantities{pricing.Messages: 1, pricing.MediaMessages: 1}, row.Meters)
-	s.Equal(int64(5_000), row.CostMicros, "Telnyx's $0.005 an MMS received")
+	s.Equal(s.sms("inbound", row.Meters), row.CostMicros, "Telnyx's rate for an MMS received")
+}
+
+// sms is what used costs on a US text in that direction at the vendor list's rates, read from
+// vendor.json so a price change there leaves the tests passing.
+func (s *TextMeteringSuite) sms(direction string, used pricing.Quantities) int64 {
+	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: "sms", Region: pricing.DefaultRegion,
+		Attributes: map[string]string{"country": "US", "direction": direction}}
+	return pricingtest.Micros(s.T(), s.prices, item, used)
 }
 
 // row waits for the customer's one text row.

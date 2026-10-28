@@ -95,12 +95,17 @@ var (
 	outputSplit = []Meter{OutputTextTokens, OutputAudioTokens}
 )
 
-// Item is what is priced: a model of a provider in a modality, and the attributes of the
-// work that can choose between its entries, such as a service tier or a country.
+// Item is what is priced: a model of a provider in a modality, in the region the work ran in
+// and with or without the customer's own key, and the attributes of the work that can choose
+// between its entries, such as a service tier or a country.
 type Item struct {
-	Modality   string
-	Provider   string
-	Model      string
+	Modality string
+	Provider string
+	Model    string
+	// Region and BYOK are matched exactly: an item is priced only by an entry of its own region
+	// and BYOK state, never by another's.
+	Region     string
+	BYOK       bool
 	Attributes map[string]string
 }
 
@@ -181,21 +186,31 @@ type Tier struct {
 }
 
 // Entry is the price of one item. When names the item attributes it applies to; an entry
-// without any is the item's default. Free and Local say why an entry with no rate is not
+// without any is the item's default. Free and Local say why an entry with no price is not
 // billed: the vendor charges nothing, or the deployment runs the model itself.
 type Entry struct {
-	Modality string            `json:"modality"`
-	Provider string            `json:"provider"`
-	Model    string            `json:"model"`
-	When     map[string]string `json:"when,omitempty"`
-	Free     bool              `json:"free,omitempty"`
-	Local    bool              `json:"local,omitempty"`
-	Rates    map[Meter]Rate    `json:"rates,omitempty"`
-	Tiers    []Tier            `json:"tiers,omitempty"`
-	// MarkupBps is the operator's markup on this entry alone, in basis points (1500 is
-	// 15%), replacing the list's: nil takes the list's, and 0 sells at the vendor's rate.
-	// Rates stay the vendor's; a markup is kept beside them, never folded into them.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
+	Modality string `json:"modality"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	// Region is where the work it prices runs, such as RegionUS. Every entry names one.
+	Region string `json:"region"`
+	// BYOK prices work done with the customer's own key, which their vendor bills them for:
+	// the price is a fee, BYOKFeeBps of the vendor's rates unless the entry sets its own.
+	BYOK bool              `json:"byok,omitempty"`
+	When map[string]string `json:"when,omitempty"`
+	// SKU names the item for as long as it is priced, whatever its price: it is kept across
+	// every change of the item's price, and only ever names one item in force.
+	SKU   string `json:"sku,omitempty"`
+	Free  bool   `json:"free,omitempty"`
+	Local bool   `json:"local,omitempty"`
+	// Rates and Tiers are the vendor's cost, kept for reference: nothing is charged from
+	// them, and a quote's BaseCostMicros is the work at them.
+	Rates map[Meter]Rate `json:"rates,omitempty"`
+	Tiers []Tier         `json:"tiers,omitempty"`
+	// Prices and PriceTiers are what the work is charged, meter for meter and tier for tier
+	// as Rates and Tiers.
+	Prices     map[Meter]Rate `json:"prices,omitempty"`
+	PriceTiers []Tier         `json:"price_tiers,omitempty"`
 	// Version names the change to the price list that wrote the entry. Empty takes the
 	// list's own version.
 	Version string `json:"version,omitempty"`
@@ -205,51 +220,48 @@ type Entry struct {
 }
 
 // QuotedVersion is the version of a quote for an amount the vendor quoted outright, such as
-// a number's monthly rental: no entry of the list priced it, only its markup.
+// a number's monthly rental: no entry of the list priced it, only QuotedFactorBps.
 const QuotedVersion = "quoted"
 
 // Quote is what one unit of work costs, in millionths of a dollar, and the price list
 // version that priced it. Billable is false for free and local work, which counts toward
-// no spend; Unpriced is billable work no rate priced.
+// no spend; Unpriced is billable work no price priced.
 type Quote struct {
-	// CostMicros is what the work is charged: its cost at the vendor's rates plus the
-	// markup, rounded once.
+	// CostMicros is what the work is charged: its cost at the entry's prices, rounded once.
 	CostMicros int64
-	// OutputCostMicros is the share of CostMicros the generated tokens cost, markup included.
+	// OutputCostMicros is the share of CostMicros the generated tokens cost.
 	OutputCostMicros int64
-	// BaseCostMicros is the cost at the vendor's rates, before any markup, so the margin on a
-	// row is CostMicros - BaseCostMicros.
+	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on a row
+	// is CostMicros - BaseCostMicros. It is 0 on a BYOK quote: the vendor bills the customer,
+	// so the work costs the operator nothing and CostMicros, the BYOK price, is all margin.
 	BaseCostMicros int64
-	// MarkupBps is the markup CostMicros carries, in basis points.
-	MarkupBps int64
-	Version   string
-	Billable  bool
-	Unpriced  bool
-	// Rated is true when some meter the work used is one the entry has a rate for, a zero
-	// rate included: false for priced work is work that reported none of what it is billed by.
+	// SKU is the priced item's; empty for work no entry matched.
+	SKU      string
+	Version  string
+	Billable bool
+	Unpriced bool
+	// Rated is true when some meter the work used is one the entry has a price for, a zero
+	// price included: false for priced work is work that reported none of what it is billed by.
 	Rated bool
 }
 
 // Pricer prices units of work.
 type Pricer interface {
 	Quote(item Item, used Quantities) Quote
-	// Quoted resells an amount the vendor quoted outright for the item: the amount plus the
-	// item's markup, versioned QuotedVersion.
+	// Quoted resells an amount the vendor quoted outright for the item: the amount times
+	// QuotedFactorBps, versioned QuotedVersion.
 	Quoted(item Item, micros int64) Quote
 	Billable(item Item) bool
-	// Entry is the item's entry at the vendor's rates.
+	// Entry is the item's entry: its vendor cost and its price.
 	Entry(item Item) (Entry, bool)
-	// Charged is the item's entry at the rates customers are charged: Charged of Entry
-	// with the list's markup.
-	Charged(item Item) (Entry, bool)
 }
 
-// priced reports whether the entry has a rate above zero.
+// priced reports whether the entry has a price above zero.
 func (e Entry) priced() bool {
-	if anyNonZero(e.Rates) {
+	if anyNonZero(e.Prices) {
 		return true
 	}
-	return slices.ContainsFunc(e.Tiers, func(tier Tier) bool { return anyNonZero(tier.Rates) })
+	return slices.ContainsFunc(e.PriceTiers, func(tier Tier) bool { return anyNonZero(tier.Rates) })
 }
 
 func anyNonZero(rates map[Meter]Rate) bool {
@@ -261,56 +273,61 @@ func anyNonZero(rates map[Meter]Rate) bool {
 	return false
 }
 
-// Billable reports whether work on this entry counts toward spend: it has a rate, or it
+// Billable reports whether work on this entry counts toward spend: it has a price, or it
 // has none and is neither free nor local.
 func (e Entry) Billable() bool {
 	return e.priced() || (!e.Free && !e.Local)
 }
 
-// Quote prices used at this entry's rates, plus its own markup when it has one. It is how an
-// item whose price travels with it, such as a customer's own model, is priced without a list;
-// a List matches the entry first and adds its markup to an entry with none of its own.
+// Quote prices used at this entry's prices. It is how an item whose price travels with it,
+// such as a customer's own model, is priced without a list.
 func (e Entry) Quote(used Quantities) Quote {
-	return e.quote(used, markupOf(e, 0))
+	return e.quote(used)
 }
 
-// markupOf is the markup an entry is sold at under a list with listMarkupBps: its own when it
-// has one, else the list's.
-func markupOf(entry Entry, listMarkupBps int64) int64 {
-	if entry.MarkupBps != nil {
-		return *entry.MarkupBps
-	}
-	return listMarkupBps
-}
-
-// marked is micros with a markup of markupBps added, unrounded.
-func marked(micros float64, markupBps int64) float64 {
-	return micros * float64(10_000+markupBps) / 10_000
-}
-
-// quote prices used at this entry's rates and adds markupBps once, to the unrounded sum, so
-// the markup never multiplies a rounding.
-func (e Entry) quote(used Quantities, markupBps int64) Quote {
+// quote charges used at this entry's prices, and works out its cost at the vendor's rates
+// beside it, which is nothing for a BYOK entry. A long prompt picks the same tier from both,
+// since their thresholds are one.
+func (e Entry) quote(used Quantities) Quote {
 	if !e.priced() {
 		billable := !e.Free && !e.Local
-		return Quote{Billable: billable, Unpriced: billable}
+		return Quote{SKU: e.SKU, Billable: billable, Unpriced: billable}
 	}
 	used = split(used)
-
-	rates := e.Rates
 	var prompt int64
 	for _, meter := range InputMeters {
 		prompt += used[meter]
 	}
-	for _, tier := range e.Tiers {
+	micros, outputMicros, rated := costAt(tierOf(e.Prices, e.PriceTiers, prompt), used)
+	var base float64
+	if !e.BYOK {
+		base, _, _ = costAt(tierOf(e.Rates, e.Tiers, prompt), used)
+	}
+	cost := roundHalfUp(micros)
+	return Quote{
+		CostMicros:       cost,
+		OutputCostMicros: min(roundHalfUp(outputMicros), cost),
+		BaseCostMicros:   roundHalfUp(base),
+		SKU:              e.SKU,
+		Billable:         true,
+		Rated:            rated,
+	}
+}
+
+// tierOf is the rates a prompt of that many input tokens is priced at: the highest tier it is
+// longer than, else the entry's own.
+func tierOf(rates map[Meter]Rate, tiers []Tier, prompt int64) map[Meter]Rate {
+	for _, tier := range tiers {
 		if prompt > tier.AboveInputTokens {
 			rates = tier.Rates
 		}
 	}
+	return rates
+}
 
-	// Summed in sorted order, so a cost never depends on map order.
-	var micros, outputMicros float64
-	rated := false
+// costAt is what used costs at rates, unrounded, the generated tokens' share of it, and whether
+// any meter used has a rate. Summed in sorted order, so a cost never depends on map order.
+func costAt(rates map[Meter]Rate, used Quantities) (micros, outputMicros float64, rated bool) {
 	for _, meter := range slices.Sorted(maps.Keys(used)) {
 		rate, ok := rateOf(rates, meter)
 		if !ok {
@@ -323,15 +340,7 @@ func (e Entry) quote(used Quantities, markupBps int64) Quote {
 			outputMicros += cost
 		}
 	}
-	cost := roundHalfUp(marked(micros, markupBps))
-	return Quote{
-		CostMicros:       cost,
-		OutputCostMicros: min(roundHalfUp(marked(outputMicros, markupBps)), cost),
-		BaseCostMicros:   roundHalfUp(micros),
-		MarkupBps:        markupBps,
-		Billable:         true,
-		Rated:            rated,
-	}
+	return micros, outputMicros, rated
 }
 
 // split drops the totals a modality split replaces, so no token is billed twice: a

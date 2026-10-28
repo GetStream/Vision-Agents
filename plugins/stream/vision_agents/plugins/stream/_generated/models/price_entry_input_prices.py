@@ -11,12 +11,15 @@ if TYPE_CHECKING:
     from ..models.price_rate import PriceRate
 
 
-T = TypeVar("T", bound="PriceEntryChargedRates")
+T = TypeVar("T", bound="PriceEntryInputPrices")
 
 
 @_attrs_define
-class PriceEntryChargedRates:
-    """What customers are charged: each rate with the markup added, to 12 significant digits."""
+class PriceEntryInputPrices:
+    """What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with
+    rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
+
+    """
 
     additional_properties: dict[str, PriceRate] = _attrs_field(init=False, factory=dict)
 
@@ -33,7 +36,7 @@ class PriceEntryChargedRates:
         from ..models.price_rate import PriceRate
 
         d = dict(src_dict)
-        price_entry_charged_rates = cls()
+        price_entry_input_prices = cls()
 
         additional_properties = {}
         for prop_name, prop_dict in d.items():
@@ -41,8 +44,8 @@ class PriceEntryChargedRates:
 
             additional_properties[prop_name] = additional_property
 
-        price_entry_charged_rates.additional_properties = additional_properties
-        return price_entry_charged_rates
+        price_entry_input_prices.additional_properties = additional_properties
+        return price_entry_input_prices
 
     @property
     def additional_keys(self) -> list[str]:

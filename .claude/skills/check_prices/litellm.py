@@ -6,6 +6,10 @@ It reads LiteLLM's model_prices_and_context_window.json at LiteLLM's latest rele
 main) and prints the tag. --list is a price file or the output of `router prices show --json`;
 the default is acceleration/prices/vendor.json. LiteLLM is a second opinion: where it and the
 vendor's own page disagree, the page wins.
+
+Only `us` entries that are not BYOK are compared, and the rest are counted as skipped: LiteLLM
+lists each vendor's US list prices, a BYOK entry's rates are those of the entry it is the twin
+of, and another region's rates are that region's own.
 """
 
 import argparse
@@ -153,7 +157,11 @@ def main() -> None:
         raise SystemExit("LiteLLM's catalog is not an object")
 
     rows: list[dict[str, Json]] = []
+    skipped = 0
     for entry in listed["entries"]:
+        if entry.get("byok") or entry.get("region") != "us":
+            skipped += 1
+            continue
         item = f"{entry['modality']}/{entry['provider']}/{entry['model']}"
         when = ",".join(
             f"{k}={v}" for k, v in sorted((entry.get("when") or {}).items())
@@ -186,10 +194,15 @@ def main() -> None:
             rows.append(row)
 
     if args.json:
-        json.dump({"litellm_tag": tag, "rows": rows}, sys.stdout, indent=2)
+        json.dump(
+            {"litellm_tag": tag, "skipped": skipped, "rows": rows},
+            sys.stdout,
+            indent=2,
+        )
         print()
         return
     print(f"# LiteLLM {tag}: item, when, LiteLLM key, meter, ours, LiteLLM, per, gap")
+    print(f"# {skipped} BYOK or non-US entries skipped: only us entries are compared")
     for row in rows:
         gap = f"{row['gap']:+.2%}" if "gap" in row else ""
         print(

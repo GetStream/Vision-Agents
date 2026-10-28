@@ -220,10 +220,11 @@ func (s *MemoryUnavailableSuite) TestASessionWithNoRowIsStillForgotten() {
 	s.False(s.mem0.holds(s.customerID(), opened.Id))
 }
 
-// remembering is a session opened with a memory user id, so it can teach the memory store.
+// remembering is a session opened with the end user's own memories, so it can teach the
+// memory store.
 func (s *MemoryUnavailableSuite) remembering() CreateSessionRequest {
 	opened := textSession(nil)
-	opened.Memory = &SessionMemory{UserId: new(s.utils.uuid())}
+	opened.Memory = &SessionMemory{UserId: new(s.client.userID)}
 	return opened
 }
 

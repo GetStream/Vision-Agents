@@ -70,7 +70,7 @@ func (s *OutcomeSuite) SetupTest() {
 // build builds the service over a fresh customer whose number is at vendor, reachable at
 // publicURL.
 func (s *OutcomeSuite) build(vendor Provider, publicURL string) {
-	list, err := pricing.NewList("vendor", prices.Vendor().Entries, 0, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	recorder := routing.NewRecorder(routing.Phone, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(recorder.Close)

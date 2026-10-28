@@ -9,8 +9,10 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * What one item costs: a model of a provider in a modality, under the attributes in when, at
- * the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+ * What one item costs: a model of a provider in a modality, in a region, with the customer's
+ * own key (byok) or without, under the attributes in when, at the rates every row of its work
+ * is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills
+ * the customer for the work itself.
  */
 final readonly class Price
 {
@@ -23,6 +25,10 @@ final readonly class Price
         public string $modality,
         public string $model,
         public string $provider,
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
         // The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a...
         public ?string $change = null,
         // In upcoming: why the change is made.
@@ -32,6 +38,8 @@ final readonly class Price
         // What a customer is charged, by meter.
         /** @var array<string, mixed>|null */
         public ?array $rates = null,
+        // The item's SKU, the same across its price changes, which every usage event of its work records. Absent for...
+        public ?string $sku = null,
         // What a customer is charged for long prompts.
         /** @var list<PriceTier>|null */
         public ?array $tiers = null,
@@ -54,10 +62,13 @@ final readonly class Price
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             change: array_key_exists('change', $data) && $data['change'] !== null ? Json::string($data, 'change') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             effectiveAt: array_key_exists('effective_at', $data) && $data['effective_at'] !== null ? Json::date($data, 'effective_at') : null,
             rates: array_key_exists('rates', $data) && $data['rates'] !== null ? Json::object($data, 'rates') : null,
+            sku: array_key_exists('sku', $data) && $data['sku'] !== null ? Json::string($data, 'sku') : null,
             tiers: array_key_exists('tiers', $data) && $data['tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'tiers')) : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
             withdrawn: array_key_exists('withdrawn', $data) && $data['withdrawn'] !== null ? Json::bool($data, 'withdrawn') : null,
@@ -77,6 +88,10 @@ final readonly class Price
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
+        }
         if ($this->change !== null) {
             $out['change'] = $this->change;
         }
@@ -88,6 +103,9 @@ final readonly class Price
         }
         if ($this->rates !== null) {
             $out['rates'] = Json::objectValue($this->rates);
+        }
+        if ($this->sku !== null) {
+            $out['sku'] = $this->sku;
         }
         if ($this->tiers !== null) {
             $out['tiers'] = array_map(static fn (PriceTier $each): array => $each->toArray(), $this->tiers);

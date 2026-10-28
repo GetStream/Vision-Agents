@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,8 +86,8 @@ func (s *OpenAISuite) TestAModelAcceptsImages() {
 	s.Contains(capabilitiesFor("gpt-6-astra").InputModalities, "image")
 }
 
-func (s *OpenAISuite) TestGPT6LunaAndSolCanBeToldNotToThink() {
-	for _, model := range []string{"gpt-6-luna", "gpt-6-sol"} {
+func (s *OpenAISuite) TestGPT6LunaSolAndTerraCanBeToldNotToThink() {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra"} {
 		provider, err := New(Options{APIKey: "k", Model: model})
 		s.Require().NoError(err)
 
@@ -304,6 +305,48 @@ func (s *OpenAISuite) TestAResponseTheVendorFailedIsNotCutShort() {
 	s.False(response.TimedOut)
 	s.Equal(llm.StatusFailed, response.Status)
 	s.ErrorContains(stream.Err(), "the model fell over")
+	s.True(llm.Transient(stream.Err()), "a server error is OpenAI's own")
+}
+
+// failedWith is the error a stream ends with when OpenAI sends event as it.
+func (s *OpenAISuite) failedWith(event string) error {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+event+"\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
+	s.Require().NoError(err)
+	defer provider.Close()
+
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}})
+	s.Require().NoError(err)
+	s.Equal(llm.StatusFailed, drained(stream).Status)
+	return stream.Err()
+}
+
+func (s *OpenAISuite) TestAnErrorEventOnOpenAIsSideIsTransient() {
+	err := s.failedWith(`{"type":"error","code":"rate_limit_exceeded","message":"slow down","param":null,"sequence_number":1}`)
+	s.ErrorContains(err, "slow down")
+	s.True(llm.Transient(err))
+	for _, code := range []string{"server_is_overloaded", "slow_down"} {
+		s.True(llm.Transient(s.failedWith(`{"type":"error","code":"`+code+`","message":"busy","param":null,"sequence_number":1}`)), code)
+	}
+}
+
+func (s *OpenAISuite) TestAFailureOfTheRequestItselfIsNotTransient() {
+	err := s.failedWith(`{"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"invalid_prompt","message":"not this"}}}`)
+	s.EqualError(err, "openai: invalid_prompt: not this")
+	failure, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.Require().True(ok, "OpenAI named it")
+	s.False(failure.Transient)
+}
+
+func (s *OpenAISuite) TestAnErrorEventWithNoCodeIsLeftUnclassified() {
+	err := s.failedWith(`{"type":"error","code":null,"message":"something","param":null,"sequence_number":1}`)
+	s.EqualError(err, "openai: something")
+	_, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.False(ok)
 }
 
 func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {

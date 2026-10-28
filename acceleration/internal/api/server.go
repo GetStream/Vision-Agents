@@ -45,6 +45,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
@@ -187,6 +188,9 @@ type Options struct {
 	// call recorded for the customer and key that asked. Absent when the deployment has no
 	// knowledge provider, in which case there is nothing to fill and the path says so.
 	Knowledge *metered.Knowledge
+	// KnowledgeLimits bound how much larger a posted document's passages can be than the
+	// document, as the router's settings name them.
+	KnowledgeLimits ingest.Limits
 	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
@@ -339,6 +343,7 @@ type Server struct {
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
+	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
@@ -516,6 +521,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
+		knowledgeLimits:    options.KnowledgeLimits,
 		pages:              options.KnowledgeURLs,
 		voices:             options.Voices,
 		library:            options.VoiceLibrary,
@@ -1391,7 +1397,7 @@ func (s *Server) getHealth(ctx context.Context, _ *struct{}) (*healthResponse, e
 	}
 
 	// A router reading its prices from the database is not ready until it has read them, so
-	// it never serves on the price files it carries, which have no markup.
+	// it never serves on the price files it carries, which have none of the prices staff set.
 	if s.prices != nil {
 		if err := s.prices.Ready(); err != nil {
 			dependencies["prices"] = err.Error()
@@ -1984,12 +1990,11 @@ func providerBenchmark(benchmark routing.Benchmark) *ProviderBenchmark {
 	}
 }
 
-// providerPrice is the token rates a model is billed at, the markup in force included, and
-// nil for a model not billed by the token. A customer is shown what they are charged, never
-// the vendor's rates.
+// providerPrice is the token prices a model is billed at, and nil for a model not billed by
+// the token. A customer is shown what they are charged, never the vendor's rates.
 func (s *Server) providerPrice(modality Modality, config routing.ProviderConfig) *ProviderPrice {
-	entry, _ := s.pricer.Charged(routing.ItemOf(routing.Modality(modality), config, nil))
-	input, output := perMillion(entry.Rates[pricing.InputTokens]), perMillion(entry.Rates[pricing.OutputTokens])
+	entry, _ := s.pricer.Entry(routing.ItemOf(routing.Modality(modality), config, nil))
+	input, output := perMillion(entry.Prices[pricing.InputTokens]), perMillion(entry.Prices[pricing.OutputTokens])
 	if input == 0 && output == 0 {
 		return nil
 	}
@@ -2423,7 +2428,7 @@ func (*ProviderBenchmark) TransformSchema(_ huma.Registry, schema *huma.Schema) 
 
 // ProviderHealth is the ProviderHealth schema.
 type ProviderHealth struct {
-	Available    bool    `json:"available" doc:"False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses."`
+	Available    bool    `json:"available" doc:"False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses."`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`
 	LatencyMsAvg float64 `json:"latency_ms_avg"`

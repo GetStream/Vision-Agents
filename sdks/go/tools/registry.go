@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // Function is one of the caller's own functions, as the model is offered it and as it runs.
@@ -16,7 +18,8 @@ type Function struct {
 	// Description is what the model is told it does, which is the whole of how it decides
 	// when to reach for one.
 	Description string
-	// Parameters is the JSON Schema object describing the arguments.
+	// Parameters is the JSON Schema object describing the arguments. Every call's arguments
+	// are held to it before the function runs.
 	Parameters map[string]any
 	// Interruptible is whether the caller talking over the agent cancels a call.
 	Interruptible bool
@@ -28,8 +31,9 @@ type Function struct {
 	// {argument} filled in from the call. Empty asks nothing.
 	Approval string
 
-	run   func(ctx context.Context, arguments []byte) (Output, error)
-	slots chan struct{}
+	run    func(ctx context.Context, arguments []byte) (Output, error)
+	schema *jsonschema.Schema
+	slots  chan struct{}
 }
 
 // Output is what a tool returns to show the model pictures beside its words, such as a frame
@@ -168,9 +172,37 @@ func Register[In any](registry *Registry, name, description string, run func(con
 }
 
 // RegisterSchema adds a function described by a JSON Schema written by hand, for arguments
-// no Go type describes well. The function is handed the model's arguments as they came, a
-// JSON object, to decode itself.
-func RegisterSchema(registry *Registry, name, description string, parameters map[string]any, run func(context.Context, json.RawMessage) (any, error), options ...Option) error {
+// no Go type describes well, such as a oneOf. The schema is a map[string]any, raw JSON as
+// []byte, json.RawMessage or a string, or a schema type of another library, such as
+// google/jsonschema-go's *jsonschema.Schema, taken as the JSON it marshals to. The function
+// is handed the model's arguments as they came, a JSON object already held to the schema, to
+// decode itself.
+func RegisterSchema(registry *Registry, name, description string, parameters any, run func(context.Context, json.RawMessage) (any, error), options ...Option) error {
+	if run == nil {
+		return fmt.Errorf("tools: %s has nothing to run", name)
+	}
+	return registerSchema(registry, name, description, parameters, func(ctx context.Context, arguments []byte) (any, error) {
+		return run(ctx, json.RawMessage(arguments))
+	}, options)
+}
+
+// RegisterWithSchema adds a function described by a JSON Schema written by hand, as
+// RegisterSchema takes one, whose arguments are still decoded into a Go type: the schema
+// says what the type alone cannot, and the function is handed the type.
+func RegisterWithSchema[In any](registry *Registry, name, description string, parameters any, run func(context.Context, In) (any, error), options ...Option) error {
+	if run == nil {
+		return fmt.Errorf("tools: %s has nothing to run", name)
+	}
+	return registerSchema(registry, name, description, parameters, func(ctx context.Context, arguments []byte) (any, error) {
+		var in In
+		if err := json.Unmarshal(arguments, &in); err != nil {
+			return nil, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", name, err)
+		}
+		return run(ctx, in)
+	}, options)
+}
+
+func registerSchema(registry *Registry, name, description string, parameters any, run func(context.Context, []byte) (any, error), options []Option) error {
 	if registry == nil {
 		return fmt.Errorf("tools: %s has no registry to go in", name)
 	}
@@ -180,21 +212,22 @@ func RegisterSchema(registry *Registry, name, description string, parameters map
 	if description == "" {
 		return fmt.Errorf("tools: %s needs a description, since it is all the model has to choose by", name)
 	}
-	if run == nil {
-		return fmt.Errorf("tools: %s has nothing to run", name)
+	schema, err := parametersOf(parameters)
+	if err != nil {
+		return fmt.Errorf("tools: %s: %w", name, err)
 	}
-	if kind, _ := parameters["type"].(string); kind != "object" {
+	if kind, _ := schema["type"].(string); kind != "object" {
 		return fmt.Errorf("tools: %s: a tool's parameters are a JSON Schema object, with type object", name)
 	}
 	return registry.add(&Function{
 		Name:        name,
 		Description: description,
-		Parameters:  parameters,
+		Parameters:  schema,
 		run: func(ctx context.Context, arguments []byte) (Output, error) {
-			if !json.Valid(arguments) {
-				return Output{}, fmt.Errorf("tools: %s was asked for with arguments that are not JSON", name)
+			if len(arguments) == 0 {
+				arguments = []byte("{}")
 			}
-			output, err := run(ctx, json.RawMessage(arguments))
+			output, err := run(ctx, arguments)
 			if err != nil {
 				return Output{}, err
 			}
@@ -264,6 +297,11 @@ func (r *Registry) add(function *Function, options []Option) error {
 	if function.Concurrency > 0 {
 		function.slots = make(chan struct{}, function.Concurrency)
 	}
+	schema, err := compile(function.Parameters)
+	if err != nil {
+		return fmt.Errorf("tools: %s: %w", function.Name, err)
+	}
+	function.schema = schema
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

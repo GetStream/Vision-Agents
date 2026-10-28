@@ -9,10 +9,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 )
@@ -21,6 +23,42 @@ import (
 // several can be put in front of a model without crowding out the conversation, and large
 // enough that a passage still answers the question on its own.
 const DefaultChunk = 1200
+
+// Limits bound how much larger a document's passages can be than the document.
+type Limits struct {
+	// MinChunk is the smallest size Split cuts at. Every passage carries its source and its
+	// id whatever its size, so tiny passages turn a document into mostly those:
+	// one-character paragraphs cut one to a passage grew a document thousands of times.
+	// Zero is no minimum.
+	MinChunk int
+	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
+	// section and in every passage's source. A heading of any length repeated in every
+	// passage is the other half of what multiplied a document. It is counted in bytes, as
+	// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
+	// room for anything else. Zero repeats no heading.
+	MaxHeading int
+}
+
+// maxSource is the longest source the API takes, in characters.
+const maxSource = 256
+
+// SizeMultiple is how many times larger than a document its passages can be: a passage, its
+// source and its id over what is left of the passage once the repeated heading is in. With
+// no minimum chunk, or no room under the heading, nothing bounds it, and it is +Inf.
+func (l Limits) SizeMultiple() float64 {
+	room := l.MinChunk - l.MaxHeading
+	if l.MinChunk == 0 || room <= 0 {
+		return math.Inf(1)
+	}
+	return float64(l.MinChunk+maxSource+len(" > ")+l.MaxHeading+maxID) / float64(room)
+}
+
+// DefaultLimits are the limits a router has unless configured otherwise. With them, a
+// document's passages are at most about (500 + name + 3 + 128 + 63) / (500 - 133) times
+// its size: the passage, its source and its id over what is left once the repeated
+// heading line is in. A name is at most 256 characters, which is about 2.6 for 256 bytes
+// and 4.7 for 1,024.
+var DefaultLimits = Limits{MinChunk: 500, MaxHeading: 128}
 
 // IDSeparator divides the file a passage came from from its place in that file. Keeping
 // the path in the id is what makes ingesting the same documentation twice an update
@@ -47,7 +85,7 @@ var readable = map[string]struct{}{
 }
 
 // Read turns the named files and directories into passages, ready to be written.
-func Read(paths []string, size int) ([]knowledge.Document, error) {
+func Read(paths []string, size int, limits Limits) ([]knowledge.Document, error) {
 	var documents []knowledge.Document
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -55,7 +93,7 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 			return nil, err
 		}
 		if !info.IsDir() {
-			found, err := readFile(path, filepath.Base(path), size)
+			found, err := readFile(path, filepath.Base(path), size, limits)
 			if err != nil {
 				return nil, err
 			}
@@ -83,7 +121,7 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 			if err != nil {
 				relative = filepath.Base(name)
 			}
-			found, err := readFile(name, filepath.ToSlash(relative), size)
+			found, err := readFile(name, filepath.ToSlash(relative), size, limits)
 			if err != nil {
 				return err
 			}
@@ -99,20 +137,21 @@ func Read(paths []string, size int) ([]knowledge.Document, error) {
 
 // readFile cuts one file into passages. The name is what a passage says it came from, so
 // it is the path as a reader would recognise it rather than wherever the command was run.
-func readFile(path, name string, size int) ([]knowledge.Document, error) {
+func readFile(path, name string, size int, limits Limits) ([]knowledge.Document, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Split(name, string(content), size), nil
+	return Split(name, string(content), size, limits), nil
 }
 
 // Split cuts one document into the passages it will be stored as.
 //
 // The name is what a passage says it came from and what its id is keyed by, so it is the
-// path as a reader would recognise it rather than wherever the file happened to be.
-func Split(name, content string, size int) []knowledge.Document {
-	pieces := split(name, content, size)
+// path as a reader would recognise it rather than wherever the file happened to be. A size
+// under limits.MinChunk is raised to it.
+func Split(name, content string, size int, limits Limits) []knowledge.Document {
+	pieces := split(name, content, max(size, limits.MinChunk), limits)
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
@@ -176,11 +215,16 @@ type passage struct {
 //
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
-// which is exactly what full-text search needs to match on.
-func split(name, content string, size int) []passage {
+// which is exactly what full-text search needs to match on. Only its first
+// limits.MaxHeading bytes are repeated; the first piece keeps the heading line as it was
+// written, so a heading is never cut away from the paragraph under it.
+func split(name, content string, size int, limits Limits) []passage {
 	var passages []passage
 	var heading string
 	var current strings.Builder
+	// held says current has something under its heading. A passage of only the heading
+	// would not be stored, so one that is not held is never flushed to make room.
+	held := false
 
 	flush := func() {
 		text := strings.TrimSpace(current.String())
@@ -198,18 +242,20 @@ func split(name, content string, size int) []passage {
 	for _, block := range blocks(content) {
 		if title, ok := headingOf(block); ok {
 			flush()
-			heading = title
+			heading = clip(title, limits.MaxHeading)
 			current.WriteString(block + "\n\n")
+			held = prose(block)
 			continue
 		}
 		for _, piece := range rows(block, size) {
-			if current.Len() > 0 && current.Len()+len(piece) > size {
+			if held && current.Len()+len(piece) > size {
 				flush()
 				if heading != "" {
 					current.WriteString("## " + heading + "\n\n")
 				}
 			}
 			current.WriteString(piece + "\n\n")
+			held = true
 		}
 	}
 	flush()
@@ -283,6 +329,17 @@ func prose(text string) bool {
 		}
 	}
 	return false
+}
+
+// clip is at most the first n bytes of text, cut between characters rather than inside one.
+func clip(text string, n int) string {
+	if len(text) <= n {
+		return text
+	}
+	for n > 0 && !utf8.RuneStart(text[n]) {
+		n--
+	}
+	return text[:n]
 }
 
 // headingOf reports the title a block opens with, when it opens with one.

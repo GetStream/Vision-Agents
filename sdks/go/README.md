@@ -16,6 +16,9 @@ export STREAM_ACCELERATION_URL=http://localhost:8080
 export STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
 
+Unset, it is Stream's hosted router in us-east4. `STREAM_ACCELERATION_REGION=europe-west4`, or
+`stream.Backend{Region: "europe-west4"}`, is the one in another region.
+
 ## In writing
 
 ```go
@@ -129,10 +132,48 @@ model may paraphrase them. `DisallowInterruptions` returns a context only the ca
 the socket ending cancel. When the call was already stopped, that context comes back cancelled,
 so the write never starts. Outside a call, all three do nothing.
 
-Struct tags describe arguments beyond `schema`: `enum:"economy,business"`, `minimum:"1"`,
-`maximum:"9"`, `pattern`, `format` and `example`. A type that describes itself implements
-`JSONSchema() map[string]any`, and `tools.RegisterSchema` takes a schema as written and hands the
-function the raw arguments.
+Struct tags describe arguments beyond `schema`:
+
+```go
+type BookFlight struct {
+	FlightID string `json:"flight_id" schema:"e.g. LH400" pattern:"^[A-Z]{2}[0-9]{1,4}$"`
+	Seats    int    `json:"seats" minimum:"1" maximum:"9"`
+	Cabin    string `json:"cabin,omitempty" enum:"economy,business,first" default:"economy"`
+}
+```
+
+The tags are `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+`multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default`
+and `example`. A struct already written for another Go JSON Schema library can keep its
+`jsonschema:"description=Full name,minLength=1,enum=a,enum=b"` tag, with `\,` for a comma in a
+value. A type that describes itself implements `JSONSchema() map[string]any`.
+
+Every call's arguments are held to the schema the model was told before the function runs.
+Arguments it refuses fail the call with what was wrong, such as `/seats: maximum: got 12, want
+9`, and the model can try again; the function never sees them.
+
+`tools.RegisterSchema` takes a schema written by hand, for a shape no struct says, such as a
+`oneOf`: a `map[string]any`, raw JSON, or another library's schema type, such as
+`google/jsonschema-go`'s, taken as the JSON it marshals to. Its function is handed the
+arguments as raw JSON. `tools.RegisterWithSchema` takes a schema the same way and decodes the
+arguments into a struct:
+
+```go
+schema := []byte(`{
+  "type": "object",
+  "properties": {
+    "flight_id": {"type": "string", "pattern": "^[A-Z]{2}[0-9]{1,4}$", "description": "e.g. LH400"},
+    "seats":     {"type": "integer", "minimum": 1, "maximum": 9},
+    "cabin":     {"type": "string", "enum": ["economy", "business", "first"], "default": "economy"}
+  },
+  "required": ["flight_id", "seats"]
+}`)
+
+tools.RegisterWithSchema(registry, "book_flight", "Book a flight for the caller", schema,
+	func(ctx context.Context, in BookFlight) (any, error) {
+		return airline.Book(ctx, in.FlightID, in.Seats, in.Cabin)
+	})
+```
 
 ## Conversations somebody comes back to
 

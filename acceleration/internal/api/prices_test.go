@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 // readPrices reads the price list as client, with the raw answer.
@@ -66,7 +68,7 @@ func (s *PriceListsSuite) TestPricesAreTheListInForce() {
 		s.Equal("llm", price.Modality, "the modality asked for alone")
 	}
 
-	counted := s.created(s.change(countedAt(3, 0.3, 15)))
+	counted := s.created(s.change(countedAt(3, 0.3, 15, 1)))
 	read, _ = s.readPrices(s.serverClient, "")
 	price, ok := priceOfModel(read.Entries, "counted-model")
 	s.Require().True(ok)
@@ -74,39 +76,38 @@ func (s *PriceListsSuite) TestPricesAreTheListInForce() {
 	s.runCounted()
 	for _, row := range s.countedRows() {
 		s.Equal(price.Change, row.PriceVersion, "the rows name the change the read named")
+		s.Equal(price.SKU, row.SKU, "and the SKU the read named")
 	}
 }
 
 func (s *PriceListsSuite) TestPricesAreWhatTheCustomerPays() {
-	s.setMarkup(2000)
 	model := "m" + s.token()
-	s.created(s.change(entry(model, 4)))
+	s.created(s.change(pricedAt(entry(model, 4), 4.8)))
 	cancelled := s.change(entry(model, 9))
 	cancelled.EffectiveAt = pointerTo(time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second))
 	called := s.created(cancelled)
 	s.cancel(called.Name)
-	markup := s.change()
-	markup.MarkupBps = pointerTo(int64(3000))
-	remarked := s.tomorrow(markup)
+	raised := s.tomorrow(s.change(pricedAt(entry(model, 4), 5.2)))
 
 	read, _ := s.readPrices(s.serverClient, "")
 
 	inForce, ok := priceOfModel(read.Entries, model)
 	s.Require().True(ok)
-	s.Equal(4.8, inForce.Rates["input_tokens"].USD, "$4 per million with the list's 20%")
+	s.Equal(4.8, inForce.Rates["input_tokens"].USD, "the price, never the vendor's $4")
 	s.Equal(int64(1_000_000), inForce.Rates["input_tokens"].Per)
+	s.Equal("llm-t1c-"+model+"-us", inForce.SKU)
 	s.False(slices.ContainsFunc(read.Upcoming, func(price Price) bool { return price.Change == called.Name }),
 		"a cancelled change is not upcoming")
 	moved, ok := priceOfModel(read.Upcoming, model)
-	s.Require().True(ok, "a markup change shows as every entry it moves")
-	s.Equal(remarked.Name, moved.Change)
+	s.Require().True(ok)
+	s.Equal(raised.Name, moved.Change)
 	s.Equal(5.2, moved.Rates["input_tokens"].USD)
+	s.Equal(inForce.SKU, moved.SKU)
 }
 
 func (s *PriceListsSuite) TestPricesLeaveOutWhatOnlyStaffRead() {
-	s.setMarkup(2000)
 	model := "m" + s.token()
-	written := s.created(s.change(entry(model, 1.25)))
+	written := s.created(s.change(pricedAt(entry(model, 1.25), 1.5)))
 
 	read, raw := s.readPrices(s.serverClient, "")
 
@@ -115,10 +116,49 @@ func (s *PriceListsSuite) TestPricesLeaveOutWhatOnlyStaffRead() {
 	}
 	inForce, ok := priceOfModel(read.Entries, model)
 	s.Require().True(ok)
-	s.Equal(1.5, inForce.Rates["input_tokens"].USD, "the charged rate, never the vendor's 1.25")
-	for _, staffOnly := range []string{"markup", "unpriced", "vendor.example", written.CreatedBy, `"source"`, "created_by", "charged_"} {
+	s.Equal(1.5, inForce.Rates["input_tokens"].USD, "the price, never the vendor's 1.25")
+	for _, staffOnly := range []string{"markup", "unpriced", "vendor.example", written.CreatedBy, `"source"`, "created_by",
+		"charged_", `"prices"`, "price_tiers"} {
 		s.False(strings.Contains(raw, staffOnly), "the answer says %q", staffOnly)
 	}
+}
+
+// TestPricesNameTheirRegionAndBYOK: every price says its region and whether it is BYOK, and a
+// region asked for keeps that region's prices alone. The suite's list has the fixtures' eu
+// entries beside vendor.json's us ones.
+func (s *PriceListsSuite) TestPricesNameTheirRegionAndBYOK() {
+	model := "m" + s.token()
+	byok := pricedAt(entry(model, 1), 0.2)
+	byok.BYOK = true
+	eu := pricedAt(entry(model, 1.1), 1.4)
+	eu.Region = pricing.RegionEU
+	s.created(s.change(pricedAt(entry(model, 1), 1.2), byok, eu))
+
+	read, raw := s.readPrices(s.serverClient, "modality=llm")
+	inEU, _ := s.readPrices(s.serverClient, "region=eu")
+
+	var mine []Price
+	for _, price := range read.Entries {
+		s.NotEmpty(price.Region, "%s/%s", price.Provider, price.Model)
+		if price.Model == model {
+			mine = append(mine, price)
+		}
+	}
+	s.Require().Len(mine, 3)
+	s.Equal([]string{pricing.RegionEU, pricing.RegionUS, pricing.RegionUS}, []string{mine[0].Region, mine[1].Region, mine[2].Region})
+	s.Equal([]bool{false, false, true}, []bool{mine[0].BYOK, mine[1].BYOK, mine[2].BYOK}, "each item's BYOK price after it")
+	s.Equal(0.2, mine[2].Rates["input_tokens"].USD)
+	s.Equal("llm-t1c-"+model+"-us-byok", mine[2].SKU)
+	s.Contains(raw, `"region":"us"`)
+	s.Contains(raw, `"byok":true`)
+	s.Contains(raw, `"byok":false`)
+	s.NotEmpty(inEU.Entries)
+	for _, price := range inEU.Entries {
+		s.Equal(pricing.RegionEU, price.Region)
+	}
+	haiku := slices.IndexFunc(inEU.Entries, func(price Price) bool { return price.Model == "claude-haiku-5-5" && !price.BYOK })
+	s.Require().GreaterOrEqual(haiku, 0, "the fixtures' eu entry is in the list")
+	s.Equal("llm-anthropic-claude-haiku-5-5-eu", inEU.Entries[haiku].SKU)
 }
 
 func (s *PriceListsSuite) TestAUserTokenReadsPrices() {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -11,17 +10,16 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
 )
 
 // errNoKnowledge is what the paths say when the deployment has no knowledge provider. Filling
 // a base that nothing can read is not worth pretending to do.
-// maxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
+// MaxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
 // a 5 MB file is more than Huma's 1 MB default would take; the rest is room for JSON
 // escaping.
-const maxKnowledgeBody = 8 << 20
+const MaxKnowledgeBody = 8 << 20
 
 // uploadReadTimeout is how long a large upload has to arrive. Huma gives a body 5 seconds,
 // which a document or recording near its limit outlasts on an ordinary connection.
@@ -64,7 +62,7 @@ func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRe
 
 	read, passages, err := s.fillKnowledge(ctx, customerID, namespace, request.Body.Documents, request.Body.ChunkSize)
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, err
 	}
 
 	s.logger.Info("filled a knowledge base",
@@ -166,7 +164,7 @@ func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *lis
 func (s *Server) knowledgePassages(
 	ctx context.Context, customerID, namespace, source string, count int,
 ) ([]KnowledgePassage, error) {
-	found, err := s.knowledgeFor(ctx, customerID).Fetch(ctx, knowledge.Scoped(customerID, namespace), ingest.IDs(source, 0, count))
+	found, err := s.knowledgeFor(ctx, customerID).Fetch(ctx, namespace, ingest.IDs(source, 0, count))
 	if err != nil {
 		return nil, err
 	}
@@ -196,14 +194,14 @@ func (s *Server) fillKnowledge(
 	for _, document := range documents {
 		source := strings.TrimSpace(document.Source)
 		if source == "" {
-			return 0, 0, stack.Wrap(errors.New("every document needs a source, which is what its passages are keyed by"))
+			return 0, 0, invalidRequest("every document needs a source, which is what its passages are keyed by")
 		}
 		// A document that is only whitespace is skipped rather than refused: a directory
 		// posted whole often has one in it, and failing the lot over it helps nobody.
 		if strings.TrimSpace(document.Text) == "" {
 			continue
 		}
-		cut := ingest.Split(source, document.Text, size)
+		cut := ingest.Split(source, document.Text, size, s.knowledgeLimits)
 		passages = append(passages, cut...)
 		written = append(written, store.KnowledgeDocument{
 			CustomerID: customerID,
@@ -215,11 +213,10 @@ func (s *Server) fillKnowledge(
 	}
 
 	if len(passages) == 0 {
-		return 0, 0, stack.Wrap(errors.New("there is nothing to read in these documents"))
+		return 0, 0, invalidRequest("there is nothing to read in these documents")
 	}
-	base := knowledge.Scoped(customerID, namespace)
 	writer := s.knowledgeFor(ctx, customerID)
-	if err := writer.Upsert(ctx, base, passages); err != nil {
+	if err := writer.Upsert(ctx, namespace, passages); err != nil {
 		return 0, 0, err
 	}
 	if s.store == nil {
@@ -241,7 +238,7 @@ func (s *Server) fillKnowledge(
 		document := &written[i]
 		was, had := before[document.Source]
 		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
-		if err := writer.Delete(ctx, base, stale); err != nil {
+		if err := writer.Delete(ctx, namespace, stale); err != nil {
 			return 0, 0, err
 		}
 		if err := s.store.SaveKnowledgeDocument(ctx, document); err != nil {
@@ -320,8 +317,7 @@ func (s *Server) forgetKnowledge(
 // avoiding.
 func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.KnowledgeDocument) error {
 	ids := ingest.IDs(document.Source, 0, document.Passages)
-	base := knowledge.Scoped(document.CustomerID, document.Namespace)
-	if err := s.knowledgeFor(ctx, document.CustomerID).Delete(ctx, base, ids); err != nil {
+	if err := s.knowledgeFor(ctx, document.CustomerID).Delete(ctx, document.Namespace, ids); err != nil {
 		return err
 	}
 	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
@@ -360,7 +356,7 @@ func (s *Server) registerKnowledge(api huma.API) {
 		OperationID:     "ingestKnowledge",
 		Method:          http.MethodPost,
 		Path:            "/v1/agents/knowledge",
-		MaxBodyBytes:    maxKnowledgeBody,
+		MaxBodyBytes:    MaxKnowledgeBody,
 		BodyReadTimeout: uploadReadTimeout,
 		Summary:         "Fill a knowledge base with what the business wrote down",
 		Description: "The writing half of the lookup a config's knowledge_namespace gives an agent. Each " +
@@ -486,7 +482,7 @@ func (*IndexedKnowledgeDocument) TransformSchema(_ huma.Registry, schema *huma.S
 
 // IngestKnowledgeRequest is the IngestKnowledgeRequest schema.
 type IngestKnowledgeRequest struct {
-	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own."`
+	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it."`
 	Documents []KnowledgeDocument `json:"documents" minItems:"1" nullable:"false"`
 	Namespace string              `json:"namespace" doc:"The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never shared, so there is no default." example:"docs"`
 }

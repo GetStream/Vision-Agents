@@ -195,6 +195,20 @@ export class Speech {
     };
   }
 
+  /**
+   * Whether a reply is known to be coming on the call and its voice has not started: one
+   * held at nothing heard. It is written before it is spoken, so this is what keeps a page
+   * showing the agent thinking until it is heard. Listeners are told when it changes.
+   */
+  get awaiting(): boolean {
+    for (const turn of this.turns.values()) {
+      if (this.holding(turn) && turn.pendingUntil !== undefined) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Where the voice last was, undefined until it has said anything. The same object until it changes. */
   get(): SpeechSnapshot | undefined {
     return this.snapshot;

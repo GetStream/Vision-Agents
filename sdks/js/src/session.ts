@@ -1,8 +1,10 @@
 import type { Client, Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
+import { CameraFrames } from "./frames.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import { Speech } from "./speech.js";
+import { ConversationState } from "./state.js";
 import type { ChatClient, VideoClient } from "./stream.js";
 import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import type { ToolApproval, Tools } from "./tools.js";
@@ -142,6 +144,17 @@ export class Session {
    * the agent leaving the call and the session ending stop that.
    */
   readonly speech = new Speech({ voice: () => this.voice.started });
+  /**
+   * What the agent is doing: listening, responding, working or idle, and ended once the
+   * conversation is over. Fed from the socket beside `events()`, like `speech`, so a page can
+   * show it without a loop of its own. Not the lifecycle, which is `created.state`.
+   */
+  readonly state = new ConversationState();
+  /**
+   * @internal What this device's camera showed lately, set by a `VoiceSession` while its
+   * camera is on. The router's `get_video_frames` is answered from it.
+   */
+  cameraFrames: CameraFrames | undefined;
 
   /**
    * Undefined for a conversation that is read and written to over HTTP rather than watched
@@ -497,7 +510,16 @@ export class Session {
         }
         // Read here rather than off events(), which is the caller's one stream.
         this.speech.observe(message);
+        this.state.observe(message);
 
+        if (message.type === "tool_call" && text(message, "name") === CameraFrames.toolName) {
+          // Answered by the session rather than offered as a tool, and only by a device whose
+          // camera is on and that the router asked: a video worker may be the one answering it.
+          if (this.cameraFrames && message["run"] !== false) {
+            this.show(this.cameraFrames, message);
+          }
+          continue;
+        }
         if (message.type === "tool_call") {
           // Every watcher is sent every call, and the router says which are to run it. One
           // from before it said holds the same rule: answering a tool held elsewhere would
@@ -532,6 +554,7 @@ export class Session {
     } finally {
       this.ended = true;
       this.speech.close();
+      this.state.end();
       this.asking.clear();
       this.ending.abort();
       for (const cancel of this.running.values()) {
@@ -593,6 +616,50 @@ export class Session {
     } finally {
       this.running.delete(id);
       this.holds.forget(id);
+    }
+
+    if (this.socket?.open) {
+      this.socket.send(result);
+    }
+  }
+
+  /**
+   * Answers the router's request for frames with the ones the camera showed at the moment it
+   * names: what the frames are, then the frames, oldest first. Nothing recent enough is said
+   * as the answer rather than as a failure, as the router's own video workers say it, so the
+   * agent can ask the person to show it again.
+   */
+  private show(frames: CameraFrames, frame: Frame): void {
+    const result: Record<string, unknown> = { type: "tool_result", tool_call_id: text(frame, "id") };
+    for (const key of ["request_id", "turn_id"]) {
+      if (text(frame, key)) {
+        result[key] = text(frame, key);
+      }
+    }
+
+    const asked = argumentsOf(frame);
+    const at = typeof asked["at_ms"] === "number" ? asked["at_ms"] : Date.now();
+    const limit = typeof asked["limit"] === "number" ? asked["limit"] : 1;
+    try {
+      const selected = frames.select(at, limit);
+      const described = JSON.stringify({
+        clock: "device_unix_ms",
+        frames: selected.map((each) => ({
+          captured_at_ms: Math.floor(each.capturedAt),
+          frame_id: `camera-${each.id}`,
+        })),
+        source: "camera",
+      });
+      // Pictures make the output an array of parts, which is how the router takes them.
+      result["output"] = [
+        { type: "text", text: described },
+        ...selected.map((each) => ({
+          type: "image_url",
+          image_url: { url: `data:image/jpeg;base64,${each.jpeg}` },
+        })),
+      ];
+    } catch (cause) {
+      result["output"] = cause instanceof Error ? cause.message : String(cause);
     }
 
     if (this.socket?.open) {
@@ -683,6 +750,22 @@ export class Voice {
     this.on = false;
     this.changed?.(false);
     return stopped;
+  }
+}
+
+/** A tool call's arguments, which arrive as a JSON object encoded as a string. Garbled ones are none. */
+function argumentsOf(frame: Frame): Frame {
+  const given = frame["arguments"];
+  if (typeof given === "object" && given !== null && !Array.isArray(given)) {
+    return given as Frame;
+  }
+  try {
+    const parsed: unknown = JSON.parse(typeof given === "string" ? given : "{}");
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Frame)
+      : {};
+  } catch {
+    return {};
   }
 }
 

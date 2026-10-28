@@ -266,6 +266,14 @@ type ProviderConfig struct {
 	// Local is a model this deployment runs itself. With no price it is free rather than
 	// unpriced.
 	Local bool `yaml:"local"`
+	// Region is where this instance runs its work, such as pricing.RegionUS, which picks the
+	// entries it is priced by. A parsed config always names one: parsing sets
+	// pricing.DefaultRegion where router.yaml leaves it out. Empty, in a config built in code,
+	// is pricing.DefaultRegion too.
+	Region string `yaml:"region"`
+	// BYOK is an instance built with the customer's own key, whose vendor bills the customer:
+	// its work is priced by the BYOK entries. It is never read from a file.
+	BYOK bool `yaml:"-"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -598,6 +606,10 @@ func (c ModalityConfig) validate() error {
 		if provider.Tier != "" && provider.Tier != LowLatency && provider.Tier != HighQuality {
 			return fmt.Errorf("%s declares unknown tier %q", provider.Name(), provider.Tier)
 		}
+		if provider.Region != "" && !pricing.ValidRegion(provider.Region) {
+			return fmt.Errorf("%s declares the region %q: a region is a letter and up to 31 of a-z, 0-9 and hyphens, such as %s",
+				provider.Name(), provider.Region, pricing.RegionUS)
+		}
 		if provider.DataPolicy != (options.DataHandling{}) && !provider.DataPolicy.Valid() {
 			return fmt.Errorf("%s declares a data policy of %q and %q, which a request cannot be compared against",
 				provider.Name(), provider.DataPolicy.TrainsOnData, provider.DataPolicy.Retention)
@@ -675,6 +687,13 @@ func parseConfig(raw []byte) (Config, error) {
 	var config Config
 	if err := yaml.Unmarshal(raw, &config); err != nil {
 		return nil, fmt.Errorf("routing: parse config: %w", err)
+	}
+	for _, section := range config {
+		for i := range section.Providers {
+			if section.Providers[i].Region == "" {
+				section.Providers[i].Region = pricing.DefaultRegion
+			}
+		}
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err

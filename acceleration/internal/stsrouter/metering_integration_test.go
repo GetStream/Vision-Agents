@@ -25,6 +25,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
@@ -63,7 +64,11 @@ func (s *MeteringSuite) SetupSuite() {
 
 	s.config, err = routing.DefaultConfig()
 	s.Require().NoError(err)
-	s.prices, err = routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	listed, err := routing.Prices(s.config, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s.Require().NoError(err)
+	// At the vendors' rates, so each cost below is what a vendor's published rate makes of the
+	// seconds and tokens it billed.
+	s.prices, err = pricing.NewList("vendor", pricing.AllAtCost(listed.Entries()), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 
 	address := os.Getenv("ROUTER_REDIS_ADDR")
@@ -80,6 +85,14 @@ func (s *MeteringSuite) health(modality routing.Modality, provider, model string
 	health, err := s.live.Health(s.ctx, string(modality), provider, model)
 	s.Require().NoError(err)
 	return health.Requests
+}
+
+// priced is what used costs at the suite's prices for the model of that modality, read from
+// vendor.json so a price change there leaves the tests passing.
+func (s *MeteringSuite) priced(modality routing.Modality, name string, used pricing.Quantities) int64 {
+	provider, model, _ := strings.Cut(name, "/")
+	return pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: string(modality), Provider: provider, Model: model,
+		Region: pricing.RegionUS}, used)
 }
 
 // spent is what the customer has spent on the modality, as the live counters have it.
@@ -264,8 +277,13 @@ func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
 		s.requireAttributed(row)
 	}
 	s.Equal([]int64{13, 15, 1}, billed, "the seconds since each report, adding up to the 29 it closed at")
-	s.Equal([]int64{10_833, 12_500, 833}, []int64{seconds[0].CostMicros, seconds[1].CostMicros, seconds[2].CostMicros},
-		"$0.05 a minute")
+	second := func(n int64) int64 {
+		return s.priced(routing.STS, "openai/gpt-live-1", pricing.Quantities{pricing.SessionSeconds: n})
+	}
+	s.Equal([]int64{second(13), second(15), second(1)}, []int64{seconds[0].CostMicros, seconds[1].CostMicros, seconds[2].CostMicros},
+		"at gpt-live-1's rate a second")
+	first := s.priced(routing.LLM, "openai/gpt-5.6-luna", pricing.Quantities{pricing.InputTokens: 890, pricing.OutputTokens: 31})
+	next := s.priced(routing.LLM, "openai/gpt-5.6-luna", pricing.Quantities{pricing.InputTokens: 946, pricing.OutputTokens: 15})
 
 	s.Require().Len(backends, 2, "a backend response sent twice is billed once")
 	s.Equal("openai", backends[0].Provider)
@@ -273,20 +291,21 @@ func (s *MeteringSuite) TestGPTLiveBillsSessionSecondsAndTheBackend() {
 	s.EqualValues(890, backends[0].InputTokens)
 	s.EqualValues(31, backends[0].OutputTokens)
 	s.Equal(map[string]string{parentSession: session.id, "service_tier": "default", "reasoning_tokens": "10"}, backends[0].Attributes)
-	s.EqualValues(215, backends[0].CostMicros, "priced as gpt-5.6-luna")
-	s.EqualValues(207, backends[1].CostMicros)
+	s.Equal(first, backends[0].CostMicros, "priced as gpt-5.6-luna")
+	s.Equal(next, backends[1].CostMicros)
 	s.Equal(session.id, backends[1].Attributes[parentSession])
 	s.requireAttributed(backends[0])
 
 	s.Require().Len(replies, 1, "the reply is still recorded, for its timing")
 	s.False(replies[0].Billable, "the seconds are the bill")
 	s.Zero(replies[0].CostMicros, "given away, so it costs nothing on the row")
-	s.Equal("833", replies[0].Attributes[routing.AttributeFreeCostMicros], "priced as a pod that has not taken this code yet bills it")
+	s.Equal(strconv.FormatInt(s.priced(routing.STS, "openai/gpt-live-1", pricing.Quantities{pricing.AudioMs: 1_000}), 10),
+		replies[0].Attributes[routing.AttributeFreeCostMicros], "priced as a pod that has not taken this code yet bills it")
 
 	s.Equal(voiceHealth+1, s.health(routing.STS, "openai", "gpt-live-1"), "only the reply measures the voice")
 	s.Equal(backendHealth, s.health(routing.LLM, "openai", "gpt-5.6-luna"), "a relayed backend response times nothing")
-	s.EqualValues(10_833+12_500+833, s.spent(routing.STS, customer), "the seconds are spent, and the free reply is not")
-	s.EqualValues(215+207, s.spent(routing.LLM, customer), "the backend is spent though it measures nothing")
+	s.Equal(second(13)+second(15)+second(1), s.spent(routing.STS, customer), "the seconds are spent, and the free reply is not")
+	s.Equal(first+next, s.spent(routing.LLM, customer), "the backend is spent though it measures nothing")
 }
 
 // TestGPTLiveBillsOnlyItsSecondsWhenTheCallerSpeaksAfterTheLastReply: a 10-second session,
@@ -329,19 +348,21 @@ func (s *MeteringSuite) TestGPTLiveBillsOnlyItsSecondsWhenTheCallerSpeaksAfterTh
 			reply = row
 		}
 	}
-	s.EqualValues(8_333, seconds.CostMicros, "10 s at $0.05 a minute")
+	tenSeconds := s.priced(routing.STS, "openai/gpt-live-1", pricing.Quantities{pricing.SessionSeconds: 10})
+	s.Equal(tenSeconds, seconds.CostMicros, "10 s at gpt-live-1's rate")
 	s.Zero(reply.CostMicros, "the reply is given away, so it costs nothing on the row")
 	s.Zero(reply.OutputCostMicros)
 	s.False(reply.Billable)
-	s.Equal("833", reply.Attributes[routing.AttributeFreeCostMicros], "what the caller's second would have cost")
+	s.Equal(strconv.FormatInt(s.priced(routing.STS, "openai/gpt-live-1", pricing.Quantities{pricing.AudioMs: 1_000}), 10),
+		reply.Attributes[routing.AttributeFreeCostMicros], "what the caller's second would have cost")
 
 	spent, err := s.store.SpendSince(s.ctx, customer, since)
 	s.Require().NoError(err)
-	s.EqualValues(8_333, spent, "a budget sees only the seconds")
+	s.Equal(tenSeconds, spent, "a budget sees only the seconds")
 	used, err := s.store.CallUsage(s.ctx, customer, agentID, "", since, nil)
 	s.Require().NoError(err)
-	s.EqualValues(8_333, used.CostMicros, "the call's cost is only the seconds")
-	s.EqualValues(8_333, s.spent(routing.STS, customer))
+	s.Equal(tenSeconds, used.CostMicros, "the call's cost is only the seconds")
+	s.Equal(tenSeconds, s.spent(routing.STS, customer))
 }
 
 // TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns plays back a recorded push-to-talk session
@@ -403,11 +424,17 @@ func (s *MeteringSuite) TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns() {
 	s.Equal([]int64{2_000, 5_000, 2_000, 2_000, 2_000, 1_500}, audio,
 		"the growth in what xAI bills, and the caller's audio after the last reply")
 	s.Equal([]int64{1, 0, 1, 0, 1, 0}, messages, "the typed turns, and not the tool's result")
-	s.Equal([]int64{6_667, 6_667, 6_667, 2_667, 6_667, 2_000}, costs, "$4.80 an hour and $0.004 a typed turn")
-	s.EqualValues(31_335, total, "where the caller's audio before each reply priced 2,667")
+	var priced []int64
+	var sum int64
+	for i := range rows {
+		cost := s.priced(routing.STS, "xai/grok-voice-3.0", pricing.Quantities{pricing.AudioMs: audio[i], pricing.Messages: messages[i]})
+		priced, sum = append(priced, cost), sum+cost
+	}
+	s.Equal(priced, costs, "the audio and the typed turns at grok-voice-3.0's rates")
+	s.Equal(sum, total)
 	s.Equal(map[string]string{routing.AttributeMeasuredBy: routing.MeasuredByRouter}, rows[5].Attributes, "no event reported the last row")
 	s.Equal(health+5, s.health(routing.STS, "xai", "grok-voice-3.0"), "the replies measure the voice and the last row does not")
-	s.EqualValues(31_335, s.spent(routing.STS, customer))
+	s.Equal(sum, s.spent(routing.STS, customer))
 }
 
 // xaiSession is a grok-voice-3.0 session over a socket replaying xAI.
@@ -606,7 +633,7 @@ func (s *MeteringSuite) TestRealtimeTranscriptionIsItsOwnRow() {
 		s.Equal("gpt-4o-mini-transcribe", row.Model)
 		s.Equal(string(routing.STS), row.Modality)
 		s.Equal(pricing.Quantities{pricing.InputAudioTokens: 33, pricing.OutputTextTokens: 16}, row.Meters)
-		s.EqualValues(121, row.CostMicros, "$1.25 a million in and $5 out")
+		s.Equal(s.priced(routing.STS, "openai/gpt-4o-mini-transcribe", row.Meters), row.CostMicros)
 		s.Equal(map[string]string{parentSession: session.id}, row.Attributes)
 		s.requireAttributed(row)
 	}

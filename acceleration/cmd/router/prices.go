@@ -37,14 +37,16 @@ import (
 const pricesUsage = `usage: router prices <command>
 
   show [--at time] [--json] [--unpriced]
-                             the price list in force: each entry's vendor rates, its markup
-                             and what it charges; --unpriced lists the routed items no entry
-                             prices. Reads the database
+                             the price list in force: each entry's item, region and byok,
+                             its SKU, its vendor rates and its price; --unpriced lists the
+                             routed items no entry prices. Reads the database
   sync --dry-run             what the next start would load from ROUTER_PRICES_FILE and
-                             vendor.json, writing nothing. Reads the database
+                             vendor.json, each item with its region and byok, writing
+                             nothing. Reads the database
   check [--file path]        parse a price file (default: the embedded vendor.json) and
-                             build a price list from it, with no database; a --file is
-                             also laid over vendor.json as a router's start lays it
+                             build a price list from it, with no database, counting its
+                             entries by region and byok; a --file is also laid over
+                             vendor.json as a router's start lays it
   drift [--since 168h] [--json]
                              per model, how far the cost of rows whose vendor said what it
                              charged is from that figure, over every shard. Reads the database
@@ -126,25 +128,26 @@ func pricesVersion(settings config.Config) string {
 }
 
 // loadPriceFiles reads the price files a router loads into its database: the deployment's own
-// first, then the embedded vendor.json, the first winning for an item and When. A file that
-// does not parse, or two that do not make a list together, stop the router at start, naming
-// the file and the entry.
-func loadPriceFiles(settings config.Config) (store.PriceLoad, error) {
+// first, then the embedded vendor.json, the first winning for an item, region, BYOK state and
+// When. A file that does not parse, or two that do not make a list together, stop the router
+// at start, naming the file and the entry. A file's markup_bps is not read, which is logged.
+func loadPriceFiles(settings config.Config, logger *slog.Logger) (store.PriceLoad, error) {
 	var files []prices.File
 	var names []string
 	if settings.PricesFile != "" {
-		own, err := prices.Load(settings.PricesFile)
+		own, err := prices.LoadDeployment(settings.PricesFile, logger)
 		if err != nil {
 			return store.PriceLoad{}, err
 		}
+		prices.IgnoredMarkup(logger, settings.PricesFile, own)
 		files, names = append(files, own), append(names, settings.PricesFile)
 	}
 	files, names = append(files, prices.Vendor()), append(names, prices.VendorFile)
 	merged := prices.Merge(files...)
-	if _, err := pricing.NewList("merged", merged, 0, slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := pricing.NewList("merged", merged, slog.New(slog.DiscardHandler)); err != nil {
 		return store.PriceLoad{}, fmt.Errorf("prices: %s: %w", strings.Join(names, " over "), err)
 	}
-	return store.PriceLoad{Entries: merged, MarkupBps: files[0].MarkupBps, Source: strings.Join(names, ", "), Release: releaseName()}, nil
+	return store.PriceLoad{Entries: merged, Source: strings.Join(names, ", "), Release: releaseName()}, nil
 }
 
 // startPrices loads the price files into the database and starts the price list every row is
@@ -217,22 +220,18 @@ func openPriceStore(settings config.Config) (*store.Store, error) {
 	})
 }
 
-// shownEntry is an entry of the list in force as show writes it: the vendor's rates, its own
-// markup or none, and what customers are charged.
+// shownEntry is an entry of the list in force as show writes it: its SKU, the vendor's rates
+// and its price.
 type shownEntry struct {
 	pricing.Entry
-	Charged       map[pricing.Meter]pricing.Rate `json:"charged,omitempty"`
-	ChargedTiers  []pricing.Tier                 `json:"charged_tiers,omitempty"`
-	EffectiveAt   time.Time                      `json:"effective_at"`
-	ChargedMarkup int64                          `json:"charged_markup_bps"`
+	EffectiveAt time.Time `json:"effective_at"`
 }
 
 // shownList is the list in force as show --json writes it.
 type shownList struct {
-	At        time.Time      `json:"at"`
-	MarkupBps int64          `json:"markup_bps"`
-	Entries   []shownEntry   `json:"entries"`
-	Unpriced  []pricing.Item `json:"unpriced"`
+	At       time.Time      `json:"at"`
+	Entries  []shownEntry   `json:"entries"`
+	Unpriced []pricing.Item `json:"unpriced"`
 }
 
 func runPricesShow(ctx context.Context, args []string, settings config.Config, out io.Writer) error {
@@ -264,24 +263,14 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 	if err != nil {
 		return err
 	}
-	markup, err := pgStore.ActiveMarkup(ctx, at)
-	if err != nil {
-		return err
-	}
-	shown := shownList{At: at.UTC(), MarkupBps: markup, Entries: []shownEntry{}, Unpriced: []pricing.Item{}}
+	shown := shownList{At: at.UTC(), Entries: []shownEntry{}, Unpriced: []pricing.Item{}}
 	entries := make([]pricing.Entry, 0, len(rows))
 	for _, row := range rows {
 		entry := row.Entry()
 		entries = append(entries, entry)
-		charged := pricing.Charged(entry, markup)
-		chargedMarkup := markup
-		if entry.MarkupBps != nil {
-			chargedMarkup = *entry.MarkupBps
-		}
-		shown.Entries = append(shown.Entries, shownEntry{Entry: entry, Charged: charged.Rates, ChargedTiers: charged.Tiers,
-			EffectiveAt: row.EffectiveAt.UTC(), ChargedMarkup: chargedMarkup})
+		shown.Entries = append(shown.Entries, shownEntry{Entry: entry, EffectiveAt: row.EffectiveAt.UTC()})
 	}
-	list, err := pricing.NewList(pricing.ActiveVersion, prices.WithLocal(entries, routing.LocalItems(routingConfig)), markup, slog.New(slog.DiscardHandler))
+	list, err := pricing.NewList(pricing.ActiveVersion, prices.WithLocal(entries, routing.LocalItems(routingConfig)), slog.New(slog.DiscardHandler))
 	if err != nil {
 		return fmt.Errorf("prices: the list in force does not build: %w", err)
 	}
@@ -297,18 +286,19 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 		return encoder.Encode(shown)
 	case *unpricedOnly:
 		for _, item := range shown.Unpriced {
-			if _, err := fmt.Fprintf(out, "%s/%s/%s\n", item.Modality, item.Provider, item.Model); err != nil {
+			name := prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK})
+			if _, err := fmt.Fprintln(out, name); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	if _, err := fmt.Fprintf(out, "at %s, markup %d basis points, %d entries\n\n", shown.At.Format(time.RFC3339), markup, len(shown.Entries)); err != nil {
+	if _, err := fmt.Fprintf(out, "at %s, %d entries\n\n", shown.At.Format(time.RFC3339), len(shown.Entries)); err != nil {
 		return err
 	}
 	for _, entry := range shown.Entries {
-		if _, err := fmt.Fprintf(out, "%s  [%s, markup %d]\n%s", prices.Name(entry.Entry), entry.Version, entry.ChargedMarkup,
-			describeRates(entry.Entry, entry.Charged)); err != nil {
+		if _, err := fmt.Fprintf(out, "%s  [%s, %s]\n%s", prices.Name(entry.Entry), entry.SKU, entry.Version,
+			describeRates(entry.Entry)); err != nil {
 			return err
 		}
 	}
@@ -320,16 +310,16 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 	return nil
 }
 
-// describeRates writes an entry's rates, one meter a line, the vendor's beside the charged.
-func describeRates(entry pricing.Entry, charged map[pricing.Meter]pricing.Rate) string {
+// describeRates writes an entry's rates, one meter a line, the vendor's cost beside the price.
+func describeRates(entry pricing.Entry) string {
 	var b strings.Builder
 	if entry.Free {
 		b.WriteString("    free\n")
 	}
 	for _, meter := range slices.Sorted(maps.Keys(entry.Rates)) {
 		rate := entry.Rates[meter]
-		fmt.Fprintf(&b, "    %-26s $%s per %d, charged $%s\n", meter, strconv.FormatFloat(rate.USD, 'g', 12, 64), rate.Per,
-			strconv.FormatFloat(charged[meter].USD, 'g', 12, 64))
+		fmt.Fprintf(&b, "    %-26s costs $%s per %d, priced $%s\n", meter, strconv.FormatFloat(rate.USD, 'g', 12, 64), rate.Per,
+			strconv.FormatFloat(entry.Prices[meter].USD, 'g', 12, 64))
 	}
 	for _, tier := range entry.Tiers {
 		fmt.Fprintf(&b, "    above %d input tokens: %d rates\n", tier.AboveInputTokens, len(tier.Rates))
@@ -346,7 +336,7 @@ func runPricesSync(ctx context.Context, args []string, settings config.Config, o
 	if !*dryRun {
 		return errors.New("router prices sync only takes --dry-run: a router loads its price files when it starts")
 	}
-	load, err := loadPriceFiles(settings)
+	load, err := loadPriceFiles(settings, slog.New(slog.NewTextHandler(out, nil)))
 	if err != nil {
 		return err
 	}
@@ -364,11 +354,7 @@ func runPricesSync(ctx context.Context, args []string, settings config.Config, o
 		_, err = fmt.Fprintf(out, "nothing to add: the price list has every item in %s\n", load.Source)
 		return err
 	case seed:
-		markup := "no markup"
-		if load.MarkupBps != nil {
-			markup = fmt.Sprintf("a markup of %d basis points", *load.MarkupBps)
-		}
-		_, err = fmt.Fprintf(out, "the next start seeds the price list from %s: %d entries, %s\n", load.Source, len(added), markup)
+		_, err = fmt.Fprintf(out, "the next start seeds the price list from %s: %d entries\n", load.Source, len(added))
 	default:
 		_, err = fmt.Fprintf(out, "the next start adds %d items new in %s, from %s:\n", len(added), load.Release, load.Source)
 	}
@@ -483,7 +469,7 @@ func runPricesReload(ctx context.Context, args []string, settings config.Config,
 	if err := developmentDatabase(*development, settings); err != nil {
 		return err
 	}
-	load, err := loadPriceFiles(settings)
+	load, err := loadPriceFiles(settings, slog.New(slog.NewTextHandler(out, nil)))
 	if err != nil {
 		return err
 	}
@@ -522,16 +508,12 @@ func describeReload(out io.Writer, reload store.PriceReload, load store.PriceLoa
 			scheduled++
 		}
 	}
-	fmt.Fprintf(&b, "%s %d price changes (%d not yet in force, %d cancelled) and their %d entries; the markup in force was %d basis points\n",
-		removes, len(reload.Changes), scheduled, cancelled, reload.Entries, reload.MarkupBps)
-	markup := "no markup"
-	if load.MarkupBps != nil {
-		markup = fmt.Sprintf("a markup of %d basis points", *load.MarkupBps)
-	}
+	fmt.Fprintf(&b, "%s %d price changes (%d not yet in force, %d cancelled) and their %d entries\n",
+		removes, len(reload.Changes), scheduled, cancelled, reload.Entries)
 	if dryRun {
-		fmt.Fprintf(&b, "%s the price list from %s: %d entries, %s\n", seeds, load.Source, len(load.Entries), markup)
+		fmt.Fprintf(&b, "%s the price list from %s: %d entries\n", seeds, load.Source, len(load.Entries))
 	} else {
-		fmt.Fprintf(&b, "%s the price list from %s: change %s, %d entries, %s\n", seeds, load.Source, reload.Seed.Name, len(reload.Loaded), markup)
+		fmt.Fprintf(&b, "%s the price list from %s: change %s, %d entries\n", seeds, load.Source, reload.Seed.Name, len(reload.Loaded))
 	}
 	changed, dropped, added := priceDiff(reload.Active, load.Entries)
 	for _, group := range []struct {
@@ -588,11 +570,11 @@ func priceDiff(active []store.PriceEntry, files []pricing.Entry) (changed, dropp
 	return changed, dropped, added
 }
 
-// priceOf is what an entry charges, as text two entries compare by: its JSON without the
-// change that wrote it or the local flag, neither of which is a price, and with an empty
-// map or list read as none, as the database stores it.
+// priceOf is what an entry costs and charges, as text two entries compare by: its JSON without
+// the change that wrote it, the local flag or its SKU, none of which is a price, and with an
+// empty map or list read as none, as the database stores it.
 func priceOf(entry pricing.Entry) string {
-	entry.Version, entry.Local = "", false
+	entry.Version, entry.Local, entry.SKU = "", false, ""
 	encoded, err := json.Marshal(entry)
 	if err != nil {
 		return ""
@@ -697,24 +679,49 @@ func runPricesCheck(args []string, out io.Writer) error {
 	merged := ""
 	if *path != "" {
 		var err error
-		if file, err = prices.Load(*path); err != nil {
+		if file, err = prices.LoadDeployment(*path, slog.New(slog.NewTextHandler(os.Stderr, nil))); err != nil {
 			return err
 		}
 		name = *path
 		// Laid over vendor.json as a router's start lays it, so an entry that would stop the
 		// start, such as one matching an item as well as a vendor entry does, stops the check.
-		load, err := loadPriceFiles(config.Config{PricesFile: *path})
+		load, err := loadPriceFiles(config.Config{PricesFile: *path}, slog.New(slog.DiscardHandler))
 		if err != nil {
 			return err
 		}
 		merged = fmt.Sprintf("; %d entries laid over %s", len(load.Entries), prices.VendorFile)
 	}
-	markup := "no markup"
+	ignored := ""
 	if file.MarkupBps != nil {
-		markup = fmt.Sprintf("a markup of %d basis points", *file.MarkupBps)
+		ignored = fmt.Sprintf("; markup_bps %d is ignored: each entry carries its price", *file.MarkupBps)
 	}
-	_, err := fmt.Fprintf(out, "%s: %d entries, %s%s\n", name, len(file.Entries), markup, merged)
+	inRegions := ""
+	if len(file.Entries) > 0 {
+		inRegions = ", " + regionCounts(file.Entries)
+	}
+	_, err := fmt.Fprintf(out, "%s: %d entries%s%s%s\n", name, len(file.Entries), inRegions, merged, ignored)
 	return err
+}
+
+// regionCounts is how many entries each region has and how many of them are BYOK, as in
+// "eu 4 (2 byok), us 304 (78 byok)".
+func regionCounts(entries []pricing.Entry) string {
+	counts, byok := map[string]int{}, map[string]int{}
+	for _, entry := range entries {
+		counts[entry.Region]++
+		if entry.BYOK {
+			byok[entry.Region]++
+		}
+	}
+	parts := make([]string, 0, len(counts))
+	for _, region := range slices.Sorted(maps.Keys(counts)) {
+		part := fmt.Sprintf("%s %d", region, counts[region])
+		if byok[region] > 0 {
+			part += fmt.Sprintf(" (%d byok)", byok[region])
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // runPricesExport writes the price: blocks of a routing config as a price file. It is how
@@ -821,9 +828,6 @@ func roundedRates(rates map[pricing.Meter]pricing.Rate) map[pricing.Meter]pricin
 func encodePrices(file prices.File) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("{\n")
-	if file.MarkupBps != nil {
-		fmt.Fprintf(&b, "  \"markup_bps\": %d,\n", *file.MarkupBps)
-	}
 	b.WriteString("  \"entries\": [\n")
 	for i, entry := range file.Entries {
 		var line bytes.Buffer

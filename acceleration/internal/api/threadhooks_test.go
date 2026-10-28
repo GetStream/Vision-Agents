@@ -57,9 +57,9 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 	s.holding.holds()
 	s.T().Cleanup(s.holding.answers)
 	// The model is the suite's, so it counts the earlier tests' requests too.
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 	respondIn(&s.RouterSuite, s.serverClient, held.Id, "what changed since yesterday?")
-	s.Require().Eventually(func() bool { return len(s.holding.requests()) == asked+1 }, settleFor, 10*time.Millisecond,
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+1 }, settleFor, 10*time.Millisecond,
 		"the backend's reply never reached the model")
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
@@ -69,11 +69,11 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 	}, settleFor, 10*time.Millisecond, "the hook never took the thread's turn")
 	// Some polls of the hook's follow-up land on the reply still running.
 	time.Sleep(5 * threadTurnPoll)
-	s.Len(s.holding.requests(), asked+1, "the message waits for the running reply")
+	s.Len(s.holding.replies(), asked+1, "the message waits for the running reply")
 
 	s.holding.answers()
 
-	s.Require().Eventually(func() bool { return len(s.holding.requests()) == asked+2 }, settleFor, 10*time.Millisecond,
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+2 }, settleFor, 10*time.Millisecond,
 		"the message was never answered once the reply finished")
 	s.Equal("Held.", s.posted(2)[1].Text)
 }
@@ -90,9 +90,9 @@ func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsFor
 	s.holding.holds()
 	s.T().Cleanup(s.holding.answers)
 	// The model is the suite's, so it counts the earlier tests' requests too.
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 	respondIn(&s.RouterSuite, s.serverClient, held.Id, "what changed since yesterday?")
-	s.Require().Eventually(func() bool { return len(s.holding.requests()) == asked+1 }, settleFor, 10*time.Millisecond,
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+1 }, settleFor, 10*time.Millisecond,
 		"the backend's reply never reached the model")
 
 	delivered := make(chan error, 1)
@@ -110,8 +110,8 @@ func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsFor
 	select {
 	case err := <-delivered:
 		s.NoError(err)
-	case <-time.After(settleFor):
-		s.FailNow("the follow-up never started once the reply finished")
+	case <-time.After(scheduledPoll / 4):
+		s.FailNow("the follow-up did not start within replyPoll of the reply finishing")
 	}
-	s.Require().Eventually(func() bool { return len(s.holding.requests()) == asked+2 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+2 }, settleFor, 10*time.Millisecond)
 }

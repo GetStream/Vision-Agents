@@ -193,7 +193,7 @@ func (s *ScheduledTasksSuite) TestACallIsGivenTheTaskWhenAnEarlierChannelAlready
 	// conversation, under the run's own id.
 	found, live := s.router.sessions.Get(call.opened.Id, call.delivery.owner())
 	s.Require().True(live)
-	s.Require().NoError(found.FollowUp(context.Background(), call.delivery.CommandID, call.delivery.Text))
+	s.Require().NoError(found.FollowUp(context.Background(), call.delivery.CommandID, call.delivery.Text, nil))
 	s.Require().Eventually(func() bool {
 		state, _, _ := found.FollowUpReply(call.delivery.CommandID)
 		return state == "completed"

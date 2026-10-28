@@ -5702,7 +5702,7 @@ type IndexedKnowledgeDocument struct {
 
 // IngestKnowledgeRequest defines model for IngestKnowledgeRequest.
 type IngestKnowledgeRequest struct {
-	// ChunkSize Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own.
+	// ChunkSize Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
 	ChunkSize *int                `json:"chunk_size,omitempty"`
 	Documents []KnowledgeDocument `json:"documents"`
 
@@ -6347,7 +6347,7 @@ type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
-	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a losing hedge or a barge-in. It is no provider failure, and its tokens are still billed. Any other code is a failure.
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
 	ErrorCode   *string `json:"error_code,omitempty"`
 	InputTokens *int64  `json:"input_tokens,omitempty"`
 	Model       string  `json:"model"`
@@ -6784,8 +6784,11 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor"`
 }
 
-// Price What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+// Price What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 type Price struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Change The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
 	Change *string `json:"change,omitempty"`
 
@@ -6808,6 +6811,12 @@ type Price struct {
 
 	// Rates What a customer is charged, by meter.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
+	Sku *string `json:"sku,omitempty"`
 
 	// Tiers What a customer is charged for long prompts.
 	Tiers *[]PriceTier `json:"tiers,omitempty"`
@@ -6836,9 +6845,6 @@ type PriceChange struct {
 	// Kind What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
 	Kind PriceChangeKind `json:"kind"`
 
-	// MarkupBps The list's markup from effective_at on. Absent left it as it was.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
-
 	// Name <UTC yyyymmddhhmmss>_<the name it was given>: the price_version of every row its entries price.
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
@@ -6847,19 +6853,32 @@ type PriceChange struct {
 
 // PriceChangeEntry defines model for PriceChangeEntry.
 type PriceChangeEntry struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
 	Free *bool `json:"free,omitempty"`
-
-	// MarkupBps The entry's own markup in basis points. Absent takes the list's.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
 
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
-	Provider string `json:"provider"`
 
-	// Rates The vendor's rates, by meter.
+	// PriceTiers What customers are charged for long prompts.
+	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
+
+	// Prices What customers are charged, by meter.
+	Prices   *map[string]PriceRate `json:"prices,omitempty"`
+	Provider string                `json:"provider"`
+
+	// Rates The vendor's cost, by meter, for reference.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
-	Tiers *[]PriceTier          `json:"tiers,omitempty"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
+	Sku string `json:"sku"`
+
+	// Tiers The vendor's cost for long prompts, for reference.
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
 
 	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
 	When *map[string]string `json:"when,omitempty"`
@@ -6876,11 +6895,8 @@ type PriceChangeInput struct {
 	// EffectiveAt When the change takes effect. Absent is now; it may be up to two years ahead, but never more than 5 minutes in the past, and a time up to 5 minutes past is taken as now.
 	EffectiveAt *time.Time `json:"effective_at,omitempty"`
 
-	// Entries Each replaces its item's entry under its when whole: every rate, tier and markup it has.
+	// Entries Each replaces its item's entry under its when whole: its cost, its price and every tier of both.
 	Entries *[]PriceEntryInput `json:"entries,omitempty"`
-
-	// MarkupBps The list's markup in basis points from effective_at on. Absent leaves it.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
 
 	// Name 1 to 48 characters of a-z, 0-9 and _. The change is named with the UTC time it was made before it.
 	Name string `json:"name"`
@@ -6906,14 +6922,8 @@ type PriceChangePage struct {
 
 // PriceEntry defines model for PriceEntry.
 type PriceEntry struct {
-	// ChargedMarkupBps The markup the entry is sold at: its own, else the list's.
-	ChargedMarkupBps int64 `json:"charged_markup_bps"`
-
-	// ChargedRates What customers are charged: each rate with the markup added, to 12 significant digits.
-	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
-
-	// ChargedTiers What customers are charged for long prompts.
-	ChargedTiers *[]PriceTier `json:"charged_tiers,omitempty"`
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
 
 	// EffectiveAt When the entry took effect, or takes effect.
 	EffectiveAt *time.Time `json:"effective_at,omitempty"`
@@ -6921,21 +6931,30 @@ type PriceEntry struct {
 	// Free The vendor charges nothing for it.
 	Free *bool `json:"free,omitempty"`
 
-	// Local The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+	// Local The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
 	Local *bool `json:"local,omitempty"`
-
-	// MarkupBps The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
 
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
-	Provider string `json:"provider"`
 
-	// Rates The vendor's rates, by meter.
+	// PriceTiers What customers are charged for long prompts, at the thresholds of tiers.
+	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
+
+	// Prices What customers are charged, by the meters of rates.
+	Prices   *map[string]PriceRate `json:"prices,omitempty"`
+	Provider string                `json:"provider"`
+
+	// Rates The vendor's cost, by meter, for reference: nothing is charged from it.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
 
-	// Tiers The vendor's rates for long prompts.
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+	Sku *string `json:"sku,omitempty"`
+
+	// Tiers The vendor's cost for long prompts, for reference.
 	Tiers *[]PriceTier `json:"tiers,omitempty"`
 
 	// Version The price change that wrote the entry, which every row it prices names as its price_version.
@@ -6947,24 +6966,36 @@ type PriceEntry struct {
 
 // PriceEntryInput defines model for PriceEntryInput.
 type PriceEntryInput struct {
-	// Free The vendor charges nothing for it.
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
+	// Free The vendor charges nothing for it. A free entry has no price.
 	Free *bool `json:"free,omitempty"`
 
 	// Local Refused with invalid_price: a model is local when the routing config says so.
 	Local *bool `json:"local,omitempty"`
 
-	// MarkupBps The entry's own markup in basis points, 0 to 100000, replacing the list's. Absent takes the list's.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
-
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
-	Provider string `json:"provider"`
 
-	// Rates The vendor's rates, by meter: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. An unknown meter, and a rate of more than $1000 a unit, are refused.
+	// PriceTiers What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.
+	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
+
+	// Prices What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
+	Prices   *map[string]PriceRate `json:"prices,omitempty"`
+	Provider string                `json:"provider"`
+
+	// Rates The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
 
-	// Tiers Rates for long prompts. Each tier rates every meter the entry does.
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+	Sku *string `json:"sku,omitempty"`
+
+	// Tiers The vendor's cost for long prompts. Each tier rates every meter the entry does.
 	Tiers *[]PriceTier `json:"tiers,omitempty"`
 
 	// Version Refused with invalid_price: an entry's version is the change that writes it.
@@ -6973,16 +7004,22 @@ type PriceEntryInput struct {
 	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
 	When *map[string]string `json:"when,omitempty"`
 
-	// Withdrawn Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate.
+	// Withdrawn Stop pricing the item under its when from effective_at on. Its entries under another when are untouched. A withdrawal carries no rate, price or SKU.
 	Withdrawn *bool `json:"withdrawn,omitempty"`
 }
 
 // PriceItem defines model for PriceItem.
 type PriceItem struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
 	Provider string `json:"provider"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
 	When *map[string]string `json:"when,omitempty"`
@@ -6993,9 +7030,6 @@ type PriceList struct {
 	// At The moment the list is read at.
 	At      time.Time    `json:"at"`
 	Entries []PriceEntry `json:"entries"`
-
-	// MarkupBps The list's markup in basis points, added to every entry with none of its own.
-	MarkupBps int64 `json:"markup_bps"`
 
 	// Unpriced The items the routing config routes whose work is billable and that no entry prices: each records its rows at nothing until a change prices it, or marks it free.
 	Unpriced []PriceItem `json:"unpriced"`
@@ -7010,10 +7044,8 @@ type PricePreview struct {
 	ConfirmationRequired bool `json:"confirmation_required"`
 
 	// EffectiveAt When the change would take effect.
-	EffectiveAt     time.Time          `json:"effective_at"`
-	Items           []PricePreviewItem `json:"items"`
-	MarkupBpsAfter  int64              `json:"markup_bps_after"`
-	MarkupBpsBefore int64              `json:"markup_bps_before"`
+	EffectiveAt time.Time          `json:"effective_at"`
+	Items       []PricePreviewItem `json:"items"`
 
 	// NeedsConfirmation The items that make it so.
 	NeedsConfirmation *[]PriceItem `json:"needs_confirmation,omitempty"`
@@ -7024,19 +7056,22 @@ type PricePreviewItem struct {
 	After  *PricedEntry `json:"after,omitempty"`
 	Before *PricedEntry `json:"before,omitempty"`
 
-	// MarkupFactor The factor the markup it is sold at moves by. Absent when either is 0.
-	MarkupFactor *float64 `json:"markup_factor,omitempty"`
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
 
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality          string `json:"modality"`
 	Model             string `json:"model"`
 	NeedsConfirmation *bool  `json:"needs_confirmation,omitempty"`
-	Provider          string `json:"provider"`
 
-	// RateFactors By meter, the factor its vendor rate moves by. Absent for a meter with no rate before or after.
-	RateFactors *map[string]float64 `json:"rate_factors,omitempty"`
+	// PriceFactors By meter, the factor its price moves by. Absent for a meter with no price before or after.
+	PriceFactors *map[string]float64 `json:"price_factors,omitempty"`
+	Provider     string              `json:"provider"`
 
-	// Unpriced It is priced before the change and billable with no rate after.
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Unpriced It is priced before the change and billable with no price after.
 	Unpriced *bool `json:"unpriced,omitempty"`
 
 	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
@@ -7069,17 +7104,19 @@ type PriceTier struct {
 
 // PricedEntry defines model for PricedEntry.
 type PricedEntry struct {
-	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
-	ChargedTiers *[]PriceTier          `json:"charged_tiers,omitempty"`
-	Free         *bool                 `json:"free,omitempty"`
-	Local        *bool                 `json:"local,omitempty"`
+	Free       *bool        `json:"free,omitempty"`
+	Local      *bool        `json:"local,omitempty"`
+	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
 
-	// MarkupBps The markup it is sold at.
-	MarkupBps int64 `json:"markup_bps"`
+	// Prices What customers are charged.
+	Prices *map[string]PriceRate `json:"prices,omitempty"`
 
-	// Rates The vendor's rates.
+	// Rates The vendor's cost, for reference.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
-	Tiers *[]PriceTier          `json:"tiers,omitempty"`
+
+	// Sku The SKU it is priced under.
+	Sku   *string      `json:"sku,omitempty"`
+	Tiers *[]PriceTier `json:"tiers,omitempty"`
 
 	// Version The change that wrote it. Absent for the change previewed.
 	Version *string `json:"version,omitempty"`
@@ -7090,7 +7127,7 @@ type Prices struct {
 	// At The moment the list is read at.
 	At time.Time `json:"at"`
 
-	// Entries Every item priced now, by modality, provider and model.
+	// Entries Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
 	Entries []Price `json:"entries"`
 
 	// Upcoming What the changes scheduled after at will set, soonest first.
@@ -7174,7 +7211,7 @@ type ProviderBenchmark struct {
 
 // ProviderHealth defines model for ProviderHealth.
 type ProviderHealth struct {
-	// Available False once the error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
+	// Available False once the health window holds enough requests to judge and their error rate crosses the configured threshold, and for a speech-to-text model for one health window after a fatal error, such as an account the vendor refuses.
 	Available    bool    `json:"available"`
 	ErrorRate    float64 `json:"error_rate"`
 	Errors       int64   `json:"errors"`
@@ -7877,7 +7914,7 @@ type SessionMemory struct {
 	// Filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
 	Filter *map[string]string `json:"filter,omitempty"`
 
-	// UserId Who the memories belong to. Empty means the customer.
+	// UserId Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
 	UserId *string `json:"user_id,omitempty"`
 }
 
@@ -9195,14 +9232,8 @@ type TurnStatsBucket struct {
 
 // UpcomingPriceEntry defines model for UpcomingPriceEntry.
 type UpcomingPriceEntry struct {
-	// ChargedMarkupBps The markup the entry is sold at: its own, else the list's.
-	ChargedMarkupBps int64 `json:"charged_markup_bps"`
-
-	// ChargedRates What customers are charged: each rate with the markup added, to 12 significant digits.
-	ChargedRates *map[string]PriceRate `json:"charged_rates,omitempty"`
-
-	// ChargedTiers What customers are charged for long prompts.
-	ChargedTiers *[]PriceTier `json:"charged_tiers,omitempty"`
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
 
 	// EffectiveAt When the entry took effect, or takes effect.
 	EffectiveAt *time.Time `json:"effective_at,omitempty"`
@@ -9210,24 +9241,33 @@ type UpcomingPriceEntry struct {
 	// Free The vendor charges nothing for it.
 	Free *bool `json:"free,omitempty"`
 
-	// Local The deployment runs the model itself, as its routing config says. Local work with no rate costs nothing.
+	// Local The deployment runs the model itself, as its routing config says. Local work with no price costs nothing.
 	Local *bool `json:"local,omitempty"`
-
-	// MarkupBps The entry's own markup in basis points, replacing the list's. Absent takes the list's.
-	MarkupBps *int64 `json:"markup_bps,omitempty"`
 
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
-	Provider string `json:"provider"`
 
-	// Rates The vendor's rates, by meter.
+	// PriceTiers What customers are charged for long prompts, at the thresholds of tiers.
+	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
+
+	// Prices What customers are charged, by the meters of rates.
+	Prices   *map[string]PriceRate `json:"prices,omitempty"`
+	Provider string                `json:"provider"`
+
+	// Rates The vendor's cost, by meter, for reference: nothing is charged from it.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
 
 	// Reason The change's reason.
 	Reason string `json:"reason"`
 
-	// Tiers The vendor's rates for long prompts.
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
+	Sku *string `json:"sku,omitempty"`
+
+	// Tiers The vendor's cost for long prompts, for reference.
 	Tiers *[]PriceTier `json:"tiers,omitempty"`
 
 	// Version The price change that wrote the entry, which every row it prices names as its price_version.
@@ -9346,6 +9386,9 @@ type UsageEvent struct {
 
 	// SessionId The session the work was done in.
 	SessionId *string `json:"session_id,omitempty"`
+
+	// Sku The SKU of the item the work was priced as, as getPrices lists it: the same across its price changes. Absent for work no entry priced, and for work recorded before SKUs were.
+	Sku *string `json:"sku,omitempty"`
 
 	// Success Whether the work succeeded.
 	Success bool `json:"success"`
@@ -10157,6 +10200,9 @@ type ListUserPoliciesParams struct {
 type GetPricesParams struct {
 	// Modality Only this modality's items, such as llm, stt, tts, sms or phone.
 	Modality *string `form:"modality,omitempty" json:"modality,omitempty"`
+
+	// Region Only this region's items, such as us or eu.
+	Region *string `form:"region,omitempty" json:"region,omitempty"`
 }
 
 // ListLimitsParams defines parameters for ListLimits.
@@ -13514,7 +13560,7 @@ type ClientInterface interface {
 
 	// GetPrices Read the price list
 	//
-	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 	//
 	// Corresponds with GET /v1/prices (the `GetPrices` operationId).
 	GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -19288,7 +19334,7 @@ func (c *Client) UpdateUserPolicy(ctx context.Context, userId string, body Updat
 
 // GetPrices Read the price list
 //
-// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 //
 // Corresponds with GET /v1/prices (the `GetPrices` operationId).
 func (c *Client) GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -29680,6 +29726,18 @@ func NewGetPricesRequest(server string, params *GetPricesParams) (*http.Request,
 
 		}
 
+		if params.Region != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "region", *params.Region, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -34751,7 +34809,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetPricesWithResponse Read the price list
 	//
-	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -64780,7 +64838,7 @@ func (c *ClientWithResponses) UpdateUserPolicyWithResponse(ctx context.Context, 
 
 // GetPricesWithResponse Read the price list
 //
-// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
