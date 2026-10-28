@@ -1153,19 +1153,48 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 	}
 }
 
-// TestATunnelToAnAllowedDomainWhoseHostReadsNothingIsClosedAtTheIdleTimeout: the sandbox's bytes
-// fill the buffers and the copy to the host blocks in its write, with no read pending on either
-// end; the deadline on the host's end ends it.
-func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseHostReadsNothingIsClosedAtTheIdleTimeout() {
+// TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
+// buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
+// time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
 	const idle = 300 * time.Millisecond
-	sandbox, _ := s.blindTunnel(idle)
-	stalled := time.Now()
-	go func() {
-		// Far more than the socket buffers on the way hold (a few MiB on loopback).
-		_, _ = sandbox.Write(make([]byte, 64<<20))
-	}()
+	for _, stalled := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
+		s.Run(stalled.name, func() {
+			sandbox, host := s.blindTunnel(idle)
+			stuck := time.Now()
+			// The test reads nothing: a flood's write returns only when the proxy closes its end,
+			// 5 s being past any idle timeout here.
+			flood := func(conn net.Conn) <-chan error {
+				ended := make(chan error, 1)
+				go func() {
+					// Far more than the socket buffers on the way hold (a few MiB on loopback).
+					_, err := conn.Write(make([]byte, 64<<20))
+					ended <- err
+				}()
+				return ended
+			}
+			var floods []<-chan error
+			if stalled.sandboxSends {
+				floods = append(floods, flood(sandbox))
+			}
+			if stalled.hostSends {
+				floods = append(floods, flood(host))
+			}
 
-	s.GreaterOrEqual(s.closedWithin(sandbox, stalled), idle)
+			for _, ended := range floods {
+				select {
+				case err := <-ended:
+					s.Error(err, "the bytes were read by no one, yet all went")
+				case <-time.After(5 * time.Second):
+					s.Fail("the tunnel was not closed in time")
+				}
+			}
+			s.GreaterOrEqual(time.Since(stuck), idle)
+		})
+	}
 }
 
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
