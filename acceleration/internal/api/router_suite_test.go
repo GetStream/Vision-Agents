@@ -752,16 +752,22 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	return bridge
 }
 
-// writtenByTheInboundWorker requires a thread channel's one message to be the one its inbound
-// worker wrote from the queue: its row is done, and the message has the id the worker gives
-// it, the channel's and the provider's for the message (channelbridge.inboundMessageID).
+// writtenByTheInboundWorker requires a thread channel's one person's message to be the one its
+// inbound worker wrote from the queue: its row is done, and the message has the id the worker
+// gives it, the channel's and the provider's for the message (channelbridge.inboundMessageID).
+// The agent's reply to it is no person's.
 func (s *RouterSuite) writtenByTheInboundWorker(channel string) {
 	var providerID string
 	s.Require().Eventually(func() bool {
 		return s.store.DB().QueryRowContext(context.Background(),
 			"SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = ? AND state = 'done'", channel).Scan(&providerID) == nil
 	}, settleFor, 10*time.Millisecond, "no written row of %s", channel)
-	stored := s.chat.Stored(channel)
+	var stored []map[string]any
+	for _, message := range s.chat.Stored(channel) {
+		if custom, _ := message["custom"].(map[string]any); custom[channelbridge.BridgedField] == true {
+			stored = append(stored, message)
+		}
+	}
 	s.Require().Len(stored, 1)
 	sum := sha256.Sum256([]byte(providerID))
 	s.Contains([]string{channel + "-" + providerID, channel + "=" + hex.EncodeToString(sum[:])}, stored[0]["id"])
