@@ -173,9 +173,11 @@ func (s *StoreSuite) TestAClaimTakesAtMostLimitOldestDueFirst() {
 	s.Require().Len(claimed, 1)
 	s.Equal("1759740000.000200", claimed[0].ProviderMessageID)
 
-	none, err := s.store.ClaimChannelInbound(s.ctx, s.base.Add(time.Second), 0, s.base.Add(time.Minute))
-	s.Require().NoError(err)
-	s.Empty(none)
+	for _, limit := range []int{0, -1} {
+		none, err := s.store.ClaimChannelInbound(s.ctx, s.base.Add(time.Second), limit, s.base.Add(time.Minute))
+		s.Require().NoError(err, "limit %d", limit)
+		s.Empty(none, "limit %d", limit)
+	}
 }
 
 func (s *StoreSuite) TestARetriedInboundMessageHoldsItsThreadUntilItsNextAttempt() {

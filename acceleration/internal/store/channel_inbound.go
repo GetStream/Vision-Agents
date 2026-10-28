@@ -173,6 +173,9 @@ RETURNING cti.*`
 // with a pause in it, with ClaimChannelInbound's arguments.
 func (s *Store) claimChannelInbound(ctx context.Context, query string, now time.Time, limit int, leaseUntil time.Time) ([]ChannelInbound, error) {
 	var claimed []ChannelInbound
+	if limit < 1 {
+		return claimed, nil
+	}
 	if err := s.db.NewRaw(query, now.UTC(), limit, leaseUntil.UTC()).Scan(ctx, &claimed); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim channel inbound: %w", err))
 	}
