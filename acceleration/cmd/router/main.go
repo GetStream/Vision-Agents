@@ -1474,7 +1474,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}()
 
 	handler := server.Handler()
-	public, err := listen(settings.Addr, settings.ListenFD)
+	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
 	if err != nil {
 		return err
 	}
@@ -1503,8 +1503,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
-		settings.ListenFD != 0, serve, logger)
+	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr,
+		settings.CodeSandbox.ProxyListenFD, settings.CodeSandbox.ProxyPublicURL, settings.ListenFD != 0, serve, logger)
 	if err != nil {
 		return err
 	}
@@ -1535,9 +1535,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 }
 
-// listen opens the public listener: the socket a supervisor handed down when there is one,
-// so the process before this one and this one take connections from the same queue.
-func listen(address string, fd int) (net.Listener, error) {
+// listen opens a listener: the socket a supervisor handed down when there is one, so the
+// process before this one and this one take connections from the same queue. setting names
+// fd in the error.
+func listen(address string, fd int, setting string) (net.Listener, error) {
 	if fd == 0 {
 		return net.Listen("tcp", address)
 	}
@@ -1545,7 +1546,7 @@ func listen(address string, fd int) (net.Listener, error) {
 	defer inherited.Close()
 	listener, err := net.FileListener(inherited)
 	if err != nil {
-		return nil, fmt.Errorf("could not serve on the inherited socket %d (listen_fd): %w", fd, err)
+		return nil, fmt.Errorf("could not serve on the inherited socket %d (%s): %w", fd, setting, err)
 	}
 	return listener, nil
 }
@@ -1566,7 +1567,8 @@ type stopping struct {
 	handOverMetrics func()
 	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
 	// so the router taking over on the same address serves the sandboxes; the tunnels already
-	// open stay until the process ends. Without a drain the caller stops it at exit. It does nothing outside an overlap deploy.
+	// open stay until the process ends. Without a drain the caller stops it at exit. It does
+	// nothing without an overlap deploy, unless proxy_listen_fd is set.
 	handOverProxy func()
 	drain         time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
