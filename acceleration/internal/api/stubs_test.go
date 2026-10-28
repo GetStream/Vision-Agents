@@ -135,8 +135,10 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
 	)
-	// Where a socket that names no target goes.
-	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
+	// Where a socket that names no target goes. It pins the stub as router.yaml pins its
+	// model: the vision model speaks English too, and left to the ranking the default would
+	// be whichever of the two ranks first on the health every suite records in Redis.
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, Prefer: "stub/stub-model"}
 	return config
 }
 
