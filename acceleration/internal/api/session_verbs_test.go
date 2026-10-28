@@ -64,7 +64,7 @@ func (s *SessionVerbsSuite) TestChangingASessionsModelsLeavesEveryOtherSessionOn
 	s.Equal("vision/vision-model", value(changed.Llm))
 	s.Equal("ada", value(changed.Voice))
 	s.Equal("vision/vision-model", value(s.serverClient.getSession(opened.Id).Llm))
-	s.NotEqual("vision/vision-model", value(s.serverClient.getSession(untouched.Id).Llm),
+	s.Equal("stub/stub-model", value(s.serverClient.getSession(untouched.Id).Llm),
 		"only the session asked about changes")
 }
 
