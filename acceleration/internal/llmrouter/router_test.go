@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -520,9 +521,27 @@ func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
 	timing := <-timings
 	s.EqualValues(100_000, timing.InputTokens, "the whole prompt, cached and written parts included")
 	s.EqualValues(90_000, timing.CachedInputTokens)
-	// $4/M for 1k fresh, $0.20/M for 90k read, $5/M for 9k written, $20/M for 10 out, priced
-	// at the vendor list's rates times the factor.
-	s.EqualValues((4_000+18_000+45_000+200)*pricing.PriceFactorBps/10_000, timing.CostMicros)
+	// 1k fresh, 90k read, 9k written and 10 out, each at the rate of the list the router prices
+	// with (vendor.json's), times the factor, so a price change there does not break the test.
+	list, err := routing.Prices(config, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	entry, ok := list.Entry(pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5"})
+	s.Require().True(ok, "the list prices claude-opus-5-5")
+	var micros float64
+	for _, used := range []struct {
+		meter  pricing.Meter
+		tokens int64
+	}{
+		{pricing.InputTokens, 1_000},
+		{pricing.CachedInputTokens, 90_000},
+		{pricing.CacheWriteInputTokens, 9_000},
+		{pricing.OutputTokens, 10},
+	} {
+		rate := entry.Rates[used.meter]
+		s.Require().Positive(rate.Per, used.meter)
+		micros += float64(used.tokens) * rate.USD * 1e6 / float64(rate.Per)
+	}
+	s.Equal(int64(math.Round(micros*pricing.PriceFactorBps/10_000)), timing.CostMicros)
 }
 
 func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
