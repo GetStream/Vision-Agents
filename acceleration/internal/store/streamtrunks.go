@@ -167,6 +167,7 @@ func (t *TrunkGroupTx) ClearLine(e164 string) error {
 		Set("stream_trunk_id = NULL").
 		Set("stream_route_id = NULL").
 		Set("attached_at = NULL").
+		Set("config_id = NULL").
 		Set("bridge_uri = NULL").
 		Set("bridge_username = NULL").
 		Set("bridge_password_sealed = NULL").

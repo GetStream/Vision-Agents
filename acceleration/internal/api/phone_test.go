@@ -745,3 +745,22 @@ func (s *PhoneSuite) TestReattachingANumberKeepsItsAgent() {
 	s.Require().NotNil(listed.AgentConfigId)
 	s.Equal(config, *listed.AgentConfigId)
 }
+
+func (s *PhoneSuite) TestClearingANumbersLineRemovesItsAgent() {
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	group := store.TrunkGroup{CustomerID: s.customerID(), Vendor: "bics"}
+	s.Require().NoError(s.store.InTrunkGroup(ctx, group, func(_ context.Context, tx *store.TrunkGroupTx) error {
+		return tx.ClearLine(number)
+	}))
+
+	answering, err := s.store.NumbersAnsweredBy(ctx, s.customerID(), config)
+	s.Require().NoError(err)
+	s.Empty(answering)
+	s.Nil(s.listedNumber().AgentConfigId)
+}
