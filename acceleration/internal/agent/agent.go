@@ -1103,7 +1103,7 @@ func (a *Agent) sayFor(text, purpose string) error {
 			a.saying = ""
 		}
 		a.mu.Unlock()
-		a.turns.interrupt(turnID)
+		a.interrupted(turnID, stt.Participant{}, interruption{cause: causeVoiceRefused})
 		a.emitter.Send(Interrupted{TurnID: turnID})
 		return err
 	}
@@ -1168,7 +1168,7 @@ func (a *Agent) Interrupt() {
 	a.toolReply = false
 	a.mu.Unlock()
 	a.abandon(turnID)
-	a.interrupt(participant)
+	a.interrupt(participant, interruption{cause: causeAPI})
 }
 
 // Events carries what happened in the conversation. It is closed by Close.
@@ -1697,14 +1697,14 @@ func (a *Agent) perform(action Action) {
 
 	case ActInterrupt:
 		if action.Unheard {
-			a.dropUnheard(action.Participant, action.TurnID)
+			a.dropUnheard(action.Participant, action.TurnID, action.Interruption)
 			return
 		}
 		// Work the interrupted reply handed over goes on: talking over the agent is not
 		// taking back what was asked, and the model drops it when the caller did.
 		a.dropSpeculations()
 		a.stopTools()
-		a.interrupt(action.Participant)
+		a.interrupt(action.Participant, action.Interruption)
 
 	case ActShorten:
 		a.shorten()
@@ -2966,7 +2966,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
-				"interrupted", typed.Interrupted,
+				// The voice stopping its synthesis early, not the turn: a reply abandoned after
+				// its last sentence was synthesised is turn_abandoned with this false.
+				"synthesis_cut", typed.Interrupted,
+				"turn_abandoned", a.abandonedTurn(turnOf(typed.SynthesisID)),
 			}, queue.finished(typed.SynthesisID)...)...)
 			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
@@ -3412,7 +3415,7 @@ func missedNote(said string) string {
 
 // dropUnheard abandons the reply to a caller's turn the same caller said more over, while
 // none of it has gone out: after that it is them talking over the agent, the controller's call.
-func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
+func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why interruption) {
 	sent := a.turns.sentToVoice(turnID)
 	var stale unheardReply
 	if !a.abandonReply(participant, func(speaking string) bool {
@@ -3422,7 +3425,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 		stale, a.unheard = a.unheard, unheardReply{}
 		a.missed = stale
 		return true
-	}) {
+	}, why) {
 		return
 	}
 	// The caller took the floor as surely as by talking over the reply, so its tools stop the same way.
@@ -3434,13 +3437,14 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.
-func (a *Agent) interrupt(participant stt.Participant) {
-	a.abandonReply(participant, nil)
+func (a *Agent) interrupt(participant stt.Participant, why interruption) {
+	a.abandonReply(participant, nil, why)
 }
 
 // abandonReply abandons the reply being spoken, and reports whether there was one. still,
-// when set, is asked under the lock whether it is still the reply to abandon.
-func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool) bool {
+// when set, is asked under the lock whether it is still the reply to abandon. why is
+// reported with it.
+func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool, why interruption) bool {
 	a.mu.Lock()
 	turnID := a.speakingTurn
 	if turnID == "" {
@@ -3460,6 +3464,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.interrupting = true
 	a.speakingTurn = ""
 	a.generating = false
+	why.reply = a.saying
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
@@ -3501,7 +3506,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		}
 	}
 
-	a.turns.interrupt(turnID)
+	a.interrupted(turnID, participant, why)
 	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
 	a.interrupting = false

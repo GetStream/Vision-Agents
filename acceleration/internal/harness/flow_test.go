@@ -351,6 +351,7 @@ func (s *FlowSuite) TestSlowOverlapYieldsBeforeTheOriginalReplyFinishes() {
 	s.Equal("over-slow", decision.CandidateID)
 	s.Equal(Wait, decision.Disposition)
 	s.Equal(Stop, decision.Floor)
+	s.Equal(Deadline, decision.Ruler, "no model ruled on it")
 	s.NoError(decision.Error())
 }
 
@@ -369,6 +370,7 @@ func (s *FlowSuite) TestSlowOverlapStreamAlsoYieldsTheFloor() {
 	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, 2*time.Second, 5*time.Millisecond)
 	s.Equal(Stop, s.decisions()[0].Floor)
 	s.Equal(Wait, s.decisions()[0].Disposition)
+	s.Equal(Deadline, s.decisions()[0].Ruler, "no model ruled on it")
 	s.NoError(s.decisions()[0].Error())
 }
 

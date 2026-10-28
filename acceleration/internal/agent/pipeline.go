@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -730,7 +731,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		if current != nil && outstanding {
 			current.Release(cut)
 		}
-		a.turns.interrupt(cut)
+		a.interrupted(cut, stt.Participant{}, interruption{cause: causeVoiceLost})
 		a.emitter.Send(cutShort.cut(Interrupted{TurnID: cut}))
 	}
 	if !replace {

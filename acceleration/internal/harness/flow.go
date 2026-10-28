@@ -529,7 +529,8 @@ func (f *flow) yieldExpiredOverlap(asked *candidate) bool {
 	if !asked.turn.Unfinished || !asked.turn.Speaking || !errors.Is(asked.ctx.Err(), context.DeadlineExceeded) {
 		return false
 	}
-	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop, TookMs: millis(time.Since(asked.askedAt))})
+	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop,
+		TookMs: millis(time.Since(asked.askedAt)), Ruler: Deadline})
 	return true
 }
 

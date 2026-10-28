@@ -210,7 +210,8 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 				a.dropSpeech()
 			}
 			if !abandoned {
-				a.turns.interrupt(complete.ResponseID)
+				// The model heard the caller itself: the router has no words of theirs to report.
+				a.interrupted(complete.ResponseID, participant, interruption{cause: causeProvider})
 				a.emitter.Send(cut.cut(Interrupted{TurnID: complete.ResponseID, Participant: participant}))
 			}
 		}
@@ -627,7 +628,7 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 			if heardMs, ok := heard.heardBy(time.Now()); ok {
 				cut.SynthesisID, cut.HeardMs, cut.Message = complete.ResponseID, heardMs, heard.span()
 			}
-			a.turns.interrupt(complete.ResponseID)
+			a.interrupted(complete.ResponseID, participant, interruption{cause: causeProvider})
 			a.emitter.Send(cut)
 		}
 	} else {
