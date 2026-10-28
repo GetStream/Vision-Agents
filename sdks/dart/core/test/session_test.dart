@@ -370,6 +370,24 @@ void main() {
       });
     });
 
+    test('declining a sign-in says only that the call is not allowed', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      // As the router's ChatLoginsSuite declines a call waiting for its login.
+      chat
+        ..declineLogin('call-linear')
+        ..say('still there?');
+
+      expect(await socket.next(), {
+        'type': 'tool_approval',
+        'tool_call_id': 'call-linear',
+        'allowed': false,
+      });
+      expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+      await chat.close();
+    });
+
     test('two readers of events each get every event', () async {
       final chat = await agents.chat();
       final socket = await router.socket();

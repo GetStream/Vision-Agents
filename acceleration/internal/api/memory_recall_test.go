@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -21,6 +22,19 @@ const extractionGrace = time.Minute
 // recallEvery is how often a test waiting on mem0 opens another session to ask.
 const recallEvery = 3 * time.Second
 
+// extractionBound is how long mem0 may take to finish an exchange it was handed. It starts an
+// exchange its worker lost again ten minutes after queueing it: of 775 adds read back from
+// mem0's events on 2026-10-28, four started 10m00s late and were done within 10m10s (AI-2162).
+const extractionBound = 12 * time.Minute
+
+// extractionBudget is how long the suite may spend in all its waits for mem0 together. A
+// package that runs past go test -timeout 30m (integration.yml) panics every suite in it, and
+// the rest of the package takes about three minutes, so the waits end well before that.
+const extractionBudget = 22 * time.Minute
+
+// mem0Event is where mem0 says what became of an exchange it queued, by the event's id.
+const mem0Event = "https://api.mem0.ai/v1/event/"
+
 // MemorySuite runs the router against mem0 rather than a stand-in: whose memories a session
 // reads is decided by the filters mem0 applies, so a stand-in would only prove itself. The
 // model is the echo stub, so what a session recalled is what it answers with.
@@ -33,6 +47,14 @@ type MemorySuite struct {
 	// known is a user of the standard app who told the agent they are allergic to peanuts,
 	// under the label company=acme. Tests read what is known about them and add nothing.
 	known *testClient
+	// mem0Log is the mem0 client's log, which names the event each exchange was queued as.
+	mem0Log *lockedLog
+	// mem0 is the client sessions remember through, whose HTTP client asks mem0 about events.
+	mem0 *mem0.Store
+	// told are the sessions told something since a test last waited for mem0 to learn it.
+	told []string
+	// extractionBy is when every wait for mem0 must be over, whichever test makes it.
+	extractionBy time.Time
 }
 
 func TestMemorySuite(t *testing.T) {
@@ -46,9 +68,14 @@ func (s *MemorySuite) SetupSuite() {
 	if os.Getenv("MEM0_API_KEY") == "" {
 		s.T().Skip("MEM0_API_KEY must be set")
 	}
-	memories, err := mem0.New(mem0.Options{})
+	s.extractionBy = time.Now().Add(extractionBudget)
+	s.mem0Log = &lockedLog{}
+	memories, err := mem0.New(mem0.Options{
+		Logger: slog.New(slog.NewJSONHandler(s.mem0Log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
 	s.Require().NoError(err)
 	s.memoryStore = memories
+	s.mem0 = memories
 	s.RouterSuite.SetupSuite()
 
 	s.useFixture("standard")
@@ -58,6 +85,7 @@ func (s *MemorySuite) SetupSuite() {
 }
 
 func (s *MemorySuite) SetupTest() {
+	s.told = nil
 	s.useFixture("standard")
 }
 
@@ -83,9 +111,11 @@ func (s *MemorySuite) TestNothingIsRememberedAboutAnAnonymousCaller() {
 		"an exchange without an answer is not remembered")
 	s.anonymousClient.stopSession(opened.Id)
 
-	backend := s.serverClient.actingFor(s.anonymousClient)
+	// The router hands an exchange over off the conversation's path, so it is given the
+	// grace to do it. What it hands over is in the log, whether or not mem0 is late with it.
+	handedOver := s.extraction()
 	for deadline := time.Now().Add(extractionGrace); time.Now().Before(deadline); time.Sleep(recallEvery) {
-		s.Require().NotContains(s.recalled(backend, remembering(name, nil)), "peanut")
+		s.Require().Empty(handedOver.queuedAs(opened.Id), "the router handed an anonymous caller's exchange to mem0")
 	}
 }
 
@@ -167,12 +197,14 @@ func (s *MemorySuite) tell(as *testClient, request CreateSessionRequest, said st
 	opened := as.createSession(request)
 	s.Require().NotEmpty(s.ask(as, opened, said), "an exchange without an answer is not remembered")
 	as.stopSession(opened.Id)
+	s.told = append(s.told, opened.Id)
 	return opened.Id
 }
 
 // learns waits until a session opened with request knows every fact, since mem0 extracts
 // what it was told after the conversation has moved on.
 func (s *MemorySuite) learns(as *testClient, request CreateSessionRequest, facts ...string) {
+	s.extracted()
 	deadline := time.Now().Add(extractionGrace)
 	for {
 		recalled := s.recalled(as, request)
@@ -183,8 +215,26 @@ func (s *MemorySuite) learns(as *testClient, request CreateSessionRequest, facts
 		if !missing {
 			return
 		}
-		s.Require().True(time.Now().Before(deadline), "the agent never learned %v, it knew %q", facts, recalled)
+		s.Require().True(time.Now().Before(deadline),
+			"the agent never learned %v, though mem0 had extracted it; it knew %q", facts, recalled)
 		time.Sleep(recallEvery)
+	}
+}
+
+// extracted waits until mem0 has finished every exchange told since the last wait, within what
+// is left of the suite's extraction time. It forgets those sessions first, so a session that
+// failed its wait is not waited for again by the next test, whose failure it would blame.
+func (s *MemorySuite) extracted() {
+	told := s.told
+	s.told = nil
+	s.Require().NoError(s.extraction().until(told, s.extractionBy))
+}
+
+// extraction is the wait for mem0, over the mem0 client's log.
+func (s *MemorySuite) extraction() mem0Extraction {
+	return mem0Extraction{
+		client: s.mem0.Client(), baseURL: mem0Event, apiKey: os.Getenv("MEM0_API_KEY"),
+		log: s.mem0Log.String, grace: extractionGrace, bound: extractionBound, every: recallEvery,
 	}
 }
 
