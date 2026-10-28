@@ -357,8 +357,10 @@ type auditRecord struct {
 //
 // A failure is logged rather than returned, the way recordUser's is: the change the caller
 // asked for has already been made, and refusing to report a write that happened would be
-// the wrong trade. A record with no changes writes nothing: a save that moved nothing is
-// not a change, and a log full of them is a log nobody reads.
+// the wrong trade. For the same reason the row is written detached: nothing writes a row lost
+// to a caller who hung up once the change was made (AI-2163). A record with no changes writes
+// nothing: a save that moved nothing is not a change, and a log full of them is a log nobody
+// reads.
 func (s *Server) audit(ctx context.Context, record auditRecord) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
@@ -384,7 +386,7 @@ func (s *Server) auditAs(ctx context.Context, customerID string, record auditRec
 		Source: actor.Source, ActorID: actor.ID, ActorName: actor.Name,
 		RequestID: RequestIDFrom(ctx), Changes: record.Changes,
 	}
-	if err := s.store.RecordAuditEntry(ctx, &entry); err != nil {
+	if err := s.store.RecordAuditEntry(context.WithoutCancel(ctx), &entry); err != nil {
 		s.logger.Error("could not record a configuration change",
 			"customer", customerID, "resource", record.ResourceType, "id", record.ResourceID,
 			"error", err)

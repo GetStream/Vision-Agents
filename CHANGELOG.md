@@ -145,6 +145,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### A connection's audit row is kept when its caller hangs up after the change
+
+A caller that hangs up right after a connection change commits no longer loses the change's row in `GET /v1/agents/connector-audit`: the `grant_revoked` row of a delete (a connection's, a user's or a connector's), and the `grant_created` row of a consent or a credentials save. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
+
 ### A bad key a provider refuses after accepting the websocket handshake is counted as refused
 
 `router_keypool_refused_attempts_total` now counts, with `status` `invalid_key`, a key a provider accepts at the websocket handshake and refuses right after, once per connection: Gemini Live's close 1007 "API key not valid", OpenAI Realtime's and Together's `invalid_api_key` frame, AssemblyAI's Error 1008 "Invalid API key" or "API key is disabled", ElevenLabs Scribe's `auth_error`, ElevenLabs speech's `invalid_api_key` and Inworld's code 7 "API key does not exist or was deleted" or "Invalid authorization credentials". AssemblyAI's 1008 "Insufficient funds" and "No metronome account found" frames are counted with status `402`. Any other frame or close is not counted, and the key is not rested. OpenAI Realtime and Together Nemotron now report the provider's reason for refusing a session, not "expected session.created" (AI-2164).
