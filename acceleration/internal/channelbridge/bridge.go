@@ -364,7 +364,7 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		// After the claim, so a retried delivery opens nothing. A store that fails here
 		// costs the card, not the message: the claim is taken, so the provider's next
 		// delivery would be dropped.
-		episode, err := b.episode(ctx, thread, config, message)
+		episode, err := b.episode(ctx, thread, config, message, time.Time{})
 		if err != nil {
 			b.logger.Error("could not open the episode of an inbound message", "connector", message.ConnectorID,
 				"channel", thread.ChannelID, "error", err)
@@ -673,7 +673,8 @@ func startsThread(message core.ChannelMessage) bool {
 // the thread's first message opens it and the later ones find it open, so a thread has one
 // card, in the omni-channel of whoever started it. A connector with no episode source, or an
 // author the contact map cannot key, gets no card; the message is answered all the same.
-func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) (omnichannel.Opened, error) {
+// started is when an episode the message opens starts; zero is now.
+func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, started time.Time) (omnichannel.Opened, error) {
 	source, carded := episodeSources[message.ConnectorID]
 	if !carded {
 		return omnichannel.Opened{}, nil
@@ -691,6 +692,7 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		Person:        person,
 		Source:        source.source,
 		ThreadChannel: chatlog.ChannelType + ":" + thread.ChannelID,
+		StartedAt:     started,
 		StreamAppPK:   thread.StreamAppPK,
 	})
 }

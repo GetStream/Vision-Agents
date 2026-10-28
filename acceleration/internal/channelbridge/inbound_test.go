@@ -143,6 +143,25 @@ func (s *InboundSuite) TestARetryWritesTheCardOfTheEpisodeAnEarlierAttemptOpened
 	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
 }
 
+// A router whose clock is behind Postgres's opens the episode, and its write fails before the
+// card is written: the retry writes the card all the same, since the episode starts at the
+// time Postgres queued the message, whatever the router's clock says.
+func (s *InboundSuite) TestARetryWritesTheCardWhenTheRoutersClockIsBehindPostgres() {
+	thread := s.thread("slack_bot")
+	s.chat.RateLimit("/" + thread.ChannelID + "/message")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE channel_thread_inbound SET created_at = created_at + interval '1 hour' WHERE channel_id = ?", thread.ChannelID)
+	s.Require().NoError(err)
+	s.bridge(&Options{InboundRetries: []time.Duration{50 * time.Millisecond, time.Hour}})
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").Attempts == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	s.chat.LiftRateLimit("/" + thread.ChannelID + "/message")
+
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	omni, card := s.card(thread)
+	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
+}
+
 // A router opened the episode and stopped before its card was written, as its lease ran out:
 // the attempt that writes the message after it writes the card all the same.
 func (s *InboundSuite) TestACardAStoppedRouterLeftIsWrittenByTheNextAttempt() {
@@ -542,7 +561,7 @@ func (s *InboundSuite) answerWith(suffix string, status int, body string) {
 // openEpisode opens the episode of a queued message as a worker does before it writes the
 // message, and returns what Open returned.
 func (s *InboundSuite) openEpisode(thread store.ChannelThread, message store.ChannelInbound) omnichannel.Opened {
-	opened, err := s.newBridge(nil).episode(s.ctx, thread, store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}, message.Message())
+	opened, err := s.newBridge(nil).episode(s.ctx, thread, store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}, message.Message(), message.CreatedAt)
 	s.Require().NoError(err)
 	s.Require().True(opened.New)
 	return opened

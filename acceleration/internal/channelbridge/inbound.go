@@ -155,8 +155,9 @@ func (b *Bridge) prune() {
 }
 
 // attempt writes a claimed message once and records what came of it: done, due again after
-// the next wait, or given up when the waits ran out or Stream Chat refused it for good. Close does not cut it short, so a message
-// is never left half written by a router that stops; its lease covers writeTimeout.
+// the next wait, or given up when the waits ran out or Stream Chat refused it for good. Close
+// does not cut it short, so a message is never left half written by a router that stops; its
+// lease covers writeTimeout.
 func (b *Bridge) attempt(message store.ChannelInbound) {
 	writing, cancel := context.WithTimeout(context.WithoutCancel(b.ctx), writeTimeout)
 	err := b.writeQueued(writing, message)
@@ -201,16 +202,17 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	config := store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}
 	inbound := message.Message()
-	opened, err := b.episode(ctx, thread, config, inbound)
+	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
 	if err != nil {
 		return err
 	}
 	// An earlier attempt may have opened the episode and stopped before its card was written:
-	// it failed, its router stopped or its lease ran out. This Open then finds it open. An
-	// episode that started after the message was queued is one this message opened, since the
-	// worker opens it; an earlier message's episode started before, and has its card. The
-	// card's id is the episode's, so writing it again is one card.
-	if opened.Episode.ID != "" && !opened.Episode.StartedAt.Before(message.CreatedAt) {
+	// it failed, its router stopped or its lease ran out. This Open then finds it open. The
+	// worker opens a message's episode at the time the message was queued, so an episode that
+	// started then is one this message opened; an earlier message's episode started at that
+	// message's time, and has its card. Both times are Postgres's, so no two clocks are
+	// compared. The card's id is the episode's, so writing it again is one card.
+	if opened.Episode.ID != "" && opened.Episode.StartedAt.Equal(message.CreatedAt) {
 		opened.New = true
 	}
 	if err := b.writeInto(ctx, thread, config, inbound, inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)); err != nil && !alreadyWritten(err) {
