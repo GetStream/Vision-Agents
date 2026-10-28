@@ -118,7 +118,7 @@ func (s *RouterSuite) toldTheModel(needle string) {
 // message's turn in the thread is over, so the test starts with the thread free.
 func (s *telnyxLine) smsTurn(person, text string) string {
 	channel := ""
-	before, replies, sent := 0, 0, len(s.telnyx.sent())
+	before, replies, sent := 0, 0, len(s.telnyx().sent())
 	if s.hasThread(person) {
 		channel = s.threadChannel(person)
 		before, replies = len(s.chat.Stored(channel)), s.repliesIn(channel)
@@ -222,7 +222,7 @@ func (s *TelnyxChannelSuite) TestSomeoneElseWritingInAPersonsThreadIsNotOfferedT
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
 
 	s.planTool("list_scheduled_tasks", `{}`)
-	sent, replies := len(s.telnyx.sent()), s.repliesIn(channel)
+	sent, replies := len(s.telnyx().sent()), s.repliesIn(channel)
 	message := maps.Clone(s.chat.Delivered(channel)[0])
 	message["id"] = store.NewID()
 	message["text"] = "what tasks have I got"
