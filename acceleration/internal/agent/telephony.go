@@ -470,12 +470,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
-	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
-		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
-	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
-		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
