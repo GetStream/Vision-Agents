@@ -318,6 +318,23 @@ func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIs
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
+// A reply that waited and is put back after its mention failed to queue is put back off the
+// request, so a provider that hung up does not lose it, and only the reply is put back.
+func (s *EventForwardingSuite) TestAReplyThatWaitedIsPutBackWhenItsMentionFailsToQueueAfterTheProviderHungUp() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.trigger("failing_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'",
+		"PERFORM pg_sleep(1); RAISE EXCEPTION 'synthetic queue failure';")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	var waiting int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_waiting WHERE customer_id = ?", s.customerID()).Scan(&waiting))
+	s.Equal(1, waiting, "the reply waits again, and only the reply")
+}
+
 // A queue insert that hangs is cut short by its bound, and the claim is released on a bound of
 // its own, so the provider gets its error in time and its retry queues the message.
 func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNotClaimed() {
@@ -386,8 +403,10 @@ func (s *EventForwardingSuite) inboundClaims() int {
 // customer, so no other test's rows meet it.
 func (s *EventForwardingSuite) trigger(name, table, op, when, body string) (drop func()) {
 	db := s.store.DB()
-	_, err := db.ExecContext(context.Background(), "CREATE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
+	_, err := db.ExecContext(context.Background(), "CREATE OR REPLACE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
 		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
 	s.Require().NoError(err)
 	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
 	s.Require().NoError(err)
