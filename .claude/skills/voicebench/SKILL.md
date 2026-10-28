@@ -10,6 +10,9 @@ them: world state, tool calls, entities, a judge, turn-taking and reply time. Re
 `benchmark/README.md` for the method; this skill is how to run it on a laptop without the
 failures every first run hits.
 
+Follow the [benchmark rules](../../../AGENTS.md#benchmark-rules) before tuning an agent,
+changing the grader or claiming a win.
+
 Work from `benchmark/` on a checkout of `accelerate`. Runs cost money (ElevenLabs, Deepgram,
 OpenAI, Gemma): start small and say how much you are about to run.
 
