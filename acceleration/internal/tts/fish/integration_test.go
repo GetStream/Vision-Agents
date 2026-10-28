@@ -46,3 +46,16 @@ func (s *FishIntegrationSuite) TestSynthesizesAtTheRequestedSampleRate() {
 	s.Greater(complete.AudioDurationMs, 2_000.0)
 	s.Less(complete.AudioDurationMs, 20_000.0)
 }
+
+func (s *FishIntegrationSuite) TestS21ProSpeaks() {
+	provider, err := New(Options{Model: "s2.1-pro"})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	complete, chunks := s.Say(provider, tts.Request{Text: ttssuite.Sentence, Final: true})
+
+	s.Require().NotEmpty(chunks)
+	s.Greater(complete.AudioDurationMs, 2_000.0)
+	s.Less(complete.AudioDurationMs, 20_000.0)
+}

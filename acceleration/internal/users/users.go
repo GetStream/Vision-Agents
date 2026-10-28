@@ -219,8 +219,8 @@ func (r *Recorder) emailLock(customerID, userID string) *sync.Mutex {
 }
 
 // Forget drops a user from the caches, for one whose row has changed under them. Deleting
-// the key is what tells the other replicas; this process's own entry goes directly,
-// because a process is not sent an invalidation for its own delete.
+// the key is what tells the other replicas and, once Redis sends it, this process's own
+// copy too; this process's entry goes directly as well, so it does not wait for that.
 func (r *Recorder) Forget(ctx context.Context, customerID, userID string) {
 	r.seen.Remove(customerID, userID)
 	if r.redis == nil {

@@ -23,12 +23,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
-// sharing is how fast the reservation tests share holds: a flush every 10 ms, the other
-// routers' holds read every 50 ms, and billable work refused once a hold waits 200 ms unshared.
+// sharing is how fast the reservation tests share holds: a flush every 10 ms and the other
+// routers' holds read every 50 ms. Billable work is refused once a hold waits a minute unshared,
+// so a flush a loaded machine holds up refuses nothing; a test of that refusal sets its own lag.
 func sharing(redis rueidis.Client) func(*Settings) {
 	return func(settings *Settings) {
 		settings.Holds = redis
-		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, 200*time.Millisecond
+		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, time.Minute
 	}
 }
 
@@ -221,16 +222,23 @@ func (s *PolicySuite) TestTwoRoutersSeeEachOthersHolds() {
 	s.usage().Credit(s.T(), s.org, 1_000_000)
 	a, b := s.sharer(redisA), s.sharer(redisB)
 
-	s.Require().NoError(a.Reserve(s.owner(), newID(), 900_000, time.Minute))
-	reserved := time.Now()
-
-	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 900_000 }, time.Second, 5*time.Millisecond,
+	s.Require().NoError(a.Reserve(s.owner(), newID(), 500_000, time.Minute))
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 500_000 }, 2*defaultHoldRefresh, 5*time.Millisecond,
 		"the other router reads it")
-	s.Less(time.Since(reserved), 500*time.Millisecond, "within a flush and a refresh")
+	// Each hold after the first is made once the other router read the one before, so each is
+	// read by a refresh of its own: four of them take four refreshes at the default pace.
+	first := time.Now()
+	for held := int64(600_000); held <= 900_000; held += 100_000 {
+		s.Require().NoError(a.Reserve(s.owner(), newID(), 100_000, time.Minute))
+		s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == held }, 2*defaultHoldRefresh, 5*time.Millisecond,
+			"the other router reads it")
+	}
+	s.Less(time.Since(first), 3*defaultHoldRefresh, "four refreshes at this test's pace, not at the default one")
 	s.NoError(b.Reserve(s.owner(), newID(), 200_000, time.Minute), "$0.10 is left, so the next unit may start")
 	s.ErrorIs(b.Reserve(s.owner(), newID(), 200_000, time.Minute), ErrNoCredits)
 	s.EqualValues(200_000, pending(b.Enforcer, s.org), "a refusal holds nothing")
-	s.Zero(remoteHeld(a.Enforcer, s.org), "a router never counts its own holds twice")
+	s.eventually(func() bool { return remoteHeld(a.Enforcer, s.org) == 200_000 }, time.Second, 5*time.Millisecond,
+		"a router counts the other's hold, and never its own twice")
 	s.ErrorIs(s.admit(b.Enforcer, s.app).Spend, ErrNoCredits, "an admission counts them too")
 }
 
@@ -271,7 +279,9 @@ func (s *PolicySuite) TestAHoldIsKeptUntilTheStandingHasTheRow() {
 	_, redisA := s.redis()
 	_, redisB := s.redis()
 	s.usage().Credit(s.T(), s.org, 3_000_000)
-	a, b := s.sharer(redisA), s.sharer(redisB)
+	// The settled hold is let go of by its ack, not by PendingTTL however long the test takes to
+	// send it.
+	a, b := s.sharer(redisA, func(settings *Settings) { settings.PendingTTL = time.Minute }), s.sharer(redisB)
 	var over atomic.Int64
 	sampling, stop := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -313,11 +323,14 @@ func (s *PolicySuite) TestAnUnsettledHoldExpires() {
 	_, redisB := s.redis()
 	s.usage().Credit(s.T(), s.org, 1_000_000)
 	a, b := s.sharer(redisA), s.sharer(redisB)
+	// Long enough for the other router to read the hold first, however long a loaded machine
+	// holds up the flush and the refresh.
+	const ttl = time.Second
 
-	s.Require().NoError(a.Reserve(s.owner(), newID(), 700_000, 150*time.Millisecond))
-	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 700_000 }, time.Second, 5*time.Millisecond)
+	s.Require().NoError(a.Reserve(s.owner(), newID(), 700_000, ttl))
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 700_000 }, ttl, 5*time.Millisecond)
 
-	s.eventually(func() bool { return pending(a.Enforcer, s.org) == 0 }, 2*time.Second, 5*time.Millisecond,
+	s.eventually(func() bool { return pending(a.Enforcer, s.org) == 0 }, 2*ttl, 5*time.Millisecond,
 		"the work was never recorded, so its reservation goes")
 	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 0 }, time.Second, 5*time.Millisecond,
 		"and Redis drops it at the same moment")
@@ -328,15 +341,18 @@ func (s *PolicySuite) TestASettledHoldWithNoAckExpires() {
 	_, redisA := s.redis()
 	_, redisB := s.redis()
 	s.usage().Credit(s.T(), s.org, 1_000_000)
-	a, b := s.sharer(redisA), s.sharer(redisB)
+	// Long enough for the other router to read the hold first, however long a loaded machine
+	// holds up the flush and the refresh.
+	const ttl = time.Second
+	a, b := s.sharer(redisA, func(settings *Settings) { settings.PendingTTL = ttl }), s.sharer(redisB)
 
 	settled := time.Now()
 	a.Settle(s.owner(), newID(), 700_000)
-	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 700_000 }, time.Second, 5*time.Millisecond)
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 700_000 }, ttl, 5*time.Millisecond)
 
-	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 0 }, 2*time.Second, 5*time.Millisecond,
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 0 }, 2*ttl, 5*time.Millisecond,
 		"a row another router's sweeper shipped is never acked here")
-	s.GreaterOrEqual(time.Since(settled), quick.PendingTTL, "after PendingTTL")
+	s.GreaterOrEqual(time.Since(settled), ttl, "after PendingTTL")
 	s.eventually(func() bool { return pending(a.Enforcer, s.org) == 0 }, 2*time.Second, 5*time.Millisecond)
 }
 
@@ -363,7 +379,7 @@ func (s *PolicySuite) TestRedisLosingItsDataChangesNoBalance() {
 func (s *PolicySuite) TestRedisDownAdmitsFromMemoryThenRefuses() {
 	proxy, redis := s.redis()
 	s.usage().Credit(s.T(), s.org, 100_000_000)
-	enforcer := s.sharer(redis)
+	enforcer := s.sharer(redis, func(settings *Settings) { settings.FlushMaxLag = 200 * time.Millisecond })
 	proxy.stop()
 	stopped := time.Now()
 
@@ -576,18 +592,30 @@ func (s *PolicySuite) TestTheScriptExpiresHoldsByRedisClock() {
 		return values
 	}
 
-	exec("a", "u1", "5:150")
+	// redisNow is Redis's clock, in milliseconds.
+	redisNow := func() int64 {
+		clock, err := client.Do(s.ctx, client.B().Time().Build()).AsStrSlice()
+		s.Require().NoError(err)
+		seconds, _ := strconv.ParseInt(clock[0], 10, 64)
+		micros, _ := strconv.ParseInt(clock[1], 10, 64)
+		return seconds*1000 + micros/1000
+	}
+	// A second, so the other router's count lands before the expiry however slow the machine.
+	const ttl = 1000
+
+	before := redisNow()
+	exec("a", "u1", "5:"+strconv.Itoa(ttl))
+	after := redisNow()
 	stored, err := client.Do(s.ctx, client.B().Hget().Key(key).Field("u1:a").Build()).ToString()
 	s.Require().NoError(err)
-	clock, err := client.Do(s.ctx, client.B().Time().Build()).AsStrSlice()
-	s.Require().NoError(err)
-	seconds, _ := strconv.ParseInt(clock[0], 10, 64)
-	micros, _ := strconv.ParseInt(clock[1], 10, 64)
 	expires, _ := strconv.ParseInt(strings.SplitN(stored, ":", 2)[1], 10, 64)
-	s.InDelta(seconds*1000+micros/1000+150, expires, 100, "the expiry is Redis's now plus the hold's ttl")
+	s.GreaterOrEqual(expires, before+ttl, "the expiry is Redis's now plus the hold's ttl")
+	s.LessOrEqual(expires, after+ttl)
 
 	s.Equal([]int64{5, 1}, exec("b"), "another router counts it")
-	time.Sleep(200 * time.Millisecond)
+	for redisNow() <= expires {
+		time.Sleep(10 * time.Millisecond)
+	}
 	s.Equal([]int64{0, 0}, exec("b"), "gone at its expiry, by Redis's clock")
 }
 
@@ -606,17 +634,35 @@ func (s *PolicySuite) TestAFlushOfMoreKeysThanAChunkLandsWhole() {
 
 	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == int64(users)*1_000 }, 2*time.Second, 5*time.Millisecond,
 		"every hold reaches the organization's key, whatever chunk carried it")
-	a.money.mu.Lock()
-	unflushed := len(a.money.dirty)
-	a.money.mu.Unlock()
-	s.Zero(unflushed, "and each of its users' keys took it")
+	// The other router may read the organization's key before the pass that wrote it has landed
+	// its other chunks, so what is still to write is waited for, then read from Redis.
+	s.eventually(func() bool {
+		a.money.mu.Lock()
+		defer a.money.mu.Unlock()
+		return len(a.money.dirty) == 0
+	}, 2*time.Second, 5*time.Millisecond, "every hold is written")
+	direct := s.direct()
+	lengths := make(rueidis.Commands, 0, users)
+	for i := range users {
+		user := usage.SubjectRef{OrganizationID: s.org, Subject: usage.SubjectUser, AppID: s.app, UserID: "user-" + strconv.Itoa(i)}
+		lengths = append(lengths, direct.B().Hlen().Key(holdKey(user.Key(usage.CounterPrefix))).Build())
+	}
+	took := 0
+	for _, length := range direct.DoMulti(s.ctx, lengths...) {
+		if held, err := length.AsInt64(); err == nil && held == 1 {
+			took++
+		}
+	}
+	s.Equal(users, took, "and each of its users' keys took it")
 }
 
 func (s *PolicySuite) TestAPassOfManyChunksGivesUpByItsDeadlineWhenRedisHangs() {
 	proxy, redis := s.redis()
 	s.usage().Credit(s.T(), s.org, 100_000_000)
 	enforcer := s.sharer(redis, func(settings *Settings) { settings.FlushMaxLag = time.Minute })
-	for i := range 12 * flushChunk {
+	// Five rounds of flushChunks chunks, each of which would cost a flushTimeout with no deadline
+	// of the pass, against the pass's deadline of two: a loaded machine has seconds to spare.
+	for i := range 20 * flushChunk {
 		owner := s.owner()
 		owner.UserID = "user-" + strconv.Itoa(i)
 		s.Require().NoError(enforcer.Reserve(owner, newID(), 1, time.Minute))
@@ -631,7 +677,7 @@ func (s *PolicySuite) TestAPassOfManyChunksGivesUpByItsDeadlineWhenRedisHangs() 
 	started := time.Now()
 	enforcer.money.flushPass(s.ctx)
 
-	s.Less(time.Since(started), flushPassTimeout+time.Second, "twelve chunks of a hanging Redis cost one deadline, not twelve timeouts")
+	s.Less(time.Since(started), flushPassTimeout+2*flushTimeout, "twenty chunks of a hanging Redis cost one deadline, not a timeout a round")
 	enforcer.money.mu.Lock()
 	unflushed := len(enforcer.money.dirty)
 	enforcer.money.mu.Unlock()

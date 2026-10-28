@@ -2591,6 +2591,13 @@ func (a *Agent) handle(event llm.Event) {
 		}
 
 	case llm.ResponseFailed:
+		// A reply the agent gave up on is over already, and its stream breaking as it was cut
+		// off is part of the cut. Reported, it would end as failed whatever the conversation
+		// is on, before the interruption ends it as cancelled.
+		if a.abandonedTurn(typed.ResponseID) {
+			a.logger.Debug("a reply failed after it was abandoned", "turn", typed.ResponseID, "error", typed.Err)
+			return
+		}
 		a.fail(typed.Err, "llm")
 
 	case llm.ResponseCompleted:

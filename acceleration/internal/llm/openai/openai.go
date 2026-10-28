@@ -414,18 +414,21 @@ func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
 	}
 }
 
-// failure is an error OpenAI named inside a stream, kept with its code. The codes that name
-// OpenAI's own side are transient: the server failing or overloaded, the request being rate
-// limited, or a lookup it ran on the request's behalf timing out. Every other code it lists
-// (an invalid prompt or image, a policy, a residency mismatch) is the request's own.
+// failure is an error OpenAI sent inside a stream, with the code it named, if any. The codes
+// that name OpenAI's own side are transient: the server failing or overloaded, the request
+// being rate limited, or a lookup it ran on the request's behalf timing out. Every other code
+// it lists (an invalid prompt or image, a policy, a residency mismatch) is the request's own.
 func failure(code, message string) error {
+	if code == "" {
+		return fmt.Errorf("openai: %s", message)
+	}
 	transient := false
 	switch responses.ResponseErrorCode(code) {
 	case responses.ResponseErrorCodeServerError, responses.ResponseErrorCodeRateLimitExceeded,
 		responses.ResponseErrorCodeVectorStoreTimeout, serverOverloaded, slowDown:
 		transient = true
 	}
-	return &llm.ProviderFailure{Err: fmt.Errorf("openai: %s", message), Code: code, Transient: transient}
+	return &llm.ProviderFailure{Err: fmt.Errorf("openai: %s: %s", code, message), Transient: transient}
 }
 
 // serverOverloaded and slowDown are the codes OpenAI documents for a model temporarily

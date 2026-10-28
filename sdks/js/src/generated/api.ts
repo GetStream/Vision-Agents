@@ -6606,7 +6606,7 @@ export type components = {
             readonly passages: number;
         };
         readonly IngestKnowledgeRequest: {
-            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500. */
+            /** @description Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it. */
             readonly chunk_size?: number;
             readonly documents: readonly components["schemas"]["KnowledgeDocument"][];
             /**
@@ -8522,7 +8522,7 @@ export type components = {
             readonly filter?: {
                 readonly [key: string]: string;
             };
-            /** @description Who the memories belong to. Empty means the customer. */
+            /** @description Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users. */
             readonly user_id?: string;
         };
         /**

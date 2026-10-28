@@ -222,6 +222,49 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+func (s *ConfigSuite) TestKnowledgeIsCutByTheIngestLimitsUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(500, config.Knowledge.MinChunk)
+	s.Equal(128, config.Knowledge.MaxHeading)
+
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "800")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "64")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800, config.Knowledge.MinChunk)
+	s.Equal(64, config.Knowledge.MaxHeading)
+}
+
+func (s *ConfigSuite) TestAHeadingLimitNotUnderTheMinimumChunkIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "500")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "500")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "knowledge.max_heading")
+	s.ErrorContains(err, "knowledge.min_chunk")
+}
+
+func (s *ConfigSuite) TestANegativeKnowledgeLimitIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "-1")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "knowledge.max_heading")
+}
+
+func (s *ConfigSuite) TestKnowledgeLimitsOfZeroAreAccepted() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "0")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "0")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Zero(config.Knowledge.MinChunk)
+	s.Zero(config.Knowledge.MaxHeading)
+}
+
 // TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor: the defaults, the
 // variables that set them, and a broker there is none of refused.
 func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
