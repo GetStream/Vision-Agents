@@ -32,7 +32,7 @@ func apiChange(name, key string, entries ...pricing.Entry) PriceChangeWrite {
 
 // withdrawal is a change's write that withdraws model.
 func withdrawal(model string) PriceEntryWrite {
-	return PriceEntryWrite{Entry: pricing.Entry{Modality: "llm", Provider: "openai", Model: model}, Withdrawn: true}
+	return PriceEntryWrite{Entry: pricing.Entry{Modality: "llm", Provider: "openai", Model: model, Region: pricing.RegionUS}, Withdrawn: true}
 }
 
 // accept is a check that takes every change.
@@ -111,7 +111,7 @@ func (s *StoreSuite) TestAPriceChangeTheCheckRefusesWritesNothing() {
 
 	_, _, _, err := s.store.CreatePriceChange(s.ctx, apiChange("checked", "key-check", priced("a", 0.5)), func(before PriceListAt, writes []PriceEntryWrite) error {
 		s.Len(before.Entries, 1, "the check is handed the list the change lands on")
-		s.Equal("llm-openai-a", writes[0].SKU, "and the entries with their SKUs")
+		s.Equal("llm-openai-a-us", writes[0].SKU, "and the entries with their SKUs")
 		return refused
 	})
 
@@ -241,10 +241,10 @@ func (s *StoreSuite) TestAnItemKeepsItsSKUAcrossItsPriceChanges() {
 	_, scheduled, _, err := s.store.CreatePriceChange(s.ctx, later, accept)
 	s.Require().NoError(err)
 
-	s.Equal("llm-openai-a", now[0].SKU)
-	s.Equal("llm-openai-a", scheduled[0].SKU)
+	s.Equal("llm-openai-a-us", now[0].SKU)
+	s.Equal("llm-openai-a-us", scheduled[0].SKU)
 	list, _ := s.activeList()
-	s.Equal("llm-openai-a", list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a"}, pricing.Quantities{pricing.InputTokens: 1}).SKU)
+	s.Equal("llm-openai-a-us", list.Quote(llmItem("a", nil), pricing.Quantities{pricing.InputTokens: 1}).SKU)
 }
 
 // TestARenamedModelKeepsItsSKU: the vendor renamed a to a-2026. One change withdraws a and
@@ -252,7 +252,7 @@ func (s *StoreSuite) TestAnItemKeepsItsSKUAcrossItsPriceChanges() {
 func (s *StoreSuite) TestARenamedModelKeepsItsSKU() {
 	s.seeded(priced("a", 1))
 	renamed := priced("a-2026", 1)
-	renamed.SKU = "llm-openai-a"
+	renamed.SKU = "llm-openai-a-us"
 	write := apiChange("rename_a", "key-rename", renamed)
 	write.Entries = append(write.Entries, withdrawal("a"))
 
@@ -260,18 +260,18 @@ func (s *StoreSuite) TestARenamedModelKeepsItsSKU() {
 
 	s.Require().NoError(err)
 	s.Require().Len(rows, 2)
-	s.Equal("llm-openai-a", rows[0].SKU)
-	s.Equal("llm-openai-a", rows[1].SKU, "the withdrawal names the SKU it stops pricing")
+	s.Equal("llm-openai-a-us", rows[0].SKU)
+	s.Equal("llm-openai-a-us", rows[1].SKU, "the withdrawal names the SKU it stops pricing")
 	s.True(rows[1].Withdrawn)
 	list, active := s.activeList()
 	s.Require().Len(active, 1)
 	s.Equal("a-2026", active[0].Model)
-	s.Equal("llm-openai-a", list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a-2026"}, pricing.Quantities{pricing.InputTokens: 1}).SKU)
+	s.Equal("llm-openai-a-us", list.Quote(llmItem("a-2026", nil), pricing.Quantities{pricing.InputTokens: 1}).SKU)
 
 	again := priced("a", 1)
 	_, back, _, err := s.store.CreatePriceChange(s.ctx, apiChange("a_again", "key-again", again), accept)
 	s.Require().NoError(err)
-	s.Equal("llm-openai-a-2", back[0].SKU, "the old name, priced again, cannot take the SKU its successor has")
+	s.Equal("llm-openai-a-us-2", back[0].SKU, "the old name, priced again, cannot take the SKU its successor has")
 }
 
 // TestASKUAnotherItemHasInForceIsRefused: a new item may only take a SKU whose item the same
@@ -279,27 +279,27 @@ func (s *StoreSuite) TestARenamedModelKeepsItsSKU() {
 func (s *StoreSuite) TestASKUAnotherItemHasInForceIsRefused() {
 	s.seeded(priced("a", 1), priced("b", 1))
 	taken := priced("c", 1)
-	taken.SKU = "llm-openai-a"
+	taken.SKU = "llm-openai-a-us"
 
 	_, _, _, err := s.store.CreatePriceChange(s.ctx, apiChange("take_a", "key-take", taken), accept)
 	s.ErrorIs(err, ErrSKUInUse)
-	s.ErrorContains(err, "llm-openai-a is the SKU of llm/openai/a")
+	s.ErrorContains(err, "llm-openai-a-us is the SKU of llm/openai/a (us)")
 
 	tomorrow := time.Now().Add(24 * time.Hour)
 	scheduled := apiChange("rename_b", "key-rename-b", pricing.Entry{Modality: "llm", Provider: "openai", Model: "b-2026",
-		SKU: "llm-openai-b", Rates: priced("b", 1).Rates})
+		Region: pricing.RegionUS, SKU: "llm-openai-b-us", Rates: priced("b", 1).Rates})
 	scheduled.Entries = append(scheduled.Entries, withdrawal("b"))
 	scheduled.EffectiveAt = &tomorrow
 	_, _, _, err = s.store.CreatePriceChange(s.ctx, scheduled, accept)
 	s.Require().NoError(err)
 	early := priced("d", 1)
-	early.SKU = "llm-openai-b"
+	early.SKU = "llm-openai-b-us"
 	early.Prices = early.Rates
 	write := apiChange("early_b", "key-early-b", early)
 	write.Entries = append(write.Entries, withdrawal("b"))
 	_, _, _, err = s.store.CreatePriceChange(s.ctx, write, accept)
-	s.ErrorIs(err, ErrSKUInUse, "a change scheduled later gives llm-openai-b to b-2026")
-	s.ErrorContains(err, "a change scheduled later gives llm-openai-b to llm/openai/b-2026")
+	s.ErrorIs(err, ErrSKUInUse, "a change scheduled later gives llm-openai-b-us to b-2026")
+	s.ErrorContains(err, "a change scheduled later gives llm-openai-b-us to llm/openai/b-2026 (us)")
 }
 
 func (s *StoreSuite) TestAnItemInForceKeepsItsSKU() {
@@ -310,7 +310,7 @@ func (s *StoreSuite) TestAnItemInForceKeepsItsSKU() {
 	_, _, _, err := s.store.CreatePriceChange(s.ctx, apiChange("resku", "key-resku", renamed), accept)
 
 	s.ErrorIs(err, ErrSKUChanged)
-	s.ErrorContains(err, "llm/openai/a has the SKU llm-openai-a, not another")
+	s.ErrorContains(err, "llm/openai/a (us) has the SKU llm-openai-a-us, not another")
 }
 
 // TestTwoItemsOfOneBaseSKUAreNumbered: gpt-4.1 and gpt-4-1 make the same SKU, so the item
@@ -321,5 +321,26 @@ func (s *StoreSuite) TestTwoItemsOfOneBaseSKUAreNumbered() {
 	_, rows, _, err := s.store.CreatePriceChange(s.ctx, apiChange("dashed", "key-dashed", priced("gpt-4-1", 1)), accept)
 
 	s.Require().NoError(err)
-	s.Equal("llm-openai-gpt-4-1-2", rows[0].SKU)
+	s.Equal("llm-openai-gpt-4-1-us-2", rows[0].SKU)
+}
+
+// TestAChangeOfTheUSPriceLeavesTheEUAndBYOKEntriesAsTheyWere: each is an item of its own, and
+// a change written to one leaves the others' prices and SKUs.
+func (s *StoreSuite) TestAChangeOfTheUSPriceLeavesTheEUAndBYOKEntriesAsTheyWere() {
+	eu := priced("a", 1.1)
+	eu.Region = pricing.RegionEU
+	byok := priced("a", 1)
+	byok.BYOK = true
+	s.seeded(priced("a", 1), eu, byok)
+
+	_, rows, _, err := s.store.CreatePriceChange(s.ctx, apiChange("halve_a", "key-halve-us", priced("a", 0.5)), accept)
+
+	s.Require().NoError(err)
+	s.Equal("llm-openai-a-us", rows[0].SKU)
+	list, _ := s.activeList()
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	s.EqualValues(500_000, list.Quote(llmItem("a", nil), used).CostMicros)
+	s.EqualValues(1_320_000, list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU}, used).CostMicros)
+	s.EqualValues(200_000, list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionUS, BYOK: true},
+		used).CostMicros)
 }

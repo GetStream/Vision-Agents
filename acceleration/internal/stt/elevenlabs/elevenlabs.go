@@ -78,6 +78,9 @@ const (
 	eventWarning                        = "warning"
 	eventCommitThrottled                = "commit_throttled"
 	eventInsufficientAudioActivity      = "insufficient_audio_activity"
+	// eventAuthError is what the server sends, right after accepting the handshake, on a
+	// key it does not take.
+	eventAuthError = "auth_error"
 )
 
 // The realtime model takes far fewer keyterms than the batch one, and shorter ones: fifty
@@ -397,6 +400,9 @@ func (s *STT) handshake() error {
 		return stack.Wrap(fmt.Errorf("elevenlabs: decode handshake: %w", err))
 	}
 	if message.MessageType != eventSessionStarted {
+		if message.MessageType == eventAuthError {
+			s.keys.InvalidKey()
+		}
 		if message.Error != "" {
 			return stack.Wrap(fmt.Errorf("elevenlabs: session refused: %s", message.Error))
 		}

@@ -1,6 +1,7 @@
 package metered
 
 import (
+	"errors"
 	"log/slog"
 	"math"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // The models a sandbox row is recorded as: the state Daytona bills it in.
@@ -117,7 +119,17 @@ type SandboxSpec struct {
 // Open is the sandbox owner's session runs code in, labelled with whose it is. Nothing is made
 // until code first runs; from then on its time is billed to owner, the session the owner's
 // attribution names.
+//
+// An owner with no app or no session is refused: every customer's sandboxes share one Daytona
+// organization, so one labelled with no app is nobody's to bill or tell apart, and one with no
+// session is deleted by the sweep while it runs.
 func (s *Sandboxes) Open(owner routing.Owner, spec SandboxSpec) (sandbox.Sandbox, error) {
+	switch {
+	case owner.CustomerID == "":
+		return nil, stack.Wrap(errors.New("metered: a sandbox needs the app it is for, sandboxes are never shared"))
+	case owner.SessionID == "":
+		return nil, stack.Wrap(errors.New("metered: a sandbox needs the session it runs for"))
+	}
 	return daytona.New(daytona.Options{
 		APIKey: s.options.APIKey, APIURL: s.options.APIURL, Config: spec.Config, Grants: spec.Grants, Broker: spec.Broker,
 		Labels: s.Labels(owner), Lifecycle: s.options.Lifecycle, Logger: s.options.Logger, Slots: spec.Slots,
@@ -131,7 +143,7 @@ func (s *Sandboxes) Labels(owner routing.Owner) map[string]string {
 	for name, value := range map[string]string{
 		LabelDeployment: s.options.Deployment, LabelEnv: s.options.Environment, LabelRouter: s.options.Router,
 		LabelOrganization: owner.OrganizationID,
-		LabelApp: owner.CustomerID, LabelSession: owner.SessionID,
+		LabelApp:          owner.CustomerID, LabelSession: owner.SessionID,
 	} {
 		if value != "" {
 			labels[name] = value

@@ -196,6 +196,7 @@ func (s *CostSuite) TestAnUtteranceCarriesItsCost() {
 	defer speaking.Close() //nolint:errcheck // the test is done with it
 	s.Require().NoError(speaking.WriteJSON(frame{"type": "start", "target": "en-low-latency"}))
 	s.await(speaking, "started")
+	s.speaking().completedByTest.Store(true)
 	line := "your call is important, " + s.utils.uuid()
 	s.Require().NoError(speaking.WriteJSON(frame{"type": "speak", "id": "s1", "text": line}))
 	s.Require().Eventually(func() bool { return slices.Contains(s.voice.spoken(), line) }, settleFor, 10*time.Millisecond)

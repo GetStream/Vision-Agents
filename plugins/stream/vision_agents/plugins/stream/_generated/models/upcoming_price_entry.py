@@ -28,6 +28,10 @@ class UpcomingPriceEntry:
         model (str):
         provider (str):
         reason (str): The change's reason.
+        region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+            priced only by an entry of its own region, never another region's.
+        byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+            by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
         effective_at (datetime.datetime | Unset): When the entry took effect, or takes effect.
         free (bool | Unset): The vendor charges nothing for it.
         local (bool | Unset): The deployment runs the model itself, as its routing config says. Local work with no price
@@ -50,6 +54,8 @@ class UpcomingPriceEntry:
     model: str
     provider: str
     reason: str
+    region: str
+    byok: bool | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
     free: bool | Unset = UNSET
     local: bool | Unset = UNSET
@@ -71,6 +77,10 @@ class UpcomingPriceEntry:
         provider = self.provider
 
         reason = self.reason
+
+        region = self.region
+
+        byok = self.byok
 
         effective_at: str | Unset = UNSET
         if not isinstance(self.effective_at, Unset):
@@ -130,8 +140,11 @@ class UpcomingPriceEntry:
                 "model": model,
                 "provider": provider,
                 "reason": reason,
+                "region": region,
             }
         )
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if effective_at is not UNSET:
             field_dict["effective_at"] = effective_at
         if free is not UNSET:
@@ -172,6 +185,10 @@ class UpcomingPriceEntry:
         provider = d.pop("provider")
 
         reason = d.pop("reason")
+
+        region = d.pop("region")
+
+        byok = d.pop("byok", UNSET)
 
         _effective_at = d.pop("effective_at", UNSET)
         effective_at: datetime.datetime | Unset
@@ -262,6 +279,8 @@ class UpcomingPriceEntry:
             model=model,
             provider=provider,
             reason=reason,
+            region=region,
+            byok=byok,
             effective_at=effective_at,
             free=free,
             local=local,

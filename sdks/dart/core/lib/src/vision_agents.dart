@@ -48,7 +48,7 @@ final class VisionAgents {
     : _client = httpClient ?? http.Client(),
       _ownsClient = httpClient == null {
     _operations = api.Operations(HttpWire(backend, _client));
-    sessions = Sessions(_operations);
+    sessions = Sessions(_operations, userId: backend.userId);
   }
 
   final Backend backend;
@@ -188,7 +188,8 @@ const _leeway = Duration(minutes: 1);
 /// The JavaScript SDK's `client.agent("docs")`: every session opened or listed here is this
 /// agent's, unless the options name another config.
 final class Agent {
-  Agent._(this._agents, this.name) : sessions = Sessions(_agents._operations, agent: name);
+  Agent._(this._agents, this.name)
+    : sessions = Sessions(_agents._operations, agent: name, userId: _agents.backend.userId);
 
   final VisionAgents _agents;
 
