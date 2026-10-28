@@ -138,10 +138,11 @@ func (w *Worker) Close() {
 
 // answerDue claims as many due messages as there are free slots and answers each on its own
 // goroutine. It returns how long to wait before looking again, with again false when only an
-// ending answer needs to wake the loop: every slot is taken, or Close was called.
+// ending answer needs to wake the loop: every slot is taken. After Close the claim fails on
+// the cancelled context and the loop returns.
 func (w *Worker) answerDue() (wait time.Duration, again bool) {
 	free := cap(w.slots) - len(w.slots)
-	if w.ctx.Err() != nil || free == 0 {
+	if free == 0 {
 		return 0, false
 	}
 	now := time.Now()
