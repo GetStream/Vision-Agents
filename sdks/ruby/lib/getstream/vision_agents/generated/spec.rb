@@ -314,6 +314,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteProviderKey" => {
+          method: :delete, path: "/v1/agents/provider-keys/{provider}",
+          path_params: %w[provider].freeze, query: %w[region].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteRouterConfig" => {
           method: :delete, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -992,6 +998,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listProviderKeys" => {
+          method: :get, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listProviders" => {
           method: :get, path: "/v1/{modality}/providers",
           path_params: %w[modality].freeze, query: [].freeze,
@@ -1284,6 +1296,12 @@ module GetStream
           method: :put, path: "/v1/agents/connections/{id}/credentials",
           path_params: %w[id].freeze, query: [].freeze,
           body: "ConnectionCredentials", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "putProviderKey" => {
+          method: :put, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: [].freeze,
+          body: "ProviderKeyRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "queryAudit" => {
@@ -1694,15 +1712,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
-          required: %w[created_at id mode name updated_at].freeze, open: false
+          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -2154,7 +2172,7 @@ module GetStream
           required: %w[rows].freeze, open: false
         }.freeze,
         "DataPolicy" => {
-          properties: %w[allow_training retention].freeze,
+          properties: %w[allow_training region retention].freeze,
           required: [].freeze, open: false
         }.freeze,
         "DetectedObject" => {
@@ -2461,6 +2479,10 @@ module GetStream
           properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app resume_history tags tool_output_retention].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "PolicyDataPolicy" => {
+          properties: %w[allow_training retention].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "PostalAddress" => {
           properties: %w[city country postal_code state street].freeze,
           required: [].freeze, open: false
@@ -2534,8 +2556,8 @@ module GetStream
           required: %w[at entries upcoming].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[benchmark description health languages model price provider realtime supports tier usage_share].freeze,
-          required: %w[health languages model provider realtime tier].freeze, open: false
+          properties: %w[benchmark description health languages model price provider realtime region supports tier usage_share].freeze,
+          required: %w[health languages model provider realtime region tier].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
           properties: %w[characters_per_second cost_per_task elo intelligence_index latency_ms output_tokens_per_second search_index word_error_rate].freeze,
@@ -2544,6 +2566,18 @@ module GetStream
         "ProviderHealth" => {
           properties: %w[available error_rate errors latency_ms_avg requests].freeze,
           required: %w[available error_rate errors latency_ms_avg requests].freeze, open: false
+        }.freeze,
+        "ProviderKey" => {
+          properties: %w[created_at key_hint provider region updated_at].freeze,
+          required: %w[provider region key_hint created_at updated_at].freeze, open: false
+        }.freeze,
+        "ProviderKeyPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ProviderKeyRequest" => {
+          properties: %w[api_key provider region].freeze,
+          required: %w[provider api_key].freeze, open: false
         }.freeze,
         "ProviderPrice" => {
           properties: %w[per_million_input_tokens per_million_output_tokens].freeze,
@@ -2834,7 +2868,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {

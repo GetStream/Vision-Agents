@@ -52,15 +52,17 @@ class ErrorDetail:
             . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory
             store could not delete what was asked, so nothing that waits on it was deleted either, and the same request
             later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no
-            organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call,
-            campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin,
-            router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has
-            invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does
-            not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year
-            ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one),
-            invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it
-            replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client
-            should expect one it does not know.
+            organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a
+            provider whose work is never routed on a customer's own key here, and the message names the ones that are), and
+            <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant,
+            knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session,
+            simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does
+            not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat),
+            schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone,
+            timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat,
+            interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and
+            too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one
+            it does not know.
         doc_url (str): Where the code is explained.
         message (str): What went wrong, for a person to read. Its wording may change; branch on code.
         type_ (ErrorType): The kind of failure, which decides the status it is answered with: invalid_request 400,

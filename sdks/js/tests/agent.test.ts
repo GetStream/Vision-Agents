@@ -13,6 +13,7 @@ import {
   daytona,
   userIdOf,
   type ConnectorDeclaration,
+  type Declaration,
   type Folder,
   type Schemas,
 } from "../src/index.js";
@@ -445,6 +446,34 @@ describe("Agent", () => {
       ]);
       assert.match(body.hash, /^[0-9a-f]{64}$/);
       assert.equal(router.received.length, 1, "the pages go in the same request");
+    });
+
+    it("sends the region agent.yaml names, and none when it names none", async () => {
+      router.serve("POST", "/v1/agents/sync", {
+        body: {
+          unchanged: false,
+          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
+        },
+      });
+      const folder = (settings: Declaration): Folder => ({
+        path: "/agents/jean",
+        name: "jean",
+        settings,
+        instructions: "Be brief.",
+        guardrail: "",
+        skills: [],
+        knowledge: [],
+        knowledgeURLs: [],
+      });
+
+      await new Agent({ folder: folder({ region: "eu" }), client: api }).sync();
+      await new Agent({ folder: folder({}), client: api }).sync();
+
+      const bodies = router.received
+        .filter((one) => one.path === "/v1/agents/sync")
+        .map((one) => one.body as Schemas["SyncAgentRequest"]);
+      assert.equal(bodies[0]?.region, "eu");
+      assert.equal(bodies[1]?.region, undefined, "the router keeps the stored region");
     });
 
     it("sends an empty simulations/ as an empty list and a missing one not at all", async () => {

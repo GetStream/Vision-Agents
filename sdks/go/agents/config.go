@@ -201,6 +201,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		mode := acceleration.AgentMode(settings.Mode)
 		body.Mode = &mode
 	}
+	setString(&body.Region, settings.Region)
 	setString(&body.Stt, settings.STT)
 	setString(&body.Tts, settings.TTS)
 	body.Sts = settings.STS

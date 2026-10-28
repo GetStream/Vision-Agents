@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"time"
 
@@ -40,6 +41,13 @@ func traceTurn(owner routing.Owner, turnID string, current *openTurn) {
 			attribute.Bool("turn.interrupted", current.interrupted),
 		))
 	defer turn.End(trace.WithTimestamp(ended))
+	if current.interrupted {
+		turn.SetAttributes(
+			attribute.String("turn.interrupt.cause", current.why.cause),
+			attribute.String("turn.interrupt.ruler", cmp.Or(string(current.why.ruler), "none")),
+			attribute.String("turn.interrupt.echo", current.why.echo),
+		)
+	}
 
 	// Speech-to-text is the one stage with no pair of moments: what the transcriber spent
 	// settling the turn is reported as a duration, and it ran up to the transcript.

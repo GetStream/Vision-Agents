@@ -13,7 +13,9 @@ namespace GetStream\VisionAgents\Generated;
  * end_user is one of the app's end users whose id was forgotten in the usage records, named by
  * the id that replaced it. limit is one of the organization's spend limits, named by its id, a
  * reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through
- * the management API is kept under the organization's id.
+ * the management API is kept under the organization's id. provider_key is a key the app keeps
+ * for its own account at a vendor, named <provider>/<region>; its changes show the key's last
+ * four characters at most, never the key.
  */
 enum AuditResourceType: string
 {
@@ -27,4 +29,5 @@ enum AuditResourceType: string
     case PriceList = 'price_list';
     case EndUser = 'end_user';
     case Limit = 'limit';
+    case ProviderKey = 'provider_key';
 }

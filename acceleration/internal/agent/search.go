@@ -72,6 +72,7 @@ func (a *Agent) startSearching(ctx context.Context) {
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
+		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        a.options.SearchTarget,
 		LanguageHints: a.options.LanguageHints,

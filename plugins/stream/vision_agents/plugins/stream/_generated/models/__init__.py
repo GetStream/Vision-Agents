@@ -330,6 +330,7 @@ from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
+from .policy_data_policy import PolicyDataPolicy
 from .policy_scope import PolicyScope
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
@@ -371,6 +372,9 @@ from .prices import Prices
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
+from .provider_key import ProviderKey
+from .provider_key_page import ProviderKeyPage
+from .provider_key_request import ProviderKeyRequest
 from .provider_price import ProviderPrice
 from .quota import Quota
 from .quota_level import QuotaLevel
@@ -891,6 +895,7 @@ __all__ = (
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
+    "PolicyDataPolicy",
     "PolicyScope",
     "PolicyTags",
     "PostalAddress",
@@ -932,6 +937,9 @@ __all__ = (
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
+    "ProviderKey",
+    "ProviderKeyPage",
+    "ProviderKeyRequest",
     "ProviderPrice",
     "Quota",
     "QuotaLevel",

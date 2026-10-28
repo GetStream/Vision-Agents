@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -48,10 +50,39 @@ type Spec struct {
 	// which is what makes an unrecognised field an error rather than a setting that was
 	// accepted and never sent.
 	Overwrites json.RawMessage
-	// Endpoint is where a customer's own model is served, and empty for every other.
+	// Endpoint is where a customer's own model is served, and empty for every other. It
+	// dials public addresses only, since a tenant wrote it.
 	Endpoint Endpoint
-	Logger   *slog.Logger
+	// BaseURL is the base URL of the instance's regional API, which the deployment's routing
+	// config set, and empty for the vendor's default host. Only a factory registered as
+	// honoring OverrideBaseURL is ever given one.
+	BaseURL string
+	// APIKey is the instance's own key, in place of the vendor's variable, and empty for that.
+	// Only a factory registered as honoring OverrideAPIKey is ever given one.
+	APIKey string
+	// BYOK says APIKey is a key the customer keeps for their own account at the vendor. A factory
+	// sends nothing of the deployment's account with it, such as Anthropic's workspace.
+	BYOK bool
+	// Region is where the instance runs its work, never empty. A factory registered as
+	// honoring OverrideRegion picks its vendor's host for it.
+	Region string
+	Logger *slog.Logger
 }
+
+// Override is something of an instance's own a factory builds with in place of its default.
+// A factory declares the ones it honors when it is registered, and a router refuses to start
+// with an instance that sets one its factory would drop.
+type Override string
+
+const (
+	// OverrideAPIKey is Spec.APIKey, an instance's own key, from its api_key_env.
+	OverrideAPIKey Override = "api_key"
+	// OverrideBaseURL is Spec.BaseURL, an instance's regional endpoint.
+	OverrideBaseURL Override = "base_url"
+	// OverrideRegion is Spec.Region read by the factory itself to reach the vendor in that
+	// region, so an instance outside the default region needs no endpoint.
+	OverrideRegion Override = "region"
+)
 
 // ErrRequest marks a build error as the caller's mistake, a setting the model cannot take,
 // rather than the provider's fault. The router records no stat for it: health is shared by
@@ -99,21 +130,34 @@ type Factory[P Provider] func(spec Spec) (P, error)
 type Registry[P Provider] struct {
 	mu        sync.RWMutex
 	factories map[string]Factory[P]
-	// probes is set by Probe. ready is what each probe of a "provider/model" answered.
+	// honors is what each provider's factory builds with of an instance's own.
+	honors map[string][]Override
+	// probes is set by Probe. ready is what each probe of an instance answered.
 	probes bool
-	ready  map[string]error
+	ready  map[instance]error
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry[P Provider]() *Registry[P] {
-	return &Registry[P]{factories: make(map[string]Factory[P]), ready: make(map[string]error)}
+	return &Registry[P]{factories: make(map[string]Factory[P]), honors: make(map[string][]Override), ready: make(map[instance]error)}
 }
 
-// Register adds or replaces the factory for a provider.
-func (r *Registry[P]) Register(provider string, factory Factory[P]) {
+// Register adds or replaces the factory for a provider, with the overrides it honors: the
+// ones it builds with when a Spec carries them. A factory that honors none takes the
+// vendor's default host and key, in the default region.
+func (r *Registry[P]) Register(provider string, factory Factory[P], honors ...Override) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[provider] = factory
+	r.honors[provider] = slices.Clone(honors)
+}
+
+// Honors reports whether the provider's factory builds with that override. A provider with
+// no factory honors nothing.
+func (r *Registry[P]) Honors(provider string, override Override) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return slices.Contains(r.honors[provider], override)
 }
 
 // Probe makes Ready build what it is asked about. A registry of real vendors probes: their
@@ -134,11 +178,17 @@ func (r *Registry[P]) Probe() {
 // ring (deepgram.New calls Next), which a build per request would skew. A registry that
 // does not Probe, and a provider with no factory, answer nil.
 func (r *Registry[P]) Ready(provider, model string) error {
-	name := provider + "/" + model
+	return r.ReadyAs(provider, Spec{Model: model, Region: pricing.DefaultRegion})
+}
+
+// ReadyAs is Ready for one instance of the model, built with its own endpoint, key and
+// region: an instance with a key of its own can be built where the vendor's variable is unset.
+func (r *Registry[P]) ReadyAs(provider string, spec Spec) error {
+	named := instance{name: provider + "/" + spec.Model, region: spec.Region}
 	r.mu.RLock()
 	_, ok := r.factories[provider]
 	probes := r.probes
-	err, probed := r.ready[name]
+	err, probed := r.ready[named]
 	r.mu.RUnlock()
 	if !ok || !probes {
 		return nil
@@ -147,12 +197,12 @@ func (r *Registry[P]) Ready(provider, model string) error {
 		return err
 	}
 
-	built, err := r.Build(provider, Spec{Model: model})
+	built, err := r.Build(provider, Spec{Model: spec.Model, BaseURL: spec.BaseURL, APIKey: spec.APIKey, Region: spec.Region})
 	if err == nil {
 		built.Close()
 	}
 	r.mu.Lock()
-	r.ready[name] = err
+	r.ready[named] = err
 	r.mu.Unlock()
 	return err
 }

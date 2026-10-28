@@ -4,9 +4,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer/turbopuffertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
@@ -84,6 +87,48 @@ func (s *UsageCommandsSuite) TestStorageIsRecordedOncePerNamespacePerHour() {
 	_, err = s.runStorage(server, storageHour.Add(time.Hour), logger)
 	s.Require().NoError(err)
 	s.Len(s.requests(), 4, "the next hour is billed again")
+}
+
+// keptKeys are the keys customers keep, by customer, provider and region.
+type keptKeys map[string]string
+
+func (k keptKeys) CustomerKey(_ context.Context, customerID, provider, region string) (string, bool, error) {
+	key, ok := k[customerID+"/"+provider+"/"+region]
+	return key, ok, nil
+}
+
+func (s *UsageCommandsSuite) TestABaseInACustomersOwnAccountIsSampledOnTheirKeyAndOneWhoseKeyIsGoneIsNotMissed() {
+	s.deploymentApps("app-1", "app-2")
+	ours, theirs := turbopuffertest.Start(s.T()), turbopuffertest.Start(s.T())
+	theirs.Holds(knowledge.Scoped("app-1", "docs"), 1_000_000)
+	inTheirs := store.KnowledgePlace{Region: pricing.RegionUS, Account: store.KnowledgeAccountCustomer}
+	for app, namespace := range map[string]string{"app-1": "docs", "app-2": "handbook"} {
+		_, err := s.store.ClaimKnowledgePlace(s.ctx, app, namespace, inTheirs)
+		s.Require().NoError(err)
+	}
+	logger := slog.New(slog.DiscardHandler)
+	backend, err := turbopuffer.New(turbopuffer.Options{APIKey: "test-key", BaseURL: ours.URL, Logger: logger})
+	s.Require().NoError(err)
+	recorder, stop, err := jobRecorder(s.ctx, s.settings, s.store, routing.Knowledge, logger)
+	s.Require().NoError(err)
+	base := metered.NewRegionalKnowledge(map[string]knowledge.Backend{pricing.RegionUS: backend}, recorder, nil, s.store)
+	base.WithCustomerAccounts(keptKeys{"app-1/turbopuffer/us": "tpuf_customer_0123456789abcdef"}, func(_, key string) (knowledge.Backend, error) {
+		return turbopuffer.New(turbopuffer.Options{APIKey: key, BaseURL: theirs.URL, Logger: logger})
+	})
+
+	var out bytes.Buffer
+	err = recordStorage(s.ctx, base, s.store, storageHour, logger, &out)
+	stop()
+
+	s.Require().NoError(err, "a base whose key is gone is nobody's to bill, not a missed hour")
+	s.Contains(out.String(), "1 knowledge bases recorded, 0 empty, 0 missed, 0 gone since listed, 0 not this deployment's, "+
+		"1 in a customer's own account whose key is gone")
+	rows := s.requests()
+	s.Require().Len(rows, 1)
+	s.Equal("app-1", rows[0].CustomerID)
+	s.True(strings.HasSuffix(rows[0].SKU, "-us-byok"), rows[0].SKU)
+	s.Zero(rows[0].BaseCostMicros, "turbopuffer bills the customer")
+	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 1_000_000}, rows[0].Quantities())
 }
 
 func (s *UsageCommandsSuite) TestAKnowledgeBaseThatCannotBeReadIsAMissedHour() {

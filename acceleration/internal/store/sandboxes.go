@@ -23,6 +23,8 @@ type SandboxUsed struct {
 	SessionID       string `bun:"session_id"`
 	// Class is the sort of sandbox the rows say it was.
 	Class string `bun:"class"`
+	// Region is where the rows say it ran, empty on rows recorded before regions.
+	Region string `bun:"region"`
 }
 
 // SandboxUsage is what this shard recorded of each of ids' time started from from until to, by
@@ -45,6 +47,7 @@ func (s *Store) SandboxUsage(ctx context.Context, deployment string, ids []strin
 		ColumnExpr("MAX(organization_id) AS organization_id").
 		ColumnExpr("MAX(session_id) AS session_id").
 		ColumnExpr("COALESCE(MAX(attributes->>'class'), '') AS class").
+		ColumnExpr("COALESCE(MAX(attributes->>'region'), '') AS region").
 		Where("modality = ?", SandboxModality).
 		Where("success").
 		Where("attributes->>'deployment' = ?", deployment).

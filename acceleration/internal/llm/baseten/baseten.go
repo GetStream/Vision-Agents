@@ -1,7 +1,7 @@
 // Package baseten reaches open-weight models on Baseten's shared Model APIs.
 //
-// The deepseek and gemma providers already run on Baseten: one on the same shared Model
-// APIs, the other on a deployment of our own. This is the rest of what Baseten hosts --
+// The deepseek provider already runs on the same shared Model APIs, and the gemma provider
+// can run on a Baseten deployment of our own. This is the rest of what Baseten hosts --
 // GLM, Kimi, Nemotron -- under the one key all three share.
 package baseten
 

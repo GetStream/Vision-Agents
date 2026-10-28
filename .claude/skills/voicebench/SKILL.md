@@ -61,7 +61,7 @@ All four should be `200`. What the others mean:
 - **401 from ElevenLabs**: rerun the probe without `-o /dev/null`. `quota_exceeded` is the
   key's character limit, whatever the model: someone with workspace access has to raise it.
   Cached caller lines (`benchmark/cache/tts/`) need no quota, the agent's own voice always does.
-- **400 from Gemma**, or a slow first answer: the Baseten deployment is deactivated or waking.
+- **400 from Gemma**, or a slow first answer: the Gemma deployment is deactivated or waking (Baseten scales to zero).
   Wait until it answers in about a second before placing calls: calls made while it wakes go
   unanswered and score as failures with no tools.
 

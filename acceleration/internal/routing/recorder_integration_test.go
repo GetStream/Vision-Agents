@@ -175,20 +175,33 @@ func (s *RecorderSuite) TestAFailureWithNoQuantityIsQuiet() {
 
 func (s *RecorderSuite) TestBillableWorkWithNoPriceIsCounted() {
 	unpriced := ProviderConfig{Provider: "vendor", Model: "unpriced"}
-	before, missing := counted(usageUnpriced, LLM, unpriced), counted(usageMissing, LLM, unpriced)
+	before, missing := counted(usageUnpriced, LLM, unpriced, "us", "false"), counted(usageMissing, LLM, unpriced)
 
 	s.recordedAs(LLM, s.prices, unpriced, Stat{Usage: Usage{InputTokens: 1_000}, Success: true}, Stat{Success: true})
 
-	s.Equal(before+2, counted(usageUnpriced, LLM, unpriced), "every row is counted")
+	s.Equal(before+2, counted(usageUnpriced, LLM, unpriced, "us", "false"), "every row is counted")
 	s.Equal(missing, counted(usageMissing, LLM, unpriced), "a row with no price raises one alarm, not two")
 }
 
+// TestWorkInARegionItsItemIsNotPricedInIsCountedThere: the model has a US price and none in
+// eu, so its EU work is counted unpriced under eu and its US count does not move.
+func (s *RecorderSuite) TestWorkInARegionItsItemIsNotPricedInIsCountedThere() {
+	inEU := priced
+	inEU.Region = pricing.RegionEU
+	us, eu := counted(usageUnpriced, LLM, priced, "us", "false"), counted(usageUnpriced, LLM, priced, "eu", "false")
+
+	s.recordedAs(LLM, s.prices, inEU, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+
+	s.Equal(eu+1, counted(usageUnpriced, LLM, priced, "eu", "false"))
+	s.Equal(us, counted(usageUnpriced, LLM, priced, "us", "false"))
+}
+
 func (s *RecorderSuite) TestLocalWorkWithNoPriceIsQuiet() {
-	before, missing := counted(usageUnpriced, LLM, hosted), counted(usageMissing, LLM, hosted)
+	before, missing := counted(usageUnpriced, LLM, hosted, "us", "false"), counted(usageMissing, LLM, hosted)
 
 	s.recorded(hosted, Stat{Success: true})
 
-	s.Equal(before, counted(usageUnpriced, LLM, hosted))
+	s.Equal(before, counted(usageUnpriced, LLM, hosted, "us", "false"))
 	s.Equal(missing, counted(usageMissing, LLM, hosted))
 }
 
