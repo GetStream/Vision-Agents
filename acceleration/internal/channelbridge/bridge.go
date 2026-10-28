@@ -374,22 +374,17 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		if !fresh {
 			continue
 		}
-		// After the claim, so a retried keyword is answered once; before the episode, so a
-		// keyword opens no card.
-		handled, err := b.keyword(ctx, thread, message)
+		inbound := store.ChannelInbound{
+			ChannelID: thread.ChannelID, ProviderMessageID: message.ProviderMessageID, CustomerID: thread.CustomerID,
+			ConnectorID: message.ConnectorID, ProviderUnitID: message.ProviderUnitID, ThreadKey: message.ThreadKey,
+			ConfigID: config.ID, ConfigName: config.Name, AuthorID: message.AuthorID, Text: message.Text,
+			Media: message.Media, Raw: message.Raw, Forward: failed,
+		}
+		admitted, err := b.admit(ctx, thread, inbound)
 		if err != nil {
 			return false, err
 		}
-		if handled {
-			continue
-		}
-		// After the keywords, which reach a person whatever the sandbox says; before the
-		// episode, so a message the gate holds back opens no card and reaches no agent.
-		allowed, err := b.allowed(ctx, thread.CustomerID, message.ConnectorID, episodeSources[message.ConnectorID].recipientOf(message.AuthorID))
-		if err != nil {
-			return false, b.unclaim(ctx, thread, message, err)
-		}
-		if !allowed {
+		if !admitted {
 			continue
 		}
 		// After the claim, so a retried delivery queues nothing; the worker opens the episode,
@@ -397,12 +392,8 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		// so the provider's retry queues it. Off the request, so a provider that hangs up meanwhile
 		// leaves the message queued, or unclaimed, not claimed with no row.
 		queuing, cancel := b.detached(ctx)
-		_, err = b.store.QueueChannelInbound(queuing, store.ChannelInbound{
-			ChannelID: thread.ChannelID, ProviderMessageID: message.ProviderMessageID, CustomerID: thread.CustomerID,
-			ConnectorID: message.ConnectorID, ProviderUnitID: message.ProviderUnitID, ThreadKey: message.ThreadKey,
-			ConfigID: config.ID, ConfigName: config.Name, AuthorID: message.AuthorID, Text: message.Text,
-			Media: message.Media, Raw: message.Raw, Forward: failed, NextAttemptAt: time.Now(),
-		})
+		inbound.NextAttemptAt = time.Now()
+		_, err = b.store.QueueChannelInbound(queuing, inbound)
 		cancel()
 		if err != nil {
 			return false, b.unclaim(ctx, thread, message, err)
@@ -410,6 +401,55 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		b.wake()
 	}
 	return answered, nil
+}
+
+// admit runs the steps a claimed message passes before it is written into its thread channel:
+// it records the chat's person and member, answers a keyword, and asks the sandbox gate.
+// admitted is whether the message goes on to be written, for an agent to answer. It reads
+// only the queued row (message, store.ChannelInbound) and the row's thread channel, never the
+// chat person the thread arrives with (store.ChannelThread brings the stored one, the thread
+// the claim linked brings none), so it can run from a queued row as well as on the request,
+// with the same result. A store that fails releases the message's
+// claim, so the provider's retry takes it again.
+func (b *Bridge) admit(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (admitted bool, err error) {
+	message := queued.Message()
+	// After the claim, so a retried delivery of an older message, such as a 1:1 one after the
+	// chat became a group, does not name the chat's person again. A store that fails releases
+	// the claim, so the provider's retry records it.
+	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil {
+		// The latest message decides, not the person the thread arrives with.
+		thread.ChatPerson = ""
+		if source.oneToOne(message.Raw) {
+			thread.ChatPerson = message.AuthorID
+		}
+		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
+			return false, b.unclaim(ctx, thread, message, err)
+		}
+	}
+	// Before the keywords, so a person who opted out silences the chat with their STOP and with
+	// any message after it (refusesReply). Every author counts, whatever data.chat.is_group
+	// says: a reply reaches whoever is in the chat.
+	if source := episodeSources[message.ConnectorID]; source.chats {
+		if err := b.store.AddChannelThreadMember(ctx, thread.ChannelID, source.recipientOf(message.AuthorID)); err != nil {
+			return false, b.unclaim(ctx, thread, message, err)
+		}
+	}
+	// After the claim, so a retried keyword is answered once; before the episode, so a
+	// keyword opens no card.
+	handled, err := b.keyword(ctx, thread, message)
+	if err != nil {
+		return false, err
+	}
+	if handled {
+		return false, nil
+	}
+	// After the keywords, which reach a person whatever the sandbox says; before the
+	// episode, so a message the gate holds back opens no card and reaches no agent.
+	allowed, err := b.allowed(ctx, thread.CustomerID, message.ConnectorID, episodeSources[message.ConnectorID].recipientOf(message.AuthorID))
+	if err != nil {
+		return false, b.unclaim(ctx, thread, message, err)
+	}
+	return allowed, nil
 }
 
 // putBack keeps the replies a delivery's message took (take) and did not queue waiting again
@@ -650,25 +690,6 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	if !fresh {
 		b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 			"customer", app.CustomerID, "connection", connection.ID, "config", configs[0].ID, "channel", thread.ChannelID)
-	}
-	// After the claim, so a retried delivery of an older message, such as a 1:1 one after the
-	// chat became a group, does not name the chat's person again. A store that fails releases
-	// the claim, so the provider's retry records it.
-	if source := episodeSources[message.ConnectorID]; fresh && source.oneToOne != nil {
-		if source.oneToOne(message.Raw) {
-			thread.ChatPerson = message.AuthorID
-		}
-		if err := b.store.SetChannelThreadChatPerson(ctx, thread.ChannelID, thread.ChatPerson); err != nil {
-			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
-		}
-	}
-	// Before the keywords, so a person who opted out silences the chat with their STOP and with
-	// any message after it (refusesReply). Every author counts, whatever data.chat.is_group
-	// says: a reply reaches whoever is in the chat.
-	if source := episodeSources[message.ConnectorID]; fresh && source.chats {
-		if err := b.store.AddChannelThreadMember(ctx, thread.ChannelID, source.recipientOf(message.AuthorID)); err != nil {
-			return store.ChannelThread{}, store.AgentConfig{}, false, nil, b.unclaim(ctx, thread, *message, err)
-		}
 	}
 	// Every reply in a thread comes after the message that started it, so the replies that
 	// waited for that message are all to be answered. A link made by a reply, such as a
