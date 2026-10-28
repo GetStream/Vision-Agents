@@ -2391,15 +2391,37 @@ llm:
       realtime: true
       tier: high-quality
 
+    # GPT-5.6 Terra, which GPT-6.1 Terra below replaces. It stays declared because callers
+    # name it outright, and a name that is no longer declared is an unknown target rather
+    # than a failover.
     - provider: openai
       model: gpt-5.6-terra
-      description: "OpenAI's middle tier: stronger reasoning than Luna, slower, and ten times the price."
+      description: "OpenAI's previous middle tier. GPT-6.1 Terra is stronger and half the price."
       benchmark: { intelligence_index: 21, output_tokens_per_second: 85 }
       context_window: 1000000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
       input_modalities: [image]
+
+    # GPT-6.1 Terra is GPT-5.6 Terra's direct upgrade at half the input price and well under
+    # half the output. Artificial Analysis score it 33 without reasoning, which is what the
+    # provider asks for unless a request names an effort, and 48 at max; its efforts run
+    # from none to max. Cache writes are $1.25 per million, and a prompt over 272k input
+    # tokens is billed at twice the input and cache rates and 1.5 times the output for the
+    # whole request. The same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6.1-terra
+      description: "OpenAI's middle tier, for visual reasoning and writing. Reads images, and can answer without thinking first."
+      benchmark: { intelligence_index: 33, output_tokens_per_second: 91 }
+      context_window: 1050000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
