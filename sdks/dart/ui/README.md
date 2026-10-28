@@ -7,4 +7,4 @@ doing, somewhere to type, and a conversation kept in Stream Chat.
 ConversationView(session: await agents.agent('support').chat())
 ```
 
-See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart) for the rest.
+See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.
