@@ -618,3 +618,47 @@ func (s *MigrationOrderSuite) auditRows(db *Store) int {
 	s.Require().NoError(db.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM connector_audit").Scan(&rows))
 	return rows
 }
+
+// chatDeliveriesVersion is the chat_deliveries migration.
+const chatDeliveriesVersion int64 = 20261204120000
+
+// TestChatDeliveriesComeOffAndGoOnAgain: Down takes the queue of Stream Chat messages off and
+// leaves the migration before it applied; Up puts it back.
+func (s *MigrationOrderSuite) TestChatDeliveriesComeOffAndGoOnAgain() {
+	db := s.open()
+	s.Require().NoError(db.Migrate(s.ctx))
+	exists := func() bool {
+		var found bool
+		s.Require().NoError(db.DB().QueryRowContext(s.ctx, `SELECT to_regclass('public.chat_deliveries') IS NOT NULL`).Scan(&found))
+		return found
+	}
+	s.True(exists())
+	before := s.migrationBefore(chatDeliveriesVersion)
+
+	s.goose()
+	s.Require().NoError(goose.DownToContext(s.ctx, db.DB().DB, ".", before))
+
+	s.False(exists())
+	applied := s.applied(db)
+	s.False(applied[chatDeliveriesVersion])
+	s.True(applied[before])
+	s.Require().NoError(db.Migrate(s.ctx))
+	s.True(exists())
+}
+
+// TestARouterClaimsChatDeliveriesAfterALaterMigrationAddsAColumn: a claim names the columns it
+// reads, so a router older than a migration that adds one still claims the rows.
+func (s *MigrationOrderSuite) TestARouterClaimsChatDeliveriesAfterALaterMigrationAddsAColumn() {
+	db := s.open()
+	s.Require().NoError(db.Migrate(s.ctx))
+	s.exec(db, `ALTER TABLE chat_deliveries ADD COLUMN later TEXT NOT NULL DEFAULT ''`)
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	_, err := db.QueueChatDelivery(s.ctx, ChatDelivery{StreamApp: 1257545, MessageID: "msg-one", Body: []byte(`{}`), NextAttemptAt: at})
+	s.Require().NoError(err)
+
+	claimed, err := db.ClaimChatDeliveries(s.ctx, at, 10, at.Add(time.Minute))
+
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Equal("msg-one", claimed[0].MessageID)
+}

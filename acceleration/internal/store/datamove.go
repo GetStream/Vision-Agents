@@ -79,7 +79,8 @@ func (t dataTable) rollup() bool {
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the
 // connection where it moved to records its client again. And connector_connection_validations:
-// the next validate where it moved to records its result again.
+// the next validate where it moved to records its result again. And chat_deliveries, Stream
+// Chat messages in flight for minutes.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
