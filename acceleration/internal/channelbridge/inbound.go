@@ -50,7 +50,9 @@ const maxMessageID = 255
 
 // readableID is a provider message id written into a Stream message id as it is: the
 // characters every provider id seen so far keeps to besides base64's + and /, which Stream
-// Chat was not tried with. Stream Chat took «.» and «-» in an id (staging app, 2026-10-27).
+// Chat was not tried with. Stream Chat took «.» and «-» in an id (staging app, 2026-10-27),
+// and «_»: probe-dupid-a900e9ce-under_score_a_b was written, then refused with code 4 as
+// already there (staging app 1257545, 2026-10-28 05:20:35 UTC).
 var readableID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // Start runs the worker that writes the queued inbound messages until Close. It looks at
@@ -153,7 +155,7 @@ func (b *Bridge) prune() {
 }
 
 // attempt writes a claimed message once and records what came of it: done, due again after
-// the next wait, or given up when the waits ran out. Close does not cut it short, so a message
+// the next wait, or given up when the waits ran out or Stream Chat refused it for good. Close does not cut it short, so a message
 // is never left half written by a router that stops; its lease covers writeTimeout.
 func (b *Bridge) attempt(message store.ChannelInbound) {
 	writing, cancel := context.WithTimeout(context.WithoutCancel(b.ctx), writeTimeout)
@@ -168,7 +170,7 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 	switch {
 	case err == nil:
 		changed, err = b.store.FinishChannelInbound(recording, message, time.Now())
-	case attempts <= len(b.inboundRetries):
+	case attempts <= len(b.inboundRetries) && !refusedForGood(err):
 		log.Info("an inbound message was not written into its thread channel and is written again", "attempts", attempts, "error", err)
 		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(b.inboundRetries[attempts-1]))
 	default:
@@ -203,10 +205,12 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if err != nil {
 		return err
 	}
-	// An earlier attempt may have opened the episode and failed before its card was written;
-	// this Open then finds it open. The card's id is the episode's, so writing it again is one
-	// card.
-	if message.Attempts > 0 && opened.Episode.ID != "" {
+	// An earlier attempt may have opened the episode and stopped before its card was written:
+	// it failed, its router stopped or its lease ran out. This Open then finds it open. An
+	// episode that started after the message was queued is one this message opened, since the
+	// worker opens it; an earlier message's episode started before, and has its card. The
+	// card's id is the episode's, so writing it again is one card.
+	if opened.Episode.ID != "" && !opened.Episode.StartedAt.Before(message.CreatedAt) {
 		opened.New = true
 	}
 	if err := b.writeInto(ctx, thread, config, inbound, inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)); err != nil && !alreadyWritten(err) {
@@ -250,6 +254,15 @@ func inboundMessageID(channelID, providerMessageID string) string {
 	}
 	sum := sha256.Sum256([]byte(providerMessageID))
 	return channelID + "=" + hex.EncodeToString(sum[:])
+}
+
+// refusedForGood is whether Stream Chat answered a write with a refusal a later attempt gets
+// too: a 4xx other than 429, as the bridge counts a reply's (retryable). No answer, a 5xx or a
+// 429 may pass later (RFC 9110 section 15.6, RFC 6585 section 4).
+func refusedForGood(err error) bool {
+	var refused *getstream.StreamError
+	return errors.As(err, &refused) && refused.StatusCode >= http.StatusBadRequest &&
+		refused.StatusCode < http.StatusInternalServerError && refused.StatusCode != http.StatusTooManyRequests
 }
 
 // alreadyWritten is whether Stream Chat refused a message because it already holds one with its
