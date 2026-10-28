@@ -1193,6 +1193,31 @@ func (s *ScheduledTasksSuite) TestACallerThatHangsUpAfterTheDeleteStillLeavesIts
 	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
 }
 
+// The pause after a delete gives up at auditWriteTimeout (AI-2183): it runs without its
+// caller's cancellation, so a task row locked for longer would hold the request open. The
+// test locks the task's row until two seconds past the bound and reads how long the delete
+// took to return.
+func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLocked() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	ctx := context.Background()
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+	release := time.AfterFunc(auditWriteTimeout+2*time.Second, func() { _ = hold.Rollback() })
+	defer release.Stop()
+
+	request := context.WithValue(context.WithValue(ctx, customerContextKey{}, s.customerID()), serverSideContextKey{}, true)
+	start := time.Now()
+	_, err = s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+	took := time.Since(start)
+
+	s.Require().NoError(err)
+	s.Less(took, auditWriteTimeout+time.Second, "the pause waits on a locked task past its bound")
+}
+
 func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
