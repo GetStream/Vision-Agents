@@ -35,6 +35,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1034,6 +1035,122 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
 
 	_, err = upstream.Read(got)
 	s.ErrorIs(err, io.EOF)
+}
+
+// blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
+// that is a bare listener: the sandbox's end and the host's.
+func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = listener.Close() })
+	s.answerAt(listener.Addr().String())
+	s.allow("outside.test")
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.IdleTimeout = idle }))
+	s.T().Cleanup(s.proxy.Close)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := listener.Accept()
+		accepted <- conn
+	}()
+	sandbox, err = net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sandbox.Close() })
+	_, err = fmt.Fprintf(sandbox, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(sandbox), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	host = <-accepted
+	s.Require().NotNil(host)
+	s.T().Cleanup(func() { _ = host.Close() })
+	return sandbox, host
+}
+
+// closedWithin is the time conn took to end, the connection closed by its peer and not a read
+// that ran out of time: the wait is bounded by a few seconds, past any idle timeout a test gives.
+func (s *ProxySuite) closedWithin(conn net.Conn, since time.Time) time.Duration {
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, err := io.Copy(io.Discard, conn)
+	if err != nil {
+		var timeout net.Error
+		s.False(errors.As(err, &timeout) && timeout.Timeout(), "the tunnel was not closed in time: %v", err)
+	}
+	return time.Since(since)
+}
+
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout: no byte either way,
+// and both ends are closed, not before the idle timeout.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout() {
+	const idle = 300 * time.Millisecond
+	sandbox, host := s.blindTunnel(idle)
+	opened := time.Now()
+
+	sandboxEnd := s.closedWithin(sandbox, opened)
+	hostEnd := s.closedWithin(host, opened)
+
+	s.GreaterOrEqual(sandboxEnd, idle)
+	s.GreaterOrEqual(hostEnd, idle)
+}
+
+// TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen: past the idle timeout, bytes in one
+// direction or the other keep it, though the other direction is silent; it closes the idle
+// timeout after the last byte. Both at once is the -race probe of the shared deadline.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen() {
+	const idle = 400 * time.Millisecond
+	const every = idle / 4
+	for _, direction := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the sandbox sends", true, false}, {"the host sends", false, true}, {"both send", true, true}} {
+		s.Run(direction.name, func() {
+			sandbox, host := s.blindTunnel(idle)
+			var sent, received atomic.Int64
+			var drained sync.WaitGroup
+			drain := func(conn net.Conn) {
+				drained.Add(1)
+				go func() {
+					defer drained.Done()
+					n, _ := io.Copy(io.Discard, conn)
+					received.Add(n)
+				}()
+			}
+			drain(sandbox)
+			drain(host)
+			var sending sync.WaitGroup
+			var last atomic.Pointer[time.Time]
+			send := func(conn net.Conn) {
+				sending.Add(1)
+				go func() {
+					defer sending.Done()
+					// Three idle timeouts of bytes, each well inside one.
+					for end := time.Now().Add(3 * idle); time.Now().Before(end); time.Sleep(every) {
+						now := time.Now()
+						if _, err := conn.Write([]byte("x")); err != nil {
+							s.Failf("the tunnel closed while it carried bytes", "%v", err)
+							return
+						}
+						sent.Add(1)
+						last.Store(&now)
+					}
+				}()
+			}
+			if direction.sandboxSends {
+				send(sandbox)
+			}
+			if direction.hostSends {
+				send(host)
+			}
+			sending.Wait()
+			s.Require().NotNil(last.Load())
+
+			closed := s.closedWithin(sandbox, *last.Load())
+			drained.Wait()
+
+			s.GreaterOrEqual(closed, idle, "closed before the idle timeout past the last byte")
+			s.Equal(sent.Load(), received.Load(), "a byte was lost")
+		})
+	}
 }
 
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
