@@ -284,7 +284,8 @@ func (s *ProviderAppMessageHookSuite) TestAThreadOfThePinnedAppIsAnsweredByTheSe
 	ctx := context.Background()
 	s.Require().Equal(http.StatusCreated, s.operatorApp())
 	workspace := s.slack.TeamID
-	bot := s.connectedBot(workspace, s.slack.InstallBot())
+	token := s.slack.InstallBot()
+	bot := s.connectedBot(workspace, token)
 	config := store.AgentConfig{
 		CustomerID: s.customerID(), Name: "slack-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "noted/noted-model",
 		Connectors: []store.ConnectorBinding{{
@@ -303,6 +304,10 @@ func (s *ProviderAppMessageHookSuite) TestAThreadOfThePinnedAppIsAnsweredByTheSe
 		return s.store.DB().QueryRowContext(ctx, "SELECT channel_id, stream_app_pk FROM channel_threads WHERE customer_id = ?", s.customerID()).Scan(&channel, &pin) == nil
 	}, settleFor, 10*time.Millisecond)
 	s.Require().Equal(s.appID(), pin, "the thread is pinned to the provider app's app")
+	// The backend opens its session on the channel the worker made, which the row is linked
+	// before: one opened earlier asks Stream for a channel that is not there yet.
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond,
+		"the worker never wrote the message")
 	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &config.Name, AgentId: &channel})
 	s.Require().Eventually(func() bool {
 		_, err := s.store.StoredSession(ctx, s.customerID(), opened.Id)
@@ -311,7 +316,16 @@ func (s *ProviderAppMessageHookSuite) TestAThreadOfThePinnedAppIsAnsweredByTheSe
 
 	handOver()
 
-	s.Require().Eventually(func() bool { return len(s.slack.Posts()) == 1 }, settleFor, 10*time.Millisecond, "the person got no reply")
+	// The suite's Slack keeps every test's posts: the reply is the one made with this
+	// test's bot token.
+	s.Require().Eventually(func() bool {
+		for _, post := range s.slack.Posts() {
+			if post.Token == token {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the person got no reply")
 	var sessions int
 	s.Require().NoError(s.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM agent_sessions WHERE customer_id = ?", s.customerID()).Scan(&sessions))
 	s.Equal(1, sessions, "the backend's session answered; the router opened none")
