@@ -13,6 +13,15 @@ import (
 // inbound queues a message of the thread channel channelID, linking the channel first, due at
 // s.base; change sets the fields a test cares about.
 func (s *StoreSuite) inbound(channelID, providerMessageID string, change ...func(*ChannelInbound)) ChannelInbound {
+	message := s.inboundMessage(channelID, providerMessageID, change...)
+	queued, err := s.store.QueueChannelInbound(s.ctx, message)
+	s.Require().NoError(err)
+	s.Require().True(queued)
+	return message
+}
+
+// inboundMessage is the message inbound queues, its thread channel linked, not yet queued.
+func (s *StoreSuite) inboundMessage(channelID, providerMessageID string, change ...func(*ChannelInbound)) ChannelInbound {
 	_, err := s.store.LinkChannelThread(s.ctx, thread(channelID, "C0000CHAN:"+channelID))
 	s.Require().NoError(err)
 	message := ChannelInbound{
@@ -24,9 +33,6 @@ func (s *StoreSuite) inbound(channelID, providerMessageID string, change ...func
 	for _, apply := range change {
 		apply(&message)
 	}
-	queued, err := s.store.QueueChannelInbound(s.ctx, message)
-	s.Require().NoError(err)
-	s.Require().True(queued)
 	return message
 }
 
@@ -170,6 +176,43 @@ func (s *StoreSuite) TestAThreadsSecondMessageWaitsUntilItsFirstIsWritten() {
 	s.Require().NoError(err)
 	s.True(changed)
 	s.claimedOne(s.base.Add(time.Second), "1759740000.000200")
+}
+
+// Message A of a thread is queued in a transaction that is still open when message B is queued:
+// B waits for A's commit, so A, queued first, is written first and B only after it. Were B
+// queued at once, it would be claimed first, and A, committed with the smaller seq while B is
+// being written, would be claimed too: two of one thread's messages at once, out of order.
+func (s *StoreSuite) TestAThreadsMessageQueuedWhileAnEarlierOneCommitsWaitsForIt() {
+	a := s.inboundMessage("thread-one", "1759740000.000100")
+	b := s.inboundMessage("thread-one", "1759740000.000200")
+	tx, err := s.store.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer tx.Rollback() //nolint:errcheck // a no-op once committed
+	queued, err := queueChannelInbound(s.ctx, tx, a)
+	s.Require().NoError(err)
+	s.Require().True(queued)
+	byB := make(chan error, 1)
+	go func() {
+		_, err := s.store.QueueChannelInbound(s.ctx, b)
+		byB <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database() AND query LIKE '%FROM channel_threads%FOR NO KEY UPDATE%'").Scan(&waiting))
+		return waiting == 1
+	}, 5*time.Second, 10*time.Millisecond, "queueing B waits for A's transaction")
+	s.Empty(s.claim(s.base), "neither is committed")
+
+	s.Require().NoError(tx.Commit())
+	s.Require().NoError(<-byB)
+
+	first := s.claimedOne(s.base, "1759740000.000100")
+	s.Empty(s.claim(s.base), "B waits while A is written")
+	changed, err := s.store.FinishChannelInbound(s.ctx, first, s.base)
+	s.Require().NoError(err)
+	s.True(changed)
+	s.claimedOne(s.base, "1759740000.000200")
 }
 
 func (s *StoreSuite) TestAThreadsMessagesAreTakenInTheOrderTheyWereQueuedNotByWhenTheyAreDue() {

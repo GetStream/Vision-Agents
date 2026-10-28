@@ -129,6 +129,26 @@ func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound)
 	if message.ChannelID == "" || message.ProviderMessageID == "" || message.CustomerID == "" || message.ConnectorID == "" || message.ConfigID == "" {
 		return false, stack.Wrap(errors.New("store: a channel, a provider message id, a customer, a connector and an agent config are required"))
 	}
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		queued, err = queueChannelInbound(ctx, tx, message)
+		return err
+	})
+	return queued, stack.Wrap(err)
+}
+
+// queueChannelInbound is QueueChannelInbound in tx.
+//
+// It first locks the message's thread channel row until tx ends, so the messages of one
+// thread channel are queued one transaction at a time. seq is taken at the insert, and a
+// claim sees only committed rows: without the lock, a message queued in a transaction that
+// commits after a later message's would get the smaller seq and become its thread's oldest
+// queued row while the later one is already being written, and the two would be written at
+// once, out of order. The lock is FOR NO KEY UPDATE, which the foreign key's FOR KEY SHARE on
+// the same row does not wait for.
+func queueChannelInbound(ctx context.Context, tx bun.Tx, message ChannelInbound) (bool, error) {
+	if _, err := tx.NewRaw("SELECT 1 FROM channel_threads WHERE channel_id = ? FOR NO KEY UPDATE", message.ChannelID).Exec(ctx); err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
+	}
 	media, err := json.Marshal(message.Media)
 	if err != nil {
 		return false, stack.Wrap(err)
@@ -141,7 +161,7 @@ func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound)
 		}
 		forward = new(string(encoded))
 	}
-	result, err := s.db.NewRaw(`
+	result, err := tx.NewRaw(`
 INSERT INTO channel_thread_inbound (channel_id, provider_message_id, customer_id, connector_id, provider_unit_id, thread_key,
     config_id, config_name, author_id, text, media, raw, forward, next_attempt_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?)
