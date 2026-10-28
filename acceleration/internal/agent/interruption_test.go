@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
@@ -64,15 +65,32 @@ func (s *AgentSuite) TestARulingOnSettledWordsSaysWhatTookTheFloorAndFromWhom() 
 func (s *AgentSuite) TestTheAgentsOwnLineHeardBackIsAnEcho() {
 	// Session 01a182c7: the words that cut the agent off were its own line.
 	s.logs = &logLines{}
+	spans := tracetest.NewSpanRecorder()
+	turnSpans().RegisterSpanProcessor(spans)
+	defer turnSpans().UnregisterSpanProcessor(spans)
 	s.join(true)
 	s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
-	s.replyGoingOut("I can hear you loud and clear.")
+	turn := s.replyGoingOut("I can hear you loud and clear.")
 
 	s.says(nash, "I can hear you, loud and clear")
 
 	logged := s.interruptedOnce()
 	s.Equal(echoMost, logged["echo"])
 	s.Equal(1.0, logged["echo_share"])
+	var traced []string
+	for _, span := range spans.Ended() {
+		if span.Name() != "agent.turn" {
+			continue
+		}
+		for _, attribute := range span.Attributes() {
+			if attribute.Key == "turn.id" && attribute.Value.AsString() == turn {
+				for _, attribute := range span.Attributes() {
+					traced = append(traced, string(attribute.Key)+"="+attribute.Value.Emit())
+				}
+			}
+		}
+	}
+	s.Subset(traced, []string{"turn.interrupt.cause=settled", "turn.interrupt.ruler=primary", "turn.interrupt.echo=most"})
 }
 
 func (s *AgentSuite) TestARulingWhileTheCallerIsStillTalkingSaysSo() {
@@ -175,7 +193,10 @@ func (s *AgentSuite) TestAnUtteranceTheVoiceFinishedAfterItsTurnWasAbandonedSays
 	s.Equal(true, spoke["turn_abandoned"], "but the caller did not hear it out")
 }
 
-func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
+// nativeAgent is a speech-to-speech agent logging to s.logs, whose model's events are sent
+// on the channel returned. receive has them pass receiveSTS first, as a call's do; without
+// it they reach consumeSTS alone.
+func (s *AgentSuite) nativeAgent(receive bool) chan<- sts.Event {
 	s.logs = &logLines{}
 	logger := slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{},
@@ -186,16 +207,39 @@ func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
 	source := make(chan sts.Event, 8)
 	ordered := make(chan sts.Event, 8)
 	agent.pipe = newPipeline(agent.ctx, true)
-	agent.pipe.running.Add(2)
-	go agent.receiveSTS(agent.pipe, source, ordered)
+	agent.pipe.running.Add(1)
 	go agent.consumeSTS(agent.pipe, nil, ordered)
+	if !receive {
+		s.T().Cleanup(func() { close(ordered) })
+		return ordered
+	}
+	agent.pipe.running.Add(1)
+	go agent.receiveSTS(agent.pipe, source, ordered)
 	s.T().Cleanup(func() { close(source) })
+	return source
+}
+
+func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
+	source := s.nativeAgent(true)
 
 	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
 	source <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
 	source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
 	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
 
+	s.nativeStoppedOnItsOwn()
+}
+
+func (s *AgentSuite) TestANativeReplyFirstSeenInterruptedAtItsEndSaysTheModelStopped() {
+	ordered := s.nativeAgent(false)
+
+	ordered <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
+	ordered <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
+
+	s.nativeStoppedOnItsOwn()
+}
+
+func (s *AgentSuite) nativeStoppedOnItsOwn() {
 	logged := s.interruptedOnce()
 	s.Equal("r1", logged["turn"])
 	s.Equal(causeProvider, logged["cause"])
