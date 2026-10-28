@@ -160,6 +160,26 @@ func (s *ChatDeliveryAppSuite) TestADeliveryIsActedOnOnlyInItsOwnApp() {
 	s.False(s.reachesWorker(somebodyElse.Messages()))
 }
 
+// A call row from before rows named an app, another customer's, on a channel of the same
+// name is not this app's: the delivery is answered by the config its channel names, as the
+// app's own webhook is, and not by whoever left that row.
+func (s *ChatDeliveryAppSuite) TestAnUnpinnedCallOnTheSameChannelIsNotTheDeliverysOwner() {
+	own, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	other := "someone-" + s.utils.uuid()
+	somebodyElse, releaseOther := s.dispatch.Register(other, dispatch.Registration{Capacity: 1})
+	defer releaseOther()
+	s.Require().NoError(s.store.StartCall(context.Background(), &store.Call{
+		ID: s.utils.uuid(), CustomerID: other, CallID: s.utils.callID(), AgentID: s.channelID,
+		ConfigID: s.config(other), StartedAt: time.Now().UTC(),
+	}))
+
+	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(s.appID(), s.config(s.customerID()), ""), s.current))
+
+	s.True(s.reachesWorker(own.Messages()))
+	s.False(s.reachesWorker(somebodyElse.Messages()))
+}
+
 // While both are switched on, the webhook and the delivery carry the same message, and the
 // app's record of what it has acted on answers it once.
 func (s *ChatDeliveryAppSuite) TestTheWebhookAndADeliveryOfOneMessageAreAnsweredOnce() {
