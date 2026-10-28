@@ -257,7 +257,6 @@ func (s *TelnyxChannelSuite) TestAStopTheStoreKeepsFailingToRecordIsNeverGivenUp
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
 	s.Require().Eventually(func() bool { return attempts() > 4 }, settleFor, 5*time.Millisecond,
 		"the STOP is not run again past the suite's three waits")
-	s.Never(func() bool { return attempts() > 6 }, 300*time.Millisecond, 5*time.Millisecond, "it runs again after the last wait, not sooner")
 	s.Zero(s.inboundRows(store.ChannelInboundFailed), "the STOP is not given up")
 	drop()
 

@@ -408,6 +408,41 @@ func (s *InboundSuite) TestAWorkerThatLostItsLeaseGivesNothingUp() {
 	s.Zero(count)
 }
 
+// A STOP whose opt-out the store keeps failing to record is never given up: past the waits it
+// is due again after the last one. A trigger refuses the test customer's opt-outs.
+func (s *InboundSuite) TestAStopPastItsWaitsIsDueAgainAfterTheLastWait() {
+	_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+		CREATE FUNCTION inbound_suite_refuse_opt_out() RETURNS trigger AS $$
+			BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER inbound_suite_refuse_opt_out BEFORE INSERT ON opt_outs FOR EACH ROW
+			WHEN (NEW.customer_id = '`+s.customer+`') EXECUTE FUNCTION inbound_suite_refuse_opt_out();
+		COMMIT`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+			DROP TRIGGER inbound_suite_refuse_opt_out ON opt_outs;
+			DROP FUNCTION inbound_suite_refuse_opt_out();
+			COMMIT`)
+		s.Require().NoError(err)
+	}()
+	s.emptyQueue()
+	thread := s.thread("telnyx")
+	s.queue(thread, "m-1", "STOP", nil)
+	_, err = s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).Set("attempts = 2").
+		Where("channel_id = ? AND provider_message_id = ?", thread.ChannelID, "m-1").Exec(s.ctx)
+	s.Require().NoError(err)
+	claimed, err := s.store.ClaimChannelInbound(s.ctx, time.Now(), 1, time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	s.newBridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Hour}}).attempt(claimed[0])
+
+	row := s.row(thread, "m-1")
+	s.Equal(store.ChannelInboundQueued, row.State, "the STOP is not given up")
+	s.Equal(3, row.Attempts)
+	s.WithinDuration(time.Now().Add(time.Hour), row.NextAttemptAt, time.Minute, "it is due again after the last wait")
+}
+
 // A message whose delivery no destination would take, such as a reply that waited, is given up
 // with no forward.
 func (s *InboundSuite) TestAGivenUpMessageWithNoForwardForwardsNothing() {
