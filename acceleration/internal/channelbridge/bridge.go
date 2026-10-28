@@ -341,7 +341,8 @@ func (b *Bridge) Close() {
 // A message that links its thread brings the replies that waited for that link (take), which
 // are handled after it, in this delivery. They are queued with no forward: each came in a
 // delivery of its own, which no agent answered then, so those destinations got that delivery
-// when it arrived (AI-1001). This delivery is not the one that carries them.
+// when it arrived (AI-1001). This delivery is not the one that carries them. An error leaves
+// the ones it did not queue waiting again (putBack), for the provider's retry to take.
 func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, messages []core.InboundMessage, unanswered *eventforward.Event) (answered bool, err error) {
 	var forward *store.ChannelInboundForward
 	if unanswered != nil {
@@ -351,7 +352,13 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		}
 	}
 	queue := slices.Clone(messages)
-	for i := 0; i < len(queue); i++ {
+	var i int
+	defer func() {
+		if err != nil && len(queue) > len(messages) {
+			err = b.putBack(ctx, app.CustomerID, queue[max(i, len(messages)):], err)
+		}
+	}()
+	for i = 0; i < len(queue); i++ {
 		message := queue[i]
 		failed := forward
 		if i >= len(messages) {
@@ -403,6 +410,21 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		b.wake()
 	}
 	return answered, nil
+}
+
+// putBack keeps the replies a delivery's message took (take) and did not queue waiting again
+// after err, so the provider's retry of that message takes them once more: take deleted them
+// from channel_thread_waiting. Each waits from now, in the order it was taken. Off the
+// request, as unclaim.
+func (b *Bridge) putBack(ctx context.Context, customerID string, waited []core.InboundMessage, err error) error {
+	waiting, cancel := b.detached(ctx)
+	defer cancel()
+	for _, message := range waited {
+		if _, waitErr := b.store.WaitChannelThreadMessage(waiting, customerID, message); waitErr != nil {
+			return errors.Join(err, waitErr)
+		}
+	}
+	return err
 }
 
 // Reply sends an agent's finished reply in a thread channel to its external thread. The

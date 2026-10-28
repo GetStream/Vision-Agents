@@ -246,6 +246,26 @@ func (s *EventForwardingSuite) TestAMessageTheStoreFailsToQueueIsNotClaimed() {
 	s.Zero(claims)
 }
 
+// The mention that links a thread takes the replies that waited for it. When the mention then
+// fails to queue, they wait again, so Slack's retry of the mention brings them as well.
+func (s *EventForwardingSuite) TestAReplyThatWaitedIsWrittenWhenItsMentionFailsToQueueAndIsRetried() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	// A NUL fails the queue alone, as in the test above.
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+	s.Require().Error(err)
+
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"},
+		[]any{s.chat.Stored(channel)[0]["id"], s.chat.Stored(channel)[1]["id"]})
+}
+
 // A provider that hangs up while its message is queued cancels the request's context
 // (net/http). The message is queued all the same, so the provider's retry, dropped as one, loses
 // nothing.
