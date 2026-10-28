@@ -720,6 +720,58 @@ func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithoutTheBotsMention()
 	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
 }
 
+// AI-2150: a reply that waited is read again from its body when the mention links its thread,
+// files included. slack_bot reads no files, so the connection is pinned to a revision that
+// does, at the event's files, taken out again when the test ends.
+func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithItsFiles() {
+	ctx := context.Background()
+	connection, err := s.store.ConnectorConnection(ctx, s.customerID(), s.bot.ConnectionID)
+	s.Require().NoError(err)
+	definition, err := s.store.ConnectorDefinition(ctx, s.customerID(), "slack_bot", connection.DefinitionRevision)
+	s.Require().NoError(err)
+	definition.Revision, definition.Manifest.Revision = 1000, 1000
+	definition.Manifest.Channel.Messages.Media = &core.MediaRule{URL: "$.event.files[*].url_private", MIMEType: "$.event.files[*].mimetype"}
+	_, err = s.store.DB().NewInsert().Model(&definition).Exec(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, err := s.store.DB().ExecContext(ctx, "DELETE FROM connector_definitions WHERE customer_id = ? AND id = 'slack_bot' AND revision = 1000", store.BuiltinCustomer)
+		s.NoError(err)
+	})
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	s.Require().NoError(credentials.Update(ctx, s.bot, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.DefinitionRevision = 1000
+		return true, nil
+	}))
+	s.deliver(s.event(`{"type":"message","channel":"C0000CHAN","user":"U0000BOB","text":"and this?","ts":"1759740000.000200",`+
+		`"thread_ts":"1759740000.000100","channel_type":"channel","files":[{"url_private":"https://files.slack.test/build.png","mimetype":"image/png"}]}`), 0)
+	s.Require().Equal(1, s.waiting(), "the reply waits")
+
+	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	s.Equal("and this?", stored[1]["text"])
+	s.Equal([]string{"https://files.slack.test/build.png"}, photoURLs(stored[1]), "the reply is written with its file")
+}
+
+// AI-2150: a reply that waited and cannot be read again fails the mention that takes it: the
+// mention is not claimed and the reply waits on, so Slack's retry of the mention takes both.
+func (s *SlackChannelSuite) TestAMentionWhoseWaitingReplyCannotBeReadIsRefusedAndTheReplyWaitsOn() {
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting())
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE channel_thread_waiting SET raw = convert_to('{}', 'UTF8') WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+
+	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	s.Equal(http.StatusInternalServerError, status)
+	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+	s.Zero(s.claimed(channel, store.ClaimInbound), "the mention is not claimed")
+	s.Equal(1, s.waiting(), "the reply waits on")
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 }, dropped, 20*time.Millisecond)
+}
+
 // AI-990 F31a: a message that starts its thread and is not to the bot is not kept: no later
 // message takes it, since the one that links its thread is a reply after it (AI-989).
 func (s *SlackChannelSuite) TestAChannelMessageNotToTheBotDoesNotWait() {
