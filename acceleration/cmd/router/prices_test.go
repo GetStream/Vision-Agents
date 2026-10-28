@@ -97,7 +97,7 @@ func (s *PriceFileSuite) TestTheVendorFilePricesWhatRouterYamlDid() {
 
 	var rounded []string
 	for _, entry := range declared {
-		item := pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, Attributes: entry.When}
+		item := pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, Region: entry.Region, Attributes: entry.When}
 		name := prices.Name(entry)
 		s.Equal(want.Billable(item), got.Billable(item), name)
 		wanted, _ := want.Entry(item)
@@ -127,7 +127,10 @@ func (s *PriceFileSuite) TestTheVendorFilePricesWhatRouterYamlDid() {
 	s.T().Logf("%d entries quote exactly; %d have a rate router.yaml left in float noise, within a micro: %v",
 		len(declared)-len(rounded), len(rounded), rounded)
 	for _, entry := range prices.Vendor().Entries {
-		item := pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, Attributes: entry.When}
+		if entry.BYOK {
+			continue
+		}
+		item := pricing.Item{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model, Region: entry.Region, Attributes: entry.When}
 		wanted, ok := want.Entry(item)
 		s.True(ok && prices.When(wanted.When) == prices.When(entry.When), "%s is in vendor.json and not in router.yaml", prices.Name(entry))
 	}
@@ -167,22 +170,55 @@ func (s *PriceFileSuite) requireSameRates(want, got map[pricing.Meter]pricing.Ra
 
 func abs(micros int64) int64 { return max(micros, -micros) }
 
+// TestTheVendorFileChecks: every entry is in the us, and the BYOK ones are the twins reading the
+// file makes.
 func (s *PriceFileSuite) TestTheVendorFileChecks() {
 	var out bytes.Buffer
+	var byok int
+	for _, entry := range prices.Vendor().Entries {
+		if entry.BYOK {
+			byok++
+		}
+	}
 
 	s.Require().NoError(runPricesCheck(nil, &out))
 
-	s.Equal(fmt.Sprintf("vendor.json: %d entries\n", len(prices.Vendor().Entries)), out.String())
+	s.Equal(fmt.Sprintf("vendor.json: %d entries, us %d (%d byok)\n", len(prices.Vendor().Entries), len(prices.Vendor().Entries), byok),
+		out.String())
 }
 
 func (s *PriceFileSuite) TestCheckingABadFileNamesTheFileAndTheEntry() {
 	path := filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(path, []byte(`{"markup_bps": 1500, "entries": [
-		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": -1, "per": 1000000}}}]}`), 0o600))
+		{"modality": "llm", "provider": "openai", "model": "m", "region": "us", "rates": {"input_tokens": {"usd": -1, "per": 1000000}}}]}`), 0o600))
 
 	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
 
-	s.ErrorContains(err, path+": pricing: llm/openai/m rates input_tokens below zero")
+	s.ErrorContains(err, path+": pricing: llm/openai/m (us) rates input_tokens below zero")
+}
+
+func (s *PriceFileSuite) TestCheckingAFileWithAnEntryInNoRegionNamesTheEntry() {
+	path := filepath.Join(s.T().TempDir(), "own-prices.json")
+	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
+		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
+
+	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
+
+	s.ErrorContains(err, path+": llm/openai/m names no region: every entry names its region, such as us")
+}
+
+// TestCheckingAFileCountsItsEntriesByRegion: an eu entry and its BYOK twin beside a us one.
+func (s *PriceFileSuite) TestCheckingAFileCountsItsEntriesByRegion() {
+	path := filepath.Join(s.T().TempDir(), "own-prices.json")
+	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
+		{"modality": "llm", "provider": "own", "model": "m", "region": "eu", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}},
+		{"modality": "stt", "provider": "own", "model": "m", "region": "us", "rates": {"audio_ms": {"usd": 1, "per": 3600000}}}]}`), 0o600))
+	var out bytes.Buffer
+
+	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
+
+	s.Equal(fmt.Sprintf("%s: 3 entries, eu 2 (1 byok), us 1; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+3),
+		out.String())
 }
 
 // TestABadPricesFileStopsStartup: run returns what loadPriceFiles says, before it opens
@@ -192,11 +228,11 @@ func (s *PriceFileSuite) TestABadPricesFileStopsStartup() {
 	settings := config.Defaults()
 	settings.PricesFile = filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(`{"entries": [
-		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1}}}]}`), 0o600))
+		{"modality": "llm", "provider": "openai", "model": "m", "region": "us", "rates": {"input_tokens": {"usd": 1}}}]}`), 0o600))
 
 	_, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
 
-	s.ErrorContains(err, settings.PricesFile+": pricing: llm/openai/m rates input_tokens per 0 units")
+	s.ErrorContains(err, settings.PricesFile+": pricing: llm/openai/m (us) rates input_tokens per 0 units")
 }
 
 // TestTheRouterPricesFromTheDeploymentsOwnFile: a model only the deployment's own file prices
@@ -207,8 +243,8 @@ func (s *PriceFileSuite) TestTheRouterPricesFromTheDeploymentsOwnFile() {
 	settings := config.Defaults()
 	settings.PricesFile = filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(fmt.Sprintf(`{"markup_bps": 2000, "entries": [
-		{"modality": "llm", "provider": "own", "model": "own-model", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
-		{"modality": %q, "provider": %q, "model": %q, "sku": "own-sku", "rates": {"input_tokens": {"usd": 7, "per": 1000000}},
+		{"modality": "llm", "provider": "own", "model": "own-model", "region": "us", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
+		{"modality": %q, "provider": %q, "model": %q, "region": "us", "sku": "own-sku", "rates": {"input_tokens": {"usd": 7, "per": 1000000}},
 		 "prices": {"input_tokens": {"usd": 7.7, "per": 1000000}}}]}`,
 		vendor.Modality, vendor.Provider, vendor.Model)), 0o600))
 	var logs bytes.Buffer
@@ -222,12 +258,16 @@ func (s *PriceFileSuite) TestTheRouterPricesFromTheDeploymentsOwnFile() {
 	s.Require().NoError(err)
 
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
-	own := list.Quote(pricing.Item{Modality: "llm", Provider: "own", Model: "own-model"}, used)
+	own := list.Quote(pricing.Item{Modality: "llm", Provider: "own", Model: "own-model", Region: pricing.RegionUS}, used)
 	s.EqualValues(3_600_000, own.CostMicros)
 	s.EqualValues(3_000_000, own.BaseCostMicros)
-	s.Equal("llm-own-own-model", own.SKU)
+	s.Equal("llm-own-own-model-us", own.SKU)
 	s.Equal("files:dev", own.Version)
-	overridden := list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model}, used)
+	ownBYOK := list.Quote(pricing.Item{Modality: "llm", Provider: "own", Model: "own-model", Region: pricing.RegionUS, BYOK: true}, used)
+	s.EqualValues(600_000, ownBYOK.CostMicros, "the file's model has its BYOK twin, at a fifth of its rates")
+	s.Zero(ownBYOK.BaseCostMicros)
+	s.Equal("llm-own-own-model-us-byok", ownBYOK.SKU)
+	overridden := list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model, Region: pricing.RegionUS}, used)
 	s.EqualValues(7_700_000, overridden.CostMicros)
 	s.EqualValues(7_000_000, overridden.BaseCostMicros)
 	s.Equal("own-sku", overridden.SKU)
@@ -244,7 +284,7 @@ func (s *PriceFileSuite) TestWithNoFileOfItsOwnTheRouterPricesFromTheVendorFile(
 	s.Require().NoError(err)
 
 	vendor := prices.Vendor().Entries[0]
-	quote := list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model},
+	quote := list.Quote(pricing.Item{Modality: vendor.Modality, Provider: vendor.Provider, Model: vendor.Model, Region: vendor.Region},
 		pricing.Quantities{pricing.InputTokens: 1_000_000})
 	s.Equal("embedded:dev", quote.Version)
 	s.Empty(list.Unpriced(routing.Items(routingConfig)))
@@ -275,7 +315,7 @@ func (s *PriceFileSuite) TestCheckingAGoodFileSaysItsMarkupIsIgnored() {
 func (s *PriceFileSuite) TestCheckingAFileRefusesWhatWouldStopTheStart() {
 	path := filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
-		{"modality": "llm", "provider": "openai", "model": "gpt-5.6-luna", "when": {"region": "eu"},
+		{"modality": "llm", "provider": "openai", "model": "gpt-5.6-luna", "region": "us", "when": {"country": "DE"},
 		 "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
 
 	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
@@ -289,15 +329,15 @@ func (s *PriceFileSuite) TestCheckingAGoodFileCountsItLaidOverTheVendorFile() {
 	vendor := prices.Vendor().Entries[0]
 	path := filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(path, []byte(fmt.Sprintf(`{"entries": [
-		{"modality": "llm", "provider": "own", "model": "own-model", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
-		{"modality": %q, "provider": %q, "model": %q, "rates": {"input_tokens": {"usd": 7, "per": 1000000}}}]}`,
+		{"modality": "llm", "provider": "own", "model": "own-model", "region": "us", "rates": {"input_tokens": {"usd": 3, "per": 1000000}}},
+		{"modality": %q, "provider": %q, "model": %q, "region": "us", "rates": {"input_tokens": {"usd": 7, "per": 1000000}}}]}`,
 		vendor.Modality, vendor.Provider, vendor.Model)), 0o600))
 	var out bytes.Buffer
 
 	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
 
-	s.Equal(fmt.Sprintf("%s: 2 entries; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+1),
-		out.String(), "one new item, and one that replaces vendor.json's")
+	s.Equal(fmt.Sprintf("%s: 3 entries, us 3 (1 byok); %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+2),
+		out.String(), "one new item and its BYOK twin, and one that replaces vendor.json's")
 }
 
 // ownConfig is a routing config of one priced and one local model, as a deployment of its
@@ -332,9 +372,9 @@ func (s *PriceFileSuite) TestExportWritesAConfigsPricesAsAFile() {
 
 	s.Equal(`{
   "entries": [
-    {"modality":"llm","provider":"deepseek","model":"DeepSeek-V4-Flash-0731","rates":{"input_tokens":{"usd":0.13,"per":1000000},"output_tokens":{"usd":0.26,"per":1000000}}},
-    {"modality":"llm","provider":"deepseek","model":"DeepSeek-V4-Flash-0731","when":{"service_tier":"flex"},"rates":{"input_tokens":{"usd":0.065,"per":1000000},"output_tokens":{"usd":0.13,"per":1000000}}},
-    {"modality":"llm","provider":"gemma","model":"gemma-4-26B-A4B-it","rates":{"input_tokens":{"usd":0.24,"per":1000000}}}
+    {"modality":"llm","provider":"deepseek","model":"DeepSeek-V4-Flash-0731","region":"us","rates":{"input_tokens":{"usd":0.13,"per":1000000},"output_tokens":{"usd":0.26,"per":1000000}}},
+    {"modality":"llm","provider":"deepseek","model":"DeepSeek-V4-Flash-0731","region":"us","when":{"service_tier":"flex"},"rates":{"input_tokens":{"usd":0.065,"per":1000000},"output_tokens":{"usd":0.13,"per":1000000}}},
+    {"modality":"llm","provider":"gemma","model":"gemma-4-26B-A4B-it","region":"us","rates":{"input_tokens":{"usd":0.24,"per":1000000}}}
   ]
 }
 `, out.String())
@@ -349,7 +389,8 @@ func (s *PriceFileSuite) TestExportAddsThePhoneVendorsWhenAsked() {
 
 	file, err := prices.Parse("exported", out.Bytes())
 	s.Require().NoError(err)
-	s.Contains(file.Entries, pricing.Entry{Modality: "phone", Provider: phone.SIPTrunkVendor, Model: phone.ModelDial, Free: true})
+	s.Contains(file.Entries, pricing.Entry{Modality: "phone", Provider: phone.SIPTrunkVendor, Model: phone.ModelDial,
+		Region: pricing.DefaultRegion, Free: true})
 }
 
 func (s *PriceFileSuite) TestStripTakesOutEveryPriceBlockAndNothingElse() {

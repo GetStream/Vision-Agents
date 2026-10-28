@@ -1,0 +1,9 @@
+{
+  "entries": [
+    {"modality":"llm","provider":"anthropic","model":"claude-haiku-5-5","region":"eu","rates":{"cache_write_input_tokens":{"usd":0.1375,"per":1000000},"cached_input_tokens":{"usd":0.011,"per":1000000},"input_tokens":{"usd":0.11,"per":1000000},"output_tokens":{"usd":0.55,"per":1000000}},"tiers":[{"above_input_tokens":100000,"rates":{"cache_write_input_tokens":{"usd":0.6875,"per":1000000},"cached_input_tokens":{"usd":0.055,"per":1000000},"input_tokens":{"usd":0.55,"per":1000000},"output_tokens":{"usd":2.75,"per":1000000}}}]},
+    {"modality":"llm","provider":"anthropic","model":"claude-sonnet-5-5","region":"us","byok":true,"rates":{"cache_write_input_tokens":{"usd":2.5,"per":1000000},"cached_input_tokens":{"usd":0.1,"per":1000000},"input_tokens":{"usd":2,"per":1000000},"output_tokens":{"usd":10,"per":1000000}},"prices":{"cache_write_input_tokens":{"usd":0.25,"per":1000000},"cached_input_tokens":{"usd":0.01,"per":1000000},"input_tokens":{"usd":0.2,"per":1000000},"output_tokens":{"usd":1,"per":1000000}}},
+    {"modality":"knowledge","provider":"turbopuffer","model":"write","region":"eu","rates":{"bytes_written":{"usd":2.4,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
+    {"modality":"knowledge","provider":"turbopuffer","model":"write","region":"eu","byok":true,"rates":{"bytes_written":{"usd":2.4,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}},"prices":{"bytes_written":{"usd":0.3,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
+    {"modality":"sandbox","provider":"daytona","model":"running","region":"eu","when":{"class":"container"},"rates":{"vcpu_seconds":{"usd":0.0605,"per":3600},"memory_gb_seconds":{"usd":0.0194,"per":3600},"disk_gb_seconds":{"usd":0.00013,"per":3600}}}
+  ]
+}

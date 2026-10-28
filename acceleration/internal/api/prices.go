@@ -35,8 +35,10 @@ type Price struct {
 }
 
 func (*Price) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What one item costs: a model of a provider in a modality, under the attributes " +
-		"in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports."
+	schema.Description = "What one item costs: a model of a provider in a modality, in a region, with the " +
+		"customer's own key (byok) or without, under the attributes in when, at the rates every row of its " +
+		"work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the " +
+		"customer for the work itself."
 	return schema
 }
 
@@ -44,12 +46,13 @@ func (*Price) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema
 // customers are charged.
 type Prices struct {
 	At       time.Time `json:"at" doc:"The moment the list is read at."`
-	Entries  []Price   `json:"entries" nullable:"false" doc:"Every item priced now, by modality, provider and model."`
+	Entries  []Price   `json:"entries" nullable:"false" doc:"Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK."`
 	Upcoming []Price   `json:"upcoming" nullable:"false" doc:"What the changes scheduled after at will set, soonest first."`
 }
 
 type getPricesRequest struct {
 	Modality string `query:"modality" doc:"Only this modality's items, such as llm, stt, tts, sms or phone."`
+	Region   string `query:"region" doc:"Only this region's items, such as us or eu."`
 }
 
 type pricesResponse struct{ Body Prices }
@@ -60,7 +63,10 @@ func (s *Server) registerPrices(api huma.API) {
 		Summary: "Read the price list",
 		Description: "Every item this router prices, at the rates a customer is charged, which are what every " +
 			"answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, " +
-			"and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will " +
+			"and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and " +
+			"work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills " +
+			"the customer; neither falls back to another region's price or the other `byok` state's. Then " +
+			"what the changes scheduled later will " +
 			"set, soonest first, with their reason, an item they withdraw included. The list is the one in " +
 			"memory, so reading it costs no query; a change made on another router shows within 30 seconds. " +
 			"Prices are the same for everyone, so any caller may read them.",
@@ -84,15 +90,17 @@ func (s *Server) getPrices(_ context.Context, request *getPricesRequest) (*price
 		list = own
 	}
 	local := routing.LocalItems(s.routedConfig())
-	wanted := func(entry pricing.Entry) bool { return request.Modality == "" || entry.Modality == request.Modality }
+	wanted := func(item PriceItem) bool {
+		return (request.Modality == "" || item.Modality == request.Modality) && (request.Region == "" || item.Region == request.Region)
+	}
 	answer := Prices{At: time.Now().UTC(), Entries: []Price{}, Upcoming: []Price{}}
 	for _, entry := range list.Entries() {
-		if wanted(entry) {
-			answer.Entries = append(answer.Entries, priceOf(entry, entry.EffectiveAt))
+		if price := priceOf(entry, entry.EffectiveAt); wanted(price.PriceItem) {
+			answer.Entries = append(answer.Entries, price)
 		}
 	}
 	for _, price := range upcomingPrices(upcoming, local) {
-		if request.Modality == "" || price.Modality == request.Modality {
+		if wanted(price.PriceItem) {
 			answer.Upcoming = append(answer.Upcoming, price)
 		}
 	}

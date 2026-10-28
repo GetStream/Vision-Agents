@@ -34,9 +34,11 @@ type File struct {
 	// MarkupBps is read and ignored: a price is written per entry, and an older file that
 	// still has a markup is loaded as though it had none. The router warns when it is set.
 	MarkupBps *int64 `json:"markup_bps,omitempty"`
-	// Entries are one per item and When: the vendor's rates and, when the file sets them, the
-	// price and the SKU. An entry the file gives no price is priced at its rates times
-	// pricing.PriceFactorBps when the file is read, which is what a load writes for it.
+	// Entries are one per item, region, BYOK state and When: the vendor's rates and, when the
+	// file sets them, the price and the SKU. Reading the file adds the BYOK twin of each entry
+	// of a modality in pricing.BYOKModalities that has none (pricing.WithBYOK), and prices an
+	// entry the file gives no price at its rates times pricing.PriceFactorBps, or
+	// pricing.BYOKFeeBps for a BYOK one, which is what a load writes for it.
 	Entries []pricing.Entry `json:"entries"`
 }
 
@@ -75,7 +77,7 @@ func Parse(name string, data []byte) (File, error) {
 	if err := file.check(); err != nil {
 		return File{}, fmt.Errorf("prices: %s: %w", name, err)
 	}
-	file.Entries = pricing.PricedAll(file.Entries)
+	file.Entries = pricing.PricedAll(pricing.WithBYOK(file.Entries))
 	if _, err := pricing.NewList("check", file.Entries, slog.New(slog.DiscardHandler)); err != nil {
 		return File{}, fmt.Errorf("prices: %s: %w", name, err)
 	}
@@ -84,6 +86,9 @@ func Parse(name string, data []byte) (File, error) {
 
 func (f File) check() error {
 	for _, entry := range f.Entries {
+		if entry.Region == "" {
+			return fmt.Errorf("%s names no region: every entry names its region, such as %s", Name(entry), pricing.RegionUS)
+		}
 		// A database keeps neither: local says how a deployment runs a model, which is its
 		// routing config's to say, and a version is the change that wrote the entry.
 		if entry.Local {
@@ -106,10 +111,21 @@ func IgnoredMarkup(logger *slog.Logger, name string, file File) {
 	}
 }
 
-// Name is the item an entry prices, as logs and errors write it: modality/provider/model,
-// and its When when it has one.
+// Name is the item an entry prices, as logs and errors write it and as a load tells one item
+// from another: modality/provider/model, its region and byok for a BYOK entry, and its When
+// when it has one, as in llm/anthropic/claude-haiku-5-5 (us, byok) when service_tier=flex.
 func Name(entry pricing.Entry) string {
+	var qualifiers []string
+	if entry.Region != "" {
+		qualifiers = append(qualifiers, entry.Region)
+	}
+	if entry.BYOK {
+		qualifiers = append(qualifiers, "byok")
+	}
 	name := entry.Modality + "/" + entry.Provider + "/" + entry.Model
+	if len(qualifiers) > 0 {
+		name += " (" + strings.Join(qualifiers, ", ") + ")"
+	}
 	if len(entry.When) > 0 {
 		name += " when " + When(entry.When)
 	}
@@ -125,8 +141,8 @@ func When(when map[string]string) string {
 	return strings.Join(pairs, ",")
 }
 
-// Merge lays the files over each other: for one item and When, the first file with an
-// entry for it wins, so a deployment's own file goes before vendor.json.
+// Merge lays the files over each other: for one item, region, BYOK state and When, the first
+// file with an entry for it wins, so a deployment's own file goes before vendor.json.
 func Merge(files ...File) []pricing.Entry {
 	var merged []pricing.Entry
 	seen := map[string]bool{}
@@ -141,8 +157,9 @@ func Merge(files ...File) []pricing.Entry {
 	return merged
 }
 
-// WithLocal marks the items a deployment runs itself: each of their entries is local, and an
-// item with none gets one with no rate, so its work is free rather than unpriced.
+// WithLocal marks the items a deployment runs itself: each of their entries is local, in every
+// region and BYOK or not, and an item with none in its own region gets one there with no rate,
+// so its work is free rather than unpriced.
 func WithLocal(entries []pricing.Entry, local []pricing.Item) []pricing.Entry {
 	return pricing.WithLocal(entries, local)
 }

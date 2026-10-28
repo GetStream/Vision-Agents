@@ -815,7 +815,7 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 func (s *RouterSuite) vendorPriced(provider, model string, attributes map[string]string, used pricing.Quantities) int64 {
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Attributes: attributes}
+	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Region: pricing.DefaultRegion, Attributes: attributes}
 	return pricingtest.Micros(s.T(), list, item, used)
 }
 
@@ -1116,13 +1116,15 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // tenth of a second rather than a router's 30, so a change made in a test prices within it.
 const suitePriceReload = 100 * time.Millisecond
 
-// databasePrices seeds the suite's price list from the embedded vendor list, as a router's
-// first start does (once: every later start finds it seeded and adds nothing it already has),
-// and reads it every suitePriceReload until the suite ends.
+// databasePrices seeds the suite's price list from the fixtures' price file laid over the
+// embedded vendor list, as a router's first start does with a file of its own (once: every
+// later start finds it seeded and adds only what it lacks), and reads it every
+// suitePriceReload until the suite ends.
 func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.T().Cleanup(cancel)
-	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: prices.Vendor().Entries, Source: prices.VendorFile, Release: "suite"})
+	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: pricingtest.Entries(s.T()),
+		Source: pricingtest.FileName + ", " + prices.VendorFile, Release: "suite"})
 	s.Require().NoError(err)
 	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
 	s.Require().NoError(err)

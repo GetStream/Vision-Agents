@@ -524,7 +524,7 @@ func (s *MeteringSuite) TestTheSweepDeletesEveryRowKeptForADayInBatches() {
 // outboundMinutes is what seconds of an outbound US call cost at the vendor list's rates, read
 // from vendor.json so a price change there leaves the tests passing.
 func (s *MeteringSuite) outboundMinutes(seconds int64) int64 {
-	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: ModelCallMinutes,
+	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: ModelCallMinutes, Region: pricing.DefaultRegion,
 		Attributes: map[string]string{"country": "US", "direction": "outbound"}}
 	return pricingtest.Micros(s.T(), s.prices, item, pricing.Quantities{pricing.CallSeconds: seconds})
 }
