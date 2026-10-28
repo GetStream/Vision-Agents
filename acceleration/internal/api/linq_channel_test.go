@@ -148,7 +148,7 @@ func (s *LinqChannelSuite) TestAnIMessageIsAnsweredInTheSameChatOnTheCustomersLi
 func (s *LinqChannelSuite) TestAPhotoWithItsCaptionReachesTheModelInAChatAndInAGroup() {
 	s.answersWith("vision/vision-model")
 	for i, isGroup := range []bool{false, true} {
-		chat, asked := s.utils.uuid(), len(s.vision.requests())
+		chat, asked := s.utils.uuid(), len(s.vision.replies())
 		body := s.chatSays(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg"), linqCaption}), isGroup)
 		s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
 		channel := s.threadChannel(chat)
@@ -161,7 +161,7 @@ func (s *LinqChannelSuite) TestAPhotoWithItsCaptionReachesTheModelInAChatAndInAG
 		sent := s.took(i + 1)[i]
 		s.Equal(chat, sent.chat)
 		s.Equal("Two roses.", sent.text)
-		turn := s.turnWithImages(s.vision.requests()[asked:])
+		turn := s.turnWithImages(s.vision.replies()[asked:])
 		s.Contains(turn.Content+llm.TextOf(turn.Parts), "What is in this photo?")
 		s.Equal([]llm.ImagePart{{Data: jpegStart, MIME: "image/jpeg"}}, imagesIn(turn), "is_group %v", isGroup)
 	}
@@ -171,7 +171,7 @@ func (s *LinqChannelSuite) TestAPhotoWithItsCaptionReachesTheModelInAChatAndInAG
 // it (AI-2094). On revision 2 it reached no agent.
 func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsAnswered() {
 	s.answersWith("vision/vision-model")
-	chat, asked := s.utils.uuid(), len(s.vision.requests())
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
 	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg")}), time.Now()))
 	channel := s.threadChannel(chat)
 	stored := s.written(channel, 1)[0]
@@ -181,7 +181,7 @@ func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsAnswered() {
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Equal("Two roses.", s.took(1)[0].text)
-	turn := s.turnWithImages(s.vision.requests()[asked:])
+	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Empty(strings.TrimSpace(turn.Content+llm.TextOf(turn.Parts)), "nothing was written with it")
 	s.Len(imagesIn(turn), 1)
 }
@@ -190,7 +190,7 @@ func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsAnswered() {
 // that it could not be opened (api.threadPhotos), not left in silence.
 func (s *LinqChannelSuite) TestAPhotoLinqNoLongerServesIsAnsweredThatItCouldNotBeOpened() {
 	s.answersWith("vision/vision-model")
-	chat, asked := s.utils.uuid(), len(s.vision.requests())
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
 	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/gone.jpeg")}), time.Now()))
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
@@ -198,7 +198,7 @@ func (s *LinqChannelSuite) TestAPhotoLinqNoLongerServesIsAnsweredThatItCouldNotB
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Equal("Two roses.", s.took(1)[0].text)
-	said := s.lastTurn(s.vision.requests()[asked:])
+	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhoto, said.Content)
 	s.Empty(imagesIn(said))
 }
@@ -208,7 +208,7 @@ func (s *LinqChannelSuite) TestAPhotoLinqNoLongerServesIsAnsweredThatItCouldNotB
 func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
 	s.answersWith("vision/vision-model")
 	video := map[string]any{"type": "media", "filename": "IMG_7565.MOV", "mime_type": "video/quicktime", "url": s.images.URL + "/photo.jpeg"}
-	chat, asked := s.utils.uuid(), len(s.vision.requests())
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
 	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{video, linqCaption}), time.Now()))
 	channel := s.threadChannel(chat)
 	s.Empty(photoURLs(s.written(channel, 1)[0]))
@@ -216,7 +216,7 @@ func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Equal("Two roses.", s.took(1)[0].text)
-	said := s.lastTurn(s.vision.requests()[asked:])
+	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal("What is in this photo?", said.Content)
 	s.Empty(imagesIn(said))
 
@@ -246,7 +246,7 @@ func (s *LinqChannelSuite) TestAConnectionStillOnRevision2PassesNoPhotoOn() {
 			return true, nil
 		}))
 	s.answersWith("vision/vision-model")
-	chat, asked := s.utils.uuid(), len(s.vision.requests())
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg"), linqCaption}), time.Now()))
 	channel := s.threadChannel(chat)
@@ -257,7 +257,7 @@ func (s *LinqChannelSuite) TestAConnectionStillOnRevision2PassesNoPhotoOn() {
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Equal("Two roses.", s.took(1)[0].text)
-	said := s.lastTurn(s.vision.requests()[asked:])
+	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal("What is in this photo?", said.Content)
 	s.Empty(imagesIn(said))
 }

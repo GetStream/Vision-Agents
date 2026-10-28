@@ -22,13 +22,13 @@ import (
 func (s *SlackChannelSuite) TestAPhotoSentWithTextInAThreadReachesTheModel() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 	question := "what is on this screenshot? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"))
 
 	s.Equal("Two roses.", s.posted(1)[0].Text)
-	turn := s.turnWithImages(s.vision.requests()[asked:])
+	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Contains(turn.Content+llm.TextOf(turn.Parts), question)
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn), "the bytes fetched, not a URL the provider might fail to fetch")
 }
@@ -37,12 +37,12 @@ func (s *SlackChannelSuite) TestAPhotoSentWithTextInAThreadReachesTheModel() {
 func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsAnswered() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"), s.photo("/photo.png"))
 
 	s.Equal("Two roses.", s.posted(1)[0].Text)
-	turn := s.turnWithImages(s.vision.requests()[asked:])
+	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Empty(strings.TrimSpace(turn.Content+llm.TextOf(turn.Parts)), "nothing was written with it")
 	s.Len(imagesIn(turn), 2)
 }
@@ -52,13 +52,13 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsAnswered() {
 func (s *SlackChannelSuite) TestAnAgentThatCannotSeeAnswersTheTextAndSaysItCannotSeeThePhoto() {
 	s.answersWith("holding/holding-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 	question := "what is on this screenshot? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"))
 
 	s.Equal("Held.", s.posted(1)[0].Text)
-	said := s.lastTurn(s.holding.requests()[asked:])
+	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(question+"\n\n"+unseenPhotoWithText, said.Content)
 	s.Empty(imagesIn(said))
 }
@@ -68,12 +68,12 @@ func (s *SlackChannelSuite) TestAnAgentThatCannotSeeAnswersTheTextAndSaysItCanno
 func (s *SlackChannelSuite) TestAnAgentThatCannotSeeRepliesToAPhotoAloneThatItCannotLookAtPhotos() {
 	s.answersWith("holding/holding-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"))
 
 	s.Equal("Held.", s.posted(1)[0].Text)
-	said := s.lastTurn(s.holding.requests()[asked:])
+	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(unseenPhoto, said.Content)
 	s.Empty(imagesIn(said))
 }
@@ -83,13 +83,13 @@ func (s *SlackChannelSuite) TestAnAgentThatCannotSeeRepliesToAPhotoAloneThatItCa
 func (s *SlackChannelSuite) TestATextOnlyThreadMessageIsAnsweredFromItsText() {
 	s.answersWith("holding/holding-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 	question := "and yesterday's? " + s.utils.uuid()
 
 	s.sentInThread(channel, question)
 
 	s.Equal("Held.", s.posted(1)[0].Text)
-	said := s.lastTurn(s.holding.requests()[asked:])
+	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(question, said.Content)
 	s.Empty(imagesIn(said))
 }
@@ -100,14 +100,14 @@ func (s *SlackChannelSuite) TestATextOnlyThreadMessageIsAnsweredFromItsText() {
 func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 	signature := "SECRETSIG" + s.utils.uuid()
 
 	// Port 1 takes no connection, so the fetch fails in transport, the error that names the URL.
 	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": "http://127.0.0.1:1/x.jpg?signature=" + signature})
 
 	s.Equal("Two roses.", s.posted(1)[0].Text)
-	said := s.lastTurn(s.vision.requests()[asked:])
+	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhoto, said.Content)
 	s.Empty(imagesIn(said))
 	s.Contains(s.logged.String(), "could not fetch a photo of a message in a thread channel")
@@ -120,13 +120,13 @@ func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() 
 func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsDroppedAndTheRestAnswered() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 	question := "what are these? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"), s.photo("/gone.png"))
 
 	s.Equal("Two roses.", s.posted(1)[0].Text)
-	turn := s.turnWithImages(s.vision.requests()[asked:])
+	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Equal(question+"\n\n"+unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn), "the photo fetched, alone")
 }
@@ -136,12 +136,12 @@ func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsDroppedAndTheRestAnsw
 func (s *SlackChannelSuite) TestPhotosSentAloneOfWhichOneCannotBeFetchedAreAnsweredFromTheRest() {
 	s.answersWith("vision/vision-model")
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "", s.photo("/gone.png"), s.photo("/photo.png"))
 
 	s.Equal("Two roses.", s.posted(1)[0].Text)
-	turn := s.turnWithImages(s.vision.requests()[asked:])
+	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn))
 }
@@ -157,12 +157,12 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneToAnAgentWithAVisionSkillIsAnswer
 		Description: "look at photos", Instructions: "Describe the photo.",
 	}))
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	asked := len(s.holding.requests())
+	asked := len(s.holding.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"))
 
 	s.Equal("Held.", s.posted(1)[0].Text)
-	s.Equal(unseenPhoto, s.lastTurn(s.holding.requests()[asked:]).Content)
+	s.Equal(unseenPhoto, s.lastTurn(s.holding.replies()[asked:]).Content)
 }
 
 // Control, as on base: a thread message with neither text nor a photo, such as a file alone or
@@ -189,12 +189,12 @@ func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHist
 	question := "what colour is this bike? " + s.utils.uuid()
 	author := s.writtenInThread(channel, question, s.photo("/photo.png"))
 	s.posted(1)
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "what colour was it?")
 
 	s.posted(2)
-	input := s.vision.requests()[asked].Input
+	input := s.vision.replies()[asked].Input
 	s.Contains(input, llm.Message{Role: llm.User, Content: question + "\n\n[sent with a photo, not shown again]", Author: author})
 	s.Contains(input, llm.Message{Role: llm.Assistant, Content: "Two roses."}, "the reply that saw the photo")
 	s.False(llm.HasImage(input), "no photo is handed over again")
@@ -207,12 +207,12 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsANoteInTheNextTurnsHis
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	author := s.writtenInThread(channel, "", s.photo("/photo.png"))
 	s.posted(1)
-	asked := len(s.vision.requests())
+	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "what colour was it?")
 
 	s.posted(2)
-	input := s.vision.requests()[asked].Input
+	input := s.vision.replies()[asked].Input
 	s.Contains(input, llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: author})
 	s.False(llm.HasImage(input))
 }
