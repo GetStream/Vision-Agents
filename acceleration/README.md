@@ -476,7 +476,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `data_policy` | `allow_training`, `retention` and `region`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models. `region` (`us` or `eu`) keeps the scope's work, knowledge and sandboxes in that region; see [Regions](#regions) |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models. A policy has no `region`, and one sent is refused: where work is done is the agent's own `region`, or a direct call's `data_policy.region`; see [Regions](#regions) |
 | `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
 | `tool_output_retention` | How long sessions keep what their tools were given and gave back: `none`, or `1h` to `3650d` such as `30d`. The shortest of the organization's, the app's and the agent config's `tools.output_retention` applies. See [What is recorded](#what-is-recorded) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
@@ -931,14 +931,46 @@ audio minute, so a busy call costs more than the table suggests and a quiet one 
 
 ### Regions
 
-A request is served in one region, `us` or `eu` for now, and never in another. Which one is
-`data_policy.region`: on the request's own option block (`stt`, `tts`, `sts`), on the app's
-policy and on the organization's. A region set on one of them holds for all of them; two
-different regions are refused, naming both (an app's and its organization's policy naming two
-refuse every request of the app until one changes). Named nowhere, the region is `us`
-(`pricing.DefaultRegion`). An LLM request has no data policy of its own, so its region is the
-policies'. A region a policy names is validated as a region (a letter and up to 31 of a-z, 0-9
-and hyphens); an unknown but well-formed one is refused when nothing runs there.
+An agent's work is done in one region, `us` or `eu` for now, and never in another: every model
+its sessions route to, its knowledge base and its sandbox. The region is the agent's own.
+`agent.yaml` names it as `region` (the sync's `region`), as a config written with the API does
+(`AgentConfigRequest.region`, `AgentConfigPatch.region`), and it is stored in
+`agent_configs.region` (migration `20261202135000_agent_region`, which puts every agent before it
+in `us`). An agent that names none is in `us` (`pricing.DefaultRegion`), and a sync, an update or a
+patch that leaves it out keeps the stored one. A region is a letter and up to 31 of a-z, 0-9 and
+hyphens (`pricing.ValidRegion`).
+
+Nothing about a region is looked up when work arrives. A session takes its region from its config,
+and carries it on every call it makes (`routing.Owner.Region`): its models', the flow controller's,
+the title's, the review's, the guardrail's and the prompt-injection screen's, its knowledge's and
+its sandbox's. So do the agent's text channels, phone calls, scheduled tasks and plugin events,
+which are sessions of its config, its episode summaries, and its simulations, whose simulated
+caller and judge are handed the agent's conversation and run in its region too. Phone legs, texts
+and memory are not routed by region.
+
+A sync, and a config create, update or patch, is checked before anything is written, and refused
+(400 `invalid_request`) naming each part of the agent's work that could not be done in its region:
+
+- a model it names (`llm`, `stt`, `tts`, `sts`, `subagent`, `search`) with no instance there:
+  `llm: no instance of anthropic/claude-haiku-5-5 in region eu`. A shortcut or a vendor name
+  passes when one of its instances runs there, as the router resolves it; a customer's own model
+  (`custom/<name>`) runs in `us` alone. A target the deployment does not route at all is left to
+  the session to refuse, as before regions, and so are the defaults of the models it leaves out;
+- its knowledge base kept in another region: a knowledge base is never moved. A sync's is the base
+  named after the agent, which it writes in the agent's region; a config's is its
+  `knowledge_namespace`. A region this deployment keeps no knowledge in is refused too;
+- a sandbox it names, in a region with no Daytona target.
+
+A read that fails fails the save, and the caller tries again. A model, a knowledge base or a
+sandbox the save leaves as it was, in the region it was in, is not checked again, so an agent
+stored before the check stays editable. The region is in what `check_changes` compares and in
+what the audit entry shows.
+
+A direct call, an `stt`, `tts` or `sts` socket or recording with no agent, names its own region in
+its option block's `data_policy.region`, `us` when it names none. Work naming two regions, its
+agent's and its data policy's, is refused naming both (`options.ErrRegionConflict`). A policy
+names no region: an app's and an organization's `data_policy` hold `allow_training` and
+`retention`, and refuse `region`, so no policy read, failed or not, moves any work.
 
 `router.yaml` may declare a model once per region. An instance is the provider, the model and
 its `region` (`us` when it names none); the same three twice is refused at start.
@@ -970,35 +1002,40 @@ llm:
   `endpoint`, or the router refuses to start, unless its factory picks the region's host
   itself from the region it is given (`routing.OverrideRegion`; none does yet).
 
-Every routing filter runs as before, then the region's: only the instances in the request's
-region are kept, and with none left the request is refused, naming the region (`no candidate in
-region eu`, a 400). Fallback walks the rest in the usual order, so a failing EU instance falls
-back only to other EU instances. That holds for every routed modality, so an EU customer's
-session needs an EU instance of each model it uses: the transcriber, the voice, the reply's
-model and the flow controller's (`llm-flow`), and search and the decision models where it
-uses them. A concrete `provider/model`, a vendor name and a shortcut
+Every routing filter runs as before, then the region's: only the instances in the work's region
+are kept, and with none left the request is refused, naming the region (`no candidate in region
+eu`, a 400). Fallback walks the rest in the usual order, so a failing EU instance falls back only
+to other EU instances. That holds for every routed modality, so an EU agent's session needs an EU
+instance of each model it uses: the transcriber, the voice, the reply's model and the flow
+controller's (`llm-flow`), the title's (`llm-fast`), and search and the decision models where it
+uses them. A prompt-injection screen with no instance in the region lets the response stand, as
+one that cannot be reached does. A concrete `provider/model`, a vendor name and a shortcut
 each resolve to every region's instances first, and a shortcut's `prefer` holds in each region.
 Live health and statistics stay keyed by provider and model: an EU instance shares its US
 twin's health. A customer's own model (`custom/<name>`) runs in `us`, its stored config having
 no region, and is filtered the same way. Each instance's work is priced at its region's entry,
 so EU work is billed under an `-eu` SKU.
 
-Knowledge and sandboxes are not routed, so they are kept in the region the owner's policies
-name (`routing.Regioner`, which `policy.Enforcer` is):
+Knowledge and sandboxes are not routed, so they are done in the work's region
+(`routing.Owner.Region`), `us` when it names none:
 
 - **Knowledge.** One turbopuffer backend per region `knowledge.regions` maps
   (`ROUTER_KNOWLEDGE_REGIONS`), `us` always among them as before. A knowledge base stays in the
   region of its first write through the router, recorded in `knowledge_namespaces` (migration
-  `20261202125000_knowledge_region`, which records every existing base as `us`). Its later
-  reads and writes go there, and an owner whose policies now name another region is refused
-  rather than having it moved; a delete goes where the base is, whatever the policies say now.
-  A region with no backend is refused. Each region's rows are priced there
+  `20261202125000_knowledge_region`, which records every existing base as `us`). Work naming a
+  region, an agent's, reads and writes a base kept there, makes one nothing was written to
+  there, and is refused one kept in another rather than having it moved. Work naming none, as
+  the knowledge API's (`/v1/agents/knowledge`) and a page's read, goes where the base is kept,
+  and makes a new one in `us`. A sync keeps the agent's base in its region before it adds a page,
+  so a page read later lands there. A delete goes where the base is, whatever the work names. A
+  region with no backend is refused. Each region's rows are priced there
   (`knowledge-turbopuffer-write-eu`), and `router usage storage` samples every region's bases.
   `cmd/knowledge` still writes to `TURBOPUFFER_REGION` directly, and records no region.
-- **Sandboxes.** Each is made on the Daytona target `code_sandbox.targets` maps its owner's
+- **Sandboxes.** Each is made on the Daytona target `code_sandbox.targets` maps its session's
   region to (`ROUTER_CODE_SANDBOX_TARGETS`); `us` with none is `DAYTONA_TARGET`, then the
-  organization's default, as before. A region with no target is refused when the session's
-  sandbox is opened. A sandbox is labelled `stream.region` and its rows carry `region` and
+  organization's default, as before. A region with no target is refused when the agent is
+  saved naming a sandbox, and again when a session's sandbox is opened. A sandbox is labelled
+  `stream.region` and its rows carry `region` and
   the region's SKU. `router usage sandboxes` lists every target of the organization, so the
   sweep and the reconciliation cover them all, pricing a gap in the sandbox's region.
 
@@ -1023,14 +1060,14 @@ key under 16 characters), and its audit entries show no more. A key holding a sp
 control character is refused. Without a keyring a put is refused, and without a database there are
 no keys.
 
-- **Routing.** For each candidate whose vendor the customer keeps a key for in the candidate's
-  region, the router inserts the customer's own instance immediately before it: a copy of the
+- **Routing.** For each candidate in the work's region whose vendor the customer keeps a key for
+  there, the router inserts the customer's own instance immediately before it: a copy of the
   instance with `BYOK` set, at the deployment's endpoint, built with the customer's key. The order
   between models stays the priority list's or the ranking's, and each model is tried on the
   customer's key first. When that fails, as it is built or when the vendor refuses the request, the
   walk and the LLM fallback move on to the deployment's instance of the model as to any next
-  candidate. A key for `eu` is used
-  only for `eu` instances, and a key for `us` only for `us` ones. A model the deployment holds no key
+  candidate. A key is looked up for the work's region alone: a key for `eu` is used only for `eu`
+  work, and a key for `us` only for `us` work. A model the deployment holds no key
   for is still served on the customer's. Keys are read through the appconfig cache (Redis, and the
   copy rueidis keeps in each process, dropped on every replica when a key is put or deleted) and
   opened, one AES-GCM open, when work is routed.
@@ -1043,7 +1080,7 @@ no keys.
 - **Billing.** Work on a customer's key is priced at its item's BYOK entry (see Prices): a SKU ending
   in `-byok`, a fee of 20% of the work at the vendor's rates, `base_cost_micros` 0. A customer who may
   not spend money is refused it as any billable work is.
-- **Knowledge.** With a `turbopuffer` key for the owner's region, a knowledge base first written from
+- **Knowledge.** With a `turbopuffer` key for the work's region, a knowledge base first written from
   then on is kept in the customer's own turbopuffer account, at the turbopuffer region of the
   deployment's own backend there, read and written on their key and priced at
   `knowledge-turbopuffer-*-byok`. `knowledge_namespaces.account` records the account, `stream` for
@@ -1052,7 +1089,7 @@ no keys.
   naming the base and the region, rather than read from the deployment's account. `router usage
   storage` samples each base kept in a customer's account on their key, at the BYOK price, and counts
   apart, not as missed, one whose key is gone.
-- **Sandboxes.** With a `daytona` key for the owner's region, the session's sandbox is made in the
+- **Sandboxes.** With a `daytona` key for the work's region, the session's sandbox is made in the
   customer's own Daytona organization, on the same target, labelled `stream.account=customer`, and its
   time is priced at `sandbox-daytona-*-byok`. Under the `daytona` broker its secrets are kept in that
   organization too, and the hourly secret sweep covers every customer organization a key is kept
