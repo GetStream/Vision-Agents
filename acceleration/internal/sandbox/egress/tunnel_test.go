@@ -297,7 +297,9 @@ func (s *TunnelSuite) TestAnotherProcessOnTheTunnelsPortFailsTheRun() {
 	s.Require().Error(err)
 	s.Contains(out, "the TLS tunnel to the proxy did not start")
 	s.Contains(strings.ToLower(out), "address already in use", "the forwarder's own error")
-	s.Less(strings.Count(out, "+ sleep 0.1"), 50, "no waiting once the forwarder exited: the tries stopped before their 50")
+	tries := strings.Count(out, "+ sleep ")
+	s.Positive(tries, "the trace shows the tries")
+	s.Less(tries, 50, "no waiting once the forwarder exited: the tries stopped before their 50")
 }
 
 // TestASecondForwarderLeavesThePidFileToTheFirst: one that cannot have the port exits without
