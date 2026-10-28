@@ -11,7 +11,8 @@
 --   - customer_id, deployment and api_key are, with stream_app, where the delivery came from
 --     as the router verified it (api.hookOrigin): the registered app's customer, empty when
 --     the router does not know it; whether the deployment's own app sent it; the key whose
---     secret signed it. stream_app is 0 for the deployment's own app while its id is unknown.
+--     secret signed it. The app is always known: the internal endpoint reads it from the signed
+--     body, and the store refuses an insert without one.
 --   - body is the verified event as Stream sent it.
 --   - state is queued until the message is answered (done) or its retries ran out (failed).
 --     next_attempt_at is when a queued row is due; a worker that takes one moves it to the

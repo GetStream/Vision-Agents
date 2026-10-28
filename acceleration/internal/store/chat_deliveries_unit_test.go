@@ -16,3 +16,8 @@ func TestQueueingAChatDeliveryWithoutABodyIsRefused(t *testing.T) {
 	_, err := (&Store{}).QueueChatDelivery(context.Background(), ChatDelivery{StreamApp: 1257545, MessageID: "msg-one"})
 	require.ErrorContains(t, err, "are required")
 }
+
+func TestQueueingAChatDeliveryWithoutAStreamAppIsRefused(t *testing.T) {
+	_, err := (&Store{}).QueueChatDelivery(context.Background(), ChatDelivery{MessageID: "msg-one", Body: []byte(`{}`)})
+	require.ErrorContains(t, err, "Stream app is required")
+}

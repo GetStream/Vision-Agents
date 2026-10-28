@@ -36,7 +36,8 @@ type ChatDelivery struct {
 
 	// Seq is the order the message was queued in.
 	Seq int64 `bun:"seq,pk"`
-	// StreamApp and MessageID are the Stream app and its id for the message.
+	// StreamApp and MessageID are the Stream app and its id for the message. The app is always
+	// known, as the internal endpoint reads it from the signed body.
 	StreamApp int64  `bun:"stream_app,notnull"`
 	MessageID string `bun:"message_id,notnull"`
 	// CustomerID, Deployment and APIKey are, with StreamApp, where the delivery came from as
@@ -71,6 +72,9 @@ func (s *Store) QueueChatDelivery(ctx context.Context, delivery ChatDelivery) (q
 func queueChatDelivery(ctx context.Context, db bun.IDB, delivery ChatDelivery) (bool, error) {
 	if delivery.MessageID == "" || len(delivery.Body) == 0 {
 		return false, stack.Wrap(errors.New("store: a message id and a body are required"))
+	}
+	if delivery.StreamApp == 0 {
+		return false, stack.Wrap(errors.New("store: a Stream app is required: a message queued without one would be queued again once the app is known"))
 	}
 	result, err := db.NewRaw(`
 INSERT INTO chat_deliveries (stream_app, message_id, customer_id, deployment, api_key, body, next_attempt_at)
