@@ -641,22 +641,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if mcp != nil {
 		created.closers = append(created.closers, mcp.Close)
 	}
+	// A session opened without a zone runs in its user's stored one, so the agent's
+	// clock line tells the day, and the scheduling tools read dates, in the zone its
+	// tasks will run in.
+	if user := zoneUser(spec); spec.Timezone == "" && user != "" && m.options.Store != nil {
+		if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, user); err == nil && zone != "" {
+			spec.Timezone, created.spec.Timezone = zone, zone
+		}
+	}
 	// The scheduling tools are offered beside the plugins, inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
 	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
 		tools = append(tools, offered...)
-		spec.SchedulingTools = true
-		created.spec.SchedulingTools = true
-		// A session opened without a zone runs in its user's stored one, so the
-		// agent reads dates, and the prompt's clock line tells the day, in the
-		// zone its tasks will run in.
-		if spec.Timezone == "" {
-			if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, scheduling.user); err == nil && zone != "" {
-				spec.Timezone, created.spec.Timezone = zone, zone
-				scheduling.spec.Timezone = zone
-			}
-		}
 		scheduling.next = runner
 		runner = scheduling
 	}
@@ -738,6 +735,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Edge:          edge,
 			Text:          spec.Text,
 			Instructions:  spec.prompt(),
+			Timezone:      spec.Timezone,
 			CustomerID:    spec.CustomerID,
 			Attribution:   spec.Attribution,
 			Caller:        spec.Caller,
