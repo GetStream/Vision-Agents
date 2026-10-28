@@ -1200,10 +1200,14 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	// The loops read nothing on their own, and an admission waits for its read as long as the
-	// read may take, however slow a loaded machine makes the batch.
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
+	// read may take, however slow a loaded machine makes the batch, with the balance not read
+	// yet refusing nothing. Spend is read from the usage service, whose windows a first read asks
+	// for every subject it reads, even those a pass of the limits loop read first.
+	billed := s.billedOn(configs, func(settings *Settings) {
 		settings.Fresh, settings.SpendEvery, settings.SumEvery, settings.FirstRead = time.Hour, time.Hour, time.Hour, readTimeout
+		settings.MaxStale = time.Hour
 	})
+	enforcer := billed.Enforcer
 	const accounts = 60
 	apps := make([]string, accounts)
 	for i := range apps {
@@ -1211,19 +1215,21 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 		organization := fmt.Sprintf("%s-%02d", s.org, i)
 		s.Require().NoError(s.store.JoinOrganization(s.ctx, apps[i], organization))
 		s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: organization, AppID: apps[i], LimitMicros: 1})
-		s.spendAs(store.Request{CustomerID: apps[i], CostMicros: 1})
+		s.usage().Credit(s.T(), organization, 1_000_000)
+		s.usage().Spend(s.T(), organization, 1, func(event *usage.Event) { event.AppID = apps[i] })
 		_, _, _, err := enforcer.policies(s.ctx, apps[i])
 		s.Require().NoError(err)
 		_, err = configs.HasUserPolicies(s.ctx, apps[i])
 		s.Require().NoError(err)
 	}
-	before := reads.reads.Load()
+	before, windowsBefore := reads.reads.Load(), billed.front.windows.Load()
 
 	var refused atomic.Int64
 	var admitting sync.WaitGroup
 	for _, app := range apps {
 		admitting.Go(func() {
-			if admitted, err := enforcer.Admit(s.ctx, ownerOf(app)); err == nil && errors.Is(admitted.Spend, ErrBudgetSpent) {
+			admitted, err := enforcer.Admit(s.ctx, ownerOf(app))
+			if err == nil && errors.Is(admitted.Spend, ErrBudgetSpent) {
 				refused.Add(1)
 			}
 		})
@@ -1232,6 +1238,7 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 
 	s.EqualValues(accounts, refused.Load(), "every first admission read its limit and spend first")
 	s.LessOrEqual(reads.reads.Load()-before, int64(accounts/10), "in batches, not a read of the limits per account")
+	s.LessOrEqual(billed.front.windows.Load()-windowsBefore, int64(accounts/10), "in batches, not a read of the spend per account")
 }
 
 func (s *PolicySuite) TestAChangedLimitIsHeldToTheLastSpendReadAtOnce() {
