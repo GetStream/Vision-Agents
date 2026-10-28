@@ -128,7 +128,7 @@ func (o OwnedKnowledge) Fetch(ctx context.Context, namespace string, ids []strin
 // requests before it, which the provider billed, are billed too. Writing none asks the
 // provider nothing.
 func (o OwnedKnowledge) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
-	if err := o.admit(ctx); err != nil {
+	if err := o.Admit(ctx); err != nil {
 		return err
 	}
 	namespace = o.scoped(namespace)
@@ -158,10 +158,11 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 	return nil
 }
 
-// admit refuses a write the owner may not pay for: writing is most of what knowledge costs,
+// Admit refuses a write the owner may not pay for: writing is most of what knowledge costs,
 // and its rows are only recorded once the provider has billed them. Deletes are not admitted,
-// so data can always be removed.
-func (o OwnedKnowledge) admit(ctx context.Context) error {
+// so data can always be removed. Upsert admits itself; a caller that pays for work before
+// the write, such as reading the page it is for, admits that work first.
+func (o OwnedKnowledge) Admit(ctx context.Context) error {
 	if o.knowledge.gate == nil {
 		return nil
 	}
