@@ -328,6 +328,10 @@ type RouterSuite struct {
 	// memoryOff gives the router no memory store, as a deployment with no memory provider
 	// has, for a control suite to set before it starts the harness.
 	memoryOff bool
+	// sessionsPhone gives the router's sessions telephony, as cmd/router does, for a suite
+	// whose sessions answer a number to set before it starts the harness. Off, a session
+	// given a number cannot open.
+	sessionsPhone bool
 
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
@@ -1184,7 +1188,12 @@ func (s *RouterSuite) sessionManager(
 	if s.sessionTelephony {
 		telephony = s.telephony(logger)
 	}
+	var telephony *phone.Service
+	if s.sessionsPhone {
+		telephony = s.telephony(logger)
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Phone:         telephony,
 		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,

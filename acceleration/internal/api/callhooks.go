@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -149,7 +150,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
 		return
 	}
-	if s.store == nil || s.dispatch == nil {
+	if s.store == nil {
 		return
 	}
 
@@ -229,6 +230,15 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
 		return
 	}
+	// A number with an agent never goes to a worker, even one waiting: the router answers
+	// it on this node.
+	if number.ConfigID != "" {
+		s.answerWithAgent(r, origin, event, number, callType, callID)
+		return
+	}
+	if s.dispatch == nil {
+		return
+	}
 	if s.forwardedToWorkers(r, payload, number.CustomerID) {
 		return
 	}
@@ -263,6 +273,44 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		arrived = append(arrived, "session_id", call.SessionID)
 	}
 	s.logger.Info("arriving call sites", arrived...)
+}
+
+// answerWithAgent opens a session of the number's agent on the arriving call. It ends on its
+// own once the caller hangs up, as any phone session does (Session.observe).
+func (s *Server) answerWithAgent(r *http.Request, origin hookOrigin, event callEvent, number store.PhoneNumber, callType, callID string) {
+	config, err := s.configs.AgentConfig(r.Context(), number.CustomerID, number.ConfigID)
+	if err != nil {
+		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to a number whose agent is gone",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164,
+			"config", number.ConfigID, "error", err)
+		return
+	}
+	spec := session.FromConfig(config)
+	// The number names each caller's call for the session answering it, as dispatch does.
+	spec.ID = callID
+	spec.Text = false
+	spec.PersistConversation = true
+	// No user: a caller id is easy to fake, and as a user it would hand one caller the
+	// agent's memory of another.
+	spec.Phone = &session.PhoneSpec{Number: number.E164}
+	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound}
+	spec.Tags = number.Tags
+	// Before Create: the manager picks the Stream app the agent joins in from this pin.
+	s.pinHook(origin, number.CustomerID, event.CallCid)
+	// The agent joins before Create returns, so Stream giving up on the hook must not
+	// leave it half-joined.
+	created, err := s.sessions.Create(context.WithoutCancel(r.Context()), spec)
+	if err != nil {
+		s.logger.Error("nobody could answer an arriving call",
+			"call", event.CallCid, "customer", number.CustomerID,
+			"number", number.E164, "config", number.ConfigID, "error", err)
+		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call its agent could not answer",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
+		return
+	}
+	s.logger.Info("an agent answered an arriving call",
+		"call", event.CallCid, "customer", number.CustomerID,
+		"number", number.E164, "config", number.ConfigID, "session", created.ID())
 }
 
 // releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,
