@@ -98,7 +98,8 @@ type Backend struct {
 	// STREAM_ACCELERATION_URL, then to STREAM_ACCELERATION_REGION, then to the hosted router.
 	URL string
 	// Region holds this SDK to the hosted router in one region, such as us-east4. It
-	// can be set together with URL only when URL names that region.
+	// can be set together with URL only when URL names that region. Resolve turns it into
+	// URL and clears it.
 	Region string
 	// CustomerID is the identity every request and every cost row is keyed by. Empty falls
 	// back to STREAM_ACCELERATION_CUSTOMER_ID. A router behind the authenticating proxy
@@ -136,8 +137,12 @@ type Backend struct {
 // Resolve fills in whatever the environment knows and refuses a backend nobody is billed for.
 func (b Backend) Resolve() (Backend, error) {
 	if b.URL != "" && b.Region != "" {
-		// Clients retain the resolved backend and resolve it again for resource calls.
-		if url, err := RegionURL(b.Region); err != nil || strings.TrimSuffix(b.URL, "/") != url {
+		// A region's own URL is not a contradiction; any other URL is.
+		url, err := RegionURL(b.Region)
+		if err != nil {
+			return b, err
+		}
+		if strings.TrimSuffix(b.URL, "/") != url {
 			return b, errors.New("stream: set a URL or a region, not both")
 		}
 	}
@@ -154,6 +159,9 @@ func (b Backend) Resolve() (Backend, error) {
 		}
 		b.URL = url
 	}
+	// The URL now says where; a region kept beside it would make a resolved backend whose
+	// URL is later changed look like one given both.
+	b.Region = ""
 	if b.URL == "" {
 		b.URL = DefaultURL
 	}
