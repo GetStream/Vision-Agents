@@ -2357,3 +2357,186 @@ func (s *ProxySuite) TestTheListenerTLSHoldsTLS12AndHTTP11() {
 	s.Equal(uint16(tls.VersionTLS12), config.MinVersion)
 	s.Equal([]string{"http/1.1"}, config.NextProtos)
 }
+
+// leafClock is the time a proxy dates and renews its certificates by, which a test moves.
+type leafClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *leafClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *leafClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// TestAHostKeepsItsCertificateUntilHalfOfItsValidityHasPassed: two tunnels to one host within
+// the window get one certificate, and a tunnel after it gets a new one. A kept certificate is
+// still valid for the client for at least the rest of the half hour, when it is reused.
+func (s *ProxySuite) TestAHostKeepsItsCertificateUntilHalfOfItsValidityHasPassed() {
+	clock := &leafClock{now: time.Now()}
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now }))
+	s.T().Cleanup(s.proxy.Close)
+	// The client reads the clock the proxy reads, so a certificate it dates is judged by it.
+	handshake := func() *x509.Certificate {
+		state := s.handshake(&tls.Config{Time: clock.Now})
+		return state.PeerCertificates[0]
+	}
+
+	first := handshake()
+	clock.advance(29*time.Minute + 59*time.Second)
+	reused := handshake()
+	reusedAt := clock.Now()
+	clock.advance(time.Second)
+	renewed := handshake()
+
+	s.Equal(first.SerialNumber, reused.SerialNumber, "within half of the validity")
+	s.True(reused.NotAfter.After(reusedAt.Add(halfValidity)), "a kept certificate has more than half an hour left: %s", reused.NotAfter)
+	s.NotEqual(first.SerialNumber, renewed.SerialNumber, "half of the validity has passed")
+	// A certificate's times are whole seconds.
+	s.WithinDuration(clock.Now().Add(time.Hour), renewed.NotAfter, time.Second, "the renewed certificate is dated by the clock")
+}
+
+// TestHostsKeepTheirOwnCertificates: a certificate kept for one host is never another host's,
+// whether the host is a tunnel's name or the listener's address.
+func (s *ProxySuite) TestHostsKeepTheirOwnCertificates() {
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test", "uploads.github.test")}})
+
+	api := s.handshake(&tls.Config{}).PeerCertificates[0]
+	uploads := s.tunnelTo("uploads.github.test", &tls.Config{})
+	s.Require().NoError(uploads.Handshake())
+	other := uploads.ConnectionState().PeerCertificates[0]
+	again := s.handshake(&tls.Config{}).PeerCertificates[0]
+
+	s.Equal([]string{"api.github.test"}, api.DNSNames)
+	s.Equal([]string{"uploads.github.test"}, other.DNSNames)
+	s.NotEqual(api.SerialNumber, other.SerialNumber)
+	s.Equal(api.SerialNumber, again.SerialNumber)
+}
+
+// TestTheListenerKeepsItsCertificateForTheAddress: every handshake the listener answers in the
+// window gets one certificate, an IP address's, dated by the clock when none is set. The
+// control for a proxy with no Now is time.Now: the certificate leafValidity either side of it.
+func (s *ProxySuite) TestTheListenerKeepsItsCertificateForTheAddress() {
+	proxy := s.newProxy(s.store)
+	config := proxy.ListenerTLS("127.0.0.1")
+	before := time.Now()
+
+	first := s.listenerCertificate(config, "127.0.0.1", time.Now)
+	second := s.listenerCertificate(config, "127.0.0.1", time.Now)
+
+	s.Equal(first.SerialNumber, second.SerialNumber)
+	s.True(first.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")))
+	s.WithinDuration(before.Add(-time.Hour), first.NotBefore, 5*time.Second)
+	s.WithinDuration(before.Add(time.Hour), first.NotAfter, 5*time.Second)
+}
+
+// listenerCertificate is the certificate config answers a client that connects to address with.
+func (s *ProxySuite) listenerCertificate(config *tls.Config, address string, now func() time.Time) *x509.Certificate {
+	server, client := net.Pipe()
+	s.T().Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	s.Require().NoError(client.SetDeadline(time.Now().Add(5 * time.Second)))
+	s.Require().NoError(server.SetDeadline(time.Now().Add(5 * time.Second)))
+	served := make(chan error, 1)
+	go func() { served <- tls.Server(server, config).Handshake() }()
+	conn := tls.Client(client, &tls.Config{ServerName: address, RootCAs: s.trusted, Time: now})
+	s.Require().NoError(conn.Handshake())
+	s.Require().NoError(<-served)
+	return conn.ConnectionState().PeerCertificates[0]
+}
+
+// maxKeptLeaves is egress's maxLeaves.
+const maxKeptLeaves = 1024
+
+// TestTheKeptCertificatesAreBounded: past the cap a host still gets a certificate, signed for
+// the handshake alone; a certificate half a validity old is dropped to make room.
+func (s *ProxySuite) TestTheKeptCertificatesAreBounded() {
+	clock := &leafClock{now: time.Now()}
+	proxy := s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now })
+	serial := func(address string) string {
+		certificate, err := proxy.ListenerTLS(address).GetCertificate(&tls.ClientHelloInfo{})
+		s.Require().NoError(err)
+		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+		s.Require().NoError(err)
+		return leaf.SerialNumber.String()
+	}
+	address := func(i int) string { return fmt.Sprintf("10.%d.%d.1", i/256, i%256) }
+	const hosts = maxKeptLeaves + 50
+	first := make([]string, hosts)
+	for i := range first {
+		first[i] = serial(address(i))
+	}
+
+	kept := 0
+	for i := range first {
+		if serial(address(i)) == first[i] {
+			kept++
+		}
+	}
+	clock.advance(halfValidity)
+	fresh := serial("192.0.2.1")
+
+	s.Equal(maxKeptLeaves, kept)
+	s.Equal(fresh, serial("192.0.2.1"), "the old certificates made room")
+}
+
+// halfValidity is half of egress's leafValidity.
+const halfValidity = 30 * time.Minute
+
+// TestConcurrentHandshakesShareTheKeptCertificates is the -race probe: handshakes for the same
+// and for different hosts at once, while the clock passes the renewal point, get one
+// certificate per host and period.
+func (s *ProxySuite) TestConcurrentHandshakesShareTheKeptCertificates() {
+	clock := &leafClock{now: time.Now()}
+	proxy := s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now })
+	addresses := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"}
+	serials := func() map[string]map[string]bool {
+		var mu sync.Mutex
+		seen := map[string]map[string]bool{}
+		var wg sync.WaitGroup
+		for range 8 {
+			for _, address := range addresses {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					certificate, err := proxy.ListenerTLS(address).GetCertificate(&tls.ClientHelloInfo{})
+					if !s.NoError(err) {
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					if seen[address] == nil {
+						seen[address] = map[string]bool{}
+					}
+					seen[address][string(certificate.Certificate[0])] = true
+				}()
+			}
+		}
+		wg.Wait()
+		return seen
+	}
+
+	before := serials()
+	clock.advance(halfValidity)
+	after := serials()
+
+	all := map[string]bool{}
+	for _, address := range addresses {
+		s.Len(before[address], 1, address)
+		s.Len(after[address], 1, address)
+		for certificate := range before[address] {
+			s.False(all[certificate], "a certificate is one host's")
+			all[certificate] = true
+		}
+		for certificate := range after[address] {
+			s.False(before[address][certificate], "renewed")
+		}
+	}
+	s.Len(all, len(addresses))
+}
