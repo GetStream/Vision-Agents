@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -113,6 +114,61 @@ func (s *RecordingsSuite) TestASpeechJobWithNothingToSayIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "nothing to say")
+}
+
+func (s *RecordingsSuite) TestARecordingNamingItsModelOutsideTheOptionsIsRefused() {
+	// On 80ed8ac26 each of these was a 202 served by the default recorded model: the body
+	// takes unknown fields, so a top-level model was dropped and the caller billed for a
+	// model they never asked for.
+	speech := map[string]any{"text": "hello"}
+	transcription := map[string]any{"source": map[string]any{"url": "https://example.test/call.mp3"}}
+	for path, body := range map[string]map[string]any{"/v1/tts/recordings": speech, "/v1/stt/recordings": transcription} {
+		for _, model := range []any{"stub/stub-model", "", 5, map[string]any{}, []string{"stub/stub-model"}} {
+			for _, inline := range []bool{false, true} {
+				request := maps.Clone(body)
+				request["model"], request["inline"] = model, inline
+				if inline && path == "/v1/stt/recordings" {
+					request["source"] = map[string]any{"audio": "YXVkaW8="}
+				}
+				s.assertTopLevelModelRefused(path, request)
+			}
+		}
+		request := maps.Clone(body)
+		request["model"] = "stub/stub-model"
+		request["options"] = map[string]any{"target": "stub/stub-model"}
+		s.assertTopLevelModelRefused(path, request)
+	}
+}
+
+func (s *RecordingsSuite) TestARecordingWithANullModelIsServedAsOneWithNone() {
+	// A null is how a generated client leaves a field out. Probed on 80ed8ac26: 202 and
+	// completed, as now.
+	var spoken Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"inline": true, "text": "hello", "model": nil}, &spoken))
+	s.Equal(RecordingStatusCompleted, spoken.Status, value(spoken.Error))
+
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings",
+		map[string]any{"inline": true, "source": map[string]any{"audio": "YXVkaW8="}, "model": nil}, &transcript))
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+}
+
+func (s *RecordingsSuite) TestARecordingNamingItsModelInOptionsTargetIsServedByIt() {
+	// Probed on 80ed8ac26: each was served by the model named, as now.
+	var spoken Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"inline": true, "text": "hello", "options": map[string]any{"target": "stub/stub-model"}}, &spoken))
+	s.Require().Equal(RecordingStatusCompleted, spoken.Status, value(spoken.Error))
+	s.Equal("stub-model", value(spoken.Model))
+
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings", map[string]any{
+		"inline": true, "source": map[string]any{"audio": "YXVkaW8="},
+		"options": map[string]any{"target": "stub/stub-batch-es"},
+	}, &transcript))
+	s.Require().Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
+	s.Equal("stub-batch-es", value(transcript.Model), "not stub-batch, which a recording naming no target gets")
 }
 
 func (s *RecordingsSuite) TestAFinishedRecordingCallsBackWhoeverAskedToBeTold() {
@@ -234,6 +290,17 @@ func (s *RecordingsSuite) TestOnlyTheAppsOwnBackendMayTranscribeARecording() {
 		return as.do(http.MethodPost, "/v1/stt/recordings",
 			map[string]any{"source": map[string]any{"url": "https://example.test/call.mp3"}}, nil)
 	})
+}
+
+// assertTopLevelModelRefused sends a recording with a top-level model and expects the 400
+// that names where the model goes.
+func (s *RecordingsSuite) assertTopLevelModelRefused(path string, request map[string]any) {
+	status, payload := s.serverClient.call(http.MethodPost, path, request)
+	s.Require().Equal(http.StatusBadRequest, status, "%s %v: %s", path, request, payload)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(ErrorTypeInvalidRequest, answered.Error.Type)
+	s.Contains(answered.Error.Message, "options.target")
 }
 
 // transcribe queues a job the router must accept.
