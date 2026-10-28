@@ -354,6 +354,12 @@ func (s *InterruptionSuite) TestTwoWordsInThreeAreAnEchoAndOneInTwoAreSome() {
 	s.Equal(echoSome, echoBucket(share, compared))
 }
 
+func (s *InterruptionSuite) TestOneWordInFourIsSome() {
+	share, compared := echoShare("wait I want soup", "you can order now, I think")
+	s.Equal(0.25, share)
+	s.Equal(echoSome, echoBucket(share, compared), "any word the reply said is some echo")
+}
+
 func (s *InterruptionSuite) TestNoWordsAreNotComparedWithAReply() {
 	_, compared := echoShare("", "Here is the menu.")
 	s.False(compared)
