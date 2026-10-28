@@ -5576,7 +5576,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+    /// What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class DataPolicy
@@ -5587,6 +5587,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("allow_training")]
         public bool? AllowTraining { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
 
         /// <summary>
         /// The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
@@ -9838,6 +9844,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("realtime")]
         public bool Realtime { get; set; } = default!;
+
+        /// <summary>
+        /// Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.

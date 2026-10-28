@@ -4562,12 +4562,15 @@ pub struct DataImport {
     )]
     pub tables: ::std::collections::BTreeMap<::std::string::String, i64>,
 }
-///What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+///What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct DataPolicy {
     ///False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub allow_training: ::std::option::Option<bool>,
+    ///Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub region: ::std::option::Option<::std::string::String>,
     ///The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub retention: ::std::option::Option<::std::string::String>,
@@ -8519,6 +8522,8 @@ pub struct Provider {
     pub price: ::std::option::Option<ProviderPrice>,
     pub provider: ::std::string::String,
     pub realtime: bool,
+    ///Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+    pub region: ::std::string::String,
     ///The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub supports: ::std::option::Option<::std::vec::Vec<::std::string::String>>,

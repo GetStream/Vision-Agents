@@ -6204,10 +6204,15 @@ export type components = {
                 readonly [key: string]: number;
             };
         };
-        /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
+        /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
         readonly DataPolicy: {
             /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
             readonly allow_training?: boolean;
+            /**
+             * @description Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+             * @example eu
+             */
+            readonly region?: string;
             /**
              * @description The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
              * @example none
@@ -7888,6 +7893,11 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /**
+             * @description Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+             * @example us
+             */
+            readonly region: string;
             /**
              * @description The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
              * @example [

@@ -37,9 +37,9 @@ class Policy:
             budget (PolicyBudget | Unset): Removed: spend limits are /v1/spend/limits, at every level. A policy that sends
                 budget is refused with 400 budget_moved, and none is read back.
             data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
-                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
-                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
-                the request is refused rather than sent somewhere that does not.
+                transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a
+                requirement rather than a description: a request naming one is only routed to a model whose declared handling
+                meets it, and if none does the request is refused rather than sent somewhere that does not.
             prompt_injection (bool | Unset): Screen what every LLM response is asked for prompt injection. The newest input
                 - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to
                 time to first token. The end of the response is held until the verdict, and a response whose input reads as an

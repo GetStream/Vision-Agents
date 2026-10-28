@@ -10,15 +10,18 @@ use GetStream\VisionAgents\Json;
 
 /**
  * What a caller requires of what happens to what they send: the audio they had transcribed, or
- * the text they had spoken and the voice speaking it. This is a requirement rather than a
- * description: a request naming one is only routed to a model whose declared handling meets
- * it, and if none does the request is refused rather than sent somewhere that does not.
+ * the text they had spoken and the voice speaking it, and the region it is done in. This is a
+ * requirement rather than a description: a request naming one is only routed to a model whose
+ * declared handling meets it, and if none does the request is refused rather than sent
+ * somewhere that does not.
  */
 final readonly class DataPolicy
 {
     public function __construct(
         // False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A...
         public ?bool $allowTraining = null,
+        // Where the work is done: us or eu for now. Only a model instance running in that region serves the request,...
+        public ?string $region = null,
         // The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
         public ?string $retention = null,
     ) {
@@ -31,6 +34,7 @@ final readonly class DataPolicy
     {
         return new self(
             allowTraining: array_key_exists('allow_training', $data) && $data['allow_training'] !== null ? Json::bool($data, 'allow_training') : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             retention: array_key_exists('retention', $data) && $data['retention'] !== null ? Json::string($data, 'retention') : null,
         );
     }
@@ -45,6 +49,9 @@ final readonly class DataPolicy
         $out = [];
         if ($this->allowTraining !== null) {
             $out['allow_training'] = $this->allowTraining;
+        }
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
         }
         if ($this->retention !== null) {
             $out['retention'] = $this->retention;
