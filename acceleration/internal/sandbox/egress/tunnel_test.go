@@ -245,8 +245,8 @@ func (s *TunnelSuite) TestADeadForwarderIsStartedAgainBeforeTheNextRunAndALiveOn
 	second, err := s.pid()
 	s.Require().NoError(err)
 	s.Equal(first, second)
-	// Never and Eventually return with their last check still running, so the checks read
-	// locals: a suite field would race the next test's SetupTest.
+	// Never and Eventually can return with a check still running, so the checks read locals: a
+	// suite field would race the next test's SetupTest.
 	logFile, address := s.root+"/tmp/va-egress-tunnel.log", "127.0.0.1:"+s.port
 	s.Never(func() bool {
 		log, _ := os.ReadFile(logFile)
