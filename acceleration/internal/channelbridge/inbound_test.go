@@ -747,8 +747,8 @@ func (s *InboundSuite) TestAMessageWhoseTurnWasClaimedBeforeIsDone() {
 }
 
 // A turn waits for the reply, up to minutes, off the worker's slot: the thread's next message
-// is written and handed over meanwhile, and Close waits for both turns.
-func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseWaitsForIt() {
+// is written and handed over meanwhile, and Close returns while both turns still run.
+func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() {
 	thread := s.thread("fake_line")
 	s.queue(thread, "m-1", "hello", nil)
 	s.queue(thread, "m-2", "and more", nil)
@@ -772,10 +772,10 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseWaitsForIt() {
 		close(closed)
 	}()
 
-	s.Never(func() bool { return isClosed(closed) }, 100*time.Millisecond, 10*time.Millisecond, "Close waits for the turns")
+	s.Require().Eventually(func() bool { return isClosed(closed) }, time.Second, 10*time.Millisecond, "Close waits for no turn")
+	s.Equal(int32(2), running.Load(), "the turns still run")
 	close(release)
-	s.Require().Eventually(func() bool { return isClosed(closed) }, 5*time.Second, 10*time.Millisecond)
-	s.Equal(int32(0), running.Load())
+	s.Require().Eventually(func() bool { return running.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
 // handedTo starts a bridge whose worker hands each message to a turn that does nothing, and
@@ -1015,7 +1015,7 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 			s.Require().NoError(err)
 			s.Require().Equal("U0000BOB", stored.ChatPerson, "the thread arrives with a stored person")
 
-			admitted, err := s.newBridge(nil).admit(s.ctx, stored, s.row(thread, "m1"))
+			admitted, err := s.newBridge(nil).admit(s.ctx, &stored, s.row(thread, "m1"))
 			s.Require().NoError(err)
 			s.True(admitted)
 

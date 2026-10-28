@@ -105,9 +105,10 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 // AnswerQueued hands the agent a person's message the channel bridge's inbound worker wrote
 // into thread (channelbridge.Answer), as the message.new Stream Chat sends about it would,
 // which the hook leaves to the worker (bridged). It claims the message's turn on the worker's
-// attempt and returns the turn: answerThread past its claim. The origin is the thread's own
-// customer and app, which the worker's write was just let into (channelbridge writeInto,
-// streamapp.Clients.ForApp), so the turn asks mayWrite nothing it did not.
+// attempt and returns the turn: answerThread past its claim. A message the hook would not
+// answer (addressed) returns no turn. The origin is the thread's own customer and app, which
+// the worker's write was just let into (channelbridge writeInto, streamapp.Clients.ForApp), so
+// the turn asks mayWrite nothing it did not.
 func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
 	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: thread.ChannelID}
 	event.Message.ID, event.Message.Text, event.Message.User.ID = written.ID, written.Text, written.Author
@@ -116,6 +117,11 @@ func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, w
 		return nil, stack.Wrap(err)
 	}
 	event.Message.Attachments = attachments
+	// As the hook would: a message with neither text nor a photo, such as a video alone, is
+	// not answered (addressed).
+	if !addressed(event) {
+		return nil, nil
+	}
 	fresh, err := s.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimTurn, written.ID)
 	if err != nil || !fresh {
 		return nil, err

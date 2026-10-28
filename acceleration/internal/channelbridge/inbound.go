@@ -214,7 +214,7 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if err != nil {
 		return err
 	}
-	admitted, err := b.admit(ctx, thread, message)
+	admitted, err := b.admit(ctx, &thread, message)
 	if err != nil || !admitted {
 		return err
 	}
@@ -256,12 +256,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	log.Info("an inbound message is handed to the agent", "message", id)
 	// Off the worker's slot: a turn waits for the thread's earlier one and for the reply, up to
-	// minutes, and the thread's next message waits for this row only. Close waits for it.
-	b.working.Add(1)
-	go func() {
-		defer b.working.Done()
-		turn()
-	}()
+	// minutes, and the thread's next message waits for this row only. Close does not wait for
+	// it, so a router stops no later than before: a turn the process cuts is lost as one the
+	// message hook started was.
+	go turn()
 	return nil
 }
 

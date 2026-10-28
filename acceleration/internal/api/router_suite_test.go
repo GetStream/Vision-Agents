@@ -244,6 +244,10 @@ type RouterSuite struct {
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
+	// handOffs, while a test holds them (holdHandOffs), and turns, the hand-offs and their
+	// turns running, are the inbound worker's hand-offs to the agent (answerQueued).
+	handOffs atomic.Pointer[chan struct{}]
+	turns    atomic.Int32
 
 	// streams, modalities and conversations are what the suite's router was built from,
 	// kept so that otherNode can build a second one over the same routing.
@@ -735,8 +739,60 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.server.Close)
 	// After the server, which answers what the worker writes, as cmd/router starts it.
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
-		bridge.Start(server.AnswerQueued)
+		bridge.Start(s.answerQueued)
 	}
+}
+
+// answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It
+// waits while the test holds hand-offs (holdHandOffs) and counts the hand-offs and the turns
+// they hand over, which each test waits for at its end (useApp): a reply that leaves later goes
+// to the next test's provider (channelProvider).
+func (s *RouterSuite) answerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
+	s.turns.Add(1)
+	if held := s.handOffs.Load(); held != nil {
+		select {
+		case <-*held:
+		case <-ctx.Done():
+			s.turns.Add(-1)
+			return nil, ctx.Err()
+		}
+	}
+	turn, err := s.router.AnswerQueued(ctx, thread, written)
+	if turn == nil {
+		s.turns.Add(-1)
+		return nil, err
+	}
+	return func() {
+		defer s.turns.Add(-1)
+		turn()
+	}, nil
+}
+
+// holdHandOffs holds the inbound worker's hand-offs to the agent until release, at the latest
+// at the test's end, for a test that opens a session on a thread channel before the agent is
+// handed its first message.
+func (s *RouterSuite) holdHandOffs() (release func()) {
+	held := make(chan struct{})
+	s.handOffs.Store(&held)
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			s.handOffs.Store(nil)
+			close(held)
+		})
+	}
+	s.T().Cleanup(release)
+	return release
+}
+
+// turnsEnded waits until the inbound worker is done with the test's messages and no hand-off
+// of it, or turn it handed over, runs.
+func (s *RouterSuite) turnsEnded() {
+	if _, built := s.bridge.(*channelbridge.Bridge); !built {
+		return
+	}
+	s.Eventually(func() bool { return s.turns.Load() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor,
+		10*time.Millisecond, "the inbound worker, or a turn it handed over, still runs")
 }
 
 // channelBridge is the router's channel bridge over the suite's store, Stream Chat and
@@ -755,22 +811,28 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 // writtenByTheInboundWorker requires a thread channel's one person's message to be the one its
 // inbound worker wrote from the queue: its row is done, and the message has the id the worker
 // gives it, the channel's and the provider's for the message (channelbridge.inboundMessageID).
-// The agent's reply to it is no person's.
 func (s *RouterSuite) writtenByTheInboundWorker(channel string) {
 	var providerID string
 	s.Require().Eventually(func() bool {
 		return s.store.DB().QueryRowContext(context.Background(),
 			"SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = ? AND state = 'done'", channel).Scan(&providerID) == nil
 	}, settleFor, 10*time.Millisecond, "no written row of %s", channel)
-	var stored []map[string]any
-	for _, message := range s.chat.Stored(channel) {
-		if custom, _ := message["custom"].(map[string]any); custom[channelbridge.BridgedField] == true {
-			stored = append(stored, message)
-		}
-	}
+	stored := s.bridged(channel)
 	s.Require().Len(stored, 1)
 	sum := sha256.Sum256([]byte(providerID))
 	s.Contains([]string{channel + "-" + providerID, channel + "=" + hex.EncodeToString(sum[:])}, stored[0]["id"])
+}
+
+// bridged are the people's messages the channel bridge wrote into a thread channel
+// (channelbridge.BridgedField), in order: the agent's replies beside them are not.
+func (s *RouterSuite) bridged(channel string) []map[string]any {
+	var written []map[string]any
+	for _, message := range s.chat.Stored(channel) {
+		if custom, _ := message["custom"].(map[string]any); custom[channelbridge.BridgedField] == true {
+			written = append(written, message)
+		}
+	}
+	return written
 }
 
 // settled waits until the inbound worker is done with every message the test's customer
@@ -1724,6 +1786,8 @@ func (s *RouterSuite) useFixture(name string) {
 // useApp points the clients at an app, each as a new caller of its kind.
 func (s *RouterSuite) useApp(app testApp) {
 	s.app = app
+	// Last, after the test's own cleanups, which may let a turn finish.
+	s.T().Cleanup(s.turnsEnded)
 	s.own(app.app.ID)
 	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: noCredential}
 	s.anonymousClient = s.data.createAnonymous()

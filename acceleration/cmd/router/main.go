@@ -1452,8 +1452,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 	// Every router runs the worker that writes the queued inbound messages and hands each to
-	// the agent; a message is taken by one router at a time. After the server, which answers
-	// them, and which takes the bridge.
+	// the agent; a message is taken by one router at a time. The hand-off is the server's
+	// (AnswerQueued), and the server is built with the bridge (options.ChannelBridge), so the
+	// worker is handed it here, once both exist, not in channelbridge.Options.
 	if bridge != nil {
 		bridge.Start(server.AnswerQueued)
 	}

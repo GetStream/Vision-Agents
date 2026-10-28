@@ -70,10 +70,10 @@ type Written struct {
 }
 
 // Answer hands the agent a message the worker wrote into thread (api.Server.AnswerQueued). It
-// claims the message's turn and returns the turn, which the bridge runs off the worker's slot,
-// as a reply waits up to minutes; nil is a message whose turn was claimed already. An error
-// is the claim failing: the worker tries the message again, and Stream Chat refuses the
-// write as already done, so the next attempt claims it.
+// claims the message's turn and returns the turn, which the bridge runs off the worker's slot
+// on a context of the turn's own, as a reply waits up to minutes; nil is a message whose turn
+// was claimed already. An error is the claim failing: the worker tries the message again, and
+// Stream Chat refuses the write as already done, so the next attempt claims it.
 type Answer func(ctx context.Context, thread store.ChannelThread, message Written) (turn func(), err error)
 
 // threadChannelPrefix starts every thread channel's id: conversation.ThreadChannelPrefix,
@@ -337,8 +337,8 @@ func New(options Options) (*Bridge, error) {
 	}, nil
 }
 
-// Close stops the worker (Start) and waits for the writes, the turns they handed the agent and
-// the replies in flight. A reply handed over after it is still sent.
+// Close stops the worker (Start) and waits for the writes and replies in flight, not for the
+// turns the writes handed the agent. A reply handed over after it is still sent.
 func (b *Bridge) Close() {
 	b.cancel()
 	b.working.Wait()
@@ -433,9 +433,11 @@ func inboundRow(thread store.ChannelThread, config store.AgentConfig, message co
 // admitted is whether the message goes on to be written, for an agent to answer. It reads
 // only the queued row and the row's thread channel, never the chat person the thread arrives
 // with (store.ChannelThread brings the stored one), so an attempt of the row again decides as
-// the first one did. A store that fails is the attempt failing: the worker tries the row again
-// after its next wait, and each step before the failure is one a second run leaves as it is.
-func (b *Bridge) admit(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (admitted bool, err error) {
+// the first one did. The chat's person it records is thread's too, which the worker hands the
+// agent (Answer): the person a thread's tools serve. A store that fails is the attempt
+// failing: the worker tries the row again after its next wait, and each step before the
+// failure is one a second run leaves as it is.
+func (b *Bridge) admit(ctx context.Context, thread *store.ChannelThread, queued store.ChannelInbound) (admitted bool, err error) {
 	message := queued.Message()
 	// Only for a claimed message, so a retried delivery of an older message, such as a 1:1 one
 	// after the chat became a group, does not name the chat's person again.
@@ -458,7 +460,7 @@ func (b *Bridge) admit(ctx context.Context, thread store.ChannelThread, queued s
 		}
 	}
 	// Before the episode, so a keyword opens no card.
-	handled, err := b.keyword(ctx, thread, queued)
+	handled, err := b.keyword(ctx, *thread, queued)
 	if err != nil || handled {
 		return false, err
 	}

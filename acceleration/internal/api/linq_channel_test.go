@@ -97,7 +97,8 @@ func (s *LinqChannelSuite) SetupTest() {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	s.app, s.secret = "line-"+s.utils.uuid(), "whsec_"+base64.StdEncoding.EncodeToString(key)
-	s.apiKey, s.line = "synthetic-linq-key-"+s.utils.uuid(), "+12025550100"
+	s.apiKey, s.line = linqKeyPrefix+s.utils.uuid(), "+12025550100"
+	s.linq.authorization = "Bearer " + s.apiKey
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("linq"),
 		ConnectorOAuthClientRequest{ProviderAppID: s.app, SigningSecret: s.secret}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
@@ -131,9 +132,8 @@ func (s *LinqChannelSuite) TestAnIMessageIsAnsweredInTheSameChatOnTheCustomersLi
 	channel := s.threadChannel(chat)
 	stored := s.written(channel, 1)
 	s.Equal("Hi, is my order ready?", stored[0]["text"])
-	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
-
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.Equal(map[string]any{channelbridge.BridgedField: true}, stored[0]["custom"],
+		"without source, so the conversation takes it as the person's; bridged, so the hook leaves it to the worker")
 
 	sent := s.took(1)[0]
 	s.Equal(chat, sent.chat, "the reply goes into the chat the message came from")
@@ -213,8 +213,6 @@ func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
 	channel := s.threadChannel(chat)
 	s.Empty(photoURLs(s.written(channel, 1)[0]))
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
-
 	s.Equal("Two roses.", s.took(1)[0].text)
 	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal("What is in this photo?", said.Content)
@@ -224,7 +222,6 @@ func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(alone, s.line, "+12025550199", []map[string]any{video}), time.Now()))
 	aloneChannel := s.threadChannel(alone)
 	s.Empty(photoURLs(s.written(aloneChannel, 1)[0]))
-	s.Require().Equal(http.StatusOK, s.streamDelivers(aloneChannel, 0))
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 }
 
@@ -253,8 +250,6 @@ func (s *LinqChannelSuite) TestAConnectionStillOnRevision2PassesNoPhotoOn() {
 	stored := s.written(channel, 1)[0]
 	s.Equal("What is in this photo?", stored["text"])
 	s.Empty(photoURLs(stored))
-
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	s.Equal("Two roses.", s.took(1)[0].text)
 	said := s.lastTurn(s.vision.replies()[asked:])
@@ -374,7 +369,7 @@ func (s *LinqChannelSuite) TestADeliveryLinqRepeatsIsWrittenOnce() {
 
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
-	s.Never(func() bool { return len(s.chat.Messages(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.bridged(channel)) > 1 }, dropped, 20*time.Millisecond)
 	s.writtenByTheInboundWorker(channel)
 }
 
@@ -584,6 +579,10 @@ func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 // refuse set.
 type fakeLinq struct {
 	server *httptest.Server
+	// authorization is the header the test's own line sends with. A send with another test's
+	// is a reply an earlier test's turn finished late (the inbound worker answers every message
+	// it writes): it is answered 200 as Linq would, before any refusal, and not taken.
+	authorization string
 
 	mu          sync.Mutex
 	messages    []linqMessage
@@ -600,6 +599,10 @@ type linqMessage struct {
 	authorization string
 }
 
+// linqKeyPrefix starts the API key of every test's line: the bearer header of a send tells
+// whose test it came from.
+const linqKeyPrefix = "synthetic-linq-key-"
+
 func newFakeLinq(t *testing.T) *fakeLinq {
 	linq := &fakeLinq{}
 	mux := http.NewServeMux()
@@ -612,6 +615,11 @@ func newFakeLinq(t *testing.T) *fakeLinq {
 func (l *fakeLinq) send(w http.ResponseWriter, r *http.Request) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer "+linqKeyPrefix) && header != l.authorization {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"chat_id": r.PathValue("chat")})
+		return
+	}
 	if l.limited > 0 {
 		l.limited--
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -802,10 +810,10 @@ func (s *LinqChannelSuite) TestAStopSentTwiceInAGroupIsLiftedOnlyByThatPersonsSt
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
 	s.settled()
-	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
-	s.Equal(telnyxStarted, s.took(2)[1].text)
+	s.Equal(telnyxStarted, s.took(3)[2].text)
 	s.Zero(s.liveIMessageOptOuts(member))
 	s.NoError(s.reachable(channel))
 }
@@ -818,7 +826,7 @@ func (s *LinqChannelSuite) TestAHelpInAGroupWithAPersonWhoOptedOutIsNotAnswered(
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "HELP"), time.Now()))
 
 	s.settled()
-	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
 	s.Contains(s.logged.String(), `level=INFO msg="dropped a keyword answer to a group with a person who opted out" connector=linq channel=`+s.threadChannel(chat))
 }
 
@@ -830,7 +838,7 @@ func (s *LinqChannelSuite) TestAStartFromAPersonWhoNeverOptedOutIsNotAnsweredInA
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
 
 	s.settled()
-	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 }
 
@@ -841,7 +849,7 @@ func (s *LinqChannelSuite) TestASecondStopInAGroupIsNotConfirmedAgain() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
 
 	s.settled()
-	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 }
 
@@ -851,20 +859,19 @@ func (s *LinqChannelSuite) TestAStartWhileAnotherPersonStaysOptedOutIsNotAnswere
 	chat, starter, member := s.silencedGroup()
 	third := "+12025550197"
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, third, "STOP"), time.Now()))
-	s.Equal(telnyxStopped, s.took(2)[1].text, "a person's first STOP is confirmed, silenced group or not")
+	s.Equal(telnyxStopped, s.took(3)[2].text, "a person's first STOP is confirmed, silenced group or not")
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
 
 	s.settled()
-	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.linq.sent()) > 3 }, dropped, 20*time.Millisecond)
 	s.Zero(s.liveIMessageOptOuts(member))
 	channel := s.threadChannel(chat)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, third, "START"), time.Now()))
-	s.Equal(telnyxStarted, s.took(3)[2].text)
+	s.Equal(telnyxStarted, s.took(4)[3].text)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Back again"), time.Now()))
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, s.index(channel, "Back again")))
-	s.Equal("Noted.", s.took(4)[3].text)
+	s.Equal("Noted.", s.took(5)[4].text)
 }
 
 // R1.1's control, as on base: in one person's own chat, HELP after STOP and a second STOP are
@@ -880,14 +887,14 @@ func (s *LinqChannelSuite) TestHelpAndASecondStopInOnePersonsChatAreAnsweredAfte
 	s.Equal(telnyxStopped, s.took(3)[2].text)
 }
 
-// silencedGroup is a group chat a starter opened, in which another member texted STOP and had
-// its one confirmation.
+// silencedGroup is a group chat a starter opened, and was answered in, in which another member
+// texted STOP and had its one confirmation.
 func (s *LinqChannelSuite) silencedGroup() (chat, starter, member string) {
 	chat, starter, member = s.utils.uuid(), "+12025550199", "+12025550198"
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
-	s.written(s.threadChannel(chat), 1)
+	s.Equal("Noted.", s.took(1)[0].text)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
-	s.Equal(telnyxStopped, s.took(1)[0].text)
+	s.Equal(telnyxStopped, s.took(2)[1].text)
 	return chat, starter, member
 }
 
@@ -902,7 +909,6 @@ func (s *LinqChannelSuite) TestAStopInOnePersonsChatLeavesAnotherPersonsChatAnsw
 
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.Equal("Noted.", s.took(2)[1].text)
 	s.NoError(s.reachable(channel))
 }
