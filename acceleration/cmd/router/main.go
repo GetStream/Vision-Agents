@@ -1307,6 +1307,22 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Auth:                  authenticator,
 		Logger:                logger,
 	}
+	// A provider app's events go on to the customer's event destinations, whose secrets are
+	// sealed under the connector keyring. Every router runs the worker that sends them; a
+	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
+	// Built before the channel bridge, which hands it the deliveries of the messages it gives
+	// up, and so closed after it.
+	var forwarder *eventforward.Forwarder
+	if connectorSecrets != nil && pgStore != nil {
+		forwarder, err = eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		if err != nil {
+			return err
+		}
+		forwarder.Start()
+		defer forwarder.Close()
+		options.EventForwarder = forwarder
+		warned.Store(forwarder)
+	}
 	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
 	// stays absent, and the events endpoint takes no events without it.
 	if connectorResolver != nil {
@@ -1320,13 +1336,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them. Its texts pass the gate
 		// internal/channels' do.
-		bridge, err := channelbridge.New(channelbridge.Options{
+		// Every router runs the worker that writes the queued inbound messages; a message is
+		// taken by one router at a time.
+		bridgeOptions := channelbridge.Options{
 			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
 			Resolver: connectorResolver, Gate: dlcGate, Logger: logger,
-		})
+		}
+		if forwarder != nil {
+			bridgeOptions.Unanswered = forwarder.ForwardUnanswered
+		}
+		bridge, err := channelbridge.New(bridgeOptions)
 		if err != nil {
 			return err
 		}
+		bridge.Start()
 		defer bridge.Close()
 		options.ChannelBridge = bridge
 		if sessions != nil {
@@ -1343,19 +1366,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
-	}
-	// A provider app's events go on to the customer's event destinations, whose secrets are
-	// sealed under the connector keyring. Every router runs the worker that sends them; a
-	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
-	if connectorSecrets != nil && pgStore != nil {
-		forwarder, err := eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
-		if err != nil {
-			return err
-		}
-		forwarder.Start()
-		defer forwarder.Close()
-		options.EventForwarder = forwarder
-		warned.Store(forwarder)
 	}
 	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
 	// under the connector keyring, and each opens a conversation, so they need connectors on,

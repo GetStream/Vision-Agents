@@ -33,6 +33,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -188,8 +189,18 @@ type Options struct {
 	// texting connector, one whose episode source names an opt-out channel, passes it before
 	// it reaches the agent, and each reply before it is sent, as on internal/channels' lines
 	// (T62a, AI-921). Nil lets everything through, as a nil *dlc.Gate does.
-	Gate   *dlc.Gate
-	Logger *slog.Logger
+	Gate *dlc.Gate
+	// InboundRetries are the waits before each write again of a queued inbound message whose
+	// write failed (Start). Nil is defaultInboundRetries.
+	InboundRetries []time.Duration
+	// InboundPoll is the shortest wait between looks for queued inbound messages while some are
+	// queued. Zero is defaultInboundPoll. Tests shorten it.
+	InboundPoll time.Duration
+	// Unanswered queues a delivery for the customer's event destinations of unhandled events
+	// (eventforward.Forwarder.ForwardUnanswered), for a queued message the worker gave up. Nil
+	// forwards nothing.
+	Unanswered func(ctx context.Context, event eventforward.Event) error
+	Logger     *slog.Logger
 }
 
 // defaultRetryBackoff is a choice, not a vendor's figure: three more sends within about 45 s,
@@ -214,6 +225,20 @@ type Bridge struct {
 	gate    *dlc.Gate
 	logger  *slog.Logger
 
+	// inboundRetries, inboundPoll and unanswered are the worker's (Options).
+	inboundRetries []time.Duration
+	inboundPoll    time.Duration
+	unanswered     func(ctx context.Context, event eventforward.Event) error
+	// kick wakes the worker: a message was queued, or a slot freed.
+	kick chan struct{}
+	// slots holds one token for each queued message being written.
+	slots chan struct{}
+	// pruned is when the worker last deleted the rows past their keep.
+	pruned time.Time
+	// ctx ends the worker on Close.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	working sync.WaitGroup
 	mu      sync.Mutex
 	turns   map[string]*holder
@@ -234,10 +259,19 @@ func New(options Options) (*Bridge, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	inboundRetries := options.InboundRetries
+	if inboundRetries == nil {
+		inboundRetries = defaultInboundRetries
+	}
+	inboundPoll := options.InboundPoll
+	if inboundPoll <= 0 {
+		inboundPoll = defaultInboundPoll
+	}
 	cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream})
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Bridge{
 		store:      options.Store,
 		stream:     options.Stream,
@@ -250,11 +284,21 @@ func New(options Options) (*Bridge, error) {
 		logger:     logger,
 		turns:      map[string]*holder{},
 		held:       map[string]chan conversation.FinishedReply{},
+
+		inboundRetries: inboundRetries,
+		inboundPoll:    inboundPoll,
+		unanswered:     options.Unanswered,
+		kick:           make(chan struct{}, 1),
+		slots:          make(chan struct{}, inboundInFlight),
+		ctx:            ctx,
+		cancel:         cancel,
 	}, nil
 }
 
-// Close waits for the writes and replies in flight.
+// Close stops the worker (Start) and waits for the writes and replies in flight. A reply
+// handed over after it is still sent.
 func (b *Bridge) Close() {
+	b.cancel()
 	b.working.Wait()
 }
 
@@ -686,7 +730,7 @@ func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, epi
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	err := b.writeInto(ctx, thread, config, message)
+	err := b.writeInto(ctx, thread, config, message, "")
 	if err != nil {
 		b.logger.Error("could not write an inbound message into its thread channel",
 			"connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
@@ -698,7 +742,9 @@ func (b *Bridge) write(thread store.ChannelThread, config store.AgentConfig, epi
 	return err == nil
 }
 
-func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) error {
+// writeInto writes message into its thread channel under the Stream message id id; empty lets
+// Stream Chat pick one.
+func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string) error {
 	bound, err := b.stream.ForApp(ctx, thread.CustomerID, thread.StreamAppPK)
 	if err != nil {
 		return err
@@ -732,9 +778,11 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		return stack.Wrap(err)
 	}
 	// No source: the message hook answers only a message without one (api.addressed).
-	_, err = bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{
-		Message: getstream.MessageRequest{Text: &message.Text, UserID: &author, Attachments: photos(message.Media)},
-	})
+	request := getstream.MessageRequest{Text: &message.Text, UserID: &author, Attachments: photos(message.Media)}
+	if id != "" {
+		request.ID = &id
+	}
+	_, err = bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
 	return stack.Wrap(err)
 }
 

@@ -607,9 +607,6 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Detection:     streams.Detection,
 	}
 
-	if s.channelProvider != nil {
-		s.bridge = s.channelBridge(logger)
-	}
 	if s.forwardHTTP != nil {
 		s.forwarder, err = eventforward.New(eventforward.Options{
 			Store: pgStore, Secrets: s.sealer, HTTP: s.forwardHTTP, PublicURL: loopbackOrPublic, Logger: logger,
@@ -619,6 +616,11 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 		s.forwarder.Start()
 		s.T().Cleanup(s.forwarder.Close)
+	}
+	// After the forwarder, which the bridge hands the deliveries of the messages it gives up,
+	// as cmd/router builds them.
+	if s.channelProvider != nil {
+		s.bridge = s.channelBridge(logger)
 	}
 
 	if s.mcpEventsOn {
@@ -741,13 +743,21 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 		},
 	})
 	s.Require().NoError(err)
-	bridge, err := channelbridge.New(channelbridge.Options{
+	options := channelbridge.Options{
 		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver,
 		Gate: s.gate, Logger: logger,
-		// A reply sent again waits milliseconds here, not the production seconds.
-		RetryBackoff: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
-	})
+		// A reply sent again waits milliseconds here, not the production seconds; so does a
+		// queued inbound message written again.
+		RetryBackoff:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		InboundPoll:    10 * time.Millisecond,
+	}
+	if s.forwarder != nil {
+		options.Unanswered = s.forwarder.ForwardUnanswered
+	}
+	bridge, err := channelbridge.New(options)
 	s.Require().NoError(err)
+	bridge.Start()
 	s.T().Cleanup(bridge.Close)
 	// As cmd/router hands it the finished replies of the conversations on thread channels.
 	s.conversations.OnFinishedReply(bridge.Reply)
