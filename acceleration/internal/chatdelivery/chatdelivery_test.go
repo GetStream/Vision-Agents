@@ -245,6 +245,36 @@ func (s *ChatDeliverySuite) TestTwoSignaturesOneValidAreAccepted() {
 	s.NoError(chatdelivery.Verify(s.keys, header, body, s.now))
 }
 
+// A v1 HMAC and an entry that is not base64 are passed over, not taken as the answer: the
+// valid v1a after them still verifies.
+func (s *ChatDeliverySuite) TestAV1AndAMalformedEntryBeforeAValidOneAreSkipped() {
+	body := []byte(`{"type":"message.new"}`)
+	header := s.signed(body, s.current)
+	header.Set(chatdelivery.SignatureHeader, "v1,"+base64.StdEncoding.EncodeToString([]byte("an-hmac"))+
+		" v1a,not*base64 "+header.Get(chatdelivery.SignatureHeader))
+
+	s.NoError(chatdelivery.Verify(s.keys, header, body, s.now))
+}
+
+// Four entries are read: a valid signature fourth still verifies.
+func (s *ChatDeliverySuite) TestAValidSignatureFourthIsVerified() {
+	body := []byte(`{"type":"message.new"}`)
+	header := s.signed(body, s.current)
+	header.Set(chatdelivery.SignatureHeader, s.forged(body, 3)+" "+header.Get(chatdelivery.SignatureHeader))
+
+	s.NoError(chatdelivery.Verify(s.keys, header, body, s.now))
+}
+
+// Past four entries the rest is ignored, so a header full of forgeries costs four checks a
+// key, not one per entry.
+func (s *ChatDeliverySuite) TestASignatureFifthIsIgnored() {
+	body := []byte(`{"type":"message.new"}`)
+	header := s.signed(body, s.current)
+	header.Set(chatdelivery.SignatureHeader, s.forged(body, 4)+" "+header.Get(chatdelivery.SignatureHeader))
+
+	s.ErrorIs(chatdelivery.Verify(s.keys, header, body, s.now), chatdelivery.ErrUnsigned)
+}
+
 func (s *ChatDeliverySuite) TestNoKeysVerifyNothing() {
 	body := []byte(`{"type":"message.new"}`)
 
@@ -324,6 +354,16 @@ func (s *ChatDeliverySuite) signedAs(id string, at time.Time, body []byte, key e
 	header.Set(chatdelivery.SignatureHeader, "v1a,"+base64.StdEncoding.EncodeToString(
 		ed25519.Sign(key, []byte(id+"."+timestamp+"."+string(body)))))
 	return header
+}
+
+// forged is n well-formed v1a entries signed by a key the router does not hold.
+func (s *ChatDeliverySuite) forged(body []byte, n int) string {
+	stranger := ed25519.NewKeyFromSeed([]byte("somebody-else-s-key-seed-32bytes"))
+	entries := make([]string, n)
+	for i := range entries {
+		entries[i] = s.signed(body, stranger).Get(chatdelivery.SignatureHeader)
+	}
+	return strings.Join(entries, " ")
 }
 
 func (s *ChatDeliverySuite) public(key ed25519.PrivateKey) ed25519.PublicKey {
