@@ -55,6 +55,9 @@ const DefaultURL = "wss://api.inworld.ai/stt/v1/transcribe:streamBidirectional"
 // apiKeyEnvVar holds the credentials when Options does not.
 const apiKeyEnvVar = "INWORLD_API_KEY"
 
+// codePermissionDenied is gRPC's PERMISSION_DENIED, the code of a frame that refuses the key.
+const codePermissionDenied = 7
+
 // encodingLinear16 is the only encoding this endpoint streams, and it is the samples
 // stt.PcmData already holds.
 const encodingLinear16 = "LINEAR16"
@@ -417,6 +420,7 @@ func (s *STT) write(payload []byte) error {
 
 // readLoop translates server frames into events until the connection ends.
 func (s *STT) readLoop() {
+	refused := false
 	for {
 		_, raw, err := s.conn.ReadMessage()
 		if err != nil {
@@ -429,6 +433,10 @@ func (s *STT) readLoop() {
 		if err := json.Unmarshal(raw, &message); err != nil {
 			s.logger.Debug("undecodable frame", "error", err, "payload", string(raw))
 			continue
+		}
+		if message.Error != nil && message.Error.refusesKey() && !refused {
+			refused = true
+			s.keys.InvalidKey()
 		}
 		s.handleMessage(message)
 	}
@@ -554,6 +562,15 @@ func (s *STT) done() {
 }
 
 // failure is what the server said went wrong.
+// refusesKey reports whether an error frame is the one the server sends, right after
+// accepting the handshake, on a key it does not take: gRPC code 7 (PERMISSION_DENIED) with one
+// of these texts. Code 7 alone is any permission the key lacks.
+func (e serverError) refusesKey() bool {
+	return e.Code == codePermissionDenied &&
+		(strings.Contains(e.Message, "API key does not exist or was deleted") ||
+			strings.Contains(e.Message, "Invalid authorization credentials"))
+}
+
 func (e serverError) failure() string {
 	if e.Message == "" {
 		return fmt.Sprintf("unknown error (code %d)", e.Code)
