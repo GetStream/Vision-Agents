@@ -187,8 +187,9 @@ ever fails.
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
 | Renaming a session or changing its models | `updateSession`, which is server-side only |
 
-Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
-device, even against a local router with no proxy in front.
+Every request sends `Stream-Auth-Type: jwt`, and a socket opened by customer id sends it as the
+`stream-auth-type=jwt` query parameter, since a browser socket cannot set a header. It declares
+this caller a device, even against a local router with no proxy in front.
 
 ## Regenerating the client
 

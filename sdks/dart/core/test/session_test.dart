@@ -28,8 +28,12 @@ void main() {
       expect(chat.isConnected, isTrue);
       final upgrade = router.upgrades.single;
       expect(upgrade.path, '/v1/agents/sessions/s1/events');
-      expect(upgrade.query, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
-      expect(upgrade.header('Stream-Auth-Type'), isNull);
+      expect(upgrade.query, {
+        'decisions': 'false',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+        'stream-auth-type': 'jwt',
+      });
       await chat.close();
     });
 
