@@ -644,6 +644,31 @@ func (s *PhoneSuite) TestANumbersAgentCanBeRemoved() {
 	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/agent", nil, nil))
 }
 
+func (s *PhoneSuite) TestAConfigANumberAnswersWithCannotBeDeleted() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+
+	status, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+config, nil)
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, number)
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config, nil, nil))
+}
+
+func (s *PhoneSuite) TestAConfigCanBeDeletedOnceNoNumberAnswersWithIt() {
+	s.useApp(s.data.createApp())
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/numbers/"+number+"/agent",
+		SetNumberAgentRequest{ConfigId: &config}, nil))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/numbers/"+number+"/agent", nil, nil))
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+}
+
 func (s *PhoneSuite) TestANumberThatIsNotAttachedCannotBeGivenAnAgent() {
 	s.useApp(s.data.createApp())
 	number := s.utils.number()

@@ -12457,7 +12457,7 @@ paths:
   /v1/agents/configs/{id}:
     delete:
       description: |-
-        Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+        Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: deleteAgentConfig
       parameters:
@@ -12490,6 +12490,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
         "503":

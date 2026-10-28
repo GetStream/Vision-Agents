@@ -336,6 +336,13 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	if err != nil {
 		return nil, errUnknownConfig
 	}
+	answering, err := s.store.NumbersAnsweredBy(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(answering) > 0 {
+		return nil, configAnswersNumbers(answering)
+	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
@@ -529,6 +536,13 @@ var (
 var errAgentRoleTaken = APIError{
 	Type: ErrorTypeConflict, Code: codeRoleTaken,
 	Message: "another agent already has this role",
+}
+
+// configAnswersNumbers is a delete of a config that phone numbers still answer with: deleting
+// it would leave their callers reaching no agent.
+func configAnswersNumbers(numbers []string) APIError {
+	return conflict(fmt.Sprintf("these numbers answer with this agent: %s. Remove the agent from them or detach them",
+		strings.Join(numbers, ", ")))
 }
 
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
@@ -2107,14 +2121,16 @@ func (s *Server) registerConfigs(api huma.API) {
 		Path:        "/v1/agents/configs/{id}",
 		Summary:     "Delete an agent config",
 		Description: "Calls that already ran under it keep naming it, so the config stops being usable rather " +
-			"than stops having existed.\n" +
+			"than stops having existed. A config that a phone number answers with is refused with a 409 " +
+			"naming the numbers.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The config is gone"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict},
 	}, s.deleteAgentConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "listSkills",
