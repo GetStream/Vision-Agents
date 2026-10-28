@@ -64,6 +64,7 @@ func TestSlackChannelSuite(t *testing.T) {
 // SetupSuite registers hmac_header and the real oauth2_code, whose Wrap puts the bot token on
 // a reply, and the real channel bridge, with sessions that write their transcripts.
 func (s *SlackChannelSuite) SetupSuite() {
+	s.database = "slack_channel"
 	verifier := hmacheader.New()
 	// Retrieve never reaches a token endpoint here: the stored bot token has no expiry and no
 	// refresh token, so it is handed out as stored.
@@ -178,6 +179,7 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	s.written(channel, 1)
 	s.Never(func() bool { return len(s.chat.Messages(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.writtenByTheInboundWorker(channel)
 }
 
 // A thread is one episode: its first message opens one card in the omni-channel of whoever
@@ -242,9 +244,12 @@ func (s *SlackChannelSuite) TestAnEpisodeCardStartsNoSession() {
 // workspace, for the test's agent.
 func (s *SlackChannelSuite) omniChannel(user string) string {
 	var cid string
-	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
-		"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'slack' AND address = ?",
-		s.customerID(), s.config.ID, s.workspace+":"+user).Scan(&cid), "no contact for %s", user)
+	// The worker that writes the message opens its episode, after the delivery's answer.
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'slack' AND address = ?",
+			s.customerID(), s.config.ID, s.workspace+":"+user).Scan(&cid) == nil
+	}, settleFor, 10*time.Millisecond, "no contact for %s", user)
 	return strings.TrimPrefix(cid, "agent:")
 }
 

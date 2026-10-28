@@ -256,21 +256,57 @@ SELECT min(head.next_attempt_at) FROM (
 // took since, changes nothing, so it cannot finish or reschedule the other's attempt. changed
 // is false then.
 func (s *Store) FinishChannelInbound(ctx context.Context, claimed ChannelInbound, at time.Time) (changed bool, err error) {
-	return s.leaveChannelInbound(ctx, claimed, ChannelInboundDone, at)
+	return leaveChannelInbound(ctx, s.db, claimed, ChannelInboundDone, at)
 }
 
 // FailChannelInbound records that a claimed message's last attempt failed and it is given up,
-// at at.
-func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, at time.Time) (changed bool, err error) {
-	return s.leaveChannelInbound(ctx, claimed, ChannelInboundFailed, at)
+// at at. forward is whether the worker forwards the message's delivery: it has a forward, and
+// no other message of the delivery was given up before it. The event destinations key a
+// forward by the delivery only while it is queued (QueueEventDeliveries; FinishEventDelivery
+// deletes it once sent), and one thread's messages are given up minutes apart, so a delivery
+// whose two messages were never written would otherwise reach a destination twice.
+func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, at time.Time) (changed, forward bool, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if claimed.Forward != nil {
+			given, err := channelInboundDeliveryGivenUp(ctx, tx, claimed)
+			if err != nil {
+				return err
+			}
+			forward = !given
+		}
+		changed, err = leaveChannelInbound(ctx, tx, claimed, ChannelInboundFailed, at)
+		forward = forward && changed
+		return err
+	})
+	return changed, forward, stack.Wrap(err)
 }
 
-func (s *Store) leaveChannelInbound(ctx context.Context, claimed ChannelInbound, state string, at time.Time) (bool, error) {
+// channelInboundDeliveryGivenUp is whether another message of claimed's delivery was given up:
+// one with the same provider id for the delivery, or with none and the same body, as the event
+// destinations key a forward (eventforward.deliveryID). It first locks the delivery until tx
+// ends, so of two messages of it given up at once on two routers, the second sees the first.
+func channelInboundDeliveryGivenUp(ctx context.Context, tx bun.Tx, claimed ChannelInbound) (bool, error) {
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"channel_thread_inbound/"+claimed.CustomerID+"/"+claimed.ConnectorID+"/"+claimed.Forward.ID); err != nil {
+		return false, fmt.Errorf("store: fail channel inbound: %w", err)
+	}
+	var given bool
+	if err := tx.NewRaw(`
+SELECT EXISTS (
+    SELECT 1 FROM channel_thread_inbound
+    WHERE state = 'failed' AND customer_id = ? AND connector_id = ? AND forward->>'id' = ? AND (? <> '' OR raw = ?)
+)`, claimed.CustomerID, claimed.ConnectorID, claimed.Forward.ID, claimed.Forward.ID, claimed.Raw).Scan(ctx, &given); err != nil {
+		return false, fmt.Errorf("store: fail channel inbound: %w", err)
+	}
+	return given, nil
+}
+
+func leaveChannelInbound(ctx context.Context, db bun.IDB, claimed ChannelInbound, state string, at time.Time) (bool, error) {
 	attempts := claimed.Attempts
 	if state == ChannelInboundFailed {
 		attempts++
 	}
-	return s.updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+	return updateClaimedChannelInbound(ctx, claimed, db.NewUpdate().Model((*ChannelInbound)(nil)).
 		Set("state = ?", state).
 		Set("attempts = ?", attempts).
 		Set("finished_at = ?", at.UTC()))
@@ -279,12 +315,12 @@ func (s *Store) leaveChannelInbound(ctx context.Context, claimed ChannelInbound,
 // RetryChannelInbound records a failed attempt of a claimed message and when the next one is
 // due.
 func (s *Store) RetryChannelInbound(ctx context.Context, claimed ChannelInbound, next time.Time) (changed bool, err error) {
-	return s.updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+	return updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
 		Set("attempts = ?", claimed.Attempts+1).
 		Set("next_attempt_at = ?", next.UTC()))
 }
 
-func (s *Store) updateClaimedChannelInbound(ctx context.Context, claimed ChannelInbound, update *bun.UpdateQuery) (bool, error) {
+func updateClaimedChannelInbound(ctx context.Context, claimed ChannelInbound, update *bun.UpdateQuery) (bool, error) {
 	result, err := update.
 		Where("seq = ?", claimed.Seq).
 		Where("state = ?", ChannelInboundQueued).

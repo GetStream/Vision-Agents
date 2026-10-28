@@ -139,6 +139,7 @@ func (s *TelnyxChannelSuite) TestAnSMSIsAnsweredFromTheCustomersNumber() {
 	stored := s.written(channel, 1)
 	s.Equal("Hi, is my order ready?", stored[0]["text"])
 	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
+	s.writtenByTheInboundWorker(channel)
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
@@ -512,9 +513,12 @@ func (s *telnyxLine) threadChannel(person string) string {
 // test's agent.
 func (s *telnyxLine) omniChannel(number string) string {
 	var cid string
-	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
-		"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'phone' AND address = ?",
-		s.customerID(), s.config.ID, number).Scan(&cid), "no contact for %s", number)
+	// The worker that writes the message opens its episode, after the delivery's answer.
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND agent_config_id = ? AND kind = 'phone' AND address = ?",
+			s.customerID(), s.config.ID, number).Scan(&cid) == nil
+	}, settleFor, 10*time.Millisecond, "no contact for %s", number)
 	return strings.TrimPrefix(cid, "agent:")
 }
 

@@ -4,7 +4,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -261,7 +263,7 @@ func (s *StoreSuite) TestAFailedInboundMessageLetsItsThreadGoOn() {
 	s.Require().NoError(err)
 	last := s.claimedOne(s.base.Add(time.Second), "1759740000.000100")
 
-	changed, err := s.store.FailChannelInbound(s.ctx, last, s.base.Add(2*time.Second))
+	changed, _, err := s.store.FailChannelInbound(s.ctx, last, s.base.Add(2*time.Second))
 	s.Require().NoError(err)
 	s.True(changed)
 
@@ -294,7 +296,7 @@ func (s *StoreSuite) TestAWorkerWhoseLeaseWasTakenOverChangesNothing() {
 
 	retried, err := s.store.RetryChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
 	s.Require().NoError(err)
-	failed, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
+	failed, _, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
 	s.Require().NoError(err)
 	finished, err := s.store.FinishChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
 	s.Require().NoError(err)
@@ -317,7 +319,7 @@ func (s *StoreSuite) TestAFinishedInboundMessageIsNotFinishedAgain() {
 	_, err := s.store.FinishChannelInbound(s.ctx, claimed, s.base)
 	s.Require().NoError(err)
 
-	failed, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
+	failed, _, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
 
 	s.Require().NoError(err)
 	s.False(failed)
@@ -430,7 +432,7 @@ func (s *StoreSuite) TestNoInboundMessageIsNextOnceAllAreWrittenOrGivenUp() {
 			s.Require().NoError(err)
 			continue
 		}
-		_, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
+		_, _, err := s.store.FailChannelInbound(s.ctx, claimed, s.base)
 		s.Require().NoError(err)
 	}
 
@@ -462,7 +464,7 @@ func (s *StoreSuite) TestPruningKeepsAWrittenMessageADayAndAGivenUpOneThirtyDays
 		if strings.HasPrefix(claimed.ProviderMessageID, "done") {
 			_, err = s.store.FinishChannelInbound(s.ctx, claimed, at)
 		} else {
-			_, err = s.store.FailChannelInbound(s.ctx, claimed, at)
+			_, _, err = s.store.FailChannelInbound(s.ctx, claimed, at)
 		}
 		s.Require().NoError(err)
 	}
@@ -491,4 +493,89 @@ func (s *StoreSuite) TestAThreadChannelsInboundMessagesGoWithIt() {
 	s.Require().NoError(err)
 
 	s.Empty(s.claim(s.base))
+}
+
+// givenUp queues a message in a thread channel of its own, claims it and gives it up, and
+// returns whether its delivery is to be forwarded.
+func (s *StoreSuite) givenUp(channelID string, change ...func(*ChannelInbound)) bool {
+	s.inbound(channelID, "1759740000.000100", change...)
+	changed, forward, err := s.store.FailChannelInbound(s.ctx, s.claimedOne(s.base, "1759740000.000100"), s.base)
+	s.Require().NoError(err)
+	s.Require().True(changed)
+	return forward
+}
+
+// forwarding gives a message the delivery forward id, and the body raw.
+func forwarding(id, raw string) func(*ChannelInbound) {
+	return func(message *ChannelInbound) {
+		message.Forward = &ChannelInboundForward{ID: id}
+		message.Raw = []byte(raw)
+	}
+}
+
+func (s *StoreSuite) TestOnlyTheFirstGivenUpMessageOfADeliveryForwardsIt() {
+	s.True(s.givenUp("thread-one", forwarding("Ev0001", `{"one":1}`)))
+	s.False(s.givenUp("thread-two", forwarding("Ev0001", `{"two":2}`)), "the provider's id keys the delivery")
+	s.True(s.givenUp("thread-three", forwarding("Ev0002", `{"one":1}`)), "another delivery")
+}
+
+func (s *StoreSuite) TestADeliveryWithNoIdIsKeyedByItsBody() {
+	s.True(s.givenUp("thread-one", forwarding("", `{"batch":1}`)))
+	s.False(s.givenUp("thread-two", forwarding("", `{"batch":1}`)), "the same body")
+	s.True(s.givenUp("thread-three", forwarding("", `{"batch":2}`)), "another body")
+	s.True(s.givenUp("thread-four", forwarding("Ev0001", `{"batch":1}`)), "a body with an id is another delivery")
+}
+
+func (s *StoreSuite) TestAnotherCustomersOrConnectorsDeliveryIsForwardedOnItsOwn() {
+	s.True(s.givenUp("thread-one", forwarding("Ev0001", `{}`)))
+	s.True(s.givenUp("thread-two", forwarding("Ev0001", `{}`), func(message *ChannelInbound) { message.CustomerID = "globex-app" }))
+	s.True(s.givenUp("thread-three", forwarding("Ev0001", `{}`), func(message *ChannelInbound) { message.ConnectorID = "other" }))
+}
+
+func (s *StoreSuite) TestAGivenUpMessageWithNoForwardForwardsNothing() {
+	s.True(s.givenUp("thread-one", forwarding("Ev0001", `{}`)))
+	s.False(s.givenUp("thread-two"))
+}
+
+// A message whose earlier attempt finished it is not given up, so it forwards nothing.
+func (s *StoreSuite) TestAWorkerWhoseLeaseWasTakenOverForwardsNothing() {
+	s.inbound("thread-one", "1759740000.000100", forwarding("Ev0001", `{}`))
+	stale := s.claimedOne(s.base, "1759740000.000100")
+	s.claimedOne(s.base.Add(time.Minute), "1759740000.000100")
+
+	changed, forward, err := s.store.FailChannelInbound(s.ctx, stale, s.base.Add(time.Minute))
+
+	s.Require().NoError(err)
+	s.False(changed)
+	s.False(forward)
+}
+
+// Two messages of one delivery given up at once, as two routers do, forward it once.
+func (s *StoreSuite) TestTwoMessagesOfADeliveryGivenUpAtOnceForwardItOnce() {
+	for round := range 20 {
+		var claimed []ChannelInbound
+		for _, channel := range []string{"thread-a", "thread-b"} {
+			id := fmt.Sprintf("1759740000.%06d", round)
+			s.inbound(channel, id, forwarding(fmt.Sprintf("Ev%04d", round), `{}`))
+			claimed = append(claimed, s.claimedOne(s.base, id))
+		}
+		forwards := make(chan bool, len(claimed))
+		var wg sync.WaitGroup
+		for _, message := range claimed {
+			wg.Go(func() {
+				_, forward, err := s.store.FailChannelInbound(s.ctx, message, s.base)
+				s.NoError(err)
+				forwards <- forward
+			})
+		}
+		wg.Wait()
+		close(forwards)
+		count := 0
+		for forward := range forwards {
+			if forward {
+				count++
+			}
+		}
+		s.Equal(1, count, "round %d", round)
+	}
 }

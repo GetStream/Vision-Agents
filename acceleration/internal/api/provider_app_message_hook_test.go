@@ -145,6 +145,7 @@ func TestProviderAppMessageHookSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookSuite) SetupSuite() {
+	s.database = "message_hook"
 	s.start(true, providerAppPublicURL)
 }
 
@@ -327,6 +328,7 @@ func TestProviderAppMessageHookNoAppSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookNoAppSuite) SetupSuite() {
+	s.database = "message_hook_no_app"
 	s.appRefuses = true
 	s.start(true, providerAppPublicURL)
 }
@@ -362,6 +364,7 @@ func TestProviderAppMessageHookWithoutPublicURLSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookWithoutPublicURLSuite) SetupSuite() {
+	s.database = "message_hook_no_url"
 	s.start(true, "")
 }
 

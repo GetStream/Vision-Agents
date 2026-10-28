@@ -108,6 +108,7 @@ func TestTelnyxSandboxSuite(t *testing.T) {
 const sandboxRecipient = "+13125550001"
 
 func (s *TelnyxSandboxSuite) SetupSuite() {
+	s.database = "telnyx_sandbox"
 	s.sandbox = dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 1}
 	s.telnyxLine.SetupSuite()
 }
@@ -189,9 +190,13 @@ func (s *TelnyxSandboxSuite) TestAReplyTelnyxRefusesIsNotCountedAgainstTheDailyL
 	s.False(refused.Load())
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.Require().Eventually(refused.Load, settleFor, 10*time.Millisecond, "Telnyx was not asked to send the first reply")
-	bridge, ok := s.bridge.(*channelbridge.Bridge)
-	s.Require().True(ok)
-	bridge.Close() // the first reply is over
+	// The first reply is over once the bridge let go of its claim, as it does for a refusal. Not
+	// Close, which would stop the bridge's inbound worker for the suite's later tests.
+	s.Require().Eventually(func() bool {
+		count, err := s.store.DB().NewSelect().Table("channel_thread_messages").
+			Where("channel_id = ? AND kind = ?", channel, store.ClaimReply).Count(context.Background())
+		return err == nil && count == 0
+	}, settleFor, 10*time.Millisecond, "the refused reply kept its claim")
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 1))
 
 	s.Equal("Noted.", s.took(1)[0].text)

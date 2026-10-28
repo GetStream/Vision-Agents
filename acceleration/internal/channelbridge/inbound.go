@@ -176,10 +176,13 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(b.inboundRetries[attempts-1]))
 	default:
 		cause := err
-		changed, err = b.store.FailChannelInbound(recording, message, time.Now())
+		var forward bool
+		changed, forward, err = b.store.FailChannelInbound(recording, message, time.Now())
 		if err == nil && changed {
 			log.Warn("gave up an inbound message: it was never written into its thread channel, so no agent answers it",
 				"attempts", attempts, "error", cause)
+		}
+		if err == nil && forward {
 			b.forwardUnanswered(recording, message)
 		}
 	}
@@ -225,10 +228,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 }
 
 // forwardUnanswered hands a given-up message's delivery to the customer's event destinations of
-// unhandled events (Options.Unanswered). The destinations key a forward by the delivery, so two
-// given-up messages of one delivery are one forward (store.QueueEventDeliveries).
+// unhandled events (Options.Unanswered): only the first given-up message of a delivery does
+// (store.FailChannelInbound), so two of them are one forward.
 func (b *Bridge) forwardUnanswered(ctx context.Context, message store.ChannelInbound) {
-	if b.unanswered == nil || message.Forward == nil {
+	if b.unanswered == nil {
 		return
 	}
 	event := eventforward.Event{
