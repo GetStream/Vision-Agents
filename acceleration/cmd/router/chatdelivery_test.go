@@ -67,7 +67,11 @@ func (s *ChatDeliveryStartupSuite) TestWithAKeyAnUnsignedDeliveryIsRefused() {
 
 	s.start()
 
-	client := http.Client{Timeout: time.Second}
+	// A transport of its own: run sets up http.DefaultTransport as it starts, and the next
+	// run in this process would do so under this request's connection.
+	transport := &http.Transport{}
+	s.T().Cleanup(transport.CloseIdleConnections)
+	client := http.Client{Timeout: time.Second, Transport: transport}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		response, err := client.Post("http://"+s.settings.Addr+"/v1/chat/internal/messages",
