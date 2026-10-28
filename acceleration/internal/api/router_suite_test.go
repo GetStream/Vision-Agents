@@ -809,13 +809,14 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	return recorder
 }
 
-// vendorPriced is what the row's work costs at the vendor list's rates, as telephonyRecorder
-// prices it, read from vendor.json so a price change there leaves the tests passing.
-func (s *RouterSuite) vendorPriced(row store.Request) int64 {
+// vendorPriced is what used of a phone item costs at the vendor list's rates, as
+// telephonyRecorder prices it, read from vendor.json so a price change there leaves the tests
+// passing. The test names the item, so a row recorded under the wrong one fails.
+func (s *RouterSuite) vendorPriced(provider, model string, attributes map[string]string, used pricing.Quantities) int64 {
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	item := pricing.Item{Modality: row.Modality, Provider: row.Provider, Model: row.Model, Attributes: row.Attributes}
-	return pricingtest.Micros(s.T(), list, item, row.Quantities())
+	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Attributes: attributes}
+	return pricingtest.Micros(s.T(), list, item, used)
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.

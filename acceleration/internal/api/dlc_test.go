@@ -23,6 +23,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -388,12 +389,15 @@ func (s *DLCSuite) TestARegisteredBrandAndCampaignAreBilledOnce() {
 	time.Sleep(500 * time.Millisecond)
 	read()
 	s.Require().Len(fees[dlc.ModelBrand], 1)
-	s.Equal(s.vendorPriced(fees[dlc.ModelBrand][0]), fees[dlc.ModelBrand][0].CostMicros)
+	fee := pricing.Quantities{pricing.Requests: 1}
+	s.Equal(s.vendorPriced("telnyx", dlc.ModelBrand, nil, fee), fees[dlc.ModelBrand][0].CostMicros)
 	s.Equal(dlc.OriginFees, fees[dlc.ModelBrand][0].APIKey, "Stream's review is no request of the app's")
 	s.Require().Len(fees[dlc.ModelCampaign], 1)
-	s.Equal(s.vendorPriced(fees[dlc.ModelCampaign][0]), fees[dlc.ModelCampaign][0].CostMicros, "the carriers' review")
+	s.Equal(s.vendorPriced("telnyx", dlc.ModelCampaign, nil, fee), fees[dlc.ModelCampaign][0].CostMicros, "the carriers' review")
+	customerCare := s.vendorPriced("telnyx", dlc.ModelCampaignMonth,
+		map[string]string{dlc.AttributeUseCaseType: "CUSTOMER_CARE"}, fee)
 	for _, month := range fees[dlc.ModelCampaignMonth] {
-		s.Equal(s.vendorPriced(month), month.CostMicros, "a customer care campaign's month")
+		s.Equal(customerCare, month.CostMicros, "a customer care campaign's month")
 		s.True(month.Billable)
 	}
 }

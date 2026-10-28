@@ -83,12 +83,14 @@ func (s *TelephonyBillingSuite) TestAReplyOnSMSIsRecordedWithItsSegmentsAndCount
 	s.Equal(routing.OriginPhoneInbound, in.APIKey, "a text nobody's key sent is the app's")
 	s.Equal(map[string]string{"direction": "inbound", "country": "US"}, in.Attributes)
 	s.Equal(pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1}, in.Meters)
-	s.Equal(s.vendorPriced(in), in.CostMicros, "Telnyx's rate a part received")
+	received := s.vendorPriced("telnyx", "sms", map[string]string{"direction": "inbound", "country": "US"}, pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1})
+	s.Equal(received, in.CostMicros, "Telnyx's rate a part received")
 	s.True(in.Billable)
 
 	s.Equal(map[string]string{"direction": "outbound", "country": "US", "caller": "user"}, out.Attributes)
 	s.Equal(pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1}, out.Meters)
-	s.Equal(s.vendorPriced(out), out.CostMicros, "Telnyx's rate a part sent, the carriers' fee included")
+	sent := s.vendorPriced("telnyx", "sms", map[string]string{"direction": "outbound", "country": "US"}, pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1})
+	s.Equal(sent, out.CostMicros, "Telnyx's rate a part sent, the carriers' fee included")
 	s.True(out.Billable)
 	s.Equal("phone:"+person, out.UserID, "the reply is the end user's")
 }
@@ -149,7 +151,8 @@ func (s *TelephonyBillingSuite) TestAWhatsAppReplyIsRecordedAsAServiceMessage() 
 	s.Equal(pricing.Quantities{pricing.Messages: 1}, out.Meters)
 	s.Equal("app", out.Attributes[channels.AttributeVendorAccount], "Meta bills the app's own account")
 	s.False(out.Billable)
-	s.Equal(strconv.FormatInt(s.vendorPriced(out), 10), out.Attributes[routing.AttributeFreeCostMicros],
+	s.Equal(strconv.FormatInt(s.vendorPriced("meta", "whatsapp",
+		map[string]string{"category": "service", "country": "US"}, pricing.Quantities{pricing.Messages: 1}), 10), out.Attributes[routing.AttributeFreeCostMicros],
 		"priced at Meta's North America service rate")
 	s.False(rows[store.Inbound].Billable, "Meta charges nothing for a message a user sends")
 }
@@ -167,7 +170,9 @@ func (s *TelephonyBillingSuite) TestAnInboundCallIsBilledForItsMinutes() {
 	s.Equal(callID, row.CallID)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 61}, row.Meters)
 	s.Equal(map[string]string{"direction": "inbound", "country": "US", "measured_by": "router"}, row.Attributes)
-	s.Equal(s.vendorPriced(row), row.CostMicros, "two started minutes")
+	minutes := s.vendorPriced("telnyx", phone.ModelCallMinutes, map[string]string{"direction": "inbound", "country": "US"},
+		pricing.Quantities{pricing.CallSeconds: 61})
+	s.Equal(minutes, row.CostMicros, "two started minutes")
 	s.True(row.Billable)
 	s.Equal(number.Tags, map[string]string(row.Tags), "the number's labels")
 }
@@ -257,7 +262,9 @@ func (s *TelephonyBillingSuite) TestAPlacedCallsMinutesKeepTheKeyThatPlacedIt() 
 	s.Equal("u1", row.UserID)
 	s.Equal([]string{"support"}, row.UsageCategories)
 	s.Equal(pricing.Quantities{pricing.CallSeconds: 120}, row.Meters, "from when the phone joined")
-	s.Equal(s.vendorPriced(row), row.CostMicros, "two minutes")
+	minutes := s.vendorPriced("telnyx", phone.ModelCallMinutes, map[string]string{"direction": "outbound", "country": "US"},
+		pricing.Quantities{pricing.CallSeconds: 120})
+	s.Equal(minutes, row.CostMicros, "two minutes")
 }
 
 func (s *TelephonyBillingSuite) TestAPlacedCallNobodyAnsweredBillsNothing() {
@@ -372,12 +379,14 @@ func (s *TelephonySandboxBillingSuite) TestASandboxedAppsTextsAndMinutesAreNotBi
 	reply := s.phoneRows("sms", 2)[store.Outbound]
 	s.False(reply.Billable)
 	s.Equal("true", reply.Attributes[phone.AttributeDLCSandbox])
-	s.Equal(strconv.FormatInt(s.vendorPriced(reply), 10), reply.Attributes[routing.AttributeFreeCostMicros],
+	s.Equal(strconv.FormatInt(s.vendorPriced("telnyx", "sms", map[string]string{"direction": "outbound", "country": "US"},
+		pricing.Quantities{pricing.Messages: 1, pricing.MessageSegments: 1}), 10), reply.Attributes[routing.AttributeFreeCostMicros],
 		"priced, so the app sees what it would cost")
 	leg := s.phoneRows(phone.ModelCallMinutes, 1)[store.Inbound]
 	s.False(leg.Billable)
 	s.Equal("true", leg.Attributes[phone.AttributeDLCSandbox])
-	minute := s.vendorPriced(leg)
+	minute := s.vendorPriced("telnyx", phone.ModelCallMinutes, map[string]string{"direction": "inbound", "country": "US"},
+		pricing.Quantities{pricing.CallSeconds: 60})
 	s.Equal(strconv.FormatInt(minute, 10), leg.Attributes[routing.AttributeFreeCostMicros])
 
 	s.Require().NoError(s.store.CreateUseCase(context.Background(), &store.UseCase{

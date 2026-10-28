@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -69,7 +68,8 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	s.Equal(map[string]string{AttributeSandboxID: "sandbox-1", AttributeSandboxClass: "container", AttributeSandboxCPU: "2",
 		AttributeSandboxMemoryGB: "4", AttributeSandboxDiskGB: "10", routing.AttributeMeasuredBy: routing.MeasuredByRouter,
 		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a"}, row.Attributes)
-	s.Equal(s.priced(row), row.CostMicros, "at Daytona's rates")
+	container := map[string]string{AttributeSandboxClass: "container"}
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxRunning, container, row.Meters), row.CostMicros, "at Daytona's rates")
 	s.True(row.Billable)
 	s.Equal([]string{"sandbox-1"}, server.Deleted())
 	held, _ := server.Sandbox("sandbox-1")
@@ -92,7 +92,8 @@ func (s *MeteredSuite) TestAnIdleSandboxIsMeteredAsStopped() {
 	s.Equal(pricing.Quantities{pricing.VCPUSeconds: 1, pricing.MemoryGBSeconds: 1, pricing.DiskGBSeconds: 3}, rows[0].Meters,
 		"a second running at Daytona's default size")
 	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 6}, rows[1].Meters, "then its disk alone")
-	s.Equal(s.priced(rows[1]), rows[1].CostMicros, "6 GiB-seconds of disk at Daytona's rate, rounded half up")
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxStopped, map[string]string{AttributeSandboxClass: "container"},
+		pricing.Quantities{pricing.DiskGBSeconds: 6}), rows[1].CostMicros, "6 GiB-seconds of disk at Daytona's rate, rounded half up")
 	s.True(rows[1].Billable)
 }
 
@@ -145,7 +146,7 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	id := "sandbox-" + uuid.NewString()
 	at := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	running := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T10:00:00Z", At: at, Model: SandboxRunning,
-		Used:  pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
+		Used: pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
 		Class: "container"}
 	stopped := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T11:00:00Z", At: at.Add(time.Hour),
 		Model: SandboxStopped, Used: pricing.Quantities{pricing.DiskGBSeconds: 3 * 3600}, Class: "container", Orphan: true}
@@ -158,12 +159,11 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	s.Require().Len(rows, 2, "a gap recorded twice is billed once")
 	s.Equal(routing.UsageID(SandboxReconciledKind, id, "2026-10-21T10:00:00Z"), rows[0].UsageID)
 	s.Equal(at, rows[0].StartedAt.UTC(), "dated to the period it bills")
-	gap := func(g SandboxGap) int64 {
-		item := pricing.Item{Modality: string(routing.Sandbox), Provider: daytonaProvider, Model: g.Model, Attributes: map[string]string{AttributeSandboxClass: g.Class}}
-		return pricingtest.Micros(s.T(), s.prices, item, g.Used)
-	}
-	s.Equal(gap(running), rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
-	s.Equal(gap(stopped), rows[1].CostMicros, "an hour of its 3 GiB disk")
+	container := map[string]string{AttributeSandboxClass: "container"}
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxRunning, container, running.Used), rows[0].CostMicros,
+		"an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxStopped, container, stopped.Used), rows[1].CostMicros,
+		"an hour of its 3 GiB disk")
 	s.Equal(map[string]string{AttributeSandboxID: id, AttributeSource: daytonaProvider, AttributeSandboxClass: "container",
 		AttributeDeployment: "deploy-a"}, rows[0].Attributes, "the deployment's, so only its own job reads it")
 	s.Equal("true", rows[1].Attributes[AttributeOrphan])
