@@ -10,6 +10,11 @@ them: world state, tool calls, entities, a judge, turn-taking and reply time. Re
 `benchmark/README.md` for the method; this skill is how to run it on a laptop without the
 failures every first run hits.
 
+Apply [Engineering integrity](../../../AGENTS.md#engineering-integrity) before tuning an
+agent, changing the evaluator or claiming a win. Keep scenario answers and judge criteria
+out of runtime prompts; validate on cases not used for tuning. A scoring repair must be
+reviewable separately and applied to both sides of a comparison.
+
 Work from `benchmark/` on a checkout of `accelerate`. Runs cost money (ElevenLabs, Deepgram,
 OpenAI, Gemma): start small and say how much you are about to run.
 

@@ -47,6 +47,23 @@ reviews:
     auto_pause_after_reviewed_commits: 50
 
   path_instructions:
+    - path: "**/*"
+      instructions: |
+        Apply AGENTS.md's Engineering integrity rules, including Keep code necessary
+        and Tests must catch a defect.
+        - Flag benchmark-aware runtime branches, leaked expected answers or future inputs,
+          rehearsed prompts, fixture-specific constants and mock-specific production shortcuts.
+        - Flag skipped required work, weakened tests or scoring, hidden failures, selective
+          reporting and unequal task information or resources presented as a fair comparison.
+        - Check that evaluation repairs are independently justified and applied to both arms,
+          and that improvement claims have reproducible evidence beyond the tuning cases.
+        - Flag unnecessary abstractions, duplicate paths, silent fallbacks, unbounded retries
+          or background work, and tests that only mirror implementation details.
+        - For a new test, identify the defect it catches. Flag tautologies, assertions about
+          mock setup or helper calls alone, copied expected-value algorithms, and coverage padding.
+        - Cite a concrete changed code path, counterexample or missing evidence. Legitimate
+          fixtures, explicit mock providers and documented protocol fast paths are allowed;
+          do not infer a violation from keywords alone or propose speculative scaffolding.
     - path: "**/test_*.py"
       instructions: |
         Review pytest tests. Project uses uv.

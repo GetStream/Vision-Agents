@@ -13,6 +13,11 @@ three models are the router's own `mock/*` providers, so a run reaches no vendor
 nothing. **What a run measures is the router**: its audio path, turn taking, sockets and
 database. It says nothing about model quality; that is Voicebench (`voicebench` skill).
 
+Apply [Engineering integrity](../../../AGENTS.md#engineering-integrity) to every change and
+comparison. Mock providers isolate router cost; shared production code must not exploit
+their fixed answers, tone or timing. Keep workload, gates and resources matched, and show
+that an optimization preserves behavior beyond the mock workload before calling it general.
+
 ## 1. What a run needs
 
 **Keys.** `STREAM_API_KEY` and `STREAM_API_SECRET`, from the repo-root `.env`. Nothing else:
