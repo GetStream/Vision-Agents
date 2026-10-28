@@ -10,6 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -101,6 +102,47 @@ func (s *TurnTracingSuite) TestTheTurnSaysWhoItWasFor() {
 		attributes = append(attributes, string(attribute.Key)+"="+attribute.Value.Emit())
 	}
 	s.Subset(attributes, []string{"turn.id=turn-1", "agent.id=agent-1", "call.id=call-1", "participant.id=caller"})
+}
+
+// attributes is the agent.turn span's attributes, as key=value.
+func (s *TurnTracingSuite) attributes() []string {
+	var attributes []string
+	for _, attribute := range s.spans()["agent.turn"].Attributes() {
+		attributes = append(attributes, string(attribute.Key)+"="+attribute.Value.Emit())
+	}
+	return attributes
+}
+
+func (s *TurnTracingSuite) TestAnInterruptedTurnSaysWhy() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+	tracker.firstAudio("turn-1", at.Add(200*time.Millisecond))
+
+	played := tracker.interrupt("turn-1", interruption{cause: causeTalking, ruler: harness.Deadline, echo: echoMost})
+
+	s.Subset(s.attributes(), []string{"turn.interrupted=true", "turn.interrupt.cause=talking",
+		"turn.interrupt.ruler=deadline", "turn.interrupt.echo=most"})
+	s.GreaterOrEqual(played, 800.0, "the reply went out 800 ms before it was cut")
+}
+
+func (s *TurnTracingSuite) TestAnInterruptionNoModelRuledOnSaysNone() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+
+	played := tracker.interrupt("turn-1", interruption{cause: causeAPI, echo: echoNoWords})
+
+	s.Subset(s.attributes(), []string{"turn.interrupt.cause=api", "turn.interrupt.ruler=none"})
+	s.Zero(played, "none of the reply went out")
+}
+
+func (s *TurnTracingSuite) TestATurnNobodyInterruptedSaysNoCause() {
+	traceTurn(s.owner, "turn-1", s.turn())
+
+	for _, attribute := range s.attributes() {
+		s.NotContains(attribute, "turn.interrupt.")
+	}
 }
 
 func (s *TurnTracingSuite) TestAStageThatNeverRanIsNotRecorded() {
