@@ -35,6 +35,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1351,7 +1352,7 @@ func (s *ProxySuite) TestTheProductionTransportDialsNoInternalAddress() {
 }
 
 // TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12: the certificate names the
-// CONNECT host only, is no CA's, is the router CA's and lives two hours; h2 is not
+// CONNECT host only, is no CA's, is the router CA's and lives at most two and a half hours; h2 is not
 // negotiated, and TLS before 1.2 is refused.
 func (s *ProxySuite) TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12() {
 	// The handshake verifies the leaf against the router's CA alone (tunnel's RootCAs).
@@ -1362,7 +1363,7 @@ func (s *ProxySuite) TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12() {
 	s.Equal([]string{"api.github.test"}, leaf.DNSNames)
 	s.False(leaf.IsCA)
 	s.Equal("router sandbox CA", leaf.Issuer.CommonName)
-	s.LessOrEqual(leaf.NotAfter.Sub(leaf.NotBefore), 2*time.Hour)
+	s.LessOrEqual(leaf.NotAfter.Sub(leaf.NotBefore), 2*time.Hour+halfValidity)
 	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11} {
 		s.Error(s.tunnel(&tls.Config{MinVersion: tls.VersionTLS10, MaxVersion: version}).Handshake(), version)
 	}
@@ -2400,7 +2401,7 @@ func (s *ProxySuite) TestAHostKeepsItsCertificateUntilHalfOfItsValidityHasPassed
 	s.True(reused.NotAfter.After(reusedAt.Add(halfValidity)), "a kept certificate has more than half an hour left: %s", reused.NotAfter)
 	s.NotEqual(first.SerialNumber, renewed.SerialNumber, "half of the validity has passed")
 	// A certificate's times are whole seconds.
-	s.WithinDuration(clock.Now().Add(time.Hour), renewed.NotAfter, time.Second, "the renewed certificate is dated by the clock")
+	s.WithinDuration(clock.Now().Add(time.Hour+halfValidity), renewed.NotAfter, time.Second, "the renewed certificate is dated by the clock")
 }
 
 // TestHostsKeepTheirOwnCertificates: a certificate kept for one host is never another host's,
@@ -2434,7 +2435,7 @@ func (s *ProxySuite) TestTheListenerKeepsItsCertificateForTheAddress() {
 	s.Equal(first.SerialNumber, second.SerialNumber)
 	s.True(first.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")))
 	s.WithinDuration(before.Add(-time.Hour), first.NotBefore, 5*time.Second)
-	s.WithinDuration(before.Add(time.Hour), first.NotAfter, 5*time.Second)
+	s.WithinDuration(before.Add(time.Hour+halfValidity), first.NotAfter, 5*time.Second)
 }
 
 // listenerCertificate is the certificate config answers a client that connects to address with.
@@ -2484,6 +2485,104 @@ func (s *ProxySuite) TestTheKeptCertificatesAreBounded() {
 
 	s.Equal(maxKeptLeaves, kept)
 	s.Equal(fresh, serial("192.0.2.1"), "the old certificates made room")
+}
+
+// TestAKeptCertificateVerifiesForAClockAnHourAhead: a certificate served 29 minutes after it
+// was signed is still valid, as a fresh one is, for a sandbox clock 59 minutes ahead.
+func (s *ProxySuite) TestAKeptCertificateVerifiesForAClockAnHourAhead() {
+	// The suite's CA lives an hour, which is less than the clock skew and the age together.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s.Require().NoError(err)
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "day CA"},
+		NotBefore: time.Now().Add(-24 * time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	s.Require().NoError(err)
+	ca, err := x509.ParseCertificate(der)
+	s.Require().NoError(err)
+	clock := &leafClock{now: time.Now()}
+	proxy, err := egress.New(egress.Options{Store: s.store, Tokens: s.tokens, Now: clock.Now,
+		CACert: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), CAKey: keyPEM(s.T(), key)})
+	s.Require().NoError(err)
+	trusted := x509.NewCertPool()
+	trusted.AddCert(ca)
+	config := proxy.ListenerTLS("127.0.0.1")
+	// handshake is the sandbox's, with a clock 59 minutes ahead of the proxy's.
+	handshake := func() *x509.Certificate {
+		server, client := net.Pipe()
+		s.T().Cleanup(func() { _ = client.Close(); _ = server.Close() })
+		s.Require().NoError(client.SetDeadline(time.Now().Add(5 * time.Second)))
+		s.Require().NoError(server.SetDeadline(time.Now().Add(5 * time.Second)))
+		go func() { _ = tls.Server(server, config).Handshake() }()
+		conn := tls.Client(client, &tls.Config{ServerName: "127.0.0.1", RootCAs: trusted,
+			Time: func() time.Time { return clock.Now().Add(59 * time.Minute) }})
+		s.Require().NoError(conn.Handshake())
+		return conn.ConnectionState().PeerCertificates[0]
+	}
+	first := handshake()
+	clock.advance(29 * time.Minute)
+
+	kept := handshake()
+
+	s.Equal(first.SerialNumber, kept.SerialNumber, "the certificate served is the first one")
+}
+
+// blockingRandom is crypto/rand's reader that holds a read once armed, until released, which
+// is how a test holds a certificate's signing, the first thing it reads randomness for.
+type blockingRandom struct {
+	reader  io.Reader
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingRandom) Read(p []byte) (int, error) {
+	if r.armed.CompareAndSwap(true, false) {
+		close(r.entered)
+		<-r.release
+	}
+	return r.reader.Read(p)
+}
+
+// TestAHostWithACertificateIsServedWhileAnotherHostIsSigned: a handshake for a host with a
+// kept certificate completes while a handshake for a new host is held in its CA signature.
+func (s *ProxySuite) TestAHostWithACertificateIsServedWhileAnotherHostIsSigned() {
+	proxy := s.newProxy(s.store)
+	_, err := proxy.ListenerTLS("10.0.0.1").GetCertificate(&tls.ClientHelloInfo{})
+	s.Require().NoError(err)
+	random := &blockingRandom{reader: rand.Reader, entered: make(chan struct{}), release: make(chan struct{})}
+	original := rand.Reader
+	rand.Reader = random
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(random.release)
+		}
+	}
+	s.T().Cleanup(func() { release(); rand.Reader = original })
+	signed := make(chan error, 1)
+	random.armed.Store(true)
+	go func() {
+		_, err := proxy.ListenerTLS("10.0.0.2").GetCertificate(&tls.ClientHelloInfo{})
+		signed <- err
+	}()
+	<-random.entered
+
+	served := make(chan error, 1)
+	go func() {
+		_, err := proxy.ListenerTLS("10.0.0.1").GetCertificate(&tls.ClientHelloInfo{})
+		served <- err
+	}()
+
+	select {
+	case err := <-served:
+		s.NoError(err)
+	case <-time.After(5 * time.Second):
+		s.Fail("a host with a certificate waits for another host's signature")
+	}
+	release()
+	s.NoError(<-signed)
 }
 
 // halfValidity is half of egress's leafValidity.

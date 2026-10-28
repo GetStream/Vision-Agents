@@ -49,9 +49,10 @@ const (
 	// proxy_read_timeout default
 	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
 	headerTimeout = 60 * time.Second
-	// leafValidity is how long a host's certificate is valid. A client checks it only in the
-	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
-	// off by that much.
+	// leafValidity is how long a host's certificate is valid for the handshake it is minted
+	// for; an hour each side leaves room for a sandbox clock that is off by that much. A kept
+	// certificate is served up to leafValidity/2 later, so it is dated leafValidity/2 longer
+	// (sign), and a client's clock may still be off by an hour.
 	leafValidity = time.Hour
 	// maxLeaves caps the certificates kept. A wildcard grant lets a sandbox name any host under
 	// a domain, so the hosts are not bounded by the grants. A DER certificate here is under
@@ -687,8 +688,8 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 
 // ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
 // address: the sandbox's proxy credential then never crosses the network in the clear. Each
-// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
-// tunnel does, since one is valid for leafValidity alone.
+// handshake gets the certificate kept for address (Proxy.leaf), signed by the CA the sandbox
+// trusts, as each tunnel does.
 func (p *Proxy) ListenerTLS(address string) *tls.Config {
 	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
 	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
@@ -699,19 +700,22 @@ func (p *Proxy) ListenerTLS(address string) *tls.Config {
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
-// The same one is returned until it is half of leafValidity old. Signing happens under the lock,
-// so handshakes for one host never sign it twice; the CA signs one certificate at a time, which
-// it did not need to before the cache but costs no more CPU.
+// The same one is returned until it is half of leafValidity old. The lock is not held while the
+// CA signs, so a flood of new hosts never holds up a host that has a certificate; two
+// handshakes for one host may both sign, and the first certificate stored is the one both return.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
-	p.leaves.mu.Lock()
-	defer p.leaves.mu.Unlock()
 	now := p.now()
-	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
-		return kept.certificate, nil
+	if certificate, ok := p.kept(host, now); ok {
+		return certificate, nil
 	}
 	certificate, err := p.sign(host, now)
 	if err != nil {
 		return tls.Certificate{}, err
+	}
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
+		return kept.certificate, nil
 	}
 	if len(p.leaves.byHost) >= maxLeaves {
 		for name, kept := range p.leaves.byHost {
@@ -726,6 +730,14 @@ func (p *Proxy) leaf(host string) (tls.Certificate, error) {
 	return certificate, nil
 }
 
+// kept is host's kept certificate, when it is not due for renewal at now.
+func (p *Proxy) kept(host string, now time.Time) (tls.Certificate, bool) {
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	kept, ok := p.leaves.byHost[host]
+	return kept.certificate, ok && now.Before(kept.renewAt)
+}
+
 // sign makes host's certificate, dated now.
 func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
@@ -738,9 +750,12 @@ func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    now.Add(-leafValidity),
-		NotAfter:     now.Add(leafValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// A kept certificate is served up to leafValidity/2 after it is dated, so it is valid
+		// that much longer: a client sees leafValidity left on it, as on a certificate signed
+		// for its handshake.
+		NotAfter:    now.Add(leafValidity + leafValidity/2),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if address := net.ParseIP(host); address != nil {
 		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280
