@@ -58,6 +58,26 @@ func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryIsAnsweredOnce() {
 	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryDone }, settleFor, 20*time.Millisecond)
 }
 
+// The worker records a delivery once its answer has ended, so its lease, not a goroutine
+// nobody waits for, holds the message while the model writes.
+func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryIsRecordedOnceItsAnswerHasEnded() {
+	s.serverClient.createSession(CreateSessionRequest{
+		AgentId: &s.channelID, Llm: pointerTo("vision/vision-model"), Incognito: pointerTo(true),
+	})
+	s.vision.holds()
+	defer s.vision.answers()
+	text := "where is order " + s.utils.uuid()
+	queued := s.queue(strings.Replace(s.message(suiteStreamApp, "", ""), "is my order on its way?", text, 1))
+
+	s.answering()
+
+	s.Eventually(func() bool { return s.asked(text) == 1 }, settleFor, 20*time.Millisecond)
+	s.Never(func() bool { return s.row(queued).State != store.ChatDeliveryQueued }, dropped, 20*time.Millisecond,
+		"recorded before the answer ended")
+	s.vision.answers()
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryDone }, settleFor, 20*time.Millisecond)
+}
+
 // The signed request is gone by the time a worker claims the row, so the row goes over the
 // peer path, and the node running the conversation answers it there, once.
 func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryForASessionOnAnotherNodeIsAnsweredThereOnce() {

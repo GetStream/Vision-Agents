@@ -59,7 +59,7 @@ func (o hookOrigin) answer(answer func()) {
 // Stream. A hook a peer handed here goes nowhere further: two nodes each believing the other
 // answers would pass it back and forth.
 func (s *Server) replayed(r *http.Request, body []byte) func(ctx context.Context, address string) (*node.ForwardResponse, error) {
-	if s.forwarder == nil || r.Header.Get(node.ForwardedHeader) != "" {
+	if r.Header.Get(node.ForwardedHeader) != "" {
 		return nil
 	}
 	return func(ctx context.Context, address string) (*node.ForwardResponse, error) {
