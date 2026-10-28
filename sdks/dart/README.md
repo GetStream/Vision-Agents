@@ -96,6 +96,19 @@ final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]))
 `ToolExecutor.client` shows the call as waiting on this person's device. Leave either out and
 the router decides.
 
+### A connector's sign-in
+
+A connector call that needs the person to sign in waits on its step, `awaiting_authorization`.
+`returnUrl` names where the sign-in comes back to: the app's own scheme in reverse domain form,
+since the dashboard, where it goes otherwise, cannot be opened on a phone. "Not now" is
+`declineLogin`, which the router answers itself: the call runs nothing and the agent is told the
+person did not connect.
+
+```dart
+final chat = await agents.chat(SessionOptions(returnUrl: 'com.example.app:/connected'));
+chat.declineLogin(toolCallId);
+```
+
 ### Going back, and branching off
 
 `rewind` takes back every turn after the one kept, so the next message carries on from there.

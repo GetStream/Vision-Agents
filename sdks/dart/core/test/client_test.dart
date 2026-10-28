@@ -146,6 +146,7 @@ void main() {
           title: 'Billing',
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
+          returnUrl: 'com.example.app:/connected',
         ),
       );
 
@@ -156,12 +157,21 @@ void main() {
         'title': 'Billing',
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
+        'return_url': 'com.example.app:/connected',
       });
       expect(session.id, 's1');
       expect(session.isText, isTrue);
       expect(session.mode, SessionMode.text);
       expect(session.modality, SessionModality.text);
       expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+    });
+
+    test('an empty return url sends none, so the sign-in goes back to the dashboard', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      await agents.sessions.create(const SessionOptions(returnUrl: ''));
+
+      expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
     });
 
     test('a voice session asks to start voice and is on its own call', () async {
