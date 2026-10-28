@@ -15,23 +15,31 @@ T = TypeVar("T", bound="DataPolicy")
 @_attrs_define
 class DataPolicy:
     """What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had
-    spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only
-    routed to a model whose declared handling meets it, and if none does the request is refused rather than sent
-    somewhere that does not.
+    spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a
+    request naming one is only routed to a model whose declared handling meets it, and if none does the request is
+    refused rather than sent somewhere that does not.
 
         Attributes:
             allow_training (bool | Unset): False requires a provider that has said it does not train on what it is sent.
                 Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+            region (str | Unset): Where the work is done: us or eu for now. Only a model instance running in that region
+                serves the request, and with none there it is refused (400), never served in another region; knowledge and
+                sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an
+                organization's policy, a region set on one of them holds for all of them, and two different regions are refused,
+                naming both. Omitted everywhere, the work is done in us. Example: eu.
             retention (str | Unset): The longest a provider may keep this audio - none, or a duration such as 30d or 24h.
                 Omitting it asks nothing. Example: none.
     """
 
     allow_training: bool | Unset = UNSET
+    region: str | Unset = UNSET
     retention: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         allow_training = self.allow_training
+
+        region = self.region
 
         retention = self.retention
 
@@ -40,6 +48,8 @@ class DataPolicy:
         field_dict.update({})
         if allow_training is not UNSET:
             field_dict["allow_training"] = allow_training
+        if region is not UNSET:
+            field_dict["region"] = region
         if retention is not UNSET:
             field_dict["retention"] = retention
 
@@ -50,10 +60,13 @@ class DataPolicy:
         d = dict(src_dict)
         allow_training = d.pop("allow_training", UNSET)
 
+        region = d.pop("region", UNSET)
+
         retention = d.pop("retention", UNSET)
 
         data_policy = cls(
             allow_training=allow_training,
+            region=region,
             retention=retention,
         )
 

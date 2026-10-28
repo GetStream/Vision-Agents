@@ -16,7 +16,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -55,9 +54,7 @@ func runUsageStorage(ctx context.Context, args []string, settings config.Config,
 	}
 	logger := slog.Default()
 
-	backend, err := turbopuffer.New(turbopuffer.Options{
-		Cost: knowledgeCost(settings.Knowledge), Timeout: storageReadTimeout, Logger: logger,
-	})
+	backends, err := knowledgeBackends(settings.Knowledge, storageReadTimeout, logger)
 	if err != nil {
 		return fmt.Errorf("usage storage: %w", err)
 	}
@@ -72,7 +69,7 @@ func runUsageStorage(ctx context.Context, args []string, settings config.Config,
 		return err
 	}
 	defer stop()
-	return recordStorage(ctx, metered.NewKnowledge(backend, recording, nil), pgStore, hour, logger, out)
+	return recordStorage(ctx, metered.NewRegionalKnowledge(backends, recording, nil, nil), pgStore, hour, logger, out)
 }
 
 // storageHourOf is the hour a run records: the one --hour names, or else the last one to have
@@ -137,26 +134,34 @@ func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Sto
 }
 
 // recordStorage writes one storage row for the hour per knowledge base of an app this
-// deployment knows, owned by the app under the storage job's origin, at the size the base
-// holds now. A rerun for the hour writes nothing twice: each row's usage id is the namespace
-// and the hour. A base that holds nothing writes no row. A base of an app this deployment has
-// never seen is another deployment's on the same key, and is left to that one's job. A base
-// it cannot read is logged at ERROR, and the run sends storage_missed for the hour once and
-// fails, so a retry, or a run with --hour, fills the hour in.
+// deployment knows, in every region it keeps knowledge in, owned by the app under the storage
+// job's origin, at the size the base holds now, priced in its region. A rerun for the hour
+// writes nothing twice: each row's usage id is the namespace and the hour. A base that holds
+// nothing writes no row. A base of an app this deployment has never seen is another
+// deployment's on the same key, and is left to that one's job. A region or a base it cannot
+// read is logged at ERROR, and the run sends storage_missed for the hour once and fails, so a
+// retry, or a run with --hour, fills the hour in.
 func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.Store, hour time.Time, logger *slog.Logger, out io.Writer) error {
 	at := hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
-	namespaces, err := base.Namespaces(ctx, "")
-	if err != nil {
-		logger.Error("could not list the knowledge bases, so no storage is recorded for the hour", "hour", at, "error", err)
-		alerts.SendItem(storageMissed, at, alerts.Warn, map[string]any{"hour": at, "listing": err.Error()})
-		return fmt.Errorf("usage storage: list the knowledge bases: %w", err)
+	type located struct{ region, namespace string }
+	var namespaces []located
+	for _, region := range base.Regions() {
+		listed, err := base.Namespaces(ctx, region, "")
+		if err != nil {
+			logger.Error("could not list the knowledge bases, so no storage is recorded for the hour", "hour", at, "region", region, "error", err)
+			alerts.SendItem(storageMissed, at, alerts.Warn, map[string]any{"hour": at, "region": region, "listing": err.Error()})
+			return fmt.Errorf("usage storage: list the knowledge bases in %s: %w", region, err)
+		}
+		for _, namespace := range listed {
+			namespaces = append(namespaces, located{region: region, namespace: namespace})
+		}
 	}
 	customers := map[string]string{}
 	var ids []string
-	for _, namespace := range namespaces {
-		customerID, _, scoped := strings.Cut(namespace, "__")
+	for _, found := range namespaces {
+		customerID, _, scoped := strings.Cut(found.namespace, "__")
 		if scoped && customerID != "" {
-			customers[namespace] = customerID
+			customers[found.namespace] = customerID
 			ids = append(ids, customerID)
 		}
 	}
@@ -168,14 +173,14 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 
 	var recorded, empty, gone, notOurs int
 	var missed []string
-	for _, namespace := range namespaces {
-		customerID, scoped := customers[namespace]
+	for _, found := range namespaces {
+		customerID, scoped := customers[found.namespace]
 		if !scoped || !known[customerID] {
 			notOurs++
 			continue
 		}
 		owner := routing.Owner{CustomerID: customerID, Attribution: routing.Attribution{APIKey: storageOrigin}}
-		stored, err := base.Storage(ctx, owner, namespace, hour)
+		stored, err := base.Storage(ctx, owner, found.region, found.namespace, hour)
 		switch {
 		case err == nil && stored.ByteHours == 0:
 			empty++
@@ -186,8 +191,8 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 			gone++
 		default:
 			logger.Error("could not read a knowledge base's size, so this hour of it is not billed",
-				"namespace", namespace, "customer_id", customerID, "hour", at, "error", err)
-			missed = append(missed, namespace)
+				"namespace", found.namespace, "region", found.region, "customer_id", customerID, "hour", at, "error", err)
+			missed = append(missed, found.namespace)
 		}
 	}
 

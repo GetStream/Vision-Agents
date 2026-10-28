@@ -5240,10 +5240,15 @@ type DataImport struct {
 	Tables *map[string]int64 `json:"tables,omitempty"`
 }
 
-// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 type DataPolicy struct {
 	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
 	AllowTraining *bool `json:"allow_training,omitempty"`
+
+	// Region Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// Retention The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
 	//
@@ -6679,7 +6684,7 @@ type Policy struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Budget *map[string]interface{} `json:"budget,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
@@ -7105,6 +7110,11 @@ type Provider struct {
 	// Provider Example: elevenlabs
 	Provider string `json:"provider"`
 	Realtime bool   `json:"realtime"`
+
+	// Region Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+	//
+	// Example: us
+	Region string `json:"region"`
 
 	// Supports The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
 	//
@@ -8463,7 +8473,7 @@ type StreamWritesInto string
 
 // StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
 type StsOptions struct {
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// Images The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
@@ -8524,7 +8534,7 @@ type SttOptions struct {
 	// Channels Transcribe a multichannel recording per channel rather than mixed down.
 	Channels *int `json:"channels,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// DetectLanguage Let the provider identify the language instead of being told it.
@@ -9086,7 +9096,7 @@ type TtsOptions struct {
 	// ChunkSchedule Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
 	ChunkSchedule *[]int `json:"chunk_schedule,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// Emotion Affect to speak with, for the providers that take one.

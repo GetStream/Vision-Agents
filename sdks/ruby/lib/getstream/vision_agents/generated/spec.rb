@@ -2154,7 +2154,7 @@ module GetStream
           required: %w[rows].freeze, open: false
         }.freeze,
         "DataPolicy" => {
-          properties: %w[allow_training retention].freeze,
+          properties: %w[allow_training region retention].freeze,
           required: [].freeze, open: false
         }.freeze,
         "DetectedObject" => {
@@ -2534,8 +2534,8 @@ module GetStream
           required: %w[at entries upcoming].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[benchmark description health languages model price provider realtime supports tier usage_share].freeze,
-          required: %w[health languages model provider realtime tier].freeze, open: false
+          properties: %w[benchmark description health languages model price provider realtime region supports tier usage_share].freeze,
+          required: %w[health languages model provider realtime region tier].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
           properties: %w[characters_per_second cost_per_task elo intelligence_index latency_ms output_tokens_per_second search_index word_error_rate].freeze,

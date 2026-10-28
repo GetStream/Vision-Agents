@@ -52,18 +52,25 @@ func DefaultRegistry() *Registry {
 		return Started(meta.New(meta.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
+	// The vendors whose clients take a key and a host of the instance's own. An instance of one
+	// of them runs wherever its endpoint is; an instance of any other runs at the vendor's
+	// default host on the vendor's variable.
+	instanced := []routing.Override{routing.OverrideAPIKey, routing.OverrideBaseURL}
+
 	registry.Register(openai.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(openai.New(openai.Options{Model: spec.Model, Logger: spec.Logger}))
-	})
+		return Started(openai.New(openai.Options{Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, Logger: spec.Logger}))
+	}, instanced...)
 
 	registry.Register(deepseek.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(deepseek.New(deepseek.Options{
 			Model:           spec.Model,
+			APIKey:          spec.APIKey,
+			BaseURL:         spec.BaseURL,
 			Thinking:        spec.Thinking,
 			ReasoningEffort: spec.ReasoningEffort,
 			Logger:          spec.Logger,
 		}))
-	})
+	}, instanced...)
 
 	registry.Register(minimax.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(minimax.New(minimax.Options{
@@ -74,8 +81,8 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(gemini.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(gemini.New(gemini.Options{Model: spec.Model, Logger: spec.Logger}))
-	})
+		return Started(gemini.New(gemini.Options{Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, Logger: spec.Logger}))
+	}, instanced...)
 
 	registry.Register(gemma.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(gemma.New(gemma.Options{Model: spec.Model, Logger: spec.Logger}))
@@ -86,16 +93,18 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(anthropic.New(anthropic.Options{Model: spec.Model, Logger: spec.Logger}))
-	})
+		return Started(anthropic.New(anthropic.Options{Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, Logger: spec.Logger}))
+	}, instanced...)
 
 	registry.Register(moondream.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(moondream.New(moondream.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
 	registry.Register(xai.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(xai.New(xai.Options{Model: spec.Model, ReasoningEffort: spec.ReasoningEffort, Logger: spec.Logger}))
-	})
+		return Started(xai.New(xai.Options{
+			Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, ReasoningEffort: spec.ReasoningEffort, Logger: spec.Logger,
+		}))
+	}, instanced...)
 
 	registry.Register(custom.ProviderName, func(spec routing.Spec) (Provider, error) {
 		endpoint := spec.Endpoint

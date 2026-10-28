@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -220,6 +222,53 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 		return stack.Wrap(fmt.Errorf("store: save knowledge document: %w", err))
 	}
 	return nil
+}
+
+// KnowledgeNamespace is the region one of a customer's knowledge bases is kept in.
+type KnowledgeNamespace struct {
+	bun.BaseModel `bun:"table:knowledge_namespaces"`
+
+	CustomerID string    `bun:"customer_id,pk"`
+	Namespace  string    `bun:"namespace,pk"`
+	Region     string    `bun:"region,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+}
+
+// KnowledgeRegion is the region a customer's knowledge base is kept in, and false for one
+// nothing has been written to through the router.
+func (s *Store) KnowledgeRegion(ctx context.Context, customerID, namespace string) (string, bool, error) {
+	var kept KnowledgeNamespace
+	err := s.db.NewSelect().Model(&kept).
+		Where("customer_id = ?", customerID).
+		Where("namespace = ?", namespace).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, stack.Wrap(fmt.Errorf("store: knowledge region: %w", err))
+	}
+	return kept.Region, true, nil
+}
+
+// ClaimKnowledgeRegion records that a customer's knowledge base is kept in region, unless it is
+// kept somewhere already, and returns where it is kept: of two first writes at once, in two
+// regions, the one that lands first is where the base stays.
+func (s *Store) ClaimKnowledgeRegion(ctx context.Context, customerID, namespace, region string) (string, error) {
+	if customerID == "" || namespace == "" {
+		return "", stack.Wrap(errors.New("store: a customer and a namespace are required"))
+	}
+	kept := KnowledgeNamespace{CustomerID: customerID, Namespace: namespace, Region: region, CreatedAt: time.Now().UTC()}
+	// A no-op update, so RETURNING answers the row that was already there.
+	_, err := s.db.NewInsert().Model(&kept).
+		On("CONFLICT (customer_id, namespace) DO UPDATE").
+		Set("customer_id = EXCLUDED.customer_id").
+		Returning("region").
+		Exec(ctx)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: claim knowledge region: %w", err))
+	}
+	return kept.Region, nil
 }
 
 // KnowledgeDocument returns one document a customer filled a knowledge base with.
