@@ -701,12 +701,23 @@ func (s *InboundSuite) TestAMessageStreamChatAlreadyHoldsIsHandedToTheAgentFromI
 	thread := s.thread("fake_line")
 	id := inboundMessageID(thread.ChannelID, "m-1")
 	s.writeAhead(thread, id, "hello")
-	s.queue(thread, "m-1", "hello", nil)
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
+		ChannelID: thread.ChannelID, ProviderMessageID: "m-1", CustomerID: thread.CustomerID, ConnectorID: thread.ConnectorID,
+		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: "config-1", ConfigName: "Support",
+		AuthorID: "U0000ALICE", Text: "hello", Media: []core.Media{{URL: "https://cdn.example/a.jpg", MIMEType: "image/jpeg"}},
+		Raw: []byte(`{}`), NextAttemptAt: time.Now(),
+	}, nil)
+	s.Require().NoError(err)
+	s.Require().True(queued)
 	handed := s.handedTo(nil)
 
 	message := s.handed(handed)
 
-	s.Equal(Written{ID: id, Text: "hello", Author: AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE")}, message)
+	s.Equal(id, message.ID)
+	s.Equal("hello", message.Text)
+	s.Equal(AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE"), message.Author)
+	s.Require().Len(message.Attachments, 1, "the photo goes with it, so a photo alone is still answered")
+	s.Equal("https://cdn.example/a.jpg", *message.Attachments[0].ImageUrl)
 	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(0, s.row(thread, "m-1").Attempts)
 }
