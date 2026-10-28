@@ -791,15 +791,18 @@ func (s *RouterSuite) holdHandOffs() (release func()) {
 }
 
 // turnsEnded waits until the inbound worker is done with the test's messages and no hand-off
-// of it, turn it handed over, or reply the bridge sends runs: a reply that leaves later dials
-// the next test's provider (channelProvider) while its SetupTest replaces it.
+// of it, turn it handed over, reply not yet written to Stream (conversation.Service.Writing),
+// or reply the bridge sends runs: a reply that leaves later dials the next test's provider
+// (channelProvider) while its SetupTest replaces it. They are read in the order a reply passes
+// them, so one between two of them is still seen.
 func (s *RouterSuite) turnsEnded() {
 	bridge, built := s.bridge.(*channelbridge.Bridge)
 	if !built {
 		return
 	}
 	s.Eventually(func() bool {
-		return s.handedOver.Load() == 0 && bridge.Replying() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0
+		return s.inboundRows(store.ChannelInboundQueued) == 0 && s.handedOver.Load() == 0 && !s.conversations.Writing() &&
+			bridge.Replying() == 0
 	}, settleFor, 10*time.Millisecond, "the inbound worker, a turn it handed over or a reply still runs")
 }
 
