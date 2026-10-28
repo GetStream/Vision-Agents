@@ -654,7 +654,8 @@ func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, 
 // Stream, or is writing it: a finished reply is handed on (OnFinishedReply) only once it is
 // written. A test waits until it is false, so no reply of one test leaves during the next.
 // Pending is read before flushing: a write taken off Pending is counted until its reply was
-// handed on.
+// handed on. A parked conversation (flush) writes nothing until parkedRetry, so its held
+// writes do not count.
 func (s *Service) Writing() bool {
 	s.mu.Lock()
 	all := make([]*Conversation, 0, len(s.all))
@@ -664,9 +665,9 @@ func (s *Service) Writing() bool {
 	s.mu.Unlock()
 	for _, c := range all {
 		c.mu.Lock()
-		pending := len(c.data.Pending)
+		pending := len(c.data.Pending) > 0 && !time.Now().Before(c.parkedUntil)
 		c.mu.Unlock()
-		if pending > 0 {
+		if pending {
 			return true
 		}
 	}
