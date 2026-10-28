@@ -145,9 +145,9 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
-### A connection's audit row is kept when its caller hangs up after the change
+### An audit row is kept when its caller hangs up after the change
 
-A caller that hangs up right after a connection change commits no longer loses the change's row in `GET /v1/agents/connector-audit`: the `grant_revoked` row of a delete (a connection's, a user's or a connector's), and the `grant_created` row of a consent or a credentials save. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
+A caller that hangs up right after a change is made no longer loses the change's audit row. In `GET /v1/agents/connector-audit` this is the `grant_revoked` row of a delete (a connection's, a user's or a connector's) and the `grant_created` row of a consent or a credentials save. In `POST /v1/audit/query` it is every configuration change. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
 
 ### A bad key a provider refuses after accepting the websocket handshake is counted as refused
 
