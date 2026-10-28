@@ -128,6 +128,14 @@ jobs:
             tui/go.sum
             benchmark/go.sum
 
+      # proxy.golang.org resets HTTP/2 streams under load, failing the download. Only this
+      # step speaks HTTP/1.1: some tests assert on HTTP/2.
+      - name: Download Go modules
+        run: go list -deps -test -tags integration ./${{ matrix.package }} > /dev/null
+        working-directory: acceleration
+        env:
+          GODEBUG: http2client=0
+
       - name: Test ${{ matrix.package }}
         run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}
         env:
