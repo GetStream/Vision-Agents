@@ -249,17 +249,20 @@ func undoneResult(content string) bool {
 	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
-// refusedBefore returns the answer of an identical call the tool already refused on this
-// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
-// sent verify_account the PIN it had misheard three times over and was refused each time;
-// only what the caller says next can change the answer.
+// refusedBefore returns the answer of an identical call the tool already refused since the
+// caller last spoke ({"ok": false}, {"error": ...}). Sent again with nothing new from the
+// caller, the same values get the same answer. Once the caller has spoken they may have
+// confirmed the values or put right what the tool needed, so the call is theirs to make again.
+// A call that could not be made, or that failed for a reason of the moment (transientResult),
+// was not refused at all.
 func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
-	for i := len(history) - 1; i >= 0; i-- {
+	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
 		result := history[i]
-		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) || !failedResult(result.Content) {
+		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) ||
+			!failedResult(result.Content) || transientResult(result.Content) {
 			continue
 		}
-		for j := i - 1; j >= 0; j-- {
+		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == result.ToolCallID && asked.Name == call.Name && sameArguments(asked.Arguments, call.Arguments)
 			}) {
@@ -287,13 +290,52 @@ func changedState(history []llm.Message, i int) bool {
 	return false
 }
 
+// transientWords are what a tool's error says when it failed for a reason of the moment
+// rather than because of the values it was sent.
+var transientWords = []string{"timeout", "timed out", "rate limit", "too many requests",
+	"service unavailable", "temporarily unavailable"}
+
+// transientResult reports whether a failed tool result says the same call may succeed if made
+// again: an HTTP status that says so (llm.TransientStatus) under "status", "status_code" or
+// "code", at the top or inside "error", or an error message in transientWords.
+func transientResult(content string) bool {
+	var body map[string]any
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	fields := []map[string]any{body}
+	var messages []string
+	switch failure := body["error"].(type) {
+	case string:
+		messages = append(messages, failure)
+	case map[string]any:
+		fields = append(fields, failure)
+		if message, ok := failure["message"].(string); ok {
+			messages = append(messages, message)
+		}
+	}
+	if message, ok := body["message"].(string); ok {
+		messages = append(messages, message)
+	}
+	for _, field := range fields {
+		for _, key := range []string{"status", "status_code", "code"} {
+			if status, ok := field[key].(float64); ok && status == float64(int(status)) && llm.TransientStatus(int(status)) {
+				return true
+			}
+		}
+	}
+	return slices.ContainsFunc(messages, func(message string) bool {
+		message = strings.ToLower(message)
+		return slices.ContainsFunc(transientWords, func(word string) bool { return strings.Contains(message, word) })
+	})
+}
+
 // alreadyRefused opens the answer to a call repeated after the tool refused it.
 // It opens with didNotWork so that it backs no claim.
 const alreadyRefused = didNotWork + "you already made this exact call with these values and it was refused: "
 
 // tryOtherValues closes it.
-const tryOtherValues = ". Do not call it again with the same values. Read them back to the caller, " +
-	"digit by digit, and ask which one is wrong."
+const tryOtherValues = ". Do not call it again with the same values before the caller says more."
 
 // fillsIn reports whether a later call's arguments are an earlier call's, with a key left out
 // taken to be the same as one sent with no value: null or blank text. Any value the earlier
@@ -441,6 +483,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
 	record := a.record()
+	// What the operator told the agent is theirs to give too: an ID or number written in it.
+	told := a.told()
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
@@ -448,11 +492,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
+	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
-	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
+	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))
