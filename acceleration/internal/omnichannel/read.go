@@ -169,7 +169,7 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 	}
 	starter := r.Data.Channel.CreatedBy.ID
 	for _, message := range r.Data.Messages {
-		if from, _ := lineOf(message); from == fromPerson && message.User.ID != starter {
+		if from, _, _ := lineOf(message); from == fromPerson && message.User.ID != starter {
 			return false, nil
 		}
 	}
@@ -274,14 +274,14 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 		if at == nil || (card.Until != nil && at.After(*card.Until)) || ((call || fromStart) && at.Before(card.StartedAt)) {
 			continue
 		}
-		from, ok := lineOf(message)
+		from, text, ok := lineOf(message)
 		if !ok {
 			continue
 		}
 		if call && from == fromPerson && !callerOf(card, message.User.ID) {
 			return nil, nil
 		}
-		said := line{From: from, Text: message.Text}
+		said := line{From: from, Text: text}
 		if from == fromPerson && message.User.Name != nil {
 			said.Name = truncate(*message.User.Name, conversation.MaxAuthorName)
 		}
@@ -307,34 +307,46 @@ func callerOf(card store.EpisodeCard, participantID string) bool {
 // lineOf is who a thread channel's message is from: the person for one a person wrote (no
 // source, as the channel bridge writes it) or said (source speech, as chatlog writes it); for
 // one with source agent, the agent, unless the conversation that wrote it says it is a user
-// turn (support_message.role). Anything else, a reply still being written, an unfinished turn
-// or one with no text, is no line.
-func lineOf(message getstream.MessageResponse) (string, bool) {
-	if message.DeletedAt != nil || message.Type == "deleted" || strings.TrimSpace(message.Text) == "" ||
-		message.Custom["generating"] == true {
-		return "", false
+// turn (support_message.role). Its text is the message's, followed for a person's message on
+// the bridge by the note of the photos sent with it, as the session's own history says it
+// (conversation.ThreadPhotoNote): a photo sent alone is a line of the person too, so a thread
+// somebody else sent only a photo in is not alone. Anything else, a reply still being
+// written, an unfinished turn or one with no text and no photo, is no line.
+func lineOf(message getstream.MessageResponse) (string, string, bool) {
+	if message.DeletedAt != nil || message.Type == "deleted" || message.Custom["generating"] == true {
+		return "", "", false
 	}
+	text := message.Text
 	source, sourced := message.Custom[chatlog.SourceField]
+	if note := conversation.ThreadPhotoNote(message.Attachments); !sourced && note != "" {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += note
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", "", false
+	}
 	switch {
 	case !sourced, source == chatlog.SourceSpeech:
-		return fromPerson, true
+		return fromPerson, text, true
 	case source != chatlog.SourceAgent:
-		return "", false
+		return "", "", false
 	}
 	written, kept := message.Custom[supportMessageField].(map[string]any)
 	if !kept {
-		return fromAgent, true
+		return fromAgent, text, true
 	}
 	if written["state"] != completedState {
-		return "", false
+		return "", "", false
 	}
 	switch written["role"] {
 	case "user":
-		return fromPerson, true
+		return fromPerson, text, true
 	case "assistant":
-		return fromAgent, true
+		return fromAgent, text, true
 	}
-	return "", false
+	return "", "", false
 }
 
 // supportMessageField and completedState are how a persistent conversation marks the

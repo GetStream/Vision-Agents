@@ -700,13 +700,16 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 	prices, err := pricing.NewList("config", pricing.PricedAll(PriceEntries(config)), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
-	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
+	number := func(vendor string) pricing.Item {
+		return routing.ItemOf(routing.Phone, routing.ProviderConfig{Provider: vendor, Model: ModelNumber}, nil)
+	}
+	own := prices.Quote(number(SIPTrunkVendor), nil)
 	s.False(own.Billable)
 	s.False(own.Unpriced)
 	for _, vendor := range config.Vendors {
-		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
+		quote := prices.Quote(number(vendor.Vendor), nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
-		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
+		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
 		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
 		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)

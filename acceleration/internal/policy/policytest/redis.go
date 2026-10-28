@@ -28,7 +28,8 @@ type Redis struct {
 
 // SharedHolds is a Redis through a proxy of the test's own that the enforcer shares holds
 // through, flushing every 10 ms, reading the others' every 50 ms and refusing billable work once
-// a hold has waited 200 ms. It skips the test without ROUTER_REDIS_ADDR.
+// a hold has waited a minute, so a flush a loaded machine holds up refuses nothing; a test of that
+// refusal sets its own FlushMaxLag. It skips the test without ROUTER_REDIS_ADDR.
 func SharedHolds(t testing.TB) (*Redis, func(*policy.Settings)) {
 	t.Helper()
 	target := os.Getenv("ROUTER_REDIS_ADDR")
@@ -72,7 +73,7 @@ func SharedHolds(t testing.TB) (*Redis, func(*policy.Settings)) {
 	t.Cleanup(r.Client.Close)
 	return r, func(settings *policy.Settings) {
 		settings.Holds = r.Client
-		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, 200*time.Millisecond
+		settings.FlushEvery, settings.HoldRefresh, settings.FlushMaxLag = 10*time.Millisecond, 50*time.Millisecond, time.Minute
 	}
 }
 

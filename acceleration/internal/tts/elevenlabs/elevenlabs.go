@@ -42,6 +42,10 @@ const DefaultModel = "eleven_flash_v2_5"
 // quota left. The key rests, so the sessions after this one are opened on another.
 const quotaExceeded = "quota_exceeded"
 
+// invalidAPIKey is the error a frame carries, right after the handshake was accepted, when the
+// server does not take the key the socket was opened on.
+const invalidAPIKey = "invalid_api_key"
+
 // DefaultVoiceID is a voice from the public voice library, so the provider works without a
 // voice having been picked. It is deliberately not one of the older premade voices: those
 // are legacy, are absent from accounts made since, and the v3 models reject one with
@@ -800,6 +804,7 @@ func (t *TTS) connect(ctx context.Context) (*socket, *http.Response, error) {
 // readLoop translates frames from one physical connection. A replaced reader cannot
 // change the state of the newer socket.
 func (t *TTS) readLoop(sock *socket) {
+	refused := false
 	for {
 		_, raw, err := sock.conn.ReadMessage()
 		if err != nil {
@@ -814,6 +819,10 @@ func (t *TTS) readLoop(sock *socket) {
 		}
 		if message.Error == quotaExceeded {
 			t.keys.QuotaExceeded(sock.key)
+		}
+		if message.Error == invalidAPIKey && !refused {
+			refused = true
+			t.keys.InvalidKey()
 		}
 		t.handleMessage(sock, message)
 	}

@@ -29,7 +29,7 @@ An agent holds a conversation.
 A skill is handed to a slower model.
 `
 
-	passages := split("agents.md", content, DefaultChunk)
+	passages := split("agents.md", content, DefaultChunk, DefaultLimits)
 
 	s.Require().Len(passages, 2)
 	s.Equal("agents.md > Agents", passages[0].source)
@@ -44,7 +44,7 @@ func (s *DocumentsSuite) TestALongSectionIsCutAgainAndKeepsItsHeading() {
 	long := strings.Repeat("The router fails over between providers. ", 20)
 	content := "## Routing\n\n" + long + "\n\n" + long
 
-	passages := split("routing.md", content, 400)
+	passages := split("routing.md", content, 400, DefaultLimits)
 
 	s.Require().Greater(len(passages), 1)
 	for _, piece := range passages {
@@ -60,7 +60,7 @@ func (s *DocumentsSuite) TestALongHeadingAndTinyPassagesDoNotMultiplyADocument()
 	content := "# " + strings.Repeat("😀", 4000) + "\n\n" + strings.Repeat("x\n\n", 1<<17)
 
 	written := 0
-	for _, passage := range Split("pricing.md", content, 1) {
+	for _, passage := range Split("pricing.md", content, 1, DefaultLimits) {
 		written += len(passage.ID) + len(passage.Text) + len(passage.Source)
 	}
 
@@ -73,7 +73,7 @@ func (s *DocumentsSuite) TestALaterPassageRepeatsOnlyTheStartOfItsHeading() {
 	short := strings.Repeat("退款政策", 10) + "退款"
 	content := "# " + heading + "\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
 
-	passages := Split("refunds.md", content, DefaultChunk)
+	passages := Split("refunds.md", content, DefaultChunk, DefaultLimits)
 
 	s.Require().Greater(len(passages), 1)
 	s.True(strings.HasPrefix(passages[0].Text, "# "+heading+"\n\n"), "the first passage keeps the heading whole")
@@ -91,7 +91,7 @@ func (s *DocumentsSuite) TestALongHeadingOverALongParagraphIsKeptWholeInThePassa
 	heading := "How long does a refund take" + strings.Repeat(" when the order was paid by card", 6)
 	content := "# " + heading + "\n\n" + strings.Repeat("Thirty days. ", 90)
 
-	passages := Split("faq.md", content, DefaultChunk)
+	passages := Split("faq.md", content, DefaultChunk, DefaultLimits)
 
 	s.Require().NotEmpty(passages)
 	s.True(strings.HasPrefix(passages[0].Text, "# "+heading+"\n\n"), passages[0].Text[:200])
@@ -100,8 +100,53 @@ func (s *DocumentsSuite) TestALongHeadingOverALongParagraphIsKeptWholeInThePassa
 func (s *DocumentsSuite) TestAChunkSizeUnderTheMinimumIsRaisedToIt() {
 	content := "# Refunds\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
 
-	s.Equal(Split("refunds.md", content, 500), Split("refunds.md", content, 1))
-	s.NotEqual(Split("refunds.md", content, 500), Split("refunds.md", content, 1000), "500 is a size of its own")
+	s.Equal(Split("refunds.md", content, 500, DefaultLimits), Split("refunds.md", content, 1, DefaultLimits))
+	s.NotEqual(Split("refunds.md", content, 500, DefaultLimits), Split("refunds.md", content, 1000, DefaultLimits), "500 is a size of its own")
+}
+
+func (s *DocumentsSuite) TestAConfiguredMinimumRaisesAChunkSizeToIt() {
+	content := "# Refunds\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+	limits := Limits{MinChunk: 800, MaxHeading: DefaultLimits.MaxHeading}
+
+	s.Equal(Split("refunds.md", content, 800, limits), Split("refunds.md", content, 1, limits))
+	s.NotEqual(Split("refunds.md", content, 1, DefaultLimits), Split("refunds.md", content, 1, limits))
+}
+
+func (s *DocumentsSuite) TestALaterPassageRepeatsTheConfiguredLengthOfItsHeading() {
+	content := "# Refund policy\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+
+	passages := Split("refunds.md", content, DefaultChunk, Limits{MinChunk: DefaultLimits.MinChunk, MaxHeading: 6})
+
+	s.Require().Greater(len(passages), 1)
+	for _, passage := range passages[1:] {
+		s.True(strings.HasPrefix(passage.Text, "## Refund\n\n"), passage.Text[:40])
+		s.Equal("refunds.md > Refund", passage.Source)
+	}
+}
+
+func (s *DocumentsSuite) TestAMinimumChunkOfZeroCutsAtTheSizeAskedFor() {
+	content := "# Refunds\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+	off := Limits{MinChunk: 0, MaxHeading: DefaultLimits.MaxHeading}
+
+	s.Greater(len(Split("refunds.md", content, 1, off)), len(Split("refunds.md", content, 1, DefaultLimits)))
+}
+
+func (s *DocumentsSuite) TestAHeadingLimitOfZeroRepeatsNoHeading() {
+	content := "# Refund policy\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200)
+
+	passages := Split("refunds.md", content, DefaultChunk, Limits{MinChunk: DefaultLimits.MinChunk, MaxHeading: 0})
+
+	s.Require().Greater(len(passages), 1)
+	for _, passage := range passages[1:] {
+		s.True(strings.HasPrefix(passage.Text, "Refunds take"), passage.Text[:40])
+		s.Equal("refunds.md", passage.Source)
+	}
+}
+
+func (s *DocumentsSuite) TestThePassageSizeMultipleStaysInTheLimits() {
+	s.InDelta(2.6, DefaultLimits.SizeMultiple(), 0.05)
+	s.InDelta(5.6, Limits{MinChunk: 500, MaxHeading: 300}.SizeMultiple(), 0.05)
+	s.True(math.IsInf(Limits{MinChunk: 0, MaxHeading: 0}.SizeMultiple(), 1), "no minimum bounds nothing")
 }
 
 func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
@@ -109,7 +154,7 @@ func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
 	// gives the model a title where it needed something to read.
 	content := "# Events\n\n## Sending\n\nCall send with the event.\n"
 
-	passages := split("events.md", content, DefaultChunk)
+	passages := split("events.md", content, DefaultChunk, DefaultLimits)
 
 	s.Require().Len(passages, 1)
 	s.Equal("events.md > Sending", passages[0].source)
@@ -124,7 +169,7 @@ func (s *DocumentsSuite) TestATableIsCutAtItsRowsBecauseItHasNoParagraphs() {
 		table.WriteString("| deepgram | speech, in eleven languages, streamed |\n")
 	}
 
-	passages := split("providers.md", table.String(), 400)
+	passages := split("providers.md", table.String(), 400, DefaultLimits)
 
 	s.Require().Greater(len(passages), 1)
 	for _, piece := range passages {
@@ -136,7 +181,7 @@ func (s *DocumentsSuite) TestATableIsCutAtItsRowsBecauseItHasNoParagraphs() {
 func (s *DocumentsSuite) TestFencedCodeIsKeptWhole() {
 	content := "## Usage\n\n```go\nfunc main() {\n\n\tprintln(\"hello\")\n}\n```\n"
 
-	passages := split("usage.md", content, DefaultChunk)
+	passages := split("usage.md", content, DefaultChunk, DefaultLimits)
 
 	s.Require().Len(passages, 1)
 	s.Contains(passages[0].text, "func main()")
@@ -149,7 +194,7 @@ func (s *DocumentsSuite) TestPassagesAreIdentifiedByWhereTheyCameFrom() {
 	directory := s.T().TempDir()
 	s.write(directory, "guide.md", "# One\n\nfirst\n\n# Two\n\nsecond\n")
 
-	documents, err := Read([]string{directory}, DefaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk, DefaultLimits)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 2)
@@ -164,7 +209,7 @@ func (s *DocumentsSuite) TestOnlyProseIsIngested() {
 	s.write(directory, "logo.png", "not a document")
 	s.write(filepath.Join(directory, ".git"), "config", "# One\n\nnot documentation\n")
 
-	documents, err := Read([]string{directory}, DefaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk, DefaultLimits)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 1)
@@ -175,7 +220,7 @@ func (s *DocumentsSuite) TestNestedDocumentsKeepThePathTheyWereFoundAt() {
 	directory := s.T().TempDir()
 	s.write(filepath.Join(directory, "reference"), "api.md", "# API\n\nthe endpoints\n")
 
-	documents, err := Read([]string{directory}, DefaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk, DefaultLimits)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 1)
@@ -214,7 +259,7 @@ func (s *DocumentsSuite) TestALongSourceIsKeyedByAHashOfAllOfIt() {
 	push := "https://getstream.io/chat/docs/sdk/android/client/guides/push-notifications/"
 	content := "# One\n\nfirst\n\n# Two\n\nsecond\n"
 
-	written := Split(push, content, DefaultChunk)
+	written := Split(push, content, DefaultChunk, DefaultLimits)
 
 	s.Require().Len(written, 2)
 	s.Equal(IDs(push, 0, 2), []string{written[0].ID, written[1].ID},
@@ -238,7 +283,7 @@ func (s *DocumentsSuite) TestFilesCountsADocumentOnceThoughItsIDsAreKeyedTwoWays
 	for index := range 11 {
 		long.WriteString("# Part " + strconv.Itoa(index) + "\n\ntext\n\n")
 	}
-	documents := append(Split(sixtyOne, long.String(), DefaultChunk), Split("guide.md", "# One\n\nfirst\n", DefaultChunk)...)
+	documents := append(Split(sixtyOne, long.String(), DefaultChunk, DefaultLimits), Split("guide.md", "# One\n\nfirst\n", DefaultChunk, DefaultLimits)...)
 	s.Require().Len(documents, 12)
 
 	s.Equal(2, Files(documents))

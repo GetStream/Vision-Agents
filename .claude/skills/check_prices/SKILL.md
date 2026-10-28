@@ -7,10 +7,12 @@ description: Check every price the router bills with against what each vendor ch
 
 Every unit of work the router records is priced by one price list (`acceleration/internal/pricing`). Each entry's `rates` are the vendors' list prices, kept for reference; what customers are charged is its `prices`, set by the operator, and never this skill's business.
 
+Every entry names its `region` (`us`, `eu`), and `vendor.json` is all `us`. Every `llm`, `knowledge` and `sandbox` entry also has a BYOK twin (`"byok": true`), for work done with the customer's own key: the router makes it when it reads a price file, with the same rates and a price of 20% of them. Check the `us` entries that are not BYOK against the vendors' pages. A twin's rates are its entry's, so they are right when the entry's are. An entry of another region is checked against that region's prices on the vendor's page.
+
 | Where | What it is | How it changes |
 | --- | --- | --- |
 | `acceleration/prices/vendor.json` | The vendors' published list prices, embedded in the router. A new database is seeded from it at the router's first start | A PR. Editing it never changes a database that already has the item |
-| A deployment's database (`price_changes`, `price_entries`) | The list once seeded, from `vendor.json` and any price file of the deployment's own (`ROUTER_PRICES_FILE`) laid over it. A router that does not yet price from the database prices from those two files | A new price change through the router's management API. A release's start only adds items the database never priced |
+| A deployment's database (`price_changes`, `price_list_entries`) | The list once seeded, from `vendor.json` and any price file of the deployment's own (`ROUTER_PRICES_FILE`) laid over it. A router that does not yet price from the database prices from those two files | A new price change through the router's management API. A release's start only adds items the database never priced |
 
 So a wrong price is fixed twice: a price change for each environment, and a PR to `vendor.json` so new deployments start right. This skill prepares both and writes neither to a shared environment.
 
@@ -58,7 +60,7 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 uv run --no-project .claude/skills/check_prices/litellm.py
 ```
 
-It reads LiteLLM's price catalog at its latest release tag (it prints the tag; never `main`) and prints its figures for the same items in our meters and units: `input_cost_per_token` × 1,000,000 is `input_tokens` per 1,000,000, `cache_read_input_token_cost` is `cached_input_tokens`, `cache_creation_input_token_cost` is `cache_write_input_tokens`, `*_above_<n>k_tokens` is a context tier above `<n>`,000, `input_cost_per_audio_token` is `input_audio_tokens`, `input_cost_per_second` × 3,600 is `audio_ms` per 3,600,000, `*_cost_per_character` is `characters` per 1,000,000, and `output_cost_per_image` is `images`. Pass `--list` a file from step 1 to check an environment's list, and `--json` for rows to work with. An item it cannot find reads `no match`.
+It reads LiteLLM's price catalog at its latest release tag (it prints the tag; never `main`) and prints its figures for the same items in our meters and units: `input_cost_per_token` × 1,000,000 is `input_tokens` per 1,000,000, `cache_read_input_token_cost` is `cached_input_tokens`, `cache_creation_input_token_cost` is `cache_write_input_tokens`, `*_above_<n>k_tokens` is a context tier above `<n>`,000, `input_cost_per_audio_token` is `input_audio_tokens`, `input_cost_per_second` × 3,600 is `audio_ms` per 3,600,000, `*_cost_per_character` is `characters` per 1,000,000, and `output_cost_per_image` is `images`. Pass `--list` a file from step 1 to check an environment's list, and `--json` for rows to work with. An item it cannot find reads `no match`. It compares only the `us` entries that are not BYOK, since LiteLLM lists the vendors' US list prices, and counts the rest as skipped.
 
 A service-tier entry (`when: {"service_tier": …}`) is compared with LiteLLM's figures for that tier (its `_flex`, `_batches`, `_priority` and `_ultrafast` fields; `fast` is billed as `priority`). For a speech-to-speech model compare the per-modality meters (`input_audio_tokens`, `output_text_tokens` and the rest): its generic `input_tokens` and `output_tokens` are the fallback for a vendor that reports no split, at the audio rates, while LiteLLM's generic fields are the text rates.
 
@@ -100,13 +102,17 @@ For each vendor announcement, one price change as JSON in `.claude/skills/check_
   "source": "https://platform.openai.com/docs/pricing, read 2026-11-02",
   "effective_at": "2026-12-01T00:00:00Z",
   "entries": [
-    {"modality": "llm", "provider": "openai", "model": "gpt-x",
+    {"modality": "llm", "provider": "openai", "model": "gpt-x", "region": "us",
      "rates": {"input_tokens": {"usd": 2.5, "per": 1000000}, "cached_input_tokens": {"usd": 0.25, "per": 1000000}},
-     "prices": {"input_tokens": {"usd": 2.4, "per": 1000000}, "cached_input_tokens": {"usd": 0.24, "per": 1000000}}}
+     "prices": {"input_tokens": {"usd": 2.4, "per": 1000000}, "cached_input_tokens": {"usd": 0.24, "per": 1000000}}},
+    {"modality": "llm", "provider": "openai", "model": "gpt-x", "region": "us", "byok": true,
+     "rates": {"input_tokens": {"usd": 2.5, "per": 1000000}, "cached_input_tokens": {"usd": 0.25, "per": 1000000}},
+     "prices": {"input_tokens": {"usd": 0.4, "per": 1000000}, "cached_input_tokens": {"usd": 0.04, "per": 1000000}}}
   ]
 }
 ```
 
+- Every entry names its `region`; a change without one is refused. The BYOK twin is an item of its own, so a vendor's new rate is written to it too, with the same rates and its own price in force.
 - An entry replaces the item's entry whole, so it carries every rate and tier the item has, not only the one that moved.
 - It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.2 and says so in `reason`.
 - `reason` says old → new with units for each model; `source` the URL and the date read; `effective_at` the vendor's date when it is in the future, else leave it out.

@@ -25,7 +25,8 @@ class SessionMemory:
             app_id (str | Unset): Separates two deployments sharing one memory account.
             filter_ (SessionMemoryFilter | Unset): The caller's own labels, which narrow recall further. They cannot widen
                 it: a filter is applied alongside the user id, never instead of it.
-            user_id (str | Unset): Who the memories belong to. Empty means the customer.
+            user_id (str | Unset): Who the memories belong to. Empty means the customer. An end user's device may only name
+                its own user id, and an anonymous caller none; a backend may name any of its users.
     """
 
     app_id: str | Unset = UNSET

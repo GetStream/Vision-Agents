@@ -1134,16 +1134,19 @@ func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() 
 
 // A read names a host of the block, a method in upper case as a client sends it (RFC 9110
 // section 9.1), and a path.Match pattern from the path's leading slash. A GraphQL read takes a
-// POST and leaves its method out, so a router that predates it matches it to no request.
+// POST and leaves its method out, so a router that predates it matches it to no request; a SQL
+// read does the same, and a read is not both.
 func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	block := "sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com, \"*.example.org\"]\n  reads:\n"
 	parsed, err := ParseManifest(minimal(block + "    - {host: api.example.com, method: POST, path: /*/*/git-upload-pack}\n" +
 		"    - {host: \"*.example.org\", method: QUERY, path: /search}\n" +
-		"    - {host: api.example.com, path: /graphql, graphql: true}\n"))
+		"    - {host: api.example.com, path: /graphql, graphql: true}\n" +
+		"    - {host: api.example.com, path: /v2/projects/*/queries, sql: true}\n"))
 	s.Require().NoError(err)
 	s.Equal([]SandboxRead{{Host: "api.example.com", Method: "POST", Path: "/*/*/git-upload-pack"},
 		{Host: "*.example.org", Method: "QUERY", Path: "/search"},
-		{Host: "api.example.com", Path: "/graphql", GraphQL: true}}, parsed.Sandbox.Reads)
+		{Host: "api.example.com", Path: "/graphql", GraphQL: true},
+		{Host: "api.example.com", Path: "/v2/projects/*/queries", SQL: true}}, parsed.Sandbox.Reads)
 
 	for read, field := range map[string]string{
 		"{host: other.example.com, method: POST, path: /x}":                    "sandbox.reads[0].host:",
@@ -1163,6 +1166,11 @@ func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 		"{host: api.example.com, path: /graphql, graphql: false}":              "sandbox.reads[0].method:",
 		"{host: other.example.com, path: /graphql, graphql: true}":             "sandbox.reads[0].host:",
 		"{host: api.example.com, path: graphql, graphql: true}":                "sandbox.reads[0].path:",
+		"{host: api.example.com, method: POST, path: /q, sql: true}":           "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /q, sql: false}":                        "sandbox.reads[0].method:",
+		"{host: other.example.com, path: /q, sql: true}":                       "sandbox.reads[0].host:",
+		"{host: api.example.com, path: q, sql: true}":                          "sandbox.reads[0].path:",
+		"{host: api.example.com, path: /q, sql: true, graphql: true}":          "sandbox.reads[0].sql:",
 	} {
 		_, err := ParseManifest(minimal(block + "    - " + read + "\n"))
 
@@ -1174,6 +1182,8 @@ func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	s.Error(err, "a method that is no string")
 	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, graphql: queries}\n"))
 	s.Error(err, "graphql that is no bool")
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, sql: select}\n"))
+	s.Error(err, "sql that is no bool")
 }
 
 // A block without reads marshals as it did before the field existed, so the seeder finds

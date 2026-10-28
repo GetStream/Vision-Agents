@@ -146,6 +146,21 @@ func (s *ImagesSuite) TestACostLabelThatIsNotOneIsRefused() {
 		Prompt: "a field", Tags: &map[string]string{"not a key": "x"}}))
 }
 
+func (s *ImagesSuite) TestAModelNamedOutsideTheOptionsIsRefused() {
+	for _, model := range []any{"nobody/nothing", "", 5, map[string]any{}, []string{"nobody/nothing"}} {
+		request := map[string]any{"prompt": "a yellow watering can"}
+		request["model"] = model
+		s.assertTopLevelModelRefused("/v1/image/generations", request)
+	}
+}
+
+func (s *ImagesSuite) TestANullModelIsServedAsNoModel() {
+	request := map[string]any{"prompt": "a yellow watering can"}
+	request["model"] = nil
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/image/generations", request)
+	s.Equal(http.StatusOK, status, string(payload))
+}
+
 func (s *ImagesSuite) TestOnlyTheCustomersOwnBackendMayDraw() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		status, _ := as.call(http.MethodPost, "/v1/image/generations",

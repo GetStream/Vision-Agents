@@ -37,3 +37,5 @@ rand = "0.10"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "net"] }
 tempfile = "3"
+rcgen = "0.14.10"
+tokio-rustls = "0.26"

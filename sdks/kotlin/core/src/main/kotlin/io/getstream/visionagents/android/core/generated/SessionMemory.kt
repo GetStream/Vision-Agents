@@ -38,7 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param appId Separates two deployments sharing one memory account.
  * @param filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
- * @param userId Who the memories belong to. Empty means the customer.
+ * @param userId Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
  */
 @Serializable
 
@@ -52,7 +52,7 @@ internal data class SessionMemory (
     @SerialName(value = "filter")
     val filter: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
 
-    /* Who the memories belong to. Empty means the customer. */
+    /* Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users. */
     @SerialName(value = "user_id")
     val userId: kotlin.String? = null
 

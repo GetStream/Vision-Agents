@@ -107,7 +107,7 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. An entry may set its `prices`, `price_tiers` and `sku`; one without a price is priced at its rates times 1.2 when it is first loaded. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -743,6 +743,7 @@ vendor rates in `prices/vendor.json`; customers are charged each entry's price, 
 | `gemma/gemma-4-26B-A4B-it`        | low-latency  | $0.24  | -       | $1.20   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
+| `openai/gpt-6.1-terra`            | high-quality | $1.00  | $0.05   | $5.00   |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
@@ -1488,7 +1489,8 @@ read, and so does adding the page again.
 go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
 ```
 
-A namespace belongs to a customer: turbopuffer stores it as `<customer>__<namespace>`, so two
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<slug>-<hash>`, a
+readable slug of the namespace and a hash of it as given (`examples__docs-<16 hex>`), so two
 apps that both say `default` never read each other's. `-customer` is the app id the agent
 runs under.
 
@@ -1831,55 +1833,103 @@ refusal.
 
 ## Prices
 
-Every priced item (a modality, provider and model, and the `when` attributes that choose
-between its entries, such as a service tier or a country) has an entry with two prices:
-`rates` and `tiers`, the vendor's cost, kept for reference, and `prices` and `price_tiers`,
-what customers are charged, with the same meters and the same `above_input_tokens`
-thresholds. A quote charges the price alone (`cost_micros`), and works out the cost at the
-vendor's rates beside it (`base_cost_micros`), so the margin on every row can be read back.
-Nothing adds a markup when a row is priced. A free entry has no price, and a local model with
-none costs nothing, as before.
+Every priced item is a modality, provider and model, in a region, with the customer's own key
+or without (BYOK), and the `when` attributes that choose between its entries, such as a
+service tier or a country. It has an entry with two prices: `rates` and `tiers`, the vendor's
+cost, kept for reference, and `prices` and `price_tiers`, what customers are charged, with the
+same meters and the same `above_input_tokens` thresholds. A quote charges the price alone
+(`cost_micros`), and works out the cost at the vendor's rates beside it (`base_cost_micros`), so
+the margin on every row can be read back. Nothing adds a markup when a row is priced. A free
+entry has no price, and a local model with none costs nothing, as before.
+
+Every entry and every item names its region: `us` or `eu` for now, more later (a letter and up
+to 31 of a-z, 0-9 and hyphens). The region and the BYOK state are matched exactly: work is
+priced only by an entry of its own region and BYOK state, so EU work is never priced by a US
+entry, and BYOK work never by an entry that is not BYOK, nor the other way round. Work no entry
+matches is unpriced, as before, and logged with its region and BYOK state. Within those, `when`
+picks the entry whose conditions all hold with the most of them. A provider instance runs in
+the `region` its routing config names. When `router.yaml` names none, as it names none today,
+parsing gives it `pricing.DefaultRegion`, `us`, so a parsed config never has an empty region.
+A config built in code, as phone, knowledge, memory and sandbox metering build one, names none
+and runs in the default region too. The default region is only where such an instance runs,
+never a fallback when an item is priced.
+
+Work done with the customer's own key is billed to the customer by the vendor, so its price is
+a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
+tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
+BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
+`cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
+(`routing.ProviderConfig.BYOK`, never read from a file). No price file writes BYOK entries:
+reading any of them, `vendor.json` included, adds a BYOK twin of each `llm`, `knowledge` and
+`sandbox` entry that is not BYOK (`pricing.WithBYOK`, for `pricing.BYOKModalities`). The twin has
+the same item, region and `when`, the same rates, tiers and free flag, and no price or SKU of
+its own, so it is priced at the fee and given its own SKU when it is first loaded. A file may
+write a BYOK entry itself, with a price of its own, and it wins over the twin.
 
 Every item has a SKU, kept across all its price changes, which each row it prices records
 (`requests.sku`, and `sku` on the usage event). A new item is given its modality, provider,
-model and `when` attributes, lowercased with every run of other characters one hyphen
-(`llm-openai-gpt-5-6-luna-service-tier-flex`), numbered `-2`, `-3` past a SKU another item
-has had. A change may give a new item an existing SKU, as a model its vendor renamed keeps
-the old name's, only when that SKU's item is withdrawn by the same change or is no longer in
-force.
+model, each `when` attribute and its value, its region, and `byok` for a BYOK item, lowercased
+with every run of other characters one hyphen: `llm-anthropic-claude-haiku-5-5-us`,
+`llm-anthropic-claude-haiku-5-5-us-byok`, `llm-openai-gpt-6-luna-service-tier-batch-us`,
+`knowledge-turbopuffer-write-us-byok`. It is numbered `-2`, `-3` past a SKU another item has had
+(`llm-openai-gpt-4-1-us-2`). A change may give a new item an existing SKU, as a model its vendor
+renamed keeps the old name's, only when that SKU's item is withdrawn by the same change or is no
+longer in force.
 
 `prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
-service tier where a vendor charges one), embedded in the binary: rates only, no price of the
-operator's and no negotiated figure. A deployment may lay a price file of its own over it with
-`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins. An entry
-of either file may set `prices`, `price_tiers` and `sku`; one with no price is priced at its
-rates times `pricing.PriceFactorBps` (12000, so 1.2), each rate kept to 12 significant digits.
-A file's top-level `markup_bps`, which older files have, is ignored with a warning.
+service tier where a vendor charges one), all in the `us`, embedded in the binary: rates only,
+no price of the operator's and no negotiated figure. A deployment may lay a price file of its
+own over it with `ROUTER_PRICES_FILE`: for one item, region, BYOK state and `when`, the first
+file with an entry wins. Every entry of `vendor.json` names its `region`, and one that names
+none is refused, naming the entry. A deployment's own file should too, but for now an entry of
+it that names none is read as `us`, with a warning naming the entries: every router of a
+deployment reads the same file at its start, and a router built before regions refuses a
+`region` field, so the file can name regions only once none of its routers is that old. An
+entry may set `prices`, `price_tiers` and `sku`. One with no price
+is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), or a BYOK one at
+`pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
+which older files have, is ignored with a warning.
 
 At start, right after migrating, a router loads them into the shared database's
-`price_changes` and `price_entries`: everything into an empty database, as one `seed` change,
-and otherwise only the models the database has never priced, as one `release` change. Those
-are the only entries priced at the factor; a model the database has priced keeps its price,
-whatever the files say now, and staff set every later price outright through the management
-API. Each load is audited (`price_list`, source `cli`). A load that fails is retried every 30
-seconds while the router serves; a file that does not parse stops the router at start. Rows
-are only ever added: a trigger refuses to change or delete an entry, its price and SKU
-included, and a change can only be cancelled before it takes effect. The one exception is
-`router prices reload`, for a development database only, below. An amount a vendor quotes
-outright, such as a number's monthly rental, is charged at that amount times the same factor,
-which no entry stores; its `base_cost_micros` is the vendor's amount.
+`price_changes` and `price_list_entries`: everything into an empty database, as one `seed`
+change, and otherwise only the items the database has never priced, as one `release` change.
+Those are the only entries priced at the factor or the fee; an item the database has priced
+keeps its price, whatever the files say now, and staff set every later price outright through
+the management API. Each load is audited (`price_list`, source `cli`). A load that fails is
+retried every 30 seconds while the router serves; a file that does not parse stops the router
+at start. Rows are only ever added: a trigger refuses to change or delete an entry, its price,
+SKU, region and BYOK state included, and a change can only be cancelled before it takes effect.
+The one exception is `router prices reload`, for a development database only, below. An amount
+a vendor quotes outright, such as a number's monthly rental, is charged at that amount times the
+same factor, which no entry stores; its `base_cost_micros` is the vendor's amount, or 0 with the
+fee charged for a BYOK item.
 
-`markup_bps` on `price_changes` and `price_entries` is left from before prices were stored:
-nothing reads it, rows written now leave it `NULL`, and a later release drops it. Migration
-`20261118120000_price_entry_prices` stored every existing entry's price as what it was
-charged: its rates times its own markup, else the list's in force when it is (or was), and
-gave every item its SKU.
+Migration `20261118120000_price_entry_prices` stored every existing entry's price as what it
+was charged: its rates times its own markup, else the list's in force when it is (or was), and
+gave every item its SKU. Migration `20261130120000_drop_price_markup` then drops the
+`markup_bps` those markups were kept in, on `price_changes` and `price_entries`, which nothing
+had read since.
+
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`
+and adds `region` and `byok`: every existing entry is `us` and not BYOK, and `region` keeps no
+default, so every later insert names one. It ends every existing SKU in `-us`
+(`llm-openai-a` becomes `llm-openai-a-us`, `llm-openai-gpt-4-1-2` becomes
+`llm-openai-gpt-4-1-2-us`), and indexes items by region and BYOK state as well. `requests.sku`
+and the usage ledger are not rewritten: a row keeps the SKU it was billed under, so a row priced
+before the migration names its item's SKU without the region. The rename is what keeps a router
+built before it from reading a BYOK entry as its item's newest price: that router's reads and
+writes of the price list fail, and it keeps pricing with the list it holds in memory, reading
+again every 30 seconds, until it is replaced. The first start after the migration writes one
+`release` change holding only the BYOK twins the files now have, at the fee; every US item keeps
+its price and its SKU. Down takes the region off the SKUs, drops the columns and renames the
+table back, and refuses a list that holds a BYOK or non-US entry, which a router built before
+it would read as a US price.
 
 | Command | What it does |
 | --- | --- |
-| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's SKU, its vendor rates and its price; `--unpriced` lists the routed models no entry prices |
-| `router prices sync --dry-run` | What the next start would load, writing nothing |
-| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's item, region and BYOK state, its SKU, its vendor rates and its price; `--unpriced` lists the routed items no entry prices, each in its region |
+| `router prices sync --dry-run` | What the next start would load, each item with its region and BYOK state, writing nothing |
+| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database, counting its entries by region and BYOK state |
 | `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
 | `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
 | `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
@@ -1887,7 +1937,7 @@ gave every item its SKU.
 A start never changes a price the database already has, so on a laptop an edit to
 `vendor.json` (a rate fixed, say) does not reach a database seeded before it.
 `router prices reload --development` puts the files' list back: in one transaction, under the
-lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
+lock a load takes, it empties `price_changes` and `price_list_entries` (every change goes, those
 scheduled and cancelled included), then writes the `seed` a fresh database gets from
 `ROUTER_PRICES_FILE` over `vendor.json`. It first prints
 the database it is pointed at, the address it connects to and the address the server answers
@@ -1917,24 +1967,30 @@ docker compose up -d --build router && docker compose exec router router prices 
 ```
 
 Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
-included): every entry in force from the router's memory, its `sku` and its price in `rates`
-and `tiers` (what they are charged), with the change that wrote it, and `upcoming`, what the
-scheduled changes will set, soonest first, with their reason. The vendor's cost, the unpriced
-items and each change's source and author stay on the staff operations.
+included): every entry in force from the router's memory, its `region`, `byok`, `sku` and its
+price in `rates` and `tiers` (what they are charged), with the change that wrote it, and
+`upcoming`, what the scheduled changes will set, soonest first, with their reason. `region` and
+`modality` in the query keep one region's or one modality's prices alone. The vendor's cost, the
+unpriced items and each change's source and author stay on the staff operations, whose list in
+force and preview name each item's `region` and `byok` too.
 
 Staff change the list with `createPriceChange` (`/v1/manage/price-lists/changes`): each entry
-sets the vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright,
-the same meters in both (else 400 `price_meters_mismatch`) and a price tier for each tier
-(else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in force is
-400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). The preview's
-`confirmation_required` is worked out on the prices: one moving by a factor of 2 or more.
+names its `region` (an entry without one, or with one of another form, fails validation with a
+400 `validation_failed`) and, for work on the customer's own key, `byok: true`. It sets the
+vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright, a BYOK entry's
+fee included, the same meters in both (else 400 `price_meters_mismatch`) and a price tier for
+each tier (else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in
+force is 400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). An entry of
+another region or BYOK state is an item of its own: it moves no other entry's price. The
+preview's `confirmation_required` is worked out on the prices: one moving by a factor of 2 or
+more.
 
 Until the router prices from the database, it prices every row from its price files:
-`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them. A
-`price:` block in a routing config is ignored, with a warning at start;
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them, BYOK
+twins included. A `price:` block in a routing config is ignored, with a warning at start;
 `router prices export --from <your config> --out own-prices.json` moves one into a file for
-`ROUTER_PRICES_FILE`, which keeps those models priced. The `check_prices` skill checks the list
-against what each vendor charges.
+`ROUTER_PRICES_FILE`, each entry in its provider's region, which keeps those models priced. The
+`check_prices` skill checks the list against what each vendor charges.
 
 ## Transcripts, memory and phone
 

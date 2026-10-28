@@ -25,8 +25,12 @@ class PricePreviewItem:
         modality (str): Such as llm, stt, tts, sms or phone.
         model (str):
         provider (str):
+        region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+            priced only by an entry of its own region, never another region's.
         after (PricedEntry | Unset):
         before (PricedEntry | Unset):
+        byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+            by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
         needs_confirmation (bool | Unset):
         price_factors (PricePreviewItemPriceFactors | Unset): By meter, the factor its price moves by. Absent for a
             meter with no price before or after.
@@ -38,8 +42,10 @@ class PricePreviewItem:
     modality: str
     model: str
     provider: str
+    region: str
     after: PricedEntry | Unset = UNSET
     before: PricedEntry | Unset = UNSET
+    byok: bool | Unset = UNSET
     needs_confirmation: bool | Unset = UNSET
     price_factors: PricePreviewItemPriceFactors | Unset = UNSET
     unpriced: bool | Unset = UNSET
@@ -53,6 +59,8 @@ class PricePreviewItem:
 
         provider = self.provider
 
+        region = self.region
+
         after: dict[str, Any] | Unset = UNSET
         if not isinstance(self.after, Unset):
             after = self.after.to_dict()
@@ -60,6 +68,8 @@ class PricePreviewItem:
         before: dict[str, Any] | Unset = UNSET
         if not isinstance(self.before, Unset):
             before = self.before.to_dict()
+
+        byok = self.byok
 
         needs_confirmation = self.needs_confirmation
 
@@ -80,12 +90,15 @@ class PricePreviewItem:
                 "modality": modality,
                 "model": model,
                 "provider": provider,
+                "region": region,
             }
         )
         if after is not UNSET:
             field_dict["after"] = after
         if before is not UNSET:
             field_dict["before"] = before
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if needs_confirmation is not UNSET:
             field_dict["needs_confirmation"] = needs_confirmation
         if price_factors is not UNSET:
@@ -112,6 +125,8 @@ class PricePreviewItem:
 
         provider = d.pop("provider")
 
+        region = d.pop("region")
+
         _after = d.pop("after", UNSET)
         after: PricedEntry | Unset
         if isinstance(_after, Unset):
@@ -125,6 +140,8 @@ class PricePreviewItem:
             before = UNSET
         else:
             before = PricedEntry.from_dict(_before)
+
+        byok = d.pop("byok", UNSET)
 
         needs_confirmation = d.pop("needs_confirmation", UNSET)
 
@@ -148,8 +165,10 @@ class PricePreviewItem:
             modality=modality,
             model=model,
             provider=provider,
+            region=region,
             after=after,
             before=before,
+            byok=byok,
             needs_confirmation=needs_confirmation,
             price_factors=price_factors,
             unpriced=unpriced,

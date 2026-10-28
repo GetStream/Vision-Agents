@@ -325,7 +325,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		}
 		namespace = name
 		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, err
 		}
 	}
 	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {

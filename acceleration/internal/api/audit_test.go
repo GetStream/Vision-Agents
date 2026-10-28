@@ -3,10 +3,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type AuditSuite struct {
@@ -98,6 +101,21 @@ func (s *AuditSuite) TestDeletingAnAgentLeavesItsDeletionOnRecord() {
 	s.Equal("goner", entry.ResourceName)
 	s.Equal("llm-flow", s.changed(entry, "llm").Before)
 	s.Nil(s.changed(entry, "llm").After)
+}
+
+// A change whose caller hung up once it was made is still on record (AI-2163): the row is
+// written after the change, and nothing writes it later.
+func (s *AuditSuite) TestAChangeWhoseCallerHungUpIsStillOnRecord() {
+	gone, hangUp := context.WithCancel(context.WithValue(context.Background(), customerContextKey{}, s.customerID()))
+	hangUp()
+	id := "cfg_" + s.utils.uuid()
+
+	s.router.audit(gone, auditRecord{ResourceType: store.AuditAgentConfig, ResourceID: id, ResourceName: "goner",
+		Action: store.AuditDeleted, Changes: []store.AuditChange{{Field: "llm", Before: "llm-flow"}}})
+
+	entry := s.latest(AuditFilter{AgentID: &id})
+	s.Equal(AuditAction("deleted"), entry.Action)
+	s.Equal("goner", entry.ResourceName)
 }
 
 func (s *AuditSuite) TestASkillIsRecordedAgainstTheAgentItBelongsTo() {

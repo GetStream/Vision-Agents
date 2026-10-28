@@ -118,8 +118,8 @@ func (s *ImageRouterIntegrationSuite) TestAnImageRowSaysTheSizeItWasDrawnAtWhich
 		return map[pricing.Meter]pricing.Rate{pricing.Images: {USD: usd, Per: 1}}
 	}
 	prices, err := pricing.NewList("sizes", pricing.AllAtCost([]pricing.Entry{
-		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Rates: perImage(0.04)},
-		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Rates: perImage(0.08),
+		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Region: pricing.RegionUS, Rates: perImage(0.04)},
+		{Modality: string(routing.Image), Provider: "quick", Model: "fast", Region: pricing.RegionUS, Rates: perImage(0.08),
 			When: map[string]string{imagegen.AttributeWidth: "1024", imagegen.AttributeHeight: "1792"}},
 	}), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
