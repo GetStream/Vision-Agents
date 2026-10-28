@@ -13,9 +13,12 @@ const _itemPage = 200;
 /// not holding one and most of these are over. `VisionAgents.attach` follows one that is
 /// still running.
 final class Sessions {
-  Sessions(this._operations, {this.agent});
+  Sessions(this._operations, {this.agent, String userId = ''}) : _userId = userId;
 
   final api.Operations _operations;
+
+  /// Who is asking, which is whose memories a session reads.
+  final String _userId;
 
   /// The agent name every call here is about, or null for all of this caller's.
   final String? agent;
@@ -93,7 +96,7 @@ final class Sessions {
   Responses responses(String id) => Responses._(_operations, id);
 
   Future<Session> _create(SessionOptions options, bool startVoice) async {
-    final request = createRequestOf(options, startVoice: startVoice, agent: agent);
+    final request = createRequestOf(options, startVoice: startVoice, agent: agent, userId: _userId);
     return sessionOf(await _operations.createSession(body: request));
   }
 
@@ -105,6 +108,10 @@ final class Sessions {
       userId: _named(query.userId),
       modality: query.modality?.name,
       state: query.state?.name,
+      createdAt: query.createdSince == null && query.createdBefore == null
+          ? null
+          : api.TimeRange(gte: query.createdSince, lt: query.createdBefore),
+      custom: query.custom.isEmpty ? null : query.custom,
       text: switch (_named(text)) {
         final String text => api.TextMatch(q: text),
         null => null,
@@ -115,6 +122,11 @@ final class Sessions {
         filter: filter.toJson().isEmpty ? null : filter,
         limit: query.limit,
         cursor: _named(query.cursor),
+        sort: switch (query.sort) {
+          null => null,
+          SessionSort.updatedAt => [const api.SessionSort(field: 'updated_at')],
+          SessionSort.relevance => [const api.SessionSort(field: 'relevance')],
+        },
       ),
     );
     return ListPage(

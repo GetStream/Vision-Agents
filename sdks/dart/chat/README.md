@@ -14,4 +14,4 @@ closes only the one built here. Only a text session that is not incognito keeps 
 Pure Dart, so it runs anywhere the core does. `ChatTranscriptView` in `vision_agents_ui` renders
 the channel.
 
-See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart) for the rest.
+See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.

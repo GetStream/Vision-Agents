@@ -16,6 +16,18 @@ Flutter member would make the pure-Dart core unresolvable without the Flutter SD
 depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
 
+Until they are on pub.dev, an app depends on them by git, and names the core in its own
+`dependency_overrides`, since pub ignores a dependency's `pubspec_overrides.yaml`:
+
+```yaml
+dependencies:
+  vision_agents_chat:
+    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/chat}
+dependency_overrides:
+  vision_agents_core:
+    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/core}
+```
+
 ## Using them
 
 ```dart
@@ -109,6 +121,22 @@ final chat = await agents.chat(SessionOptions(returnUrl: 'com.example.app:/conne
 chat.declineLogin(toolCallId);
 ```
 
+### Remembering the user
+
+`memory` has the agent recall what it learned about the user in earlier sessions and keep what
+it learns in this one. It is always the `userId` the client was built with: a device recalls
+nobody else's. `filter` narrows what is recalled, and `timezone` is the zone the agent reads
+dates in.
+
+```dart
+final chat = await agents.agent('support').chat(
+  const SessionOptions(
+    memory: SessionMemory(filter: {'topic': 'billing'}),
+    timezone: 'Europe/Amsterdam',
+  ),
+);
+```
+
 ### Going back, and branching off
 
 `rewind` takes back every turn after the one kept, so the next message carries on from there.
@@ -160,6 +188,13 @@ final live = await asGuest.agent('support').sessions.query(
 final more = await asGuest.agent('support').sessions.query(
   SessionQuery(state: SessionState.live, limit: 20, cursor: live.nextCursor),
 );
+final thisWeek = await agents.sessions.query(
+  SessionQuery(
+    createdSince: DateTime.now().subtract(const Duration(days: 7)),
+    custom: {'topic': 'billing'},
+    sort: SessionSort.updatedAt,
+  ),
+);
 
 // The router comes from the client; what it routes to lives in the "healthcare" config.
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
@@ -185,7 +220,7 @@ ever fails.
 | Writing a config, syncing a folder, dispatching agents | The agent name, which is all the app needs |
 | Minting the user's token | The token the router, Stream Chat and Stream Video all connect with |
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
-| Renaming a session or changing its models | `updateSession`, which is server-side only |
+| Changing a session's models | `updateSession` with them, which only a backend may send |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
 device, even against a local router with no proxy in front.
