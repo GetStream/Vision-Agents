@@ -73,8 +73,8 @@ func (t dataTable) rollup() bool {
 // under this deployment's key and their callbacks are this deployment's URL. And
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
-// either; and channel_thread_waiting, replies in flight for minutes. And
-// connector_invocations and connector_audit, with connector_audit_credentials and
+// either; and channel_thread_waiting and channel_thread_inbound, messages in flight for
+// minutes. And connector_invocations and connector_audit, with connector_audit_credentials and
 // connector_invocation_arguments: this deployment's record of what it did with credentials
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the

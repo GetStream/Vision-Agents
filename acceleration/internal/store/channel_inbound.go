@@ -1,0 +1,262 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// States of a queued inbound message (ChannelInbound.State).
+const (
+	ChannelInboundQueued = "queued"
+	ChannelInboundDone   = "done"
+	ChannelInboundFailed = "failed"
+)
+
+// channelInboundDoneKeep is how long a written message's row is kept, so a provider's retry
+// of it queues nothing. It is channelMessageKeep, the span the bridge already drops retries
+// in.
+const channelInboundDoneKeep = channelMessageKeep
+
+// channelInboundFailedKeep is how long the row of a message whose retries ran out is kept,
+// for someone to find why it was never answered. 30 days is a choice, not a measurement.
+const channelInboundFailedKeep = 30 * 24 * time.Hour
+
+// ChannelInbound is one inbound message queued to be written into its thread channel
+// (20261201120000_channel_thread_inbound.sql), with what writing it and opening its episode
+// card take.
+type ChannelInbound struct {
+	bun.BaseModel `bun:"table:channel_thread_inbound,alias:cti"`
+
+	// Seq is the order the message was queued in.
+	Seq               int64  `bun:"seq,pk"`
+	ChannelID         string `bun:"channel_id,notnull"`
+	ProviderMessageID string `bun:"provider_message_id,notnull"`
+	CustomerID        string `bun:"customer_id,notnull"`
+	ConnectorID       string `bun:"connector_id,notnull"`
+	ProviderUnitID    string `bun:"provider_unit_id,notnull"`
+	ThreadKey         string `bun:"thread_key,notnull"`
+	// ConfigID and ConfigName are the agent config that answers the thread.
+	ConfigID   string       `bun:"config_id,notnull"`
+	ConfigName string       `bun:"config_name,notnull"`
+	AuthorID   string       `bun:"author_id,notnull"`
+	Text       string       `bun:"text,notnull"`
+	Media      []core.Media `bun:"media,type:jsonb,notnull"`
+	// Raw is the verified request body.
+	Raw []byte `bun:"raw,notnull"`
+	// Forward is the delivery's forward to the event destinations that take what no agent
+	// answered; nil when none would take it.
+	Forward *ChannelInboundForward `bun:"forward,type:jsonb"`
+	State   string                 `bun:"state,notnull"`
+	// Attempts is how many writes of the message failed.
+	Attempts int `bun:"attempts,notnull"`
+	// NextAttemptAt is when the message is due; on a claimed row, the end of the claim's lease.
+	NextAttemptAt time.Time  `bun:"next_attempt_at,notnull"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	FinishedAt    *time.Time `bun:"finished_at"`
+}
+
+// ChannelInboundForward is what forwarding a delivery to the customer's event destinations
+// takes besides its body, which is the message's Raw (eventforward.Event).
+type ChannelInboundForward struct {
+	// ID is the provider's own id for the delivery; empty keys the forward by its body.
+	ID string `json:"id"`
+	// Headers are the provider's headers a receiver verifies the body with.
+	Headers map[string]string `json:"headers"`
+	// HeadersUntil is when the signature in Headers stops verifying; nil when it does not age.
+	HeadersUntil *time.Time `json:"headers_until,omitempty"`
+}
+
+// Message is the queued message as the verifier handed it over.
+func (m ChannelInbound) Message() core.InboundMessage {
+	return core.InboundMessage{
+		ConnectorID:       m.ConnectorID,
+		ProviderUnitID:    m.ProviderUnitID,
+		ThreadKey:         m.ThreadKey,
+		AuthorID:          m.AuthorID,
+		Text:              m.Text,
+		Media:             m.Media,
+		ProviderMessageID: m.ProviderMessageID,
+		Raw:               m.Raw,
+	}
+}
+
+// QueueChannelInbound queues message to be written into its thread channel, due at
+// message.NextAttemptAt. A message already queued for the channel under the same provider id,
+// written or given up within its keep, is not queued again: queued is false.
+func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound) (queued bool, err error) {
+	if message.ChannelID == "" || message.ProviderMessageID == "" || message.CustomerID == "" || message.ConnectorID == "" || message.ConfigID == "" {
+		return false, stack.Wrap(errors.New("store: a channel, a provider message id, a customer, a connector and an agent config are required"))
+	}
+	media, err := json.Marshal(message.Media)
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	if message.Media == nil {
+		media = []byte("[]")
+	}
+	var forward *string
+	if message.Forward != nil {
+		encoded, err := json.Marshal(message.Forward)
+		if err != nil {
+			return false, stack.Wrap(err)
+		}
+		forward = new(string(encoded))
+	}
+	result, err := s.db.NewRaw(`
+INSERT INTO channel_thread_inbound (channel_id, provider_message_id, customer_id, connector_id, provider_unit_id, thread_key,
+    config_id, config_name, author_id, text, media, raw, forward, next_attempt_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?)
+ON CONFLICT (channel_id, provider_message_id) DO NOTHING`,
+		message.ChannelID, message.ProviderMessageID, message.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey,
+		message.ConfigID, message.ConfigName, message.AuthorID, message.Text, string(media), message.Raw, forward,
+		message.NextAttemptAt.UTC()).Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// ClaimChannelInbound takes at most limit messages due at now, oldest due first, and moves
+// each one's next attempt to leaseUntil, so no other worker takes it while this one writes it.
+// Rows another worker is claiming at the same moment are skipped, not waited for.
+//
+// It takes only the oldest queued message of a thread channel, so a thread's messages are
+// written in the order they were queued, one at a time: the ones behind a message being
+// written or waiting for its retry wait with it.
+func (s *Store) ClaimChannelInbound(ctx context.Context, now time.Time, limit int, leaseUntil time.Time) ([]ChannelInbound, error) {
+	return s.claimChannelInbound(ctx, claimChannelInboundQuery, now, limit, leaseUntil)
+}
+
+// claimChannelInboundQuery is ClaimChannelInbound's statement. head is the oldest queued row
+// of each thread channel; due locks the heads that are due.
+//
+// due checks state and next_attempt_at on the row it locks, not only in head, which reads the
+// rows as they were when the statement started. When another router's claim, or its finish,
+// commits in between, Postgres locks the row's newer version and checks only due's own WHERE
+// on it again («the second updater ... re-evaluates its WHERE condition»: Read Committed
+// Isolation Level, https://www.postgresql.org/docs/16/transaction-iso.html). Without the
+// check in due, a row another router just leased is leased again.
+const claimChannelInboundQuery = `
+WITH head AS (
+    SELECT DISTINCT ON (cti.channel_id) cti.seq
+    FROM channel_thread_inbound AS cti
+    WHERE cti.state = 'queued'
+    ORDER BY cti.channel_id, cti.seq
+), due AS (
+    SELECT cti.seq FROM channel_thread_inbound AS cti
+    JOIN head ON head.seq = cti.seq
+    WHERE cti.state = 'queued' AND cti.next_attempt_at <= ?
+    ORDER BY cti.next_attempt_at, cti.seq
+    LIMIT ?
+    FOR UPDATE OF cti SKIP LOCKED
+)
+UPDATE channel_thread_inbound AS cti
+SET next_attempt_at = ?
+FROM due
+WHERE cti.seq = due.seq
+RETURNING cti.*`
+
+// claimChannelInbound runs query, ClaimChannelInbound's statement or a test's variant of it
+// with a pause in it, with ClaimChannelInbound's arguments.
+func (s *Store) claimChannelInbound(ctx context.Context, query string, now time.Time, limit int, leaseUntil time.Time) ([]ChannelInbound, error) {
+	var claimed []ChannelInbound
+	if err := s.db.NewRaw(query, now.UTC(), limit, leaseUntil.UTC()).Scan(ctx, &claimed); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: claim channel inbound: %w", err))
+	}
+	return claimed, nil
+}
+
+// NextChannelInboundAt is when the message due first is due, leased ones at the end of their
+// lease, of the ones a claim may take: the oldest queued message of each thread channel.
+// found is false when no message is queued at all.
+func (s *Store) NextChannelInboundAt(ctx context.Context) (next time.Time, found bool, err error) {
+	var at sql.NullTime
+	if err := s.db.NewRaw(`
+SELECT min(head.next_attempt_at) FROM (
+    SELECT DISTINCT ON (channel_id) next_attempt_at
+    FROM channel_thread_inbound
+    WHERE state = 'queued'
+    ORDER BY channel_id, seq
+) AS head`).Scan(ctx, &at); err != nil {
+		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: next channel inbound: %w", err))
+	}
+	return at.Time, at.Valid, nil
+}
+
+// FinishChannelInbound records that a claimed message was written, at at.
+//
+// It, RetryChannelInbound and FailChannelInbound change the row only while the claim's lease
+// is the row's: a worker whose lease ran out while it wrote, and whose message another worker
+// took since, changes nothing, so it cannot finish or reschedule the other's attempt. changed
+// is false then.
+func (s *Store) FinishChannelInbound(ctx context.Context, claimed ChannelInbound, at time.Time) (changed bool, err error) {
+	return s.leaveChannelInbound(ctx, claimed, ChannelInboundDone, at)
+}
+
+// FailChannelInbound records that a claimed message's last attempt failed and it is given up,
+// at at.
+func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, at time.Time) (changed bool, err error) {
+	return s.leaveChannelInbound(ctx, claimed, ChannelInboundFailed, at)
+}
+
+func (s *Store) leaveChannelInbound(ctx context.Context, claimed ChannelInbound, state string, at time.Time) (bool, error) {
+	attempts := claimed.Attempts
+	if state == ChannelInboundFailed {
+		attempts++
+	}
+	return s.updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+		Set("state = ?", state).
+		Set("attempts = ?", attempts).
+		Set("finished_at = ?", at.UTC()))
+}
+
+// RetryChannelInbound records a failed attempt of a claimed message and when the next one is
+// due.
+func (s *Store) RetryChannelInbound(ctx context.Context, claimed ChannelInbound, next time.Time) (changed bool, err error) {
+	return s.updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+		Set("attempts = ?", claimed.Attempts+1).
+		Set("next_attempt_at = ?", next.UTC()))
+}
+
+func (s *Store) updateClaimedChannelInbound(ctx context.Context, claimed ChannelInbound, update *bun.UpdateQuery) (bool, error) {
+	result, err := update.
+		Where("seq = ?", claimed.Seq).
+		Where("state = ?", ChannelInboundQueued).
+		Where("next_attempt_at = ?", claimed.NextAttemptAt.UTC()).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: update channel inbound: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: update channel inbound: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// PruneChannelInbound deletes the rows of written messages finished a day before now, and of
+// given-up ones 30 days before, and returns how many it deleted.
+func (s *Store) PruneChannelInbound(ctx context.Context, now time.Time) (int, error) {
+	result, err := s.db.NewRaw(`
+DELETE FROM channel_thread_inbound
+WHERE (state = 'done' AND finished_at < ?) OR (state = 'failed' AND finished_at < ?)`,
+		now.Add(-channelInboundDoneKeep).UTC(), now.Add(-channelInboundFailedKeep).UTC()).Exec(ctx)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: prune channel inbound: %w", err))
+	}
+	pruned, _ := result.RowsAffected()
+	return int(pruned), nil
+}
