@@ -90,6 +90,15 @@ func NewSecrets(o SecretsOptions) (*Secrets, error) {
 	return &Secrets{client: c, options: o}, nil
 }
 
+// WithAPIKey is the broker on another organization's key, for the same session, names and
+// tokens: a sandbox made in a customer's own Daytona organization reads only that organization's
+// secrets. It is taken before the sandbox is made, so the broker holds no secret yet.
+func (s *Secrets) WithAPIKey(key string) (*Secrets, error) {
+	options := s.options
+	options.APIKey = key
+	return NewSecrets(options)
+}
+
 func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.Mount, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

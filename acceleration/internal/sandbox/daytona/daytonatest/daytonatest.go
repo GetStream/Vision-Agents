@@ -60,6 +60,8 @@ type Server struct {
 	calls     []string
 	ran       []string
 	deleted   []string
+	// keys is the bearer key every request to the sandbox API carried.
+	keys []string
 	// files is what each sandbox's file system holds, by path.
 	files map[string]map[string][]byte
 	// writes is what every code run leaves in its sandbox's file system, by path.
@@ -174,6 +176,13 @@ func (s *Server) Calls() []string {
 	return slices.Clone(s.calls)
 }
 
+// Keys is the key every request to the sandbox API was made with, in order.
+func (s *Server) Keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.keys)
+}
+
 // Ran is the code of every run, as "<sandbox>: <code>", in order.
 func (s *Server) Ran() []string {
 	s.mu.Lock()
@@ -238,6 +247,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.analytics(w, r)
 	case strings.HasPrefix(path, "/api/sandbox"):
 		s.calls = append(s.calls, r.Method+" "+path)
+		s.keys = append(s.keys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		s.sandboxAPI(w, r, strings.Trim(strings.TrimPrefix(path, "/api/sandbox"), "/"))
 	case strings.HasPrefix(path, "/toolbox/"):
 		id, rest, _ := strings.Cut(strings.TrimPrefix(path, "/toolbox/"), "/")

@@ -43,7 +43,8 @@ class UsageEvent:
             attributes (UsageEventAttributes | Unset): What chose the price or explains the work, such as country or
                 direction.
             call_id (str | Unset): The call the work was done in.
-            error_code (str | Unset): Why it failed, when it did.
+            error_code (str | Unset): Why it failed, when it did. key_refused is the vendor refusing the key the app keeps
+                for it (BYOK).
             model (str | Unset): The model that did it.
             provider (str | Unset): Who did the work, such as openai.
             purpose (str | Unset): What within the request the work was for, such as subagent.

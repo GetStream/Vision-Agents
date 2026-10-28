@@ -91,7 +91,7 @@ func (s *SecretSweepSuite) TearDownTest() {
 
 // swept is what Daytona was asked for by the sweep secretSweeper gives settings, if any.
 func (s *SecretSweepSuite) swept(settings config.CodeSandbox, redis *live.Client, directory *node.Directory) []string {
-	sweeper, err := secretSweeper(settings, redis, directory, s.logger)
+	sweeper, err := secretSweeper(settings, redis, directory, nil, s.logger)
 	s.Require().NoError(err)
 	if sweeper != nil {
 		s.Require().NoError(sweeper.Sweep(context.Background()))
@@ -116,7 +116,7 @@ func (s *SecretSweepSuite) TestTheRouterStartsTheSweeper() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s.Require().NoError(startSecretSweeper(ctx, settings, s.redis, s.directory, s.logger))
+	s.Require().NoError(startSecretSweeper(ctx, settings, s.redis, s.directory, nil, s.logger))
 
 	s.Eventually(func() bool { return slices.Contains(s.asking(), "/api/secret/paginated va_"+s.prefix+"_") },
 		5*time.Second, 10*time.Millisecond)
@@ -133,7 +133,7 @@ func (s *SecretSweepSuite) TestADefaultRouterStartsNoSweeper() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s.Require().NoError(startSecretSweeper(ctx, config.Defaults().CodeSandbox, s.redis, s.directory, s.logger))
+	s.Require().NoError(startSecretSweeper(ctx, config.Defaults().CodeSandbox, s.redis, s.directory, nil, s.logger))
 
 	time.Sleep(300 * time.Millisecond)
 	s.Empty(s.asking())

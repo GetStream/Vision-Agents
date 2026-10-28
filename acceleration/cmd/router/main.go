@@ -74,6 +74,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -652,6 +653,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 		defer configs.Close()
 	}
+	// The keys customers keep for their own accounts at the vendors, read through the same cache
+	// and opened with the keyring they were sealed under. Without either, work is routed on the
+	// deployment's own keys alone.
+	var customerKeys routing.CustomerKeys
+	if configs != nil && secrets != nil {
+		customerKeys = providerkeys.NewKeyring(configs, secrets)
+	}
 
 	// Who each app is acting for, written down once per user rather than once per
 	// request: an LRU of the last few thousand this process saw, a key the replicas share
@@ -894,6 +902,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Gate:       gate,
 			Pricer:     prices,
 			Models:     models,
+			Keys:       customerKeys,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			FlowHedge:  settings.Agent.FlowHedge,
@@ -1045,7 +1054,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, pgStore, logger)
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, pgStore, customerKeys, logger)
 	if base != nil {
 		defer base.Close()
 	}
@@ -1060,7 +1069,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if directory != nil {
 		defer directory.Close()
 	}
-	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, logger); err != nil {
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, customerDaytonaKeys(pgStore, secrets), logger); err != nil {
 		return err
 	}
 
@@ -1081,7 +1090,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessionConnectors.Resolver = connectorResolver
 	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, prices, policies, logger)
+		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
 	}
@@ -1861,6 +1870,7 @@ func buildSessions(
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
+	keys routing.CustomerKeys,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1911,7 +1921,7 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
-	options.Sandboxes = newSandboxes(settings, usageWriter, prices, policies, logger)
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, policies, keys, logger)
 	options.SandboxLimits = policies
 	options.ResumeHistories = policies
 	return session.NewManager(options)
@@ -1969,20 +1979,37 @@ func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
 }
 
 // newKnowledge is the knowledge base every lookup and write goes through, a backend in each
-// region the settings map, recorded by recorder, each write admitted by gate, and the region
-// each base is kept in recorded in pgStore; nil without a turbopuffer key.
-func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, pgStore *store.Store, logger *slog.Logger) *metered.Knowledge {
+// region the settings map, recorded by recorder, each write admitted by gate, and the place
+// each base is kept recorded in pgStore: its region, and the customer's own account there when
+// keys holds their turbopuffer key for it as the base is first written. Nil without a
+// turbopuffer key of the deployment's.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, pgStore *store.Store,
+	keys routing.CustomerKeys, logger *slog.Logger) *metered.Knowledge {
 	backends, err := knowledgeBackends(settings.Knowledge, 0, logger)
 	if err != nil {
 		logger.Debug("nothing will be looked up or written down", "error", err)
 		return nil
 	}
 	// A nil *store.Store in the interface would not be a nil interface.
-	var regions metered.NamespaceRegions
+	var places metered.NamespacePlaces
 	if pgStore != nil {
-		regions = pgStore
+		places = pgStore
 	}
-	return metered.NewRegionalKnowledge(backends, recorder, gate, regions)
+	base := metered.NewRegionalKnowledge(backends, recorder, gate, places)
+	if keys != nil {
+		base.WithCustomerAccounts(keys, knowledgeAccounts(settings.Knowledge, 0, logger))
+	}
+	return base
+}
+
+// knowledgeAccounts builds the turbopuffer store of a customer's own account in a region the
+// settings map, on their key, at the turbopuffer region the deployment's own store there is at.
+// Each is built for one call, which costs nothing: it holds no connection of its own, every
+// store dialling through the default transport.
+func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) metered.AccountBackend {
+	return func(region, key string) (knowledge.Backend, error) {
+		return turbopuffer.New(turbopuffer.Options{APIKey: key, Region: settings.Regions[region], Timeout: timeout, Logger: logger})
+	}
 }
 
 // knowledgeBackends is a turbopuffer store in each region knowledge.regions maps to one of

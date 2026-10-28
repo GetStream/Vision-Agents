@@ -43,13 +43,13 @@ func TestTheSessionsSandboxesAreLabelledWithTheDeploymentAndShard(t *testing.T) 
 	settings := config.Defaults()
 	settings.Shard = "shard-b"
 
-	labels := newSandboxes(settings, nil, nil, nil, nil).Labels(routing.Owner{CustomerID: "app-1",
+	labels := newSandboxes(settings, nil, nil, nil, nil, nil).Labels(routing.Owner{CustomerID: "app-1",
 		Attribution: routing.Attribution{SessionID: "session-1"}})
 
 	require.Equal(t, map[string]string{metered.LabelEnv: "production", metered.LabelRouter: "shard-b", metered.LabelApp: "app-1",
 		metered.LabelSession: "session-1"}, labels, "an organization the session does not know is left off")
 	t.Setenv("SENTRY_ENVIRONMENT", "")
 	settings.Shard = ""
-	labels = newSandboxes(settings, nil, nil, nil, nil).Labels(routing.Owner{})
+	labels = newSandboxes(settings, nil, nil, nil, nil, nil).Labels(routing.Owner{})
 	require.Equal(t, map[string]string{metered.LabelEnv: "development", metered.LabelRouter: routing.Unsharded}, labels)
 }

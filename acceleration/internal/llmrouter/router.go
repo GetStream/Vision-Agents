@@ -64,6 +64,9 @@ type Options struct {
 	// Models resolves the custom/<name> models customers serve themselves. Nil leaves
 	// none.
 	Models routing.ModelResolver
+	// Keys are the keys customers keep for their own accounts at the vendors: each model of a
+	// vendor a customer keeps one for is asked on it first. Nil routes on the deployment's keys.
+	Keys routing.CustomerKeys
 	// Screen judges each response's input for prompt injection. Nil screens nothing.
 	Screen Screen
 	// ReplyHedge is how long a reply may say nothing before the same request is asked of
@@ -132,6 +135,7 @@ func New(options Options) (*Router, error) {
 		Store:    options.Store,
 		Live:     options.Live,
 		Models:   options.Models,
+		Keys:     options.Keys,
 		Gate:     options.Gate,
 		Writer:   options.Writer,
 		Pricer:   options.Pricer,
@@ -197,7 +201,9 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			if ctx.Err() != nil {
 				return nil, stack.Wrap(ctx.Err())
 			}
-			if candidate.Config.Name() == config.Name() {
+			// The model on the other key is another instance: on the customer's key failing,
+			// the deployment's is asked next, as any next candidate is.
+			if candidate.Config.Name() == config.Name() && candidate.Config.BYOK == config.BYOK {
 				continue
 			}
 			child, err := r.child(ctx, core, session, candidate.Config)
@@ -231,10 +237,12 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 // per provider tried. It still holds the limiter, because whichever provider ends up
 // answering is the one whose tokens have to be debited.
 func (r *Router) child(ctx context.Context, core routing.Request, parent *Session, candidate routing.ProviderConfig) (*Session, error) {
-	// The list would win over the target, so it is cleared to ask this one alone.
+	// The list would win over the target, so it is cleared to ask this one alone, on the key the
+	// candidate is built with: a model's instance on the customer's key shares its name.
 	alternative := core
 	alternative.Target = candidate.Name()
 	alternative.Providers = nil
+	alternative.BYOK = &candidate.BYOK
 	provider, selected, err := r.Select(ctx, alternative)
 	if err != nil {
 		return nil, err
