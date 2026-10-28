@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -21,6 +23,14 @@ const extractionGrace = time.Minute
 // recallEvery is how often a test waiting on mem0 opens another session to ask.
 const recallEvery = 3 * time.Second
 
+// extractionBound is how long mem0 may take to finish an exchange it was handed. It starts an
+// exchange its worker lost again ten minutes after queueing it: of 775 adds read back from
+// mem0's events on 2026-10-28, four started 10m00s late and were done within 10m10s (AI-2162).
+const extractionBound = 12 * time.Minute
+
+// mem0Event is where mem0 says what became of an exchange it queued, by the event's id.
+const mem0Event = "https://api.mem0.ai/v1/event/"
+
 // MemorySuite runs the router against mem0 rather than a stand-in: whose memories a session
 // reads is decided by the filters mem0 applies, so a stand-in would only prove itself. The
 // model is the echo stub, so what a session recalled is what it answers with.
@@ -33,6 +43,12 @@ type MemorySuite struct {
 	// known is a user of the standard app who told the agent they are allergic to peanuts,
 	// under the label company=acme. Tests read what is known about them and add nothing.
 	known *testClient
+	// mem0Log is the mem0 client's log, which names the event each exchange was queued as.
+	mem0Log *lockedLog
+	// mem0 is the client sessions remember through, whose HTTP client asks mem0 about events.
+	mem0 *mem0.Store
+	// told are the sessions told something since a test last waited for mem0 to learn it.
+	told []string
 }
 
 func TestMemorySuite(t *testing.T) {
@@ -46,9 +62,13 @@ func (s *MemorySuite) SetupSuite() {
 	if os.Getenv("MEM0_API_KEY") == "" {
 		s.T().Skip("MEM0_API_KEY must be set")
 	}
-	memories, err := mem0.New(mem0.Options{})
+	s.mem0Log = &lockedLog{}
+	memories, err := mem0.New(mem0.Options{
+		Logger: slog.New(slog.NewJSONHandler(s.mem0Log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
 	s.Require().NoError(err)
 	s.memoryStore = memories
+	s.mem0 = memories
 	s.RouterSuite.SetupSuite()
 
 	s.useFixture("standard")
@@ -167,12 +187,14 @@ func (s *MemorySuite) tell(as *testClient, request CreateSessionRequest, said st
 	opened := as.createSession(request)
 	s.Require().NotEmpty(s.ask(as, opened, said), "an exchange without an answer is not remembered")
 	as.stopSession(opened.Id)
+	s.told = append(s.told, opened.Id)
 	return opened.Id
 }
 
 // learns waits until a session opened with request knows every fact, since mem0 extracts
 // what it was told after the conversation has moved on.
 func (s *MemorySuite) learns(as *testClient, request CreateSessionRequest, facts ...string) {
+	s.extracted()
 	deadline := time.Now().Add(extractionGrace)
 	for {
 		recalled := s.recalled(as, request)
@@ -183,9 +205,66 @@ func (s *MemorySuite) learns(as *testClient, request CreateSessionRequest, facts
 		if !missing {
 			return
 		}
-		s.Require().True(time.Now().Before(deadline), "the agent never learned %v, it knew %q", facts, recalled)
+		s.Require().True(time.Now().Before(deadline),
+			"the agent never learned %v, though mem0 had extracted it; it knew %q", facts, recalled)
 		time.Sleep(recallEvery)
 	}
+}
+
+// extracted waits until mem0 has finished every exchange told since the last wait. mem0 may
+// start an exchange minutes after queueing it, and recall cannot tell one still queued from
+// one that was lost.
+func (s *MemorySuite) extracted() {
+	deadline := time.Now().Add(extractionBound)
+	for _, session := range s.told {
+		for status := s.extraction(session); status != "SUCCEEDED"; status = s.extraction(session) {
+			s.Require().NotEqual("FAILED", status, "mem0 failed to extract what session %s was told", session)
+			s.Require().True(time.Now().Before(deadline),
+				"mem0 never extracted what session %s was told: its event is %q", session, status)
+			time.Sleep(recallEvery)
+		}
+	}
+	s.told = nil
+}
+
+// extraction is what mem0 says of the event a session's exchange was queued as: empty until
+// the router has handed it over, and the HTTP status while mem0 does not answer.
+func (s *MemorySuite) extraction(session string) string {
+	event := s.queuedAs(session)
+	if event == "" {
+		return ""
+	}
+	request, err := http.NewRequest(http.MethodGet, mem0Event+event+"/", nil)
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Token "+os.Getenv("MEM0_API_KEY"))
+	response, err := s.mem0.Client().Do(request)
+	if err != nil {
+		return err.Error()
+	}
+	defer response.Body.Close()
+	var answer struct {
+		Status string `json:"status"`
+	}
+	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&answer) != nil {
+		return response.Status
+	}
+	return answer.Status
+}
+
+// queuedAs is the mem0 event a session's exchange was queued as, from the mem0 client's log.
+func (s *MemorySuite) queuedAs(session string) string {
+	for line := range strings.Lines(s.mem0Log.String()) {
+		var record struct {
+			Msg   string `json:"msg"`
+			Event string `json:"event"`
+			RunID string `json:"run_id"`
+		}
+		if json.Unmarshal([]byte(line), &record) == nil &&
+			record.Msg == "queued a conversation to remember" && record.RunID == session {
+			return record.Event
+		}
+	}
+	return ""
 }
 
 // recalled is what a session opened with request knew about the person before they said
