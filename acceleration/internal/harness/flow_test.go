@@ -429,19 +429,25 @@ func (s *FlowSuite) TestAStreamClosedBeforeTheDeadlineIsNotRuledOn() {
 }
 
 func (s *FlowSuite) TestARulingSaysWhoseAnswerItIs() {
-	ruled := func(id, answer string, writtenBy [2]string) Ruler {
+	ruledOn := func(turn FlowTurn, answer string, writtenBy [2]string) Ruler {
+		id := turn.ID
 		s.model.mu.Lock()
 		s.model.answers[id], s.model.writtenBy = answer, writtenBy
 		s.model.mu.Unlock()
-		s.Require().NoError(s.flow.Decide(FlowTurn{ID: id, Participant: "Alex", Text: "two"}))
+		s.Require().NoError(s.flow.Decide(turn))
 		s.Require().Eventually(func() bool { return len(s.decisions()) > 0 && s.decisions()[len(s.decisions())-1].CandidateID == id },
 			settleFor, 5*time.Millisecond, "no ruling came back")
 		return s.decisions()[len(s.decisions())-1].Ruler
 	}
+	ruled := func(id, answer string, writtenBy [2]string) Ruler {
+		return ruledOn(FlowTurn{ID: id, Participant: "Alex", Text: "two"}, answer, writtenBy)
+	}
 	respond := `{"disposition":"respond","floor":"continue"}`
 
 	s.Equal(Primary, ruled("own", respond, [2]string{}))
-	s.Empty(ruled("unusable", "not json", [2]string{}), "a default the controller fell back on is nobody's answer")
+	s.Equal(Unusable, ruled("unusable", "not json", [2]string{}), "a default the controller fell back on is nobody's answer")
+	s.Equal(Unusable, ruledOn(FlowTurn{ID: "unusable-over", Participant: "Alex", Text: "two", Unfinished: true}, "not json", [2]string{}),
+		"the stop a caller still talking gets for an unreadable answer is nobody's answer either")
 	s.Equal(Fallback, ruled("hedged", respond, [2]string{"", "another-model"}))
 	s.Equal(Fallback, ruled("elsewhere", respond, [2]string{"another-provider", ""}))
 }

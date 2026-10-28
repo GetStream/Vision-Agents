@@ -67,8 +67,8 @@ type Decided struct {
 	// spent waiting to be answered and is worth reporting alongside the answer.
 	TookMs float64
 	Err    error
-	// Ruler is whose answer the decision is, or Deadline. Empty when no model's answer was
-	// read for another reason.
+	// Ruler is whose answer the decision is, or Deadline or Unusable. Empty when no model's
+	// answer was read for another reason.
 	Ruler Ruler
 }
 
@@ -83,6 +83,9 @@ const (
 	// Deadline is no model: words over the agent waited out overlapDeadline, and the
 	// floor went to the caller unread.
 	Deadline Ruler = "deadline"
+	// Unusable is no model either: the controller's answer could not be read, and the
+	// decision is the default for it.
+	Unusable Ruler = "unusable"
 )
 
 func (d Decided) Valid() bool {

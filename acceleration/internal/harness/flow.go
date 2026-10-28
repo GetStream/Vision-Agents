@@ -492,6 +492,7 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.
 	var ruler Ruler
 	if err != nil {
 		invalidRulings.WithLabelValues(invalid).Inc()
+		ruler = Unusable
 		// Truncated JSON used to mean continue, which is how Gemini thinking ate the
 		// token budget and the caller talking over the agent never took the floor.
 		if asked.turn.Unfinished {
