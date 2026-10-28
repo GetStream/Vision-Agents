@@ -80,8 +80,8 @@ const proxyListenRetry = 100 * time.Millisecond
 // address over, or this one ends. handOver is that hand-over, for a router that starts draining:
 // it stops taking connections on addr and leaves the tunnels already open, which are the
 // sandboxes' until the router stops. Either may be called more than once, and after the other.
-// Without overlap a held address fails the start, as on any listener, and handOver does nothing:
-// the proxy takes connections until stop.
+// Without overlap and without fd a held address fails the start, as on any listener, and handOver
+// does nothing: the proxy takes connections until stop.
 //
 // fd, when not zero, is the proxy socket a supervisor handed down (code_sandbox.proxy_listen_fd),
 // served in place of addr: the router before this one and this one accept from the same queue,
@@ -156,7 +156,12 @@ func serveSandboxProxy(proxy *egress.Proxy, addr string, fd int, publicURL strin
 		}
 		finished = true
 		if handingOver {
-			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
+			// serving is nil while the address is still held by the router before this one.
+			address := addr
+			if serving != nil {
+				address = serving.Addr().String()
+			}
+			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", address,
 				"setting", setting)
 		}
 		// The listener alone: the connections the proxy took are still served, a request
