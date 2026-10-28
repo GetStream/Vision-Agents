@@ -932,7 +932,13 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 	var handedOver atomic.Bool
 	done := make(chan struct{})
 	attempts := make(chan attempt, 1<<14)
+	var stopping sync.Once
+	stopSandbox := func() { stopping.Do(func() { close(done) }) }
+	// A failed assertion ends the sandbox too, before the test's other cleanups run.
+	ended := make(chan struct{})
+	s.T().Cleanup(func() { stopSandbox(); <-ended })
 	go func() {
+		defer close(ended)
 		defer close(attempts)
 		for {
 			select {
@@ -978,7 +984,7 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 			after++
 		}
 	}
-	close(done)
+	stopSandbox()
 	for a := range attempts {
 		seen = append(seen, a)
 	}
@@ -989,7 +995,18 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 			s.Require().Equal("second", a.body, "attempt %d went to the router that had handed over", i)
 		}
 	}
-	s.ErrorIs(<-s.served, net.ErrClosed, "the draining router's Serve did not end with its listener")
+	s.ErrorIs(s.servedWithin(), net.ErrClosed, "the draining router's Serve did not end with its listener")
+}
+
+// servedWithin is what a router's Serve ended with, failing the test if none ends in 5s.
+func (s *SandboxProxyHandOverSuite) servedWithin() error {
+	select {
+	case err := <-s.served:
+		return err
+	case <-time.After(5 * time.Second):
+		s.FailNow("no router stopped serving")
+		return nil
+	}
 }
 
 // TestHandingOverTheInheritedSocketLeavesItListeningAndTheTunnelsOpen: the old router closes its
@@ -1003,7 +1020,7 @@ func (s *SandboxProxyHandOverSuite) TestHandingOverTheInheritedSocketLeavesItLis
 	s.Require().NoError(err)
 
 	handOver()
-	s.Require().ErrorIs(<-s.served, net.ErrClosed)
+	s.Require().ErrorIs(s.servedWithin(), net.ErrClosed, "the router still accepts after its hand-over")
 	queued, err := net.DialTimeout("tcp", s.address, time.Second)
 	s.Require().NoError(err, "the hand-over closed the supervisor's socket")
 	s.T().Cleanup(func() { _ = queued.Close() })
