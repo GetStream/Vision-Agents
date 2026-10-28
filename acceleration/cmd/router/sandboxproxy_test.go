@@ -793,6 +793,11 @@ func (s *SandboxProxyHandOverSuite) TestARouterDrainedBeforeItGetsTheAddressNeve
 
 // TestHandingOverSaysSoOnce, as metrics do, and a router that only stops says nothing of it.
 func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
+	// The router serves an inherited socket, whose address is not the proxy address it is
+	// given, so the line names the one it stopped serving.
+	s.holdProxySocket()
+	socket := s.address
+	s.address = "127.0.0.1:1"
 	var lines lockedBuffer
 	stop, handOver, err := s.startRouter("first", slog.New(slog.NewTextHandler(&lines, nil)))
 	s.Require().NoError(err)
@@ -802,6 +807,7 @@ func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
 	s.Require().NoError(stop())
 
 	s.Equal(1, strings.Count(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over"))
+	s.Contains(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over address="+socket)
 	var stopped lockedBuffer
 	stop, handOver, err = s.startRouter("second", slog.New(slog.NewTextHandler(&stopped, nil)))
 	s.Require().NoError(err)
@@ -978,6 +984,9 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 	}
 
 	handOverFirst()
+	// The old router's Serve has ended: an Accept already under way when the listener closed
+	// may still take a connection, so only a dial after this one is the new router's.
+	s.ErrorIs(s.servedWithin(), net.ErrClosed, "the draining router's Serve did not end with its listener")
 	handedOver.Store(true)
 	for after := 0; after < 20; {
 		if next().afterHandOver {
@@ -995,7 +1004,6 @@ func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandb
 			s.Require().Equal("second", a.body, "attempt %d went to the router that had handed over", i)
 		}
 	}
-	s.ErrorIs(s.servedWithin(), net.ErrClosed, "the draining router's Serve did not end with its listener")
 }
 
 // servedWithin is what a router's Serve ended with, failing the test if none ends in 5s.
