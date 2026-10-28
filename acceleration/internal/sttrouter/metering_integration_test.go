@@ -16,6 +16,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -189,7 +190,12 @@ func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondIt
 	s.Equal([]int64{1_000, 0, 1_500, 500}, audio,
 		"what was streamed, not the 640 the vendor said; a turn that followed none is the zero it was; "+
 			"what the caller said before hanging up is billed as the session ends")
-	s.Equal([]int64{112, 0, 168, 56}, costs, "Cartesia's published rate of $0.00672757 a minute")
+	var priced []int64
+	for _, ms := range audio {
+		priced = append(priced, pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "cartesia", Model: "ink-2"},
+			pricing.Quantities{pricing.AudioMs: ms}))
+	}
+	s.Equal(priced, costs, "what was streamed at Cartesia's rate")
 	s.Equal(estimatedBefore, counted("router_usage_estimated_total", "cartesia", "ink-2", nil), "the router's count is the bill, not an estimate")
 	s.Equal(missingBefore, counted("router_usage_missing_total", "cartesia", "ink-2", nil), "a zero the router counted is no missing usage")
 	s.NotContains(s.logs.String(), "level=ERROR")
@@ -252,7 +258,8 @@ func (s *MeteringSuite) TestAFailoverBillsEachVendorTheAudioItTook() {
 	s.EqualValues(700, rows[0].AudioMs, "the vendor that refused is billed what it took before it did")
 	s.Equal("gemini-3.5-transcribe-live", rows[1].Model)
 	s.EqualValues(300, rows[1].AudioMs, "the next vendor is billed only what it took")
-	s.EqualValues(45, rows[1].CostMicros, "$0.009 a minute")
+	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "gemini", Model: "gemini-3.5-transcribe-live"}, pricing.Quantities{pricing.AudioMs: 300}),
+		rows[1].CostMicros, "300 ms at Gemini's rate")
 }
 
 func (s *MeteringSuite) TestATurnTheVendorDidNotMeasureIsBilledForWhatWasStreamed() {
@@ -278,7 +285,8 @@ func (s *MeteringSuite) TestATurnTheVendorDidNotMeasureIsBilledForWhatWasStreame
 	s.EqualValues(1_500, rows[0].AudioMs, "the audio streamed since the session opened")
 	s.Equal(map[string]string{routing.AttributeUsageEstimated: "true"}, rows[0].Attributes)
 	s.True(rows[0].Billable)
-	s.EqualValues(115, rows[0].CostMicros, "1.5 s at $0.276 an hour")
+	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "deepgram", Model: "flux-general-en"}, pricing.Quantities{pricing.AudioMs: 1_500}),
+		rows[0].CostMicros, "1.5 s at Flux's rate")
 	s.EqualValues(480, rows[1].AudioMs, "a turn the vendor measured keeps its figure")
 	s.Empty(rows[1].Attributes)
 	s.Equal(before+1, estimated())

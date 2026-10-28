@@ -76,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -806,6 +807,16 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)
 	return recorder
+}
+
+// vendorPriced is what used of a phone item costs at the vendor list's rates, as
+// telephonyRecorder prices it, read from vendor.json so a price change there leaves the tests
+// passing. The test names the item, so a row recorded under the wrong one fails.
+func (s *RouterSuite) vendorPriced(provider, model string, attributes map[string]string, used pricing.Quantities) int64 {
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Attributes: attributes}
+	return pricingtest.Micros(s.T(), list, item, used)
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.
