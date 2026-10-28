@@ -13,7 +13,8 @@
 --     written in order and one at a time.
 --   - config_id and config_name are the agent config that answers the thread when the
 --     message came; author_id, text, media and raw are the message as the verifier read it.
---     media is a JSON array of core.Media; raw is the verified body.
+--     media is a JSON array of {"url", "mime_type"} (store.ChannelInboundMedia); raw is the
+--     verified body.
 --   - forward is the delivery's forward to the customer's event destinations that take what
 --     no agent answered, for the worker to queue when it gives the message up: the delivery's
 --     id, the provider's headers and when they stop verifying ({"id", "headers",

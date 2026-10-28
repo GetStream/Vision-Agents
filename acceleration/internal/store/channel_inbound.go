@@ -45,11 +45,11 @@ type ChannelInbound struct {
 	ProviderUnitID    string `bun:"provider_unit_id,notnull"`
 	ThreadKey         string `bun:"thread_key,notnull"`
 	// ConfigID and ConfigName are the agent config that answers the thread.
-	ConfigID   string       `bun:"config_id,notnull"`
-	ConfigName string       `bun:"config_name,notnull"`
-	AuthorID   string       `bun:"author_id,notnull"`
-	Text       string       `bun:"text,notnull"`
-	Media      []core.Media `bun:"media,type:jsonb,notnull"`
+	ConfigID   string              `bun:"config_id,notnull"`
+	ConfigName string              `bun:"config_name,notnull"`
+	AuthorID   string              `bun:"author_id,notnull"`
+	Text       string              `bun:"text,notnull"`
+	Media      ChannelInboundMedia `bun:"media,type:jsonb,notnull"`
 	// Raw is the verified request body.
 	Raw []byte `bun:"raw,notnull"`
 	// Forward is the delivery's forward to the event destinations that take what no agent
@@ -73,6 +73,39 @@ type ChannelInboundForward struct {
 	Headers map[string]string `json:"headers"`
 	// HeadersUntil is when the signature in Headers stops verifying; nil when it does not age.
 	HeadersUntil *time.Time `json:"headers_until,omitempty"`
+}
+
+// ChannelInboundMedia is a queued message's media. Its JSON, the row's media column, is an
+// array of {"url", "mime_type"}, never null: core.Media has no json tags, and keying the rows
+// by its field names would empty the media of rows queued before a rename of one.
+type ChannelInboundMedia []core.Media
+
+// channelInboundFile is one file of ChannelInboundMedia as the row holds it.
+type channelInboundFile struct {
+	URL      string `json:"url"`
+	MIMEType string `json:"mime_type"`
+}
+
+// MarshalJSON writes the media as the row holds it.
+func (m ChannelInboundMedia) MarshalJSON() ([]byte, error) {
+	files := make([]channelInboundFile, 0, len(m))
+	for _, file := range m {
+		files = append(files, channelInboundFile(file))
+	}
+	return json.Marshal(files)
+}
+
+// UnmarshalJSON reads the media as the row holds it.
+func (m *ChannelInboundMedia) UnmarshalJSON(data []byte) error {
+	var files []channelInboundFile
+	if err := json.Unmarshal(data, &files); err != nil {
+		return err
+	}
+	*m = nil
+	for _, file := range files {
+		*m = append(*m, core.Media(file))
+	}
+	return nil
 }
 
 // Message is the queued message as the verifier handed it over.
@@ -99,9 +132,6 @@ func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound)
 	media, err := json.Marshal(message.Media)
 	if err != nil {
 		return false, stack.Wrap(err)
-	}
-	if message.Media == nil {
-		media = []byte("[]")
 	}
 	var forward *string
 	if message.Forward != nil {

@@ -81,6 +81,22 @@ func (s *StoreSuite) TestAClaimedInboundMessageHasEverythingItWasQueuedWith() {
 	s.True(claimed.Forward.HeadersUntil.Equal(until))
 }
 
+// The row keys a file by its own names, not by core.Media's field names, which a rename would
+// change under the rows queued before it.
+func (s *StoreSuite) TestAnInboundMessagesMediaIsStoredUnderItsOwnKeys() {
+	s.inbound("thread-one", "1759740000.000100", func(message *ChannelInbound) {
+		message.Media = []core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}}
+	})
+
+	var media string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT media::text FROM channel_thread_inbound WHERE channel_id = 'thread-one'").Scan(&media))
+
+	s.JSONEq(`[{"url": "https://files.example.com/a.png", "mime_type": "image/png"}]`, media)
+	s.Equal([]core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}},
+		s.claimedOne(s.base, "1759740000.000100").Message().Media)
+}
+
 func (s *StoreSuite) TestAnInboundMessageWithNoMediaAndNoForwardIsClaimedWithNeither() {
 	s.inbound("thread-one", "1759740000.000100")
 
