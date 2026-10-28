@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -68,7 +69,7 @@ const optOutSource = "keyword"
 // internal/channels answers, and it goes out past the sandbox gate: the confirmation is the
 // one message a person is still owed. A keyword the provider answered itself is not answered
 // again. A store that fails fails the worker's attempt, which runs the row again: an opt-out is
-// never lost. The answer is sent at most once, whatever the attempts: the row records it before
+// never lost, since the worker never gives its row up (optsOut). The answer is sent at most once, whatever the attempts: the row records it before
 // it is sent (store.MarkChannelInboundKeywordAnswered), as a reply is claimed before it is sent.
 func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (bool, error) {
 	message := queued.Message()
@@ -166,6 +167,14 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, queued
 		b.logger.Error("could not answer a keyword", "connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
 	}
 	return true, nil
+}
+
+// optsOut is whether a message is a STOP on a connector with an opt-out channel, which keyword
+// records in the customer's opt-outs. The worker never gives its row up (Bridge.attempt): an
+// opt-out must be honoured (CTIA 5.1.3, FCC 47 CFR 64.1200(a)(10)), so a store that keeps
+// failing delays the record, never drops it.
+func optsOut(message core.InboundMessage) bool {
+	return episodeSources[message.ConnectorID].optOuts != "" && slices.Contains(stopWords, keywordOf(message.Text))
 }
 
 // telnyxAnswered is whether Telnyx answered a keyword itself: «When a user sends an opt-in,

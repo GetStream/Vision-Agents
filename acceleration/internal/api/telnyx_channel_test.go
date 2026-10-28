@@ -241,6 +241,31 @@ func (s *TelnyxChannelSuite) TestAStopTheStoreFailedToRecordIsRecordedAndConfirm
 	s.Equal(1, s.liveOptOuts(person))
 }
 
+// A STOP the store keeps failing to record is never given up: past the scheduled waits it runs
+// again after the last one, until the opt-out is recorded and confirmed, once.
+func (s *TelnyxChannelSuite) TestAStopTheStoreKeepsFailingToRecordIsNeverGivenUp() {
+	person := "+13125550081"
+	drop := s.trigger("telnyx_suite_refuse_opt_out_long", "opt_outs", "INSERT", "NEW.recipient = '"+person+"'",
+		"RAISE EXCEPTION 'refused by the test';")
+	attempts := func() int {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT coalesce(max(attempts), 0) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'queued'", s.customerID()).Scan(&count))
+		return count
+	}
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
+	s.Require().Eventually(func() bool { return attempts() > 4 }, settleFor, 5*time.Millisecond,
+		"the STOP is not run again past the suite's three waits")
+	s.Never(func() bool { return attempts() > 6 }, 300*time.Millisecond, 5*time.Millisecond, "it runs again after the last wait, not sooner")
+	s.Zero(s.inboundRows(store.ChannelInboundFailed), "the STOP is not given up")
+	drop()
+
+	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.settled()
+	s.Equal(1, s.liveOptOuts(person))
+}
+
 // A keyword whose answer the store fails to mark fails the attempt before the answer is sent,
 // and the next attempt answers it, once.
 func (s *TelnyxChannelSuite) TestAKeywordWhoseAnswerCannotBeMarkedIsAnsweredOnTheNextAttempt() {
