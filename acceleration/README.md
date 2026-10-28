@@ -1923,7 +1923,10 @@ Every entry and every item names its region: `us` or `eu` for now, more later (a
 to 31 of a-z, 0-9 and hyphens). The region and the BYOK state are matched exactly: work is
 priced only by an entry of its own region and BYOK state, so EU work is never priced by a US
 entry, and BYOK work never by an entry that is not BYOK, nor the other way round. Work no entry
-matches is unpriced, as before, and logged with its region and BYOK state. Within those, `when`
+matches is unpriced, as before, and logged with its region and BYOK state. It is counted in
+`router_usage_unpriced_total` with `region` and `byok` labels besides the item's, and its alert
+names it as `<modality>/<provider>/<model>/<region>/<byok>`, such as
+`llm/anthropic/claude-haiku-5-5/eu/false`. Within those, `when`
 picks the entry whose conditions all hold with the most of them. A provider instance runs in
 the `region` its routing config names. When `router.yaml` names none, as it names none today,
 parsing gives it `pricing.DefaultRegion`, `us`, so a parsed config never has an empty region.
