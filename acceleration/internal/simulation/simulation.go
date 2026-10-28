@@ -164,7 +164,7 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) (store.Simula
 	}
 	r.mu.Unlock()
 
-	scenarios := r.scenarios(ctx, simulation)
+	scenarios := r.scenarios(ctx, simulation, config)
 
 	run := store.SimulationRun{
 		CustomerID:   customerID,
@@ -236,12 +236,13 @@ func (r *Runner) Close() {
 	r.working.Wait()
 }
 
-// scenarios is the ways this run will ask. The scenario as written is always the first of
-// them, so a run that asks ten ways still asks the one the customer actually wrote.
+// scenarios is the ways this run will ask, thought of in the agent's region as everything a
+// run of it does is. The scenario as written is always the first of them, so a run that asks
+// ten ways still asks the one the customer actually wrote.
 //
 // Failing to think of the other nine is not a failed run: it is a run of one, which is what
 // a simulation without variations is anyway.
-func (r *Runner) scenarios(ctx context.Context, simulation store.Simulation) []string {
+func (r *Runner) scenarios(ctx context.Context, simulation store.Simulation, config store.AgentConfig) []string {
 	scenarios := []string{simulation.Scenario}
 	if simulation.Variations <= 1 {
 		return scenarios
@@ -249,6 +250,7 @@ func (r *Runner) scenarios(ctx context.Context, simulation store.Simulation) []s
 
 	rewrites, err := expand(ctx, r.llm, llmrouter.Request{
 		CustomerID: simulation.CustomerID,
+		Region:     config.Region,
 		Tags:       simulation.Tags,
 		Target:     simulation.CallerTarget,
 	}, "expand-"+simulation.ID, simulation.Scenario, simulation.Variations-1)
@@ -326,15 +328,18 @@ func (r *Runner) play(
 	ctx, cancel := context.WithTimeout(ctx, caseTimeout)
 	defer cancel()
 
+	// The caller and the judge are handed the agent's conversation, so they are in its region.
 	owner := llmrouter.Request{
 		CustomerID: simulation.CustomerID,
 		AgentID:    agentID(kase.ID),
+		Region:     config.Region,
 		Tags:       tag(simulation.Tags, simulation.ID),
 	}
 
 	persona, err := newCaller(ctx, r.llm, llmrouter.Request{
 		CustomerID: owner.CustomerID,
 		AgentID:    owner.AgentID,
+		Region:     owner.Region,
 		Tags:       owner.Tags,
 		Target:     simulation.CallerTarget,
 	}, kase.Scenario)
@@ -373,6 +378,7 @@ func (r *Runner) play(
 	ruled, err := rule(ctx, r.llm, llmrouter.Request{
 		CustomerID: owner.CustomerID,
 		AgentID:    owner.AgentID,
+		Region:     owner.Region,
 		Tags:       owner.Tags,
 		Target:     simulation.JudgeTarget,
 	}, "judge-"+kase.ID, simulation.Assertion, over.Session().Tools(), so)
