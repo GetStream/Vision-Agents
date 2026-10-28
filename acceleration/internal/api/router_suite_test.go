@@ -245,7 +245,8 @@ type RouterSuite struct {
 	router *Server
 	app    testApp
 	// handOffs, while a test holds them (holdHandOffs), and handedOver, the hand-offs and their
-	// turns running, are the inbound worker's hand-offs to the agent (answerQueued).
+	// turns running, are the inbound worker's hand-offs to the agent (answerQueued); handedOver
+	// counts the replies to a thread's turns being sent too (channelBridge).
 	handOffs   atomic.Pointer[chan struct{}]
 	handedOver atomic.Int32
 
@@ -791,7 +792,7 @@ func (s *RouterSuite) holdHandOffs() (release func()) {
 }
 
 // turnsEnded waits until the inbound worker is done with the test's messages and no hand-off
-// of it, or turn it handed over, runs.
+// of it, turn it handed over, or reply to a thread's turn runs.
 func (s *RouterSuite) turnsEnded() {
 	if _, built := s.bridge.(*channelbridge.Bridge); !built {
 		return
@@ -808,8 +809,21 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	bridge, err := channelbridge.New(s.channelBridgeOptions(logger))
 	s.Require().NoError(err)
 	s.T().Cleanup(bridge.Close)
-	// As cmd/router hands it the finished replies of the conversations on thread channels.
-	s.conversations.OnFinishedReply(bridge.Reply)
+	// As cmd/router hands it the finished replies of the conversations on thread channels,
+	// but for the reply to a thread's turn (answerClaimed's follow-up, which nothing holds):
+	// that one is sent, as Reply sends one nobody holds, on a goroutine the suite counts, so
+	// no test ends while it dials the test's provider (turnsEnded).
+	s.conversations.OnFinishedReply(func(reply conversation.FinishedReply) {
+		if !strings.HasPrefix(reply.CommandID, "thread_") {
+			bridge.Reply(reply)
+			return
+		}
+		s.handedOver.Add(1)
+		go func() {
+			defer s.handedOver.Add(-1)
+			_ = bridge.Send(reply)
+		}()
+	})
 	return bridge
 }
 

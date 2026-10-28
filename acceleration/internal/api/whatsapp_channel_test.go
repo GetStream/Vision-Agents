@@ -427,8 +427,9 @@ type fakeMeta struct {
 	server *httptest.Server
 	// authorization is the header the test's own number sends with. A send with another
 	// test's is a reply an earlier test's turn finished late (the inbound worker answers every
-	// message it writes): it is answered as any other and not taken.
+	// message it writes), which the harness waits for (turnsEnded): it fails the test.
 	authorization string
+	t             *testing.T
 
 	mu       sync.Mutex
 	messages []metaMessage
@@ -452,7 +453,7 @@ func (m metaMessage) withoutAuthorization() metaMessage {
 const metaTokenPrefix = "synthetic-meta-token-"
 
 func newFakeMeta(t *testing.T) *fakeMeta {
-	meta := &fakeMeta{}
+	meta := &fakeMeta{t: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v25.0/{unit}/messages", meta.send)
 	meta.server = httptest.NewTLSServer(mux)
@@ -476,10 +477,12 @@ func (f *fakeMeta) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
-	if header := r.Header.Get("Authorization"); !strings.HasPrefix(header, "Bearer "+metaTokenPrefix) || header == f.authorization {
-		f.messages = append(f.messages, metaMessage{unit: r.PathValue("unit"), to: sent.To, kind: sent.Type, text: sent.Text.Body,
-			authorization: header})
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, "Bearer "+metaTokenPrefix) && header != f.authorization {
+		f.t.Errorf("Meta took a send with another test's token: a reply outlived its test")
 	}
+	f.messages = append(f.messages, metaMessage{unit: r.PathValue("unit"), to: sent.To, kind: sent.Type, text: sent.Text.Body,
+		authorization: header})
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{

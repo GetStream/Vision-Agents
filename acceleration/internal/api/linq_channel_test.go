@@ -581,8 +581,9 @@ type fakeLinq struct {
 	server *httptest.Server
 	// authorization is the header the test's own line sends with. A send with another test's
 	// is a reply an earlier test's turn finished late (the inbound worker answers every message
-	// it writes): it is answered 200 as Linq would, before any refusal, and not taken.
+	// it writes), which the harness waits for (turnsEnded): it fails the test.
 	authorization string
+	t             *testing.T
 
 	mu          sync.Mutex
 	messages    []linqMessage
@@ -604,7 +605,7 @@ type linqMessage struct {
 const linqKeyPrefix = "synthetic-linq-key-"
 
 func newFakeLinq(t *testing.T) *fakeLinq {
-	linq := &fakeLinq{}
+	linq := &fakeLinq{t: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/partner/v3/chats/{chat}/messages", linq.send)
 	linq.server = httptest.NewTLSServer(mux)
@@ -616,9 +617,7 @@ func (l *fakeLinq) send(w http.ResponseWriter, r *http.Request) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer "+linqKeyPrefix) && header != l.authorization {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"chat_id": r.PathValue("chat")})
-		return
+		l.t.Errorf("Linq took a send with another test's key: a reply outlived its test")
 	}
 	if l.limited > 0 {
 		l.limited--
