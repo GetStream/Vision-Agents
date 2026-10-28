@@ -95,6 +95,8 @@ func (unpaid) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 type base struct {
 	mu       sync.Mutex
 	passages map[string]knowledge.Document
+	// writing, when set, runs once as the next write starts, before it is made.
+	writing func()
 }
 
 func newBase() *base {
@@ -102,6 +104,13 @@ func newBase() *base {
 }
 
 func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Document) (knowledge.Billed, error) {
+	b.mu.Lock()
+	writing := b.writing
+	b.writing = nil
+	b.mu.Unlock()
+	if writing != nil {
+		writing()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -495,6 +504,35 @@ func (s *URLsSuite) TestAPageRemovedBeforeItWasReadWritesNothing() {
 	s.drained(page)
 
 	s.Empty(s.base.ids())
+}
+
+func (s *URLsSuite) TestAPageRemovedWhileItWasReadWritesNothing() {
+	reading, release := s.holdReads()
+	defer release()
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
+	<-reading
+
+	s.Require().NoError(s.service.Remove(s.ctx, "acme", page.ID))
+	release()
+	s.drained(page)
+
+	s.Empty(s.base.ids(), "a page removed during its read does not come back")
+}
+
+func (s *URLsSuite) TestAPageRemovedAsItsPassagesWereWrittenLeavesNoneBehind() {
+	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	removed := make(chan error, 1)
+	s.base.mu.Lock()
+	s.base.writing = func() { removed <- s.service.Remove(s.ctx, "acme", page.ID) }
+	s.base.mu.Unlock()
+
+	_, err := s.service.Reindex(s.ctx, "acme", page.ID)
+	s.Require().NoError(err)
+	s.Require().NoError(<-removed)
+	s.drained(page)
+
+	s.Empty(s.base.ids(), "the passages written as the page was removed are taken back")
 }
 
 func (s *URLsSuite) TestAPageThatGotShorterLeavesNoOrphans() {

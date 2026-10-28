@@ -261,6 +261,10 @@ Every turn's instructions end with the date and the hour in UTC, and in the user
 
 An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
 
+### A page removed while it is read stays out of its knowledge base
+
+The URL crawler wrote a page's passages even when the page was removed while it was read, so an agent went on answering out of a page no list showed. The crawler now looks for the page again before it writes and once it has written, and takes back what it wrote when the page is gone (AI-1996).
+
 ### Go clients keep working with a region
 
 An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
