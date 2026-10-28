@@ -141,6 +141,7 @@ void main() {
 
       expect(voice.state.value.isMuted, isFalse);
       expect(voice.state.value.isCameraEnabled, isFalse);
+      expect(voice.session.cameraFrames, isNull);
       await voice.end();
     });
 

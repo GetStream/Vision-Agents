@@ -1,6 +1,9 @@
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 
+import 'camera_jpeg.dart';
+import 'camera_sampler.dart';
+
 const _kind = 'video';
 
 /// The app's own Stream Video client.
@@ -97,6 +100,8 @@ final class VoiceSession {
   final bool _createdLocally;
   final _state = LiveValueController(const VoiceState());
   bool _joining = false;
+  final _frames = CameraFrames(encode: cameraJpeg);
+  CameraSampler? _sampler;
 
   LiveValue<VoiceState> get state => _state;
   video.Call? get call => _state.value.call;
@@ -107,7 +112,8 @@ final class VoiceSession {
   /// on and the speaker is the loudspeaker; the camera is off unless [camera] is true, and
   /// starts on the back lens, since what an agent is shown is whatever the caller points at.
   /// Both are join settings rather than changed afterwards, so no front-facing frame is ever
-  /// published.
+  /// published. While the camera is on, the agent can look through it, as [setCameraEnabled]
+  /// says.
   ///
   /// It joins on the client handed over with `useVideo`, or else on one built from the
   /// agents' key, user and token, which every voice session then shares. Without a key, user
@@ -139,6 +145,9 @@ final class VoiceSession {
         return;
       }
       _state.value = _state.value._with(call: joined, isMuted: false, isCameraEnabled: camera);
+      if (camera) {
+        _look(joined);
+      }
     } on Exception catch (error) {
       _state.value = _state.value._with(failure: error);
     } finally {
@@ -159,6 +168,10 @@ final class VoiceSession {
   }
 
   /// Turns this device's camera on or off. Turning it back on keeps the back lens.
+  ///
+  /// While it is on, the agent can look through it: its vision skill asks for what the camera
+  /// showed when a question was put, and [session] answers with those frames. Turned off,
+  /// what it showed is forgotten.
   Future<void> setCameraEnabled(bool enabled) async {
     final call = this.call;
     if (call == null) {
@@ -172,6 +185,11 @@ final class VoiceSession {
       return;
     }
     _state.value = _state.value._with(isCameraEnabled: enabled);
+    if (enabled) {
+      _look(call);
+    } else {
+      _stopLooking();
+    }
   }
 
   /// Leaves this device's call. Closes the router session only if this device started it;
@@ -183,6 +201,7 @@ final class VoiceSession {
   Future<void> end() => _leave(closeSession: true);
 
   Future<void> _leave({required bool closeSession}) async {
+    _stopLooking();
     final call = this.call;
     _state.value = VoiceState(failure: _state.value.failure);
     if (call != null) {
@@ -209,6 +228,29 @@ final class VoiceSession {
       ),
       disconnect: (client) => client.dispose(),
     );
+  }
+
+  /// Samples the call's camera for the agent, and lets [session] answer with what it showed.
+  ///
+  /// A call left while its camera was being turned on is not looked through.
+  void _look(video.Call call) {
+    if (!identical(this.call, call)) {
+      return;
+    }
+    _sampler ??= CameraSampler(() async {
+      final local = call.state.value.localParticipant;
+      return local == null ? null : (await call.takeScreenshot(local))?.asUint8List();
+    }, _frames);
+    session.cameraFrames = _frames;
+  }
+
+  void _stopLooking() {
+    _sampler?.stop();
+    _sampler = null;
+    _frames.clear();
+    if (identical(session.cameraFrames, _frames)) {
+      session.cameraFrames = null;
+    }
   }
 
   bool _failed(video.Result<video.None> result) {
