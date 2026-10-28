@@ -133,6 +133,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### A voice that reports one utterance finished twice bills it once
+
+A second completion for an utterance that has already settled, and has not started again, now writes no request row. Before, it wrote a second row with a new usage id and the voice's own character count, which billed the utterance twice. An utterance that the voice starts again after it settled, because more text came for it, still gets its own row (AI-2141).
+
 ### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
 
 `router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
