@@ -51,10 +51,12 @@ reviews:
       instructions: |
         Apply AGENTS.md's benchmark rules, its Testing section and its Other code rules. Flag:
         - runtime code or prompts that detect a benchmark, read expected answers or exploit mock providers
-        - weakened tests, scoring or workloads, hidden failures, or unequal comparisons
-        - abstractions, fallbacks or retries the change does not need
+        - skipped required work, weakened tests, scoring or workloads, hidden or reclassified failures,
+          selective reporting, evaluator fixes applied to one side only, or unequal comparisons
+        - abstractions, fallbacks or retries the change does not need; unbounded retries, queues or background work
         - tests that would still pass on a broken implementation
-        Cite the code path or missing evidence. Do not flag on keywords alone.
+        Cite the code path or missing evidence. Fixtures, mock providers and documented protocol fast
+        paths are allowed; do not flag on keywords alone.
     - path: "**/test_*.py"
       instructions: |
         Review pytest tests. Project uses uv.
