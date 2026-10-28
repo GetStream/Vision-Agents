@@ -478,7 +478,7 @@ func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
 	out, err := s.sh(s.mount.EachRun[0])
 	s.Require().Error(err, out)
 	span := time.Since(start)
-	for step := range 21 {
+	for step := range 41 {
 		// A sandbox of its own, so a forwarder of an earlier check that has yet to lose the port
 		// writes to that check's log.
 		s.root = s.T().TempDir()
@@ -487,7 +487,7 @@ func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
 			s.Require().NoError(os.WriteFile(s.root+name, data, 0o600))
 		}
 		pidFile, logFile := s.root+"/tmp/va-egress-tunnel.pid", s.root+"/tmp/va-egress-tunnel.log"
-		delay := span * time.Duration(step) / 20
+		delay := span * time.Duration(step) / 40
 		// beforeLoss is whether the pid file was there before the forwarder wrote that it lost the
 		// port, so before it exited and the check looked once more.
 		var beforeLoss bool
