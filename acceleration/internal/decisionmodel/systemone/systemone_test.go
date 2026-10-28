@@ -186,7 +186,7 @@ func (s *SystemOneSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
 	// the whole of what it may say.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"floor":{"type":"choice","choice":"stop"}}}`
 
-	_, err := s.ask("wait, make it six", map[string]decisionmodel.Question{
+	_, err := s.ask("wait, make it seven", map[string]decisionmodel.Question{
 		"floor": decisionmodel.Choice("Who should hold the floor?", map[string]string{
 			"stop":     "A correction or a direct interruption.",
 			"shorten":  "A related addition.",
@@ -293,7 +293,7 @@ func (s *SystemOneSuite) TestAnUnansweredQuestionIsAFailureRatherThanAZero() {
 	// nothing about a caller talking over it, which is worse than the error.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"disposition":{"type":"choice","choice":"respond"}}}`
 
-	_, err := s.ask("make it six", map[string]decisionmodel.Question{
+	_, err := s.ask("make it seven", map[string]decisionmodel.Question{
 		"disposition": decisionmodel.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
 		"floor":       decisionmodel.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
 	})

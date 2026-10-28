@@ -375,10 +375,10 @@ func (s *LLMSuite) TestStreamAssemblesToolCallsInTheOrderTheModelAskedForThem() 
 }
 
 func (s *LLMSuite) TestAToolCallCutOffMidArgumentsIsDropped() {
-	// Shortening a reply stopped Gemma inside check_availability{"party_size": 4, and the
+	// Shortening a reply stopped Gemma inside find_room{"guests": 4, and the
 	// call kept in the history had Baseten refuse every later turn of the call.
 	stream := s.stream(
-		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "check_availability", `{"party_size": 4`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "find_room", `{"guests": 4`, "") },
 		func(w *ResponseWriter) { w.Cancelled() },
 	)
 	s.drain(stream)

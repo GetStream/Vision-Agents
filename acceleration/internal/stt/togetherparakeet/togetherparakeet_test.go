@@ -175,21 +175,21 @@ func (s *TogetherParakeetSuite) TestASegmentFlushKeepsTheWordsAlreadyHeard() {
 		"a hypothesis after a flush should still be the whole utterance")
 }
 
-// TestAFlushInTheMiddleOfAWordDoesNotSplitIt is the sequence recorded off the wire: the
-// server settled "…seven thirty pat" and the deltas resumed at "io". The join has to be
-// exactly what it sent, so trimming either side would spell the word "pat io".
+// TestAFlushInTheMiddleOfAWordDoesNotSplitIt has the server settle "…by the win" and the
+// deltas resume at "dow". The join has to be exactly what it sent, so trimming either side
+// would spell the word "win dow".
 func (s *TogetherParakeetSuite) TestAFlushInTheMiddleOfAWordDoesNotSplitIt() {
 	provider := s.newSTT(Options{})
 
-	provider.handleMessage(delta("this Saturday at seven thirty patio"))
-	provider.handleMessage(completed("this Saturday at seven thirty pat"))
-	provider.handleMessage(delta("io"))
-	provider.handleMessage(delta("io."))
+	provider.handleMessage(delta("this Friday at six fifteen by the window"))
+	provider.handleMessage(completed("this Friday at six fifteen by the win"))
+	provider.handleMessage(delta("dow"))
+	provider.handleMessage(delta("dow."))
 	s.quiet(provider)
 
 	settled := s.finals(provider)
 	s.Require().Len(settled, 1)
-	s.Equal("this Saturday at seven thirty patio.", settled[0].Text)
+	s.Equal("this Friday at six fifteen by the window.", settled[0].Text)
 }
 
 // TestSegmentsOfOneSentenceAreOneUtterance is what stops the router treating the tail of a
