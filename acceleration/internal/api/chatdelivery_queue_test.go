@@ -99,6 +99,19 @@ func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryForASessionOnAnotherNodeIsAn
 	s.False(s.reachesWorker(worker.Messages()), "a second agent was started")
 }
 
+// With no worker waiting here, the row goes to the node where one waits, and is placed there.
+func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryReachesAWorkerWaitingOnAnotherNode() {
+	other := s.otherNodeDispatching(dispatch.NewPool())
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.await(worker, "ready")
+	queued := s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))
+
+	s.answering()
+
+	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryDone }, settleFor, 20*time.Millisecond)
+}
+
 // The peer path takes a router's word for an app and a customer, so only a peer the
 // forwarder vouches for is heard, and a header anybody can send vouches for nothing.
 func (s *ChatDeliveryQueueSuite) TestThePeerPathRefusesWhatNoPeerHandedOver() {
