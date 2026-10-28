@@ -86,15 +86,39 @@ func (s *regionSuite) TestAConflictingURLAndRegionAreRefused() {
 
 func (s *regionSuite) TestAnInvalidRegionWithAURLIsRefused() {
 	_, err := New(stream.Backend{Region: "us-east4.evil.com/x", URL: stream.DefaultURL})
-	s.Require().EqualError(err, "stream: set a URL or a region, not both")
+	s.Require().EqualError(err, `stream: "us-east4.evil.com/x" is not a region, such as us-east4`)
+}
+
+func (s *regionSuite) TestAResolvedRegionalBackendCanBePointedElsewhere() {
+	s.T().Setenv(stream.RegionEnv, "us-east4")
+	api, err := New(stream.Backend{})
+	s.Require().NoError(err)
+	moved := api.Backend()
+	moved.URL = "http://localhost:8080"
+	resolved, err := moved.Resolve()
+	s.Require().NoError(err)
+	s.Equal("http://localhost:8080", resolved.URL)
 }
 
 func (s *regionSuite) TestARegionalClientCanActForAUser() {
-	api, err := New(stream.Backend{Region: "us-east4"})
+	s.actForAUser(stream.Backend{Region: "us-east4"})
+}
+
+func (s *regionSuite) TestARegionFromTheEnvironmentCanActForAUser() {
+	s.T().Setenv(stream.RegionEnv, "us-east4")
+	s.actForAUser(stream.Backend{})
+}
+
+// actForAUser checks the user client both resolves and reaches the regional router.
+func (s *regionSuite) actForAUser(backend stream.Backend) {
+	backend.HTTPClient = s.httpClient
+	api, err := New(backend)
 	s.Require().NoError(err)
 	user, err := api.SetUser("jean", "user-token")
 	s.Require().NoError(err)
 	s.Equal(stream.DefaultURL, user.Backend().URL)
 	s.Equal("jean", user.Backend().UserID)
 	s.Equal("user-token", user.Backend().Token)
+	_, err = user.Settings().App(s.T().Context())
+	s.Require().NoError(err)
 }

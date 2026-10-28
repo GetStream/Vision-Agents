@@ -5,7 +5,7 @@ description: How to build and extend the Kotlin/Android SDK in sdks/kotlin. Read
 
 # Kotlin SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the modules in
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions the modules in
 [`sdks/kotlin`](../../../sdks/kotlin) already follow, so a change lands consistently rather than
 re-litigating them. It mirrors [sdk-swift](../sdk-swift/SKILL.md): the two SDKs are the same
 API in two languages, and a feature added to one belongs in the other.

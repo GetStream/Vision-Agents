@@ -5,7 +5,7 @@ description: How to build and extend the Swift SDK in sdks/swift. Read this befo
 
 # Swift SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the package in
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions the package in
 [`sdks/swift`](../../../sdks/swift) already follow, so a change lands consistently rather than
 re-litigating them. Where a rule has an exception, the exception is written down.
 
@@ -215,7 +215,7 @@ hands over its body.
 ## Public API
 
 `VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
-provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
+provider. `ID` and `URL` are
 capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
 only for a router running locally with nothing in front of it; an `apiKey:` beside it is
 Stream's alone, for chat and video, and the router is still reached by customer id.

@@ -5,7 +5,7 @@ description: How to build and extend the .NET SDK in sdks/dotnet. Read this befo
 
 # .NET SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions
 [`sdks/dotnet`](../../../sdks/dotnet) already follows, so a change lands consistently rather
 than re-litigating them.
 

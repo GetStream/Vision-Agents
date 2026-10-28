@@ -155,7 +155,7 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ### Go clients keep working with a region
 
-An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
+An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. `Resolve` turns the region into its URL and clears `Region`, so a resolved backend resolves again unchanged and can be pointed at another URL. A region passed with its own URL is accepted, one with any other URL is refused, and a malformed region is reported as not a region rather than as a URL and a region together (AI-2188, #1407, #1413).
 
 ### A thread task's reply is texted as soon as the agent finishes it
 

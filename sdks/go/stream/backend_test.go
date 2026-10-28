@@ -111,6 +111,29 @@ func TestARegionIsTheHostedRouterThere(t *testing.T) {
 	}
 }
 
+func TestResolvingARegionalBackendAgainChangesNothing(t *testing.T) {
+	t.Setenv(URLEnv, "")
+	t.Setenv(RegionEnv, "us-east4")
+	t.Setenv(CustomerEnv, "")
+	t.Setenv(APIKeyEnv, "ntv9")
+	t.Setenv(APISecretEnv, "shh")
+
+	once, err := Backend{}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if once.Region != "" {
+		t.Errorf("a resolved backend kept region %q beside %s", once.Region, once.URL)
+	}
+	twice, err := once.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if twice.URL != once.URL || twice.Authenticate != once.Authenticate {
+		t.Errorf("resolved again to %s, authenticating %v", twice.URL, twice.Authenticate)
+	}
+}
+
 func TestTheHostedRouterOutOfTheBoxIsUSEast4(t *testing.T) {
 	if DefaultURL != "https://accelerate-us-east4.gcp.stream-io-api.com" {
 		t.Errorf("the default is %s", DefaultURL)

@@ -5,7 +5,7 @@ description: How to build and extend the PHP SDK in sdks/php. Read this before c
 
 # PHP SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md), for the server side only. It records the
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md), for the server side only. It records the
 decisions [`sdks/php`](../../../sdks/php) already follows, so a change lands consistently
 rather than re-litigating them.
 
@@ -150,9 +150,11 @@ Docker VM disk was full; do not prune shared images or volumes to make room.
 1. `php bin/generate.php ../../acceleration/api/openapi.yaml` and review the diff.
 2. Hand-written resources only change for a new behaviour, not a new field.
 3. Unit tests, PHPStan, then the live suite once.
-4. Write the git blob ids of `acceleration/api/openapi.yaml` and `.claude/skills/sdk/SKILL.md`
-   to `sdks/php/.sdk_update_log`, as the sdk skill's SDK updates section says, so the next
-   update can diff what changed since.
+4. Update `sdks/php/.sdk_update_log` only for work completed and verified. Follow
+   [maintenance checkpoint migration](../sdk-maintenance/SKILL.md#update-checkpoints)
+   before replacing an old skill ID. New skill IDs refer to
+   `.claude/skills/sdk-maintenance/SKILL.md`; spec IDs still refer to
+   `acceleration/api/openapi.yaml`.
 
 ## Review checklist
 

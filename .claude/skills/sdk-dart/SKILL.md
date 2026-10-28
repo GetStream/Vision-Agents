@@ -5,7 +5,7 @@ description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Rea
 
 # Dart SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the packages in
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions the packages in
 [`sdks/dart`](../../../sdks/dart) already follow, so a change lands consistently rather than
 re-litigating them. It is a **client-side** SDK: what a phone, a browser or a desktop app does.
 Folder sync, dispatch and writing configs are backend work and stay out.

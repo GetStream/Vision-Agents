@@ -5,7 +5,7 @@ description: How to build and extend the Rust server-side SDK in sdks/rust. Read
 
 # Rust SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md), server side only. It records the decisions
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md), server side only. It records the decisions
 [`sdks/rust`](../../../sdks/rust) already follows, so a change lands consistently rather than
 re-litigating them.
 
