@@ -783,13 +783,17 @@ func (s *LinqChannelSuite) TestAnAuthorCountsWhenTheChatDoesNotSayItIsAGroup() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, "+12025550199", "Hi all"), nil), time.Now()))
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
+	// The inbound worker answers "Hi all": its reply has left before the STOP, so it is not
+	// taken for one the STOP should have held back.
+	s.turnsEnded()
+	answered := len(s.linq.sent())
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, member, "STOP"), nil), time.Now()))
 
-	s.took(1)
+	s.took(answered + 1)
 	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, "+12025550199", "Anyone there?"), nil), time.Now()))
 	s.settled()
-	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > answered+1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
 
