@@ -1291,6 +1291,20 @@ func (s *SessionSuite) TestTheGreetingWaitsForSomebodyToJoinTheCall() {
 	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
 }
 
+func (s *SessionSuite) TestTheGreetingGivesWhoeverJoinedTimeToHearIt() {
+	wait := greetingDelay
+	greetingDelay = 4 * testTimeout
+	s.T().Cleanup(func() { greetingDelay = wait })
+	s.manages()
+	s.joins(Spec{Greeting: "Hi, I'm listening."})
+
+	s.call().arrives(visitor)
+
+	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
+		"the greeting started the moment somebody joined")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
+}
+
 func (s *SessionSuite) TestSomebodyAlreadyInTheCallIsGreetedOnJoining() {
 	s.manages()
 

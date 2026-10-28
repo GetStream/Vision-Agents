@@ -21,6 +21,12 @@ var (
 	inboundStartTimeout  = 30 * time.Second
 )
 
+// greetingDelay is the time from when the first participant joins to when the greeting
+// starts. The SFU reports a participant before their client plays audio from the agent.
+// Without this delay, the participant does not hear the start of the greeting. Tests change
+// this value.
+var greetingDelay = 100 * time.Millisecond
+
 // presence is who is in the call one agent run is on. Its lock is taken before s.mu, which
 // the timeout calls take, and never while holding s.mu.
 type presence struct {
@@ -132,7 +138,11 @@ func (s *Session) observe(run *presence, event Event) {
 		// back through this event loop.
 		if greet := run.pendingGreeting; greet != nil {
 			run.pendingGreeting = nil
-			s.running.Go(greet)
+			delay := greetingDelay
+			s.running.Go(func() {
+				time.Sleep(delay)
+				greet()
+			})
 		}
 		if _, ok := phone.CallerNumber(reported.Participant.UserID); ok {
 			s.callerSeen.Store(true)
