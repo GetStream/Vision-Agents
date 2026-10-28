@@ -624,7 +624,9 @@ func (s *SlackChannelSuite) TestAMentionRetriedAfterItLinkedItsThreadTakesTheRep
 	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
 	s.Require().Equal(http.StatusOK, status)
-	stored := s.written(channel, 2)
+	// The person's messages alone: the agent's answer to the mention may land between them.
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) >= 2 }, settleFor, 10*time.Millisecond)
+	stored := s.bridged(channel)
 	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
 	s.Zero(s.waiting(), "the reply no longer waits")
 }
