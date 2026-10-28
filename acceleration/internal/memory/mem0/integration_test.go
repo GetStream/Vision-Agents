@@ -3,14 +3,10 @@
 package mem0
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +31,7 @@ type Mem0IntegrationSuite struct {
 	store *Store
 	scope memory.Scope
 	// log is the store's log, which names the event each conversation was queued as.
-	log bytes.Buffer
+	log queueLog
 }
 
 func TestMem0IntegrationSuite(t *testing.T) {
@@ -53,7 +49,7 @@ func (s *Mem0IntegrationSuite) SetupSuite() {
 		s.T().Skip(apiKeyEnvVar + " not set")
 	}
 
-	store, err := New(Options{Logger: slog.New(slog.NewJSONHandler(&s.log, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	store, err := New(Options{Logger: slog.New(slog.NewJSONHandler(&s.log.Buffer, &slog.HandlerOptions{Level: slog.LevelDebug}))})
 	s.Require().NoError(err)
 	s.store = store
 
@@ -183,44 +179,15 @@ func (s *Mem0IntegrationSuite) recallsAtLeast(ctx context.Context, scope memory.
 	return recalled
 }
 
-// extracted waits until mem0 has finished every conversation handed to it so far. mem0 may
-// start one minutes after queueing it, and recall cannot tell one still queued from one that
-// was lost.
+// extracted waits until mem0 has finished every conversation handed to it since the last
+// wait: the log lines before that belong to tests that have waited for theirs already.
 func (s *Mem0IntegrationSuite) extracted(ctx context.Context) {
-	deadline := time.Now().Add(extractionBound)
-	for line := range strings.Lines(s.log.String()) {
-		var record struct {
-			Msg   string `json:"msg"`
-			Event string `json:"event"`
-		}
-		if json.Unmarshal([]byte(line), &record) != nil || record.Msg != "queued a conversation to remember" {
-			continue
-		}
-		for status := s.extraction(ctx, record.Event); status != "SUCCEEDED"; status = s.extraction(ctx, record.Event) {
-			s.Require().NotEqual("FAILED", status, "mem0 failed to extract event %s", record.Event)
-			s.Require().True(time.Now().Before(deadline), "mem0 never extracted event %s: it is %q", record.Event, status)
-			time.Sleep(2 * time.Second)
-		}
+	events := s.log.unread()
+	wait := extractionWait{
+		client: s.store.client, baseURL: s.store.baseURL, apiKey: s.store.apiKey,
+		bound: extractionBound, every: 2 * time.Second,
 	}
-}
-
-// extraction is what mem0 says of an event, or the HTTP status while it does not answer.
-func (s *Mem0IntegrationSuite) extraction(ctx context.Context, event string) string {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.store.baseURL+"/v1/event/"+event+"/", nil)
-	s.Require().NoError(err)
-	request.Header.Set("Authorization", "Token "+s.store.apiKey)
-	response, err := s.store.client.Do(request)
-	if err != nil {
-		return err.Error()
-	}
-	defer response.Body.Close()
-	var answer struct {
-		Status string `json:"status"`
-	}
-	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&answer) != nil {
-		return response.Status
-	}
-	return answer.Status
+	s.Require().NoError(wait.until(ctx, events))
 }
 
 func (s *Mem0IntegrationSuite) TestAnotherUsersMemoriesAreNotRecalled() {
