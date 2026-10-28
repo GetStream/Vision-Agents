@@ -123,7 +123,9 @@ func (s *TelnyxSandboxSuite) TestAPersonOutsideTheSandboxReachesNoAgent() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, "+13125550099", "Hi"), time.Now()))
 
 	channel := s.threadChannel("+13125550099")
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Zero(s.episodes(), "a message the gate holds back opens no card")
 }
 
 // A sandbox recipient is answered until the day's one message is sent; a reply after it is
@@ -142,6 +144,7 @@ func (s *TelnyxSandboxSuite) TestARecipientIsAnsweredUntilTheDailyLimit() {
 	s.Require().Eventually(func() bool { return s.answers(channel) == 2 }, settleFor, 10*time.Millisecond)
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "third"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	for _, message := range s.chat.Stored(channel) {
 		s.NotEqual("third", message["text"], "the message past the limit reaches no agent")
@@ -156,17 +159,19 @@ func (s *TelnyxSandboxSuite) TestAKeywordIsAnsweredPastTheSandbox() {
 	s.Equal(telnyxHelp, s.took(1)[0].text)
 }
 
-// A gate that fails to read after the keywords is answered 500 and the message is unclaimed,
-// so the delivery Telnyx sends again reaches the agent: it is not dropped as one already taken.
-func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadReachesTheAgentWhenTelnyxDeliversItAgain() {
+// A gate that fails to read after the keywords fails the worker's attempt, not the delivery, so
+// the next attempt, once the gate reads again, writes the message for the agent, once.
+func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadIsWrittenOnceTheGateReadsAgain() {
 	restore := s.gateOnClosedStore()
-	body := s.received(s.line, sandboxRecipient, "Hi")
 
-	s.Equal(http.StatusInternalServerError, s.deliver(body, time.Now()))
+	s.Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "Hi"), time.Now()))
+	s.failedOnce()
 	restore()
-	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
 
-	s.Equal("Hi", s.written(s.threadChannel(sandboxRecipient), 1)[0]["text"])
+	s.settled()
+	stored := s.chat.Stored(s.threadChannel(sandboxRecipient))
+	s.Require().Len(stored, 1)
+	s.Equal("Hi", stored[0]["text"])
 }
 
 // A reply the provider refuses is not a message sent, so it is not counted against the day's

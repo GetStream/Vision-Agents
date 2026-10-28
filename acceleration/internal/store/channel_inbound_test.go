@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 )
 
@@ -17,10 +19,21 @@ import (
 // s.base; change sets the fields a test cares about.
 func (s *StoreSuite) inbound(channelID, providerMessageID string, change ...func(*ChannelInbound)) ChannelInbound {
 	message := s.inboundMessage(channelID, providerMessageID, change...)
-	queued, err := s.store.QueueChannelInbound(s.ctx, message)
+	queued, err := s.queue(message)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 	return message
+}
+
+// queue queues message in a transaction of its own, as AcceptChannelInbound does after its claim.
+func (s *StoreSuite) queue(message ChannelInbound) (bool, error) {
+	var queued bool
+	err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		queued, err = queueChannelInbound(ctx, tx, message)
+		return err
+	})
+	return queued, err
 }
 
 // inboundMessage is the message inbound queues, its thread channel linked, not yet queued.
@@ -124,7 +137,7 @@ func (s *StoreSuite) TestAnInboundMessageWithNoMediaAndNoForwardIsClaimedWithNei
 func (s *StoreSuite) TestAnInboundMessageQueuedTwiceInOneChannelIsOneRow() {
 	first := s.inbound("thread-one", "1759740000.000100")
 
-	again, err := s.store.QueueChannelInbound(s.ctx, first)
+	again, err := s.queue(first)
 	s.Require().NoError(err)
 	s.False(again, "a provider's retry of a message queues nothing")
 	s.inbound("thread-two", "1759740000.000100")
@@ -138,7 +151,7 @@ func (s *StoreSuite) TestAWrittenInboundMessageIsNotQueuedAgain() {
 	_, err := s.store.FinishChannelInbound(s.ctx, s.claimedOne(s.base, "1759740000.000100"), s.base)
 	s.Require().NoError(err)
 
-	again, err := s.store.QueueChannelInbound(s.ctx, first)
+	again, err := s.queue(first)
 
 	s.Require().NoError(err)
 	s.False(again)
@@ -196,7 +209,7 @@ func (s *StoreSuite) TestAThreadsMessageQueuedWhileAnEarlierOneCommitsWaitsForIt
 	s.Require().True(queued)
 	byB := make(chan error, 1)
 	go func() {
-		_, err := s.store.QueueChannelInbound(s.ctx, b)
+		_, err := s.queue(b)
 		byB <- err
 	}()
 	s.Require().Eventually(func() bool {
@@ -606,4 +619,117 @@ func (s *StoreSuite) TestTwoMessagesOfADeliveryGivenUpAtOnceForwardItOnce() {
 		}
 		s.Equal(1, count, "round %d", round)
 	}
+}
+
+// inboundClaims are the provider ids of the inbound messages claimed in channelID.
+func (s *StoreSuite) inboundClaims(channelID string) []string {
+	var ids []string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT message_id FROM channel_thread_messages WHERE channel_id = ? AND kind = ? ORDER BY message_id",
+		channelID, ClaimInbound).Scan(s.ctx, &ids))
+	return ids
+}
+
+// waitedRow is the row AcceptChannelInbound's waited callback makes of a reply in thread-one. It
+// touches no table: the transaction holds the thread channel's row.
+func (s *StoreSuite) waitedRow(reply core.InboundMessage) (ChannelInbound, error) {
+	return ChannelInbound{
+		ChannelID: "thread-one", ProviderMessageID: reply.ProviderMessageID, CustomerID: "acme-app", ConnectorID: reply.ConnectorID,
+		ProviderUnitID: reply.ProviderUnitID, ThreadKey: reply.ThreadKey, ConfigID: "config-one", ConfigName: "Ada",
+		AuthorID: reply.AuthorID, Text: reply.Text, Raw: reply.Raw, NextAttemptAt: s.base,
+	}, nil
+}
+
+func (s *StoreSuite) TestAnAcceptedInboundMessageIsClaimedAndQueuedOnce() {
+	message := s.inboundMessage("thread-one", "1759740000.000100")
+
+	fresh, err := s.store.AcceptChannelInbound(s.ctx, message, nil)
+	s.Require().NoError(err)
+	s.True(fresh)
+	again, err := s.store.AcceptChannelInbound(s.ctx, message, nil)
+
+	s.Require().NoError(err)
+	s.False(again, "a provider's retry of a message is dropped")
+	s.Equal([]string{"1759740000.000100"}, s.inboundClaims("thread-one"))
+	s.claimedOne(s.base, "1759740000.000100")
+}
+
+// The replies that waited for the message that starts their thread are claimed and queued after
+// it, in the order they waited, and taken once.
+func (s *StoreSuite) TestTheRepliesThatWaitedAreQueuedAfterTheMessageThatStartsTheirThread() {
+	message := s.inboundMessage("thread-one", "1759740000.000100")
+	for _, id := range []string{"1759740000.000300", "1759740000.000200"} {
+		_, err := s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting(message.ThreadKey, id))
+		s.Require().NoError(err)
+	}
+
+	_, err := s.store.AcceptChannelInbound(s.ctx, message, s.waitedRow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"1759740000.000100", "1759740000.000200", "1759740000.000300"}, s.inboundClaims("thread-one"))
+	var queued []string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = 'thread-one' ORDER BY seq").Scan(s.ctx, &queued))
+	s.Equal([]string{"1759740000.000100", "1759740000.000300", "1759740000.000200"}, queued)
+	left, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", message.ThreadKey)
+	s.Require().NoError(err)
+	s.Empty(left)
+}
+
+// A failure after the claim and the take, here a waited reply's row, leaves the message unclaimed
+// and unqueued, and its replies waiting, for the provider's retry to take them all.
+func (s *StoreSuite) TestAFailedAcceptLeavesNoClaimNoRowAndTheRepliesWaiting() {
+	message := s.inboundMessage("thread-one", "1759740000.000100")
+	_, err := s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting(message.ThreadKey, "1759740000.000200"))
+	s.Require().NoError(err)
+
+	_, err = s.store.AcceptChannelInbound(s.ctx, message, func(core.InboundMessage) (ChannelInbound, error) {
+		return ChannelInbound{}, errors.New("synthetic read failure")
+	})
+
+	s.Require().ErrorContains(err, "synthetic read failure")
+	s.Empty(s.inboundClaims("thread-one"))
+	s.Empty(s.claim(s.base))
+	_, err = s.store.AcceptChannelInbound(s.ctx, s.inboundMessage("thread-one", "1759740000.000100", func(message *ChannelInbound) { message.ConfigID = "" }), nil)
+	s.Require().Error(err, "a message with no agent config")
+	s.Empty(s.inboundClaims("thread-one"))
+	fresh, err := s.store.AcceptChannelInbound(s.ctx, message, s.waitedRow)
+	s.Require().NoError(err)
+	s.True(fresh)
+	s.Equal([]string{"1759740000.000100", "1759740000.000200"}, s.inboundClaims("thread-one"))
+}
+
+// A message claimed before still takes the replies that waited, as a first delivery that linked
+// the thread before any of them waited leaves them to the next.
+func (s *StoreSuite) TestAMessageClaimedBeforeStillTakesTheRepliesThatWaited() {
+	message := s.inboundMessage("thread-one", "1759740000.000100")
+	_, err := s.store.AcceptChannelInbound(s.ctx, message, s.waitedRow)
+	s.Require().NoError(err)
+	_, err = s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting(message.ThreadKey, "1759740000.000200"))
+	s.Require().NoError(err)
+
+	fresh, err := s.store.AcceptChannelInbound(s.ctx, message, s.waitedRow)
+
+	s.Require().NoError(err)
+	s.False(fresh)
+	s.Equal([]string{"1759740000.000100", "1759740000.000200"}, s.inboundClaims("thread-one"))
+}
+
+// The keyword mark holds across claims of the row and is made once, and a worker whose lease was
+// taken over marks nothing.
+func (s *StoreSuite) TestAKeywordIsMarkedAnsweredOnlyUnderTheRowsLease() {
+	s.inbound("thread-one", "1759740000.000100")
+	stale := s.claimedOne(s.base, "1759740000.000100")
+	current := s.claimedOne(s.base.Add(time.Minute), "1759740000.000100")
+
+	marked, err := s.store.MarkChannelInboundKeywordAnswered(s.ctx, stale)
+	s.Require().NoError(err)
+	s.False(marked, "the lease is another worker's")
+	marked, err = s.store.MarkChannelInboundKeywordAnswered(s.ctx, current)
+	s.Require().NoError(err)
+	s.True(marked)
+
+	again := s.claimedOne(s.base.Add(2*time.Minute), "1759740000.000100")
+	s.True(again.KeywordAnswered)
+	marked, err = s.store.MarkChannelInboundKeywordAnswered(s.ctx, again)
+	s.Require().NoError(err)
+	s.False(marked, "an earlier attempt answered it")
 }

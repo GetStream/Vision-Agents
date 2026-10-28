@@ -408,6 +408,100 @@ func (s *InboundSuite) TestAWorkerThatLostItsLeaseGivesNothingUp() {
 	s.Zero(count)
 }
 
+// A STOP whose opt-out the store keeps failing to record is never given up: past the waits it
+// is due again after the last one. A trigger refuses the test customer's opt-outs.
+func (s *InboundSuite) TestAStopPastItsWaitsIsDueAgainAfterTheLastWait() {
+	_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+		CREATE FUNCTION inbound_suite_refuse_opt_out() RETURNS trigger AS $$
+			BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER inbound_suite_refuse_opt_out BEFORE INSERT ON opt_outs FOR EACH ROW
+			WHEN (NEW.customer_id = '`+s.customer+`') EXECUTE FUNCTION inbound_suite_refuse_opt_out();
+		COMMIT`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+			DROP TRIGGER inbound_suite_refuse_opt_out ON opt_outs;
+			DROP FUNCTION inbound_suite_refuse_opt_out();
+			COMMIT`)
+		s.Require().NoError(err)
+	}()
+	s.emptyQueue()
+	thread := s.thread("telnyx")
+	s.queue(thread, "m-1", "STOP", nil)
+	_, err = s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).Set("attempts = 2").
+		Where("channel_id = ? AND provider_message_id = ?", thread.ChannelID, "m-1").Exec(s.ctx)
+	s.Require().NoError(err)
+	claimed, err := s.store.ClaimChannelInbound(s.ctx, time.Now(), 1, time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	s.newBridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Hour}}).attempt(claimed[0])
+
+	row := s.row(thread, "m-1")
+	s.Equal(store.ChannelInboundQueued, row.State, "the STOP is not given up")
+	s.Equal(3, row.Attempts)
+	s.WithinDuration(time.Now().Add(time.Hour), row.NextAttemptAt, time.Minute, "it is due again after the last wait")
+	s.Equal(1, strings.Count(s.logs.String(), "level=WARN msg=\"an opt-out is still not recorded"), "past its waits it logs at WARN")
+}
+
+// The WARN for a STOP that is still not recorded starts past the waits: attempt 1 and the attempt
+// that uses the last wait are retried at INFO only.
+func (s *InboundSuite) TestAStopWithinItsWaitsIsRetriedWithoutAWarning() {
+	_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+		CREATE FUNCTION inbound_suite_refuse_opt_out() RETURNS trigger AS $$
+			BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER inbound_suite_refuse_opt_out BEFORE INSERT ON opt_outs FOR EACH ROW
+			WHEN (NEW.customer_id = '`+s.customer+`') EXECUTE FUNCTION inbound_suite_refuse_opt_out();
+		COMMIT`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+			DROP TRIGGER inbound_suite_refuse_opt_out ON opt_outs;
+			DROP FUNCTION inbound_suite_refuse_opt_out();
+			COMMIT`)
+		s.Require().NoError(err)
+	}()
+	s.emptyQueue()
+	thread := s.thread("telnyx")
+	bridge := s.newBridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Hour}})
+	warnings := func() int { return strings.Count(s.logs.String(), "level=WARN") }
+
+	for _, tried := range []int{0, 1, 2} {
+		id := fmt.Sprintf("m-%d", tried)
+		s.emptyQueue()
+		s.queue(thread, id, "STOP", nil)
+		_, err = s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).Set("attempts = ?", tried).
+			Where("channel_id = ? AND provider_message_id = ?", thread.ChannelID, id).Exec(s.ctx)
+		s.Require().NoError(err)
+		claimed, err := s.store.ClaimChannelInbound(s.ctx, time.Now(), 1, time.Now().Add(time.Minute))
+		s.Require().NoError(err)
+		s.Require().Len(claimed, 1)
+		before := warnings()
+
+		bridge.attempt(claimed[0])
+
+		s.Equal(store.ChannelInboundQueued, s.row(thread, id).State)
+		if tried+1 > 2 {
+			s.Equal(before+1, warnings(), "attempt %d is past the waits: one WARN", tried+1)
+		} else {
+			s.Equal(before, warnings(), "attempt %d is within the waits: no WARN", tried+1)
+		}
+	}
+}
+
+// A STOP is held for its opt-out channel (optsOut); a "stop" on a connector with none is not,
+// so it is given up after its waits like any other message.
+func (s *InboundSuite) TestAStopOnAConnectorWithNoOptOutChannelIsGivenUp() {
+	thread := s.thread("slack_bot")
+	s.chat.RateLimit("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "stop", nil)
+
+	s.bridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Millisecond}})
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundFailed }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(3, s.row(thread, "m-1").Attempts)
+}
+
 // A message whose delivery no destination would take, such as a reply that waited, is given up
 // with no forward.
 func (s *InboundSuite) TestAGivenUpMessageWithNoForwardForwardsNothing() {
@@ -659,12 +753,12 @@ func (s *InboundSuite) queue(thread store.ChannelThread, providerMessageID, text
 
 // queueAt queues a message of U0000ALICE in thread, due at due.
 func (s *InboundSuite) queueAt(thread store.ChannelThread, providerMessageID, text string, forward *store.ChannelInboundForward, due time.Time) {
-	queued, err := s.store.QueueChannelInbound(s.ctx, store.ChannelInbound{
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
 		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: text,
 		Raw: []byte(`{"text":"` + text + `"}`), Forward: forward, NextAttemptAt: due,
-	})
+	}, nil)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 }
@@ -798,12 +892,12 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 
 // queueLinq queues a Linq message of U0000ALICE in thread, whose raw event says whether the chat is a group.
 func (s *InboundSuite) queueLinq(thread store.ChannelThread, providerMessageID string, isGroup bool) {
-	queued, err := s.store.QueueChannelInbound(s.ctx, store.ChannelInbound{
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
 		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: "hi",
 		Raw: []byte(fmt.Sprintf(`{"data":{"chat":{"is_group":%t}}}`, isGroup)), NextAttemptAt: time.Now(),
-	})
+	}, nil)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 }

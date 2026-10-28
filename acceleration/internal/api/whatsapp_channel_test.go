@@ -199,6 +199,7 @@ func (s *WhatsAppChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "Hi, are you there?")))
 
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.meta.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Zero(s.episodes(), "a keyword opens no card")
 
@@ -237,6 +238,7 @@ func (s *WhatsAppChannelSuite) TestAnOptOutOfTheNumberInE164KeepsTheAgentAway() 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "Hi")))
 
 	channel := s.threadChannel(person)
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.meta.sent()) > 0 }, dropped, 20*time.Millisecond)
 }
 

@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
@@ -181,6 +183,7 @@ func (s *TelnyxChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Hi, are you there?"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Zero(s.episodes(), "a keyword opens no card")
 
@@ -220,36 +223,93 @@ func (s *TelnyxChannelSuite) TestAStopTelnyxRepeatsIsConfirmedOnce() {
 	s.Equal(1, s.liveOptOuts(person))
 }
 
-// A STOP the store fails to record is answered 500, so Telnyx delivers it again, and its claim
-// is released, so that delivery records and confirms it: an opt-out is never lost to a retry.
-// A trigger refuses the first insert of the person's opt-out, as a store that fails would.
-func (s *TelnyxChannelSuite) TestAStopTheStoreFailedToRecordIsRecordedWhenTelnyxDeliversItAgain() {
+// A STOP the store fails to record fails the worker's attempt, not the delivery, and the next
+// attempt records and confirms it, once: an opt-out is never lost to a store that fails. A
+// trigger refuses the person's opt-out until the first attempt failed, as a store that fails would.
+func (s *TelnyxChannelSuite) TestAStopTheStoreFailedToRecordIsRecordedAndConfirmedOnceOnTheNextAttempt() {
 	person := "+13125550077"
-	ctx := context.Background()
-	_, err := s.store.DB().ExecContext(ctx, `CREATE OR REPLACE FUNCTION telnyx_suite_refuse_opt_out() RETURNS trigger AS $$
-		BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql`)
-	s.Require().NoError(err)
-	_, err = s.store.DB().ExecContext(ctx, `CREATE TRIGGER telnyx_suite_refuse_opt_out BEFORE INSERT ON opt_outs
-		FOR EACH ROW WHEN (NEW.recipient = '`+person+`') EXECUTE FUNCTION telnyx_suite_refuse_opt_out()`)
-	s.Require().NoError(err)
-	gone := false
-	drop := func() {
-		if !gone {
-			_, err := s.store.DB().ExecContext(ctx, "DROP TRIGGER telnyx_suite_refuse_opt_out ON opt_outs")
-			s.Require().NoError(err)
-			gone = true
-		}
-	}
-	defer drop()
-	body := s.received(s.line, person, "STOP")
+	drop := s.trigger("telnyx_suite_refuse_opt_out", "opt_outs", "INSERT", "NEW.recipient = '"+person+"'",
+		"RAISE EXCEPTION 'refused by the test';")
 
-	s.Equal(http.StatusInternalServerError, s.deliver(body, time.Now()))
+	s.Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
+	s.failedOnce()
 	drop()
-	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
 
 	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.settled()
 	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveOptOuts(person))
+}
+
+// A STOP the store keeps failing to record is never given up: past the scheduled waits it runs
+// again after the last one, until the opt-out is recorded and confirmed, once.
+func (s *TelnyxChannelSuite) TestAStopTheStoreKeepsFailingToRecordIsNeverGivenUp() {
+	person := "+13125550081"
+	drop := s.trigger("telnyx_suite_refuse_opt_out_long", "opt_outs", "INSERT", "NEW.recipient = '"+person+"'",
+		"RAISE EXCEPTION 'refused by the test';")
+	attempts := func() int {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT coalesce(max(attempts), 0) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'queued'", s.customerID()).Scan(&count))
+		return count
+	}
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
+	s.Require().Eventually(func() bool { return attempts() > 4 }, settleFor, 5*time.Millisecond,
+		"the STOP is not run again past the suite's three waits")
+	s.Zero(s.inboundRows(store.ChannelInboundFailed), "the STOP is not given up")
+	drop()
+
+	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.settled()
+	s.Equal(1, s.liveOptOuts(person))
+}
+
+// A keyword whose answer the store fails to mark fails the attempt before the answer is sent,
+// and the next attempt answers it, once.
+func (s *TelnyxChannelSuite) TestAKeywordWhoseAnswerCannotBeMarkedIsAnsweredOnTheNextAttempt() {
+	person := "+13125550080"
+	drop := s.trigger("telnyx_suite_refuse_mark", "channel_thread_inbound", "UPDATE",
+		"NEW.author_id = '"+person+"' AND NEW.keyword_answered", "RAISE EXCEPTION 'refused by the test';")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "HELP"), time.Now()))
+	s.failedOnce()
+	s.Empty(s.telnyx().sent(), "nothing is sent before the answer is marked")
+	drop()
+
+	s.Equal(telnyxHelp, s.took(1)[0].text)
+	s.settled()
+	s.Len(s.telnyx().sent(), 1)
+}
+
+// A keyword answered by an attempt whose row was not recorded as done, as when its router stops
+// after the answer, is not answered again by the attempt that takes the row once its lease ran
+// out. A trigger refuses to record the row done; the test then cuts the lease short.
+func (s *TelnyxChannelSuite) TestAKeywordIsAnsweredOnceWhenItsRowIsTakenAgain() {
+	person := "+13125550079"
+	drop := s.trigger("telnyx_suite_refuse_done", "channel_thread_inbound", "UPDATE",
+		"NEW.author_id = '"+person+"' AND NEW.state = 'done'", "RAISE EXCEPTION 'refused by the test';")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "HELP"), time.Now()))
+	s.took(1)
+	channel := s.threadChannel(person)
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `msg="could not record an inbound message's attempt" connector=telnyx customer=`+s.customerID()+" channel="+channel)
+	}, settleFor, 10*time.Millisecond, "the attempt was recorded")
+	drop()
+
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE channel_thread_inbound SET next_attempt_at = now() WHERE author_id = ? AND state = 'queued'", person)
+	s.Require().NoError(err)
+	// Another router's worker looks at once when it starts; the suite's sleeps until the lease
+	// it saw runs out.
+	next, err := channelbridge.New(s.channelBridgeOptions(slog.New(slog.DiscardHandler)))
+	s.Require().NoError(err)
+	next.Start()
+	s.T().Cleanup(next.Close)
+
+	s.settled()
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Empty(s.chat.Stored(channel), "a keyword reaches no agent on any attempt")
 }
 
 // CTIA 5.1.3: «No further messages should be sent following the confirmation message», so a
@@ -339,22 +399,24 @@ func (s *TelnyxChannelSuite) TestEachStopWordRecordsAnOptOutAndEachStartWordRevo
 	for i, word := range []string{"STOP", "STOPALL", "STOP ALL", "END", "UNSUBSCRIBE", "CANCEL", "QUIT", "REVOKE", "OPT OUT"} {
 		person := "+1312555" + strconv.Itoa(1000+i)
 		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, word), time.Now()))
+		s.settled()
 		s.Equal(1, s.liveOptOuts(person), word)
 	}
 	for i, word := range []string{"START", "UNSTOP"} {
 		person := "+1312555" + strconv.Itoa(2000+i)
 		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "STOP"), time.Now()))
+		s.settled()
 		s.Require().Equal(1, s.liveOptOuts(person))
 		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, word), time.Now()))
+		s.settled()
 		s.Zero(s.liveOptOuts(person), word)
 	}
 }
 
-// A message whose opt-out the store fails to read is answered 500, as any store failure of the
-// bridge is (connector_events.go, writeFailure), and reaches no agent: it is never let through
-// to someone who may have opted out. A view in place of opt_outs refuses this customer's rows,
+// A message whose opt-out the store fails to read reaches no agent: the worker's attempts fail
+// until it gives the message up, and it is never let through to someone who may have opted out. A view in place of opt_outs refuses this customer's rows,
 // as a store that fails would; the person has opted out, so a read let through would drop it.
-func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsAnswered500AndReachesNoAgent() {
+func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsGivenUpAndReachesNoAgent() {
 	person := "+13125550078"
 	ctx := context.Background()
 	s.Require().NoError(s.store.OptOut(ctx, &store.OptOut{CustomerID: s.customerID(), Recipient: person, Channel: "sms", Source: "keyword"}))
@@ -375,10 +437,12 @@ func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsAnswered500And
 		s.Require().NoError(err)
 	}()
 
-	s.Equal(http.StatusInternalServerError, s.deliver(s.received(s.line, person, "Hi"), time.Now()))
+	s.Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Hi"), time.Now()))
 
-	channel := s.threadChannel(person)
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Require().Eventually(func() bool { return s.inboundRows(store.ChannelInboundFailed) == 1 }, settleFor, 10*time.Millisecond,
+		"the message was not given up")
+	s.Empty(s.chat.Stored(s.threadChannel(person)))
+	s.Empty(s.telnyx().sent())
 }
 
 // Telnyx answers STOP, START and HELP itself, and the event says so in
@@ -387,9 +451,11 @@ func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsAnswered500And
 func (s *TelnyxChannelSuite) TestKeywordsTelnyxAnsweredAreRecordedAndNotAnsweredAgain() {
 	person := "+13125550001"
 	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "STOP", "STOP"), time.Now()))
+	s.settled()
 	s.Equal(1, s.liveOptOuts(person))
 	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "HELP", "HELP"), time.Now()))
 	s.Require().Equal(http.StatusOK, s.deliver(s.autoAnswered(s.line, person, "Start", "START"), time.Now()))
+	s.settled()
 	s.Zero(s.liveOptOuts(person))
 
 	channel := s.threadChannel(person)

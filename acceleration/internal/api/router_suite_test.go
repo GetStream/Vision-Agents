@@ -763,6 +763,59 @@ func (s *RouterSuite) writtenByTheInboundWorker(channel string) {
 	s.Contains([]string{channel + "-" + providerID, channel + "=" + hex.EncodeToString(sum[:])}, stored[0]["id"])
 }
 
+// settled waits until the inbound worker is done with every message the test's customer
+// queued: none of its rows is queued any more. Deliver queues a message before it answers, so
+// what the worker records when it admits one (opt-outs, a chat's person and members) can be
+// read once it returns, and what it held back is held back for good.
+func (s *RouterSuite) settled() {
+	s.Require().Eventually(func() bool { return s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor, 10*time.Millisecond,
+		"the inbound worker left messages queued")
+}
+
+// inboundRows is how many of the test customer's queued inbound messages are in state.
+func (s *RouterSuite) inboundRows(state string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = ?", s.customerID(), state).Scan(&count))
+	return count
+}
+
+// failedOnce waits until the first attempt of one of the test customer's queued inbound messages
+// failed, for a test that broke the store to mend it before the row is given up.
+func (s *RouterSuite) failedOnce() {
+	s.Require().Eventually(func() bool {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'queued' AND attempts > 0", s.customerID()).Scan(&count))
+		return count > 0
+	}, settleFor, 5*time.Millisecond, "no attempt failed")
+}
+
+// trigger runs body before each op on table for a row where when holds, until the test ends or
+// drop. The table is in the suite's own database (database), and when names the test's
+// customer, so no other test's rows meet it.
+func (s *RouterSuite) trigger(name, table, op, when, body string) (drop func()) {
+	db := s.store.DB()
+	_, err := db.ExecContext(context.Background(), "CREATE OR REPLACE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
+		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
+	s.Require().NoError(err)
+	var once sync.Once
+	drop = func() {
+		once.Do(func() {
+			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+			s.Require().NoError(err)
+			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS "+name+"()")
+			s.Require().NoError(err)
+		})
+	}
+	s.T().Cleanup(drop)
+	return drop
+}
+
 // channelBridgeOptions are the options channelBridge builds the bridge with, for a test to
 // build another router's bridge.
 func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Options {
@@ -783,9 +836,10 @@ func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Op
 		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver,
 		Gate: s.gate, Logger: logger,
 		// A reply sent again waits milliseconds here, not the production seconds; so does a
-		// queued inbound message written again.
+		// queued inbound message written again, but for the last wait: a test that breaks the
+		// store and mends it once an attempt failed has half a second before the row is given up.
 		RetryBackoff:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
-		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 500 * time.Millisecond},
 		InboundPoll:    10 * time.Millisecond,
 	}
 	if s.forwarder != nil {

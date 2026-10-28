@@ -327,6 +327,7 @@ func (s *LinqChannelSuite) TestAStopInIMessageIsConfirmedAndKeepsTheAgentAwayUnt
 	channel := s.threadChannel(chat)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "Hi, are you there?"), time.Now()))
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, person, "START"), time.Now()))
@@ -717,6 +718,7 @@ func (s *LinqChannelSuite) TestAStopFromAnyoneInAGroupIsConfirmedAndSilencesTheG
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.answeredAfter(channel, 0)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
+	s.settled()
 	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut, "a scheduled delivery into the group is refused too")
 	s.Contains(s.logged.String(), `level=INFO msg="dropped an inbound message in a chat with a person who opted out" connector=linq channel=`+channel)
@@ -779,6 +781,7 @@ func (s *LinqChannelSuite) TestAnAuthorCountsWhenTheChatDoesNotSayItIsAGroup() {
 
 	s.took(1)
 	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, "+12025550199", "Anyone there?"), nil), time.Now()))
+	s.settled()
 	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
@@ -791,11 +794,14 @@ func (s *LinqChannelSuite) TestAStopSentTwiceInAGroupIsLiftedOnlyByThatPersonsSt
 	channel := s.threadChannel(chat)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "Stop."), time.Now()))
+	s.settled()
 	s.Equal(1, s.liveIMessageOptOuts(member))
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
+	s.settled()
 	s.Equal(1, s.liveIMessageOptOuts(member))
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
+	s.settled()
 	s.Never(func() bool { return s.holds(channel, "Anyone there?") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
@@ -811,6 +817,7 @@ func (s *LinqChannelSuite) TestAHelpInAGroupWithAPersonWhoOptedOutIsNotAnswered(
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "HELP"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Contains(s.logged.String(), `level=INFO msg="dropped a keyword answer to a group with a person who opted out" connector=linq channel=`+s.threadChannel(chat))
 }
@@ -822,6 +829,7 @@ func (s *LinqChannelSuite) TestAStartFromAPersonWhoNeverOptedOutIsNotAnsweredInA
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "START"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 }
@@ -832,6 +840,7 @@ func (s *LinqChannelSuite) TestASecondStopInAGroupIsNotConfirmedAgain() {
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveIMessageOptOuts(member))
 }
@@ -846,6 +855,7 @@ func (s *LinqChannelSuite) TestAStartWhileAnotherPersonStaysOptedOutIsNotAnswere
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "START"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.linq.sent()) > 2 }, dropped, 20*time.Millisecond)
 	s.Zero(s.liveIMessageOptOuts(member))
 	channel := s.threadChannel(chat)
@@ -897,10 +907,11 @@ func (s *LinqChannelSuite) TestAStopInOnePersonsChatLeavesAnotherPersonsChatAnsw
 	s.NoError(s.reachable(channel))
 }
 
-// A store that cannot record a chat's member fails the delivery and releases its claim, so
-// Linq's retry of the same event is taken: the STOP is recorded and silences the chat. The table
-// is renamed away: the suite's database is its own (SetupSuite), and a defer puts it back.
-func (s *LinqChannelSuite) TestAMemberTheStoreCannotRecordLeavesTheMessageToTheRetry() {
+// A store that cannot record a chat's member fails the worker's attempt, not the delivery, and
+// the next attempt records it: the STOP is recorded, confirmed once and silences the chat. The
+// table is renamed away until the first attempt failed: the suite's database is its own
+// (SetupSuite), and a defer puts it back.
+func (s *LinqChannelSuite) TestAMemberTheStoreCannotRecordIsRecordedOnTheNextAttempt() {
 	ctx := context.Background()
 	chat, member := s.utils.uuid(), "+12025550198"
 	body := s.inGroup(chat, member, "STOP")
@@ -916,12 +927,14 @@ func (s *LinqChannelSuite) TestAMemberTheStoreCannotRecordLeavesTheMessageToTheR
 	}
 	defer restore()
 
-	s.NotEqual(http.StatusOK, s.deliver(body, time.Now()))
-	restore()
-	s.Zero(s.liveIMessageOptOuts(member))
-
 	s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
+	s.failedOnce()
+	s.Zero(s.liveIMessageOptOuts(member), "the member is recorded before the keyword")
+	restore()
+
 	s.Equal(telnyxStopped, s.took(1)[0].text)
+	s.settled()
+	s.Len(s.linq.sent(), 1)
 	s.ErrorIs(s.reachable(s.threadChannel(chat)), channelbridge.ErrOptedOut)
 }
 

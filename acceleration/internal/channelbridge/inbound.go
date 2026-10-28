@@ -41,7 +41,8 @@ const pruneEvery = time.Hour
 
 // defaultInboundRetries are the waits before each write again of a queued message whose write
 // failed: five more within about 13 minutes, spaced so a Stream Chat that answered 5xx or 429
-// has time to recover. Then the message is given up. A choice, not a vendor's figure.
+// has time to recover. Then the message is given up, except an opt-out (optsOut), which is
+// written again after the last wait until it is recorded. A choice, not a vendor's figure.
 var defaultInboundRetries = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}
 
 // maxMessageID is the longest message id Stream Chat takes: «message.id must be a maximum of
@@ -155,7 +156,8 @@ func (b *Bridge) prune() {
 }
 
 // attempt writes a claimed message once and records what came of it: done, due again after
-// the next wait, or given up when the waits ran out or Stream Chat refused it for good. Close
+// the next wait, or given up when the waits ran out or Stream Chat refused it for good. An
+// opt-out is never given up: once the waits ran out it is due again after the last one. Close
 // does not cut it short, so a message is never left half written by a router that stops; its
 // lease covers writeTimeout.
 func (b *Bridge) attempt(message store.ChannelInbound) {
@@ -171,9 +173,13 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 	switch {
 	case err == nil:
 		changed, err = b.store.FinishChannelInbound(recording, message, time.Now())
-	case attempts <= len(b.inboundRetries) && !refusedForGood(err):
+	case (attempts <= len(b.inboundRetries) || optsOut(message.Message())) && !refusedForGood(err):
 		log.Info("an inbound message was not written into its thread channel and is written again", "attempts", attempts, "error", err)
-		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(b.inboundRetries[attempts-1]))
+		if attempts > len(b.inboundRetries) {
+			log.Warn("an opt-out is still not recorded and is tried again", "attempts", attempts, "error", err)
+		}
+		wait := b.inboundRetries[min(attempts, len(b.inboundRetries))-1]
+		changed, err = b.store.RetryChannelInbound(recording, message, time.Now().Add(wait))
 	default:
 		cause := err
 		changed, err = b.store.FailChannelInbound(recording, message, time.Now(), b.forwardUnanswered(message))
@@ -191,12 +197,17 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 	}
 }
 
-// writeQueued writes a queued message into its thread channel under its own Stream id, and the
-// card of the episode it opens, as Deliver and write do for a message they take. Either one
-// already written by an attempt whose answer was lost counts as written.
+// writeQueued admits a queued message (admit), then writes it into its thread channel under its
+// own Stream id, and the card of the episode it opens. Either one already written by an attempt
+// whose answer was lost counts as written. A message admit holds back, such as a keyword or one
+// the gate refuses, is done with nothing written.
 func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) error {
 	thread, err := b.store.ChannelThread(ctx, message.ChannelID)
 	if err != nil {
+		return err
+	}
+	admitted, err := b.admit(ctx, thread, message)
+	if err != nil || !admitted {
 		return err
 	}
 	config := store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}
