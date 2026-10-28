@@ -8987,11 +8987,17 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+    /// What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Price
     {
+
+        /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
 
         /// <summary>
         /// The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
@@ -9040,6 +9046,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
@@ -9137,6 +9149,12 @@ namespace GetStream.VisionAgents.Models
     public partial class PriceChangeEntry
     {
 
+        /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("free")]
         public bool? Free { get; set; } = default!;
 
@@ -9169,6 +9187,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
@@ -9279,6 +9303,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -9327,6 +9357,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
+        /// <summary>
         /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("sku")]
@@ -9366,6 +9402,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// The vendor charges nothing for it. A free entry has no price.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("free")]
@@ -9393,7 +9435,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
 
         /// <summary>
-        /// What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+        /// What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("prices")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
@@ -9408,7 +9450,13 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
-        /// The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
+        /// <summary>
+        /// The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("sku")]
         public string? Sku { get; set; } = default!;
@@ -9444,6 +9492,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9454,6 +9508,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
@@ -9561,6 +9621,12 @@ namespace GetStream.VisionAgents.Models
         public PricedEntry? Before { get; set; } = default!;
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9580,6 +9646,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// It is priced before the change and billable with no price after.
@@ -9714,7 +9786,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset At { get; set; } = default!;
 
         /// <summary>
-        /// Every item priced now, by modality, provider and model.
+        /// Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("entries")]
         public System.Collections.Generic.List<Price> Entries { get; set; } = new System.Collections.Generic.List<Price>();
@@ -14429,6 +14501,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -14481,6 +14559,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("reason")]
         public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.

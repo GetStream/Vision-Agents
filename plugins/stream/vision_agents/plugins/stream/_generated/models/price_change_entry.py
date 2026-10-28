@@ -26,7 +26,11 @@ class PriceChangeEntry:
         modality (str): Such as llm, stt, tts, sms or phone.
         model (str):
         provider (str):
+        region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+            priced only by an entry of its own region, never another region's.
         sku (str): The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
+        byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+            by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
         free (bool | Unset):
         price_tiers (list[PriceTier] | None | Unset): What customers are charged for long prompts.
         prices (PriceChangeEntryPrices | Unset): What customers are charged, by meter.
@@ -40,7 +44,9 @@ class PriceChangeEntry:
     modality: str
     model: str
     provider: str
+    region: str
     sku: str
+    byok: bool | Unset = UNSET
     free: bool | Unset = UNSET
     price_tiers: list[PriceTier] | None | Unset = UNSET
     prices: PriceChangeEntryPrices | Unset = UNSET
@@ -57,7 +63,11 @@ class PriceChangeEntry:
 
         provider = self.provider
 
+        region = self.region
+
         sku = self.sku
+
+        byok = self.byok
 
         free = self.free
 
@@ -106,9 +116,12 @@ class PriceChangeEntry:
                 "modality": modality,
                 "model": model,
                 "provider": provider,
+                "region": region,
                 "sku": sku,
             }
         )
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if free is not UNSET:
             field_dict["free"] = free
         if price_tiers is not UNSET:
@@ -140,7 +153,11 @@ class PriceChangeEntry:
 
         provider = d.pop("provider")
 
+        region = d.pop("region")
+
         sku = d.pop("sku")
+
+        byok = d.pop("byok", UNSET)
 
         free = d.pop("free", UNSET)
 
@@ -217,7 +234,9 @@ class PriceChangeEntry:
             modality=modality,
             model=model,
             provider=provider,
+            region=region,
             sku=sku,
+            byok=byok,
             free=free,
             price_tiers=price_tiers,
             prices=prices,

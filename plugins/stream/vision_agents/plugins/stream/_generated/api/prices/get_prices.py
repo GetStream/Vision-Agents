@@ -13,11 +13,14 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     *,
     modality: str | Unset = UNSET,
+    region: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
 
     params["modality"] = modality
+
+    params["region"] = region
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -89,18 +92,22 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     modality: str | Unset = UNSET,
+    region: str | Unset = UNSET,
 ) -> Response[ErrorResponse | Prices]:
     """Read the price list
 
      Every item this router prices, at the rates a customer is charged, which are what every answer's
     X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long
-    prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest
-    first, with their reason, an item they withdraw included. The list is the one in memory, so reading
-    it costs no query; a change made on another router shows within 30 seconds. Prices are the same for
-    everyone, so any caller may read them.
+    prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with
+    the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer;
+    neither falls back to another region's price or the other `byok` state's. Then what the changes
+    scheduled later will set, soonest first, with their reason, an item they withdraw included. The list
+    is the one in memory, so reading it costs no query; a change made on another router shows within 30
+    seconds. Prices are the same for everyone, so any caller may read them.
 
     Args:
         modality (str | Unset): Only this modality's items, such as llm, stt, tts, sms or phone.
+        region (str | Unset): Only this region's items, such as us or eu.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +119,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         modality=modality,
+        region=region,
     )
 
     response = client.get_httpx_client().request(
@@ -125,18 +133,22 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     modality: str | Unset = UNSET,
+    region: str | Unset = UNSET,
 ) -> ErrorResponse | Prices | None:
     """Read the price list
 
      Every item this router prices, at the rates a customer is charged, which are what every answer's
     X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long
-    prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest
-    first, with their reason, an item they withdraw included. The list is the one in memory, so reading
-    it costs no query; a change made on another router shows within 30 seconds. Prices are the same for
-    everyone, so any caller may read them.
+    prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with
+    the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer;
+    neither falls back to another region's price or the other `byok` state's. Then what the changes
+    scheduled later will set, soonest first, with their reason, an item they withdraw included. The list
+    is the one in memory, so reading it costs no query; a change made on another router shows within 30
+    seconds. Prices are the same for everyone, so any caller may read them.
 
     Args:
         modality (str | Unset): Only this modality's items, such as llm, stt, tts, sms or phone.
+        region (str | Unset): Only this region's items, such as us or eu.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,6 +161,7 @@ def sync(
     return sync_detailed(
         client=client,
         modality=modality,
+        region=region,
     ).parsed
 
 
@@ -156,18 +169,22 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     modality: str | Unset = UNSET,
+    region: str | Unset = UNSET,
 ) -> Response[ErrorResponse | Prices]:
     """Read the price list
 
      Every item this router prices, at the rates a customer is charged, which are what every answer's
     X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long
-    prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest
-    first, with their reason, an item they withdraw included. The list is the one in memory, so reading
-    it costs no query; a change made on another router shows within 30 seconds. Prices are the same for
-    everyone, so any caller may read them.
+    prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with
+    the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer;
+    neither falls back to another region's price or the other `byok` state's. Then what the changes
+    scheduled later will set, soonest first, with their reason, an item they withdraw included. The list
+    is the one in memory, so reading it costs no query; a change made on another router shows within 30
+    seconds. Prices are the same for everyone, so any caller may read them.
 
     Args:
         modality (str | Unset): Only this modality's items, such as llm, stt, tts, sms or phone.
+        region (str | Unset): Only this region's items, such as us or eu.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,6 +196,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         modality=modality,
+        region=region,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -190,18 +208,22 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     modality: str | Unset = UNSET,
+    region: str | Unset = UNSET,
 ) -> ErrorResponse | Prices | None:
     """Read the price list
 
      Every item this router prices, at the rates a customer is charged, which are what every answer's
     X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long
-    prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest
-    first, with their reason, an item they withdraw included. The list is the one in memory, so reading
-    it costs no query; a change made on another router shows within 30 seconds. Prices are the same for
-    everyone, so any caller may read them.
+    prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with
+    the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer;
+    neither falls back to another region's price or the other `byok` state's. Then what the changes
+    scheduled later will set, soonest first, with their reason, an item they withdraw included. The list
+    is the one in memory, so reading it costs no query; a change made on another router shows within 30
+    seconds. Prices are the same for everyone, so any caller may read them.
 
     Args:
         modality (str | Unset): Only this modality's items, such as llm, stt, tts, sms or phone.
+        region (str | Unset): Only this region's items, such as us or eu.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,5 +237,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             modality=modality,
+            region=region,
         )
     ).parsed
