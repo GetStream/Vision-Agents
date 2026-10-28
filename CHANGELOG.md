@@ -2,6 +2,10 @@
 
 ## Features
 
+### A Flutter app on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` in `vision_agents_rtc` now lets the agent look through the phone's camera, as the Swift, Kotlin and JS SDKs do. While the camera is on, a picture of the call's own video is taken twice a second and the last four seconds kept; when the agent's `vision` skill asks for what the camera showed (`get_video_frames`), the session answers with the frames taken at or before the moment the question was taken, at most eight, scaled to 1024 px and sent as JPEGs. With nothing from the last five seconds it says so as the answer, so the agent asks the person to show it again; with the camera off it does not answer, leaving the call to a video worker in the backend. In `vision_agents_core`, `AgentSession.cameraFrames` (a `CameraFrames`) is what answers, which an app with a camera of its own can fill. `vision_agents_rtc` now depends on `image`.
+
 ### An iMessage photo reaches the agent
 
 A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).

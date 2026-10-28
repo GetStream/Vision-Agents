@@ -123,6 +123,28 @@ final photograph = AgentTool.withPictures(
 A call the router cancels, because its timeout passed or the caller interrupted it, is not
 answered: the tool's future runs to its end and what it returns is dropped.
 
+### Showing the agent the camera
+
+On a call, turn the camera on and the agent can look through it:
+
+```dart
+await voice.join(camera: true); // or later: await voice.setCameraEnabled(true);
+```
+
+The camera is the back lens. While it is on, a picture of the call's own video is taken twice a
+second and the last four seconds are kept. When the agent's `vision` skill needs to see, the
+router asks for what the camera showed at the moment the question was taken
+(`get_video_frames`), and `voice.session` answers with those frames, at most 1024 px on their
+longest side, as JPEGs. Nothing is declared as a tool, so the model is never offered it, and a
+camera turned off forgets what it showed. With the camera off the session does not answer, so a
+video worker in your backend can. The agent needs the `vision` skill, and the call a subagent to
+run it on.
+
+Stream Video has no Dart hook on the frames a call sends, so each picture is a screenshot of the
+local camera track (`Call.takeScreenshot`), at the camera's full size; only the few an answer
+sends are scaled and re-encoded. An app with a camera of its own can fill
+`session.cameraFrames` (a `CameraFrames`) itself.
+
 ### A connector's sign-in
 
 A connector call that needs the person to sign in waits on its step, `awaiting_authorization`.

@@ -168,12 +168,24 @@ userToken:, tokenLoader:)`, `makeCall(callType:, id:)`, `call.join(connectOption
 CallConnectOptions(microphone:, camera:, cameraFacingMode: FacingMode.environment,
 speakerDefaultOn: true))` (which creates the call too), `setMicrophoneEnabled`,
 `setCameraEnabled(constraints: CameraConstraints(...))`, `call.leave()`, `dispose()`,
-`call.state.valueStream`, `StreamVideoRenderer`. Results are `Result<T>`; a `Failure` becomes
-`VoiceState.failure`.
+`call.state.valueStream`, `StreamVideoRenderer`, `call.takeScreenshot(localParticipant)`. Results
+are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
 
 - A token provider, not a token: `tokenLoader` asks the agents' token function again when the
   token expires an hour in.
 - The camera starts on the back lens as a join setting, so no front-facing frame is published.
+- The agent looks through the camera with the router's `get_video_frames` tool call, answered by
+  `AgentSession` from `cameraFrames` (core's `CameraFrames`: 0.5 s, keep 8, fresh 5 s, skew 2 s,
+  as Swift, Kotlin and JS) and never offered to the app's tools. With `cameraFrames` null the call
+  is left alone (a backend video worker may own it); with `run: false` it is left alone too, as
+  JS does. `VoiceSession` sets it while the camera is on. Stream Video 1.6 has no Dart hook on
+  outgoing frames, so it takes a screenshot of the call's own track every 0.5 s: full size, a JPEG
+  q100 on Android and a PNG on iOS, encoded natively on the thread that delivers frames; a picture
+  not there within 2 s is given up on, since a stopped or replaced track never gives one. Only the
+  frames an answer sends are scaled to 1024 px and made JPEG q70 (`package:image` in `compute`):
+  several full-size pictures pass the router's 5 MiB socket frame limit, which closes the socket.
+  A socket that names its `tools` must name `get_video_frames` too, or the router sends the call
+  with `run: false` and drops the answer.
 - Permissions are the host app's: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `CAMERA`,
   `BLUETOOTH_CONNECT`, `INTERNET`, `ACCESS_NETWORK_STATE`; `NSMicrophoneUsageDescription`,
   `NSCameraUsageDescription`. Emulators do not test echo cancellation or audio routing.
