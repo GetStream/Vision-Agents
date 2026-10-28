@@ -538,9 +538,11 @@ func (s *ConfigSuite) TestTheProxySocketIsInheritedOnlyWhenAskedFor() {
 	s.Zero(config.CodeSandbox.ProxyListenFD)
 	s.Empty(os.Getenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD"))
 
+	// From a file, so the variable read afterwards is the one Load wrote.
 	s.T().Setenv("ROUTER_LISTEN_FD", "3")
-	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD", "4")
-	config, _, err = Load("")
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("code_sandbox:\n  proxy_listen_fd: 4\n"), 0o600))
+	config, _, err = Load(path)
 	s.Require().NoError(err)
 	s.Equal(4, config.CodeSandbox.ProxyListenFD)
 	s.Equal("4", os.Getenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD"))

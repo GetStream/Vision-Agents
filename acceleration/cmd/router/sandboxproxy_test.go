@@ -1057,3 +1057,34 @@ func TestAnInheritedDescriptorThatIsNoSocketFailsTheStart(t *testing.T) {
 
 	require.ErrorContains(t, err, fmt.Sprintf("could not serve on the inherited socket %d (code_sandbox.proxy_listen_fd)", fd))
 }
+
+// TestAnInheritedProxySocketIsHandedOverEvenWithoutAnInheritedPublicOne: the proxy's socket
+// alone says a supervisor runs the next router on it, so the hand-over stops this one accepting.
+func TestAnInheritedProxySocketIsHandedOverEvenWithoutAnInheritedPublicOne(t *testing.T) {
+	opened, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	file, err := opened.(*net.TCPListener).File()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	require.NoError(t, opened.Close())
+	fd, err := syscall.Dup(int(file.Fd()))
+	require.NoError(t, err)
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	served := make(chan error, 1)
+	stop, handOver, err := serveSandboxProxy(proxy, ":8091", fd, "", false, func(server *http.Server, listener net.Listener) {
+		served <- server.Serve(listener)
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+
+	handOver()
+
+	select {
+	case err := <-served:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the router still accepts on the inherited socket after its hand-over")
+	}
+}
