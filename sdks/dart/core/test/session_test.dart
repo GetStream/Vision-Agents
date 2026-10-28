@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:test/test.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
@@ -546,6 +547,161 @@ void main() {
       });
       expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
       await chat.close();
+    });
+
+    group('the request for frames', () {
+      // The moment the router took the question, and its request for frames as `frameOf`
+      // writes the vision skill's call.
+      final asked = DateTime.utc(2026, 10, 27, 12);
+      String request({String run = 'true', String ids = '"request_id":"","turn_id":""'}) =>
+          '{"type":"tool_call","id":"task-1-capture","name":"get_video_frames",'
+          r'"arguments":"{\"at_ms\":1793102400000,\"limit\":2,\"source\":\"camera\"}",'
+          '$ids,"session_id":"s1","run":$run}';
+
+      test('is answered with what the camera showed then, words first, oldest first', () async {
+        final chat = await agents.chat();
+        chat.cameraFrames = CameraFrames()
+          ..record(Uint8List.fromList([1]), asked.subtract(const Duration(milliseconds: 1500)))
+          ..record(Uint8List.fromList([2]), asked.subtract(const Duration(milliseconds: 1000)))
+          ..record(Uint8List.fromList([3]), asked.subtract(const Duration(milliseconds: 500)))
+          ..record(Uint8List.fromList([4]), asked.add(const Duration(seconds: 3)));
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'task-1-capture',
+          'output': [
+            {
+              'type': 'text',
+              'text':
+                  '{"clock":"device_unix_ms","frames":['
+                  '{"captured_at_ms":1793102399000,"frame_id":"camera-2"},'
+                  '{"captured_at_ms":1793102399500,"frame_id":"camera-3"}],"source":"camera"}',
+            },
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,Ag=='},
+            },
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,Aw=='},
+            },
+          ],
+          'error': '',
+        });
+        await chat.close();
+      });
+
+      test("repeats a request's ids, as any tool result does", () async {
+        final chat = await agents.chat();
+        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), asked);
+        final socket = await router.socket();
+
+        socket.send(request(ids: '"request_id":"cmd-1","turn_id":"t1"'));
+
+        final result = await socket.next();
+        expect(result['request_id'], 'cmd-1');
+        expect(result['turn_id'], 't1');
+        await chat.close();
+      });
+
+      test('sends each frame as its encoder made it, leaving out one it could not', () async {
+        final chat = await agents.chat();
+        chat.cameraFrames =
+            CameraFrames(
+                encode: (picture) async => picture.first == 2
+                    ? throw const FormatException('not a picture')
+                    : Uint8List.fromList([9, ...picture]),
+              )
+              ..record(Uint8List.fromList([2]), asked.subtract(const Duration(seconds: 1)))
+              ..record(Uint8List.fromList([3]), asked);
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        final output = (await socket.next())['output']! as List<Object?>;
+        expect(output, hasLength(2));
+        expect((output.first! as Map)['text'], contains('"frame_id":"camera-2"'));
+        expect(output.last, {
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,CQM='},
+        });
+        await chat.close();
+      });
+
+      test('says the camera showed nothing recent, as an answer rather than a failure', () async {
+        final chat = await agents.chat();
+        chat.cameraFrames = CameraFrames()
+          ..record(Uint8List.fromList([1]), asked.subtract(const Duration(seconds: 6)));
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'task-1-capture',
+          'output':
+              'The camera has shown nothing in the last few seconds; ask them to point it at '
+              'what they mean again.',
+          'error': '',
+        });
+        await chat.close();
+      });
+
+      test('is left to whoever the router says runs it', () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), asked);
+        final socket = await router.socket();
+
+        socket
+          ..send(request(run: 'false'))
+          ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test('with the camera off, is left alone like any tool this app does not have', () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket
+          ..send(request())
+          ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test("with the camera off, goes to the app's own tool of that name as before", () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [
+              AgentTool(
+                name: 'get_video_frames',
+                description: 'What the doorbell saw.',
+                run: (_) async => 'a parcel',
+              ),
+            ],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect((await socket.next())['output'], 'a parcel');
+        await chat.close();
+      });
     });
 
     test('two readers of events each get every event', () async {
