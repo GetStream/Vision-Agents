@@ -132,6 +132,11 @@ type Knowledge struct {
 	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
 	// section and in every passage's source.
 	MaxHeading int `koanf:"max_heading"`
+	// Regions maps each region knowledge is kept in, such as eu, to the turbopuffer region
+	// serving it, such as aws-eu-central-1. The default region, us, is always served: left
+	// out here, at TURBOPUFFER_REGION, then gcp-us-central1, as before. A customer whose
+	// policies name a region mapped to none has its knowledge refused.
+	Regions map[string]string `koanf:"regions"`
 }
 
 // LimitsMode is how much of credit, the spend hard limit and the customers' spend limits the
@@ -430,6 +435,11 @@ type CodeSandbox struct {
 	// touches only sandboxes carrying it. Empty labels nothing, and the job leaves the
 	// sandboxes alone.
 	Deployment string `koanf:"deployment"`
+	// Targets maps each region sandboxes run in, such as eu, to the Daytona target they are
+	// made on, such as eu. The default region, us, is always served: left out here, on
+	// DAYTONA_TARGET, then Daytona's own default, as before. A session whose customer's
+	// policies name a region mapped to none is refused its sandbox.
+	Targets map[string]string `koanf:"targets"`
 }
 
 // sandboxDeployment is what code_sandbox.deployment may hold: a Daytona label value.
@@ -537,6 +547,7 @@ var variables = map[string]string{
 	"code_sandbox.idle_stop":        "ROUTER_CODE_SANDBOX_IDLE_STOP",
 	"code_sandbox.stopped_delete":   "ROUTER_CODE_SANDBOX_STOPPED_DELETE",
 	"code_sandbox.deployment":       "ROUTER_CODE_SANDBOX_DEPLOYMENT",
+	"code_sandbox.targets":          "ROUTER_CODE_SANDBOX_TARGETS",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -551,6 +562,7 @@ var variables = map[string]string{
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
+	"knowledge.regions":     "ROUTER_KNOWLEDGE_REGIONS",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -558,7 +570,11 @@ var lists = map[string]bool{"trusted_proxies": true}
 
 // pairs are the settings written as a comma-separated variable of name=value and as a
 // mapping in YAML.
-var pairs = map[string]bool{"postgres.shards": true}
+var pairs = map[string]bool{"postgres.shards": true, "knowledge.regions": true, "code_sandbox.targets": true}
+
+// providerRegion is what a turbopuffer region or a Daytona target may be called: part of a
+// host name, or a value Daytona takes.
+var providerRegion = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -818,6 +834,19 @@ func (c Config) validate() error {
 			return fmt.Errorf("config: knowledge.stream_cost.%s is usd per a positive number of units, got %+v", meter, rate)
 		}
 	}
+	for _, regions := range []struct {
+		setting, example string
+		mapped           map[string]string
+	}{
+		{"knowledge.regions (ROUTER_KNOWLEDGE_REGIONS)", "the turbopuffer region serving it, such as eu=aws-eu-central-1", c.Knowledge.Regions},
+		{"code_sandbox.targets (ROUTER_CODE_SANDBOX_TARGETS)", "the Daytona target serving it, such as eu=eu", c.CodeSandbox.Targets},
+	} {
+		for _, region := range slices.Sorted(maps.Keys(regions.mapped)) {
+			if !pricing.ValidRegion(region) || !providerRegion.MatchString(regions.mapped[region]) {
+				return fmt.Errorf("config: %s maps a region to %s, got %s=%q", regions.setting, regions.example, region, regions.mapped[region])
+			}
+		}
+	}
 	switch c.Limits.Mode {
 	case LimitsEnforce, LimitsShadow, LimitsOff:
 	default:
@@ -991,6 +1020,7 @@ func (c Config) export() error {
 		"code_sandbox.idle_stop":        c.CodeSandbox.IdleStop.String(),
 		"code_sandbox.stopped_delete":   c.CodeSandbox.StoppedDelete.String(),
 		"code_sandbox.deployment":       c.CodeSandbox.Deployment,
+		"code_sandbox.targets":          joinPairs(c.CodeSandbox.Targets),
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
@@ -1008,6 +1038,7 @@ func (c Config) export() error {
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),
+		"knowledge.regions":     joinPairs(c.Knowledge.Regions),
 	}
 	for key, value := range values {
 		if value == "" {

@@ -372,6 +372,7 @@ pub fn config(id: &str, name: &str) -> Value {
         "id": id,
         "name": name,
         "mode": "voice",
+        "region": "us",
         "created_at": "2026-09-24T10:00:00Z",
         "updated_at": "2026-09-24T10:00:00Z",
     })

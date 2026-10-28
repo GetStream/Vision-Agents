@@ -28,7 +28,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -498,7 +497,7 @@ func (s *PolicySuite) TestAnOldAccountAnswersAtOnce() {
 func (s *PolicySuite) TestAMissReadsThePoliciesNowAndTheMoneyLater() {
 	no := false
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{
-		DataPolicy:    options.DataPolicy{AllowTraining: &no},
+		DataPolicy:    store.PolicyDataPolicy{AllowTraining: &no},
 		AllowedModels: &[]string{"openai/gpt-5.6-luna"},
 	})
 	enforcer := s.billed()
@@ -515,7 +514,7 @@ func (s *PolicySuite) TestAMissReadsThePoliciesNowAndTheMoneyLater() {
 
 func (s *PolicySuite) TestJoinWarmsTheDecisionAndTheAccount() {
 	no := false
-	s.save(store.ScopeApp, s.app, store.PolicyDocument{DataPolicy: options.DataPolicy{AllowTraining: &no}})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{DataPolicy: store.PolicyDataPolicy{AllowTraining: &no}})
 	enforcer := s.billed()
 
 	enforcer.Join(s.app, s.org, openTier)

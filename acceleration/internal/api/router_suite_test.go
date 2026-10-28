@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -59,6 +60,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -427,6 +429,14 @@ type RouterSuite struct {
 	// daytona is where the sessions' sandboxes are made, for a suite whose agents run code to
 	// set before it starts the harness. Nil makes them on the Daytona the environment names.
 	daytona *daytonatest.Server
+	// llmInstances, llmFactories, knowledgeRegions and sandboxTargets are a suite about regions'
+	// own, set before it starts the harness: model instances laid over reasoningConfig, what
+	// registers their factories over the suite's stubs, a knowledge backend for each region
+	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
+	llmInstances     []routing.ProviderConfig
+	llmFactories     func(*llmrouter.Registry)
+	knowledgeRegions map[string]knowledge.Backend
+	sandboxTargets   map[string]string
 	// sandbox is what an app with no approved use case may do, for a suite about the
 	// sandbox to set before it starts the harness. The zero value is off.
 	sandbox dlc.Sandbox
@@ -1005,13 +1015,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	// A model that runs the tool calls its test queued in the suite's schedulingScript,
 	// one call per person who speaks, for the scheduling tools' tests.
-	reasoning.Register("scheduling", func(routing.Spec) (llmrouter.Provider, error) {
-		model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
-		s.scheduledMu.Lock()
-		s.scheduled = append(s.scheduled, model)
-		s.scheduledMu.Unlock()
-		return model, nil
-	})
+	reasoning.Register("scheduling", s.schedulingModel)
 	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
 	// asks it something, a follow-up after a login included (chat_logins_test.go).
 	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
@@ -1025,8 +1029,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	if s.prices != nil {
 		pricer = s.prices
 	}
+	reasoned := reasoningConfig()
+	reasoned.Providers = append(reasoned.Providers, s.llmInstances...)
+	if s.llmFactories != nil {
+		s.llmFactories(reasoning)
+	}
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
+		Config: reasoned, Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Pricer: pricer, Logger: logger,
 		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
 		Writer: s.shippingWriter(gate, logger),
@@ -1158,7 +1167,8 @@ func (s *RouterSuite) sessionManager(
 	}
 	var sandboxes *metered.Sandboxes
 	if s.daytona != nil {
-		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
+		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(),
+			Targets: s.sandboxTargets, Recorder: s.metering, Logger: logger})
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Sandboxes:     sandboxes,
@@ -1329,7 +1339,19 @@ func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
 
 func (s *RouterSuite) knowledgeWriter(gate routing.Gate) *metered.Knowledge {
 	s.knowledge = newKnowledgeBase()
-	return metered.NewKnowledge(s.knowledge, s.metering, gate)
+	backends := map[string]knowledge.Backend{pricing.DefaultRegion: s.knowledge}
+	maps.Copy(backends, s.knowledgeRegions)
+	return metered.NewRegionalKnowledge(backends, s.metering, gate, s.store)
+}
+
+// schedulingModel is a model that runs the tool calls its test queued in the suite's
+// schedulingScript, one call per person who speaks, for the scheduling tools' tests.
+func (s *RouterSuite) schedulingModel(routing.Spec) (llmrouter.Provider, error) {
+	model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
+	s.scheduledMu.Lock()
+	s.scheduled = append(s.scheduled, model)
+	s.scheduledMu.Unlock()
+	return model, nil
 }
 
 // pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a

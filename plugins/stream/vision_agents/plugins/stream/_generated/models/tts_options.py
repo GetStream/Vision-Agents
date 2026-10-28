@@ -27,9 +27,9 @@ class TtsOptions:
             chunk_schedule (list[int] | Unset): Character counts at which a streaming voice flushes audio. Smaller first
                 values start speaking sooner and cost more requests. Live only.
             data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
-                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
-                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
-                the request is refused rather than sent somewhere that does not.
+                transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a
+                requirement rather than a description: a request naming one is only routed to a model whose declared handling
+                meets it, and if none does the request is refused rather than sent somewhere that does not.
             emotion (str | Unset): Affect to speak with, for the providers that take one.
             format_ (str | Unset): Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for
                 telephony. Example: pcm_16000.

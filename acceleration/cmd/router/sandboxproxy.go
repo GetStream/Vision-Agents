@@ -175,12 +175,13 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 	return stop, func() { finish(true) }, nil
 }
 
-// secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there
+// secretSweeper sweeps the Daytona secrets a crashed router left behind, in the deployment's
+// organization and in each customer's own that accounts gives a key for, and is nil where there
 // are none to sweep: under the proxy broker, whose grants expire in Redis, and without Daytona
 // or a secret prefix, which every secret this router makes is named with. It also needs the
 // node directory, the only thing that says whether a session runs on another router.
 func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
-	logger *slog.Logger) (*daytona.Sweeper, error) {
+	accounts func(context.Context) ([]string, error), logger *slog.Logger) (*daytona.Sweeper, error) {
 	if settings.Broker != config.CodeSandboxBrokerDaytona || settings.SecretPrefix == "" || !daytona.Configured() {
 		return nil, nil
 	}
@@ -190,13 +191,13 @@ func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *n
 		return nil, nil
 	}
 	return daytona.NewSweeper(daytona.SweepOptions{Prefix: settings.SecretPrefix, Sessions: directory,
-		Slots: concurrency.New(redis.Redis(), nil), Logger: logger})
+		Slots: concurrency.New(redis.Redis(), nil), Accounts: accounts, Logger: logger})
 }
 
 // startSecretSweeper sweeps, until ctx ends, with the sweeper secretSweeper gives, if any.
 func startSecretSweeper(ctx context.Context, settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
-	logger *slog.Logger) error {
-	sweeper, err := secretSweeper(settings, redis, directory, logger)
+	accounts func(context.Context) ([]string, error), logger *slog.Logger) error {
+	sweeper, err := secretSweeper(settings, redis, directory, accounts, logger)
 	if err != nil || sweeper == nil {
 		return err
 	}

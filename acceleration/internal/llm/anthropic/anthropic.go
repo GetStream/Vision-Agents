@@ -29,6 +29,9 @@ type Options struct {
 	// WorkspaceID names the workspace a key that is not scoped to one bills to. Anthropic
 	// refuses such a key without it.
 	WorkspaceID string
+	// CustomerKey says APIKey is a customer's own, of their own organization, so the
+	// deployment's ANTHROPIC_WORKSPACE_ID is not sent with it.
+	CustomerKey bool
 	// Compat serves the model over the OpenAI-compatible endpoint, which does not cache.
 	// ANTHROPIC_OPENAI_COMPAT=true sets it for every provider built.
 	Compat bool
@@ -39,7 +42,7 @@ func New(options Options) (llm.LLM, error) {
 	if options.APIKey == "" {
 		options.APIKey = keypool.Getenv("ANTHROPIC_API_KEY")
 	}
-	if options.WorkspaceID == "" {
+	if options.WorkspaceID == "" && !options.CustomerKey {
 		options.WorkspaceID = os.Getenv("ANTHROPIC_WORKSPACE_ID")
 	}
 	if options.Model == "" {

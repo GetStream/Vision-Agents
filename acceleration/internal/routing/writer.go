@@ -203,22 +203,26 @@ func (w *Writer) Close(ctx context.Context) {
 
 // queued is a row, the gate its tags come from (looked up by the writer so the request path
 // never does it), and what only provider health reads. keep is false for a row the stages
-// have no room for, which is counted live and then lost.
+// have no room for, which is counted live and then lost. private is work on the customer's own
+// key.
 type queued struct {
 	request    store.Request
 	gate       Gate
 	fatal      bool
 	unmeasured bool
+	private    bool
 	at         time.Time
 	keep       bool
 }
 
 // live is what the row adds to the live counters. A row that measures nothing its provider did
-// is spent as a cancelled request is, and kept out of health like one.
+// is spent as a cancelled request is, and kept out of health like one. A row of work on the
+// customer's own key is counted for the customer alone.
 func (row queued) live() live.Usage {
 	usage := liveUsage(row.request)
 	usage.Fatal = row.fatal
 	usage.Cancelled = usage.Cancelled || row.unmeasured
+	usage.Private = row.private
 	return usage
 }
 

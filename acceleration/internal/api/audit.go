@@ -64,10 +64,12 @@ func (AuditResourceType) Schema(registry huma.Registry) *huma.Schema {
 			"for an app. end_user is one of the app's end users whose id was forgotten in the "+
 			"usage records, named by the id that replaced it. limit is one of the organization's "+
 			"spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff "+
-			"made through the management API is kept under the organization's id.",
+			"made through the management API is kept under the organization's id. provider_key is a key the app keeps "+
+			"for its own account at a vendor, named <provider>/<region>; its changes show the key's last four "+
+			"characters at most, never the key.",
 		store.AuditAgentConfig, store.AuditSkill, store.AuditKnowledge, store.AuditKnowledgeURL,
 		store.AuditRouterConfig, store.AuditPlugin, store.AuditPolicy, store.AuditResourcePriceList,
-		store.AuditEndUser, store.AuditSpendLimit)
+		store.AuditEndUser, store.AuditSpendLimit, store.AuditProviderKey)
 }
 
 // AuditAction is what happened to it.

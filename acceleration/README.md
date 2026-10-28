@@ -85,9 +85,9 @@ go run ./cmd/router --config /etc/router.yaml
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
-`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
-`stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
-binary, by `ROUTER_ENV`.
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled`,
+`knowledge.regions`, `code_sandbox.targets` and `stream.{api_key,api_secret}`. Naming no file
+loads one of the three embedded in the binary, by `ROUTER_ENV`.
 
 Every variable below still wins over the file, so a chart, compose and `.env` keep working
 with nothing changed, and the effective settings are written back into the environment for
@@ -119,6 +119,8 @@ the other commands that read them there.
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
+| `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
+| `ROUTER_KNOWLEDGE_REGIONS` | `knowledge.regions`: each region knowledge is kept in and the turbopuffer region serving it, as `region=turbopuffer region` pairs, such as `eu=aws-eu-central-1`. `us` is always served: left out, at `TURBOPUFFER_REGION`, then `gcp-us-central1`, as before. One `TURBOPUFFER_API_KEY` serves every region. See [Regions](#regions) |
 | `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
@@ -474,7 +476,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models. A policy has no `region`, and one sent is refused: where work is done is the agent's own `region`, or a direct call's `data_policy.region`; see [Regions](#regions) |
 | `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
 | `tool_output_retention` | How long sessions keep what their tools were given and gave back: `none`, or `1h` to `3650d` such as `30d`. The shortest of the organization's, the app's and the agent config's `tools.output_retention` applies. See [What is recorded](#what-is-recorded) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
@@ -926,6 +928,178 @@ treats as the transcriber settling rather than as the caller saying it twice.
 Billing is per token, not per hour: audio in at $3.50/1M against 25 tokens a second, text
 out at $21.00/1M. The router config carries Google's own blended figure of about $0.009 an
 audio minute, so a busy call costs more than the table suggests and a quiet one less.
+
+### Regions
+
+An agent's work is done in one region, `us` or `eu` for now, and never in another: every model
+its sessions route to, its knowledge base and its sandbox. The region is the agent's own.
+`agent.yaml` names it as `region` (the sync's `region`), as a config written with the API does
+(`AgentConfigRequest.region`, `AgentConfigPatch.region`), and it is stored in
+`agent_configs.region` (migration `20261202135000_agent_region`, which puts every agent before it
+in `us`). An agent that names none is in `us` (`pricing.DefaultRegion`), and a sync, an update or a
+patch that leaves it out keeps the stored one. A region is a letter and up to 31 of a-z, 0-9 and
+hyphens (`pricing.ValidRegion`).
+
+Nothing about a region is looked up when work arrives. A session takes its region from its config,
+and carries it on every call it makes (`routing.Owner.Region`): its models', the flow controller's,
+the title's, the review's, the guardrail's and the prompt-injection screen's, its knowledge's and
+its sandbox's. So do the agent's text channels, phone calls, scheduled tasks and plugin events,
+which are sessions of its config, its episode summaries, and its simulations, whose simulated
+caller and judge are handed the agent's conversation and run in its region too. Phone legs, texts
+and memory are not routed by region.
+
+A sync, and a config create, update or patch, is checked before anything is written, and refused
+(400 `invalid_request`) naming each part of the agent's work that could not be done in its region:
+
+- a model it names (`llm`, `stt`, `tts`, `sts`, `subagent`, `search`) with no instance there:
+  `llm: no instance of anthropic/claude-haiku-5-5 in region eu`. A shortcut or a vendor name
+  passes when one of its instances runs there, as the router resolves it; a customer's own model
+  (`custom/<name>`) runs in `us` alone. A target the deployment does not route at all is left to
+  the session to refuse, as before regions, and so are the defaults of the models it leaves out;
+- its knowledge base kept in another region: a knowledge base is never moved. A sync's is the base
+  named after the agent, which it writes in the agent's region; a config's is its
+  `knowledge_namespace`. A region this deployment keeps no knowledge in is refused too;
+- a sandbox it names, in a region with no Daytona target.
+
+A read that fails fails the save, and the caller tries again. A model, a knowledge base or a
+sandbox the save leaves as it was, in the region it was in, is not checked again, so an agent
+stored before the check stays editable. The region is in what `check_changes` compares and in
+what the audit entry shows.
+
+A direct call, an `stt`, `tts` or `sts` socket or recording with no agent, names its own region in
+its option block's `data_policy.region`, `us` when it names none. Work naming two regions, its
+agent's and its data policy's, is refused naming both (`options.ErrRegionConflict`). A policy
+names no region: an app's and an organization's `data_policy` hold `allow_training` and
+`retention`, and refuse `region`, so no policy read, failed or not, moves any work.
+
+`router.yaml` may declare a model once per region. An instance is the provider, the model and
+its `region` (`us` when it names none); the same three twice is refused at start.
+
+```yaml
+llm:
+  providers:
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+      region: eu
+      endpoint: https://eu.anthropic.example/v1
+      api_key_env: ANTHROPIC_EU_API_KEY
+```
+
+- `endpoint` is the base URL of that instance's regional API, in place of the vendor's
+  default host.
+- `api_key_env` names the environment variable holding that instance's key, in place of the
+  vendor's own variable. It is read once at start, never logged, and a variable that is unset
+  or empty stops the router from starting.
+- A factory says which of them it takes (`routing.OverrideBaseURL`, `OverrideAPIKey`), and the
+  router refuses to start with an instance that sets one its factory would drop. The LLM
+  factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both; nothing else takes either
+  yet.
+- Every vendor's default host is taken to be in `us`, so an instance anywhere else must set an
+  `endpoint`, or the router refuses to start, unless its factory picks the region's host
+  itself from the region it is given (`routing.OverrideRegion`; none does yet).
+
+Every routing filter runs as before, then the region's: only the instances in the work's region
+are kept, and with none left the request is refused, naming the region (`no candidate in region
+eu`, a 400). Fallback walks the rest in the usual order, so a failing EU instance falls back only
+to other EU instances. That holds for every routed modality, so an EU agent's session needs an EU
+instance of each model it uses: the transcriber, the voice, the reply's model and the flow
+controller's (`llm-flow`), the title's (`llm-fast`), and search and the decision models where it
+uses them. A prompt-injection screen with no instance in the region lets the response stand, as
+one that cannot be reached does. A concrete `provider/model`, a vendor name and a shortcut
+each resolve to every region's instances first, and a shortcut's `prefer` holds in each region.
+Live health and statistics stay keyed by provider and model: an EU instance shares its US
+twin's health. A customer's own model (`custom/<name>`) runs in `us`, its stored config having
+no region, and is filtered the same way. Each instance's work is priced at its region's entry,
+so EU work is billed under an `-eu` SKU.
+
+Knowledge and sandboxes are not routed, so they are done in the work's region
+(`routing.Owner.Region`), `us` when it names none:
+
+- **Knowledge.** One turbopuffer backend per region `knowledge.regions` maps
+  (`ROUTER_KNOWLEDGE_REGIONS`), `us` always among them as before. A knowledge base stays in the
+  region of its first write through the router, recorded in `knowledge_namespaces` (migration
+  `20261202125000_knowledge_region`, which records every existing base as `us`). Work naming a
+  region, an agent's, reads and writes a base kept there, makes one nothing was written to
+  there, and is refused one kept in another rather than having it moved. Work naming none, as
+  the knowledge API's (`/v1/agents/knowledge`) and a page's read, goes where the base is kept,
+  and makes a new one in `us`. A sync keeps the agent's base in its region before it adds a page,
+  so a page read later lands there. A delete goes where the base is, whatever the work names. A
+  region with no backend is refused. Each region's rows are priced there
+  (`knowledge-turbopuffer-write-eu`), and `router usage storage` samples every region's bases.
+  `cmd/knowledge` still writes to `TURBOPUFFER_REGION` directly, and records no region.
+- **Sandboxes.** Each is made on the Daytona target `code_sandbox.targets` maps its session's
+  region to (`ROUTER_CODE_SANDBOX_TARGETS`); `us` with none is `DAYTONA_TARGET`, then the
+  organization's default, as before. A region with no target is refused when the agent is
+  saved naming a sandbox, and again when a session's sandbox is opened. A sandbox is labelled
+  `stream.region` and its rows carry `region` and
+  the region's SKU. `router usage sandboxes` lists every target of the organization, so the
+  sweep and the reconciliation cover them all, pricing a gap in the sandbox's region.
+
+`GET /v1/{modality}/providers` lists a model once per instance, each with its `region`.
+
+### Customers' own provider keys (BYOK)
+
+A customer may keep a key for their own account at a vendor, one per vendor and region:
+`PUT /v1/agents/provider-keys` with `provider`, `region` (`us` when left out) and `api_key`,
+`GET /v1/agents/provider-keys` to list them and `DELETE /v1/agents/provider-keys/{provider}?region=`
+to forget one, all server-side only and audited as `provider_key`. A key is taken for an LLM
+vendor the deployment routes whose factory builds with an instance's own key
+(`routing.OverrideAPIKey`: OpenAI, Anthropic, Gemini, xAI and DeepSeek today), for `turbopuffer`
+and for `daytona`; any other is a 400 `provider_takes_no_key` naming the ones that are. Only a key
+is taken, never an endpoint: the deployment's own is used.
+
+Keys are kept in `provider_keys` (migration `20261202130000_provider_keys`), sealed with the
+deployment's keyring (`auth.Sealer`, as the other customer secrets are) and bound to the customer,
+the vendor and the region, so a sealed key copied to another row does not open. A key is never
+returned, logged or put in an error: the API lists its last four characters (`key_hint`, empty for a
+key under 16 characters), and its audit entries show no more. A key holding a space, a comma or a
+control character is refused. Without a keyring a put is refused, and without a database there are
+no keys.
+
+- **Routing.** For each candidate in the work's region whose vendor the customer keeps a key for
+  there, the router inserts the customer's own instance immediately before it: a copy of the
+  instance with `BYOK` set, at the deployment's endpoint, built with the customer's key. The order
+  between models stays the priority list's or the ranking's, and each model is tried on the
+  customer's key first. When that fails, as it is built or when the vendor refuses the request, the
+  walk and the LLM fallback move on to the deployment's instance of the model as to any next
+  candidate. A key is looked up for the work's region alone: a key for `eu` is used only for `eu`
+  work, and a key for `us` only for `us` work. A model the deployment holds no key
+  for is still served on the customer's. Keys are read through the appconfig cache (Redis, and the
+  copy rueidis keeps in each process, dropped on every replica when a key is put or deleted) and
+  opened, one AES-GCM open, when work is routed.
+- **Health.** Work on a customer's key is counted for the customer and kept out of the vendor and
+  model's live health and its fatal mark, so one customer's revoked key never marks the model down
+  for everyone. `router_requests_total` counts its failures under `outcome="customer_key"`, never
+  `error` or `timeout`. A 401 or 403 from the vendor on the customer's key is `error_code`
+  `key_refused` on its request row, with a message naming the vendor and region, which the customer
+  sees on their usage events and call timelines; the deployment's instance is asked next.
+- **Billing.** Work on a customer's key is priced at its item's BYOK entry (see Prices): a SKU ending
+  in `-byok`, a fee of 20% of the work at the vendor's rates, `base_cost_micros` 0. A customer who may
+  not spend money is refused it as any billable work is.
+- **Knowledge.** With a `turbopuffer` key for the work's region, a knowledge base first written from
+  then on is kept in the customer's own turbopuffer account, at the turbopuffer region of the
+  deployment's own backend there, read and written on their key and priced at
+  `knowledge-turbopuffer-*-byok`. `knowledge_namespaces.account` records the account, `stream` for
+  every base written before. A base stays in the account of its first write: one in the deployment's
+  stays there when its owner puts a key, and one in theirs whose key was deleted is refused, a 400
+  naming the base and the region, rather than read from the deployment's account. `router usage
+  storage` samples each base kept in a customer's account on their key, at the BYOK price, and counts
+  apart, not as missed, one whose key is gone.
+- **Sandboxes.** With a `daytona` key for the work's region, the session's sandbox is made in the
+  customer's own Daytona organization, on the same target, labelled `stream.account=customer`, and its
+  time is priced at `sandbox-daytona-*-byok`. Under the `daytona` broker its secrets are kept in that
+  organization too, and the hourly secret sweep covers every customer organization a key is kept
+  for. `router usage sandboxes` deletes the orphans and reconciles Daytona's records in each customer
+  organization on its key, as it does in the deployment's (its lines start `a customer's
+  organization:`), pricing a gap at the BYOK entry. A sandbox labelled for a customer's organization
+  is never the deployment organization's, even where one key reaches both.
+
+`router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
+as the router, so their CronJobs need its variables too.
 
 ## Run
 
@@ -1846,7 +2020,10 @@ Every entry and every item names its region: `us` or `eu` for now, more later (a
 to 31 of a-z, 0-9 and hyphens). The region and the BYOK state are matched exactly: work is
 priced only by an entry of its own region and BYOK state, so EU work is never priced by a US
 entry, and BYOK work never by an entry that is not BYOK, nor the other way round. Work no entry
-matches is unpriced, as before, and logged with its region and BYOK state. Within those, `when`
+matches is unpriced, as before, and logged with its region and BYOK state. It is counted in
+`router_usage_unpriced_total` with `region` and `byok` labels besides the item's, and its alert
+names it as `<modality>/<provider>/<model>/<region>/<byok>`, such as
+`llm/anthropic/claude-haiku-5-5/eu/false`. Within those, `when`
 picks the entry whose conditions all hold with the most of them. A provider instance runs in
 the `region` its routing config names. When `router.yaml` names none, as it names none today,
 parsing gives it `pricing.DefaultRegion`, `us`, so a parsed config never has an empty region.
@@ -1859,7 +2036,7 @@ a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2
 tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
 BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
 `cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
-(`routing.ProviderConfig.BYOK`, never read from a file). No price file writes BYOK entries:
+(`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
 reading any of them, `vendor.json` included, adds a BYOK twin of each `llm`, `knowledge` and
 `sandbox` entry that is not BYOK (`pricing.WithBYOK`, for `pricing.BYOKModalities`). The twin has
 the same item, region and `when`, the same rates, tiers and free flag, and no price or SKU of
