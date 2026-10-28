@@ -53,6 +53,11 @@ const (
 	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
 	// off by that much.
 	leafValidity = time.Hour
+	// maxLeaves caps the certificates kept. A wildcard grant lets a sandbox name any host under
+	// a domain, so the hosts are not bounded by the grants. A DER certificate here is under
+	// 1 KiB (P-256 key and CA signature), so the cap holds under 1 MiB. Past it a host's
+	// certificate is signed for the handshake alone, as it was before the cache.
+	maxLeaves = 1024
 	// authenticate is the challenge a 407 must carry (RFC 9110 section 15.5.8), for the
 	// Basic credential a proxy URL's userinfo sends (RFC 7617).
 	authenticate = `Basic realm="sandbox egress"`
@@ -77,6 +82,9 @@ type Options struct {
 	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
 	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
 	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
+	// Now replaces time.Now when set, for tests: it dates a certificate and tells when a kept
+	// one is renewed.
+	Now func() time.Time
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -91,6 +99,23 @@ type Proxy struct {
 	logger    *slog.Logger
 
 	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
+
+	now func() time.Time
+	// leaves holds each host's certificate until it is half of leafValidity old, so a handshake
+	// costs no CA signature (P-256 about 66 us, RSA-4096 about 4.5 ms) once a host has one.
+	leaves leaves
+}
+
+type leaves struct {
+	mu     sync.Mutex
+	byHost map[string]keptLeaf
+}
+
+type keptLeaf struct {
+	certificate tls.Certificate
+	// renewAt is when the certificate is signed anew: leafValidity/2 after it was dated, so a
+	// client still has half of leafValidity left on it.
+	renewAt time.Time
 }
 
 func New(options Options) (*Proxy, error) {
@@ -115,10 +140,14 @@ func New(options Options) (*Proxy, error) {
 	if dial == nil {
 		dial = publicegress.DialPublic
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
 		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
-		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout)}, nil
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -670,13 +699,40 @@ func (p *Proxy) ListenerTLS(address string) *tls.Config {
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
+// The same one is returned until it is half of leafValidity old. Signing happens under the lock,
+// so handshakes for one host never sign it twice; the CA signs one certificate at a time, which
+// it did not need to before the cache but costs no more CPU.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	now := p.now()
+	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
+		return kept.certificate, nil
+	}
+	certificate, err := p.sign(host, now)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if len(p.leaves.byHost) >= maxLeaves {
+		for name, kept := range p.leaves.byHost {
+			if !now.Before(kept.renewAt) {
+				delete(p.leaves.byHost, name)
+			}
+		}
+	}
+	if len(p.leaves.byHost) < maxLeaves {
+		p.leaves.byHost[host] = keptLeaf{certificate: certificate, renewAt: now.Add(leafValidity / 2)}
+	}
+	return certificate, nil
+}
+
+// sign makes host's certificate, dated now.
+func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, stack.Wrap(err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
