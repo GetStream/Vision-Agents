@@ -106,8 +106,12 @@ var (
 	shared   = map[string]*Pool{}
 )
 
-// quotaExceededStatus is the status label of a refusal that came as a websocket frame.
-const quotaExceededStatus = "quota_exceeded"
+// The status labels of a refusal that came in a websocket frame or close after the handshake,
+// which has no HTTP status: a spent quota, and a key the provider does not take.
+const (
+	quotaExceededStatus = "quota_exceeded"
+	invalidKeyStatus    = "invalid_key"
+)
 
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
 // finds under envVars. The first of envVars names the pool's key variable in its metrics.
@@ -302,6 +306,13 @@ func (p *Pool) Cooldown(key string, d time.Duration) {
 func (p *Pool) QuotaExceeded(key string) {
 	p.countRefused(quotaExceededStatus)
 	p.Cooldown(key, MaxCooldown)
+}
+
+// InvalidKey counts as refused, under the status "invalid_key", a key a provider accepted at
+// the websocket handshake and refused in a frame or close after it. Like a 401 at the
+// handshake it leaves the key in turn: a key to replace, not one to wait out.
+func (p *Pool) InvalidKey() {
+	p.countRefused(invalidKeyStatus)
 }
 
 // CooldownFromResponse rests key for as long as the response's Retry-After asks, or for
