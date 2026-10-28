@@ -659,12 +659,12 @@ func (s *InboundSuite) queue(thread store.ChannelThread, providerMessageID, text
 
 // queueAt queues a message of U0000ALICE in thread, due at due.
 func (s *InboundSuite) queueAt(thread store.ChannelThread, providerMessageID, text string, forward *store.ChannelInboundForward, due time.Time) {
-	queued, err := s.store.QueueChannelInbound(s.ctx, store.ChannelInbound{
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
 		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: text,
 		Raw: []byte(`{"text":"` + text + `"}`), Forward: forward, NextAttemptAt: due,
-	})
+	}, nil)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 }
@@ -798,12 +798,12 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 
 // queueLinq queues a Linq message of U0000ALICE in thread, whose raw event says whether the chat is a group.
 func (s *InboundSuite) queueLinq(thread store.ChannelThread, providerMessageID string, isGroup bool) {
-	queued, err := s.store.QueueChannelInbound(s.ctx, store.ChannelInbound{
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
 		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: "hi",
 		Raw: []byte(fmt.Sprintf(`{"data":{"chat":{"is_group":%t}}}`, isGroup)), NextAttemptAt: time.Now(),
-	})
+	}, nil)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 }

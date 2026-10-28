@@ -131,7 +131,7 @@ func (m ChannelInbound) Message() core.InboundMessage {
 // retry takes it again. fresh is false for a message claimed before, which is not queued again.
 //
 // With waited not nil, the message starts its external thread, and the transaction also takes
-// the messages that waited on that thread (TakeWaitingChannelThreadMessages), whether or not the
+// the messages that waited on that thread (takeWaitingChannelThreadMessages), whether or not the
 // message is fresh, and claims and queues the row waited makes of each, after the message's: on
 // a failure they wait again, and each waiting message is taken once.
 func (s *Store) AcceptChannelInbound(ctx context.Context, message ChannelInbound, waited func(core.InboundMessage) (ChannelInbound, error)) (fresh bool, err error) {
@@ -180,21 +180,9 @@ func validChannelInbound(message ChannelInbound) error {
 	return nil
 }
 
-// QueueChannelInbound queues message to be written into its thread channel, due at
+// queueChannelInbound queues message in tx to be written into its thread channel, due at
 // message.NextAttemptAt. A message already queued for the channel under the same provider id,
 // written or given up within its keep, is not queued again: queued is false.
-func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound) (queued bool, err error) {
-	if err := validChannelInbound(message); err != nil {
-		return false, err
-	}
-	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		queued, err = queueChannelInbound(ctx, tx, message)
-		return err
-	})
-	return queued, stack.Wrap(err)
-}
-
-// queueChannelInbound is QueueChannelInbound in tx.
 //
 // It first locks the message's thread channel row until tx ends, so the messages of one
 // thread channel are queued one transaction at a time. seq is taken at the insert, and a

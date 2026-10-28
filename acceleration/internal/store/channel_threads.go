@@ -234,7 +234,7 @@ type waitingMessage struct {
 
 // WaitChannelThreadMessage keeps a customer's message on an external thread no thread channel
 // is linked to, for the message that links the thread to take
-// (TakeWaitingChannelThreadMessages). False is one already waiting, delivered again. Rows past
+// (AcceptChannelInbound). False is one already waiting, delivered again. Rows past
 // channelWaitingKeep are dropped first, so the table holds minutes of them.
 func (s *Store) WaitChannelThreadMessage(ctx context.Context, customerID string, message core.InboundMessage) (bool, error) {
 	if customerID == "" || message.ConnectorID == "" || message.ThreadKey == "" || message.ProviderMessageID == "" {
@@ -275,15 +275,10 @@ func (s *Store) UnwaitChannelThreadMessage(ctx context.Context, customerID strin
 	return affected == 1, nil
 }
 
-// TakeWaitingChannelThreadMessages takes every message waiting on a customer's external thread
-// that is not past channelWaitingKeep, oldest first. Each is taken once: a message that takes
-// itself back at the same time (UnwaitChannelThreadMessage) gets it, or this does.
-func (s *Store) TakeWaitingChannelThreadMessages(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
-	return takeWaitingChannelThreadMessages(ctx, s.db, customerID, connectorID, providerUnitID, threadKey)
-}
-
-// takeWaitingChannelThreadMessages is TakeWaitingChannelThreadMessages on db, the store's or a
-// transaction's.
+// takeWaitingChannelThreadMessages takes on db, the store's or a transaction's, every message
+// waiting on a customer's external thread that is not past channelWaitingKeep, oldest first.
+// Each is taken once: a message that takes itself back at the same time
+// (UnwaitChannelThreadMessage) gets it, or this does.
 func takeWaitingChannelThreadMessages(ctx context.Context, db bun.IDB, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
 	var rows []waitingMessage
 	err := db.NewRaw(

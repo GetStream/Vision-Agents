@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 )
 
@@ -17,10 +19,21 @@ import (
 // s.base; change sets the fields a test cares about.
 func (s *StoreSuite) inbound(channelID, providerMessageID string, change ...func(*ChannelInbound)) ChannelInbound {
 	message := s.inboundMessage(channelID, providerMessageID, change...)
-	queued, err := s.store.QueueChannelInbound(s.ctx, message)
+	queued, err := s.queue(message)
 	s.Require().NoError(err)
 	s.Require().True(queued)
 	return message
+}
+
+// queue queues message in a transaction of its own, as AcceptChannelInbound does after its claim.
+func (s *StoreSuite) queue(message ChannelInbound) (bool, error) {
+	var queued bool
+	err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		queued, err = queueChannelInbound(ctx, tx, message)
+		return err
+	})
+	return queued, err
 }
 
 // inboundMessage is the message inbound queues, its thread channel linked, not yet queued.
@@ -124,7 +137,7 @@ func (s *StoreSuite) TestAnInboundMessageWithNoMediaAndNoForwardIsClaimedWithNei
 func (s *StoreSuite) TestAnInboundMessageQueuedTwiceInOneChannelIsOneRow() {
 	first := s.inbound("thread-one", "1759740000.000100")
 
-	again, err := s.store.QueueChannelInbound(s.ctx, first)
+	again, err := s.queue(first)
 	s.Require().NoError(err)
 	s.False(again, "a provider's retry of a message queues nothing")
 	s.inbound("thread-two", "1759740000.000100")
@@ -138,7 +151,7 @@ func (s *StoreSuite) TestAWrittenInboundMessageIsNotQueuedAgain() {
 	_, err := s.store.FinishChannelInbound(s.ctx, s.claimedOne(s.base, "1759740000.000100"), s.base)
 	s.Require().NoError(err)
 
-	again, err := s.store.QueueChannelInbound(s.ctx, first)
+	again, err := s.queue(first)
 
 	s.Require().NoError(err)
 	s.False(again)
@@ -196,7 +209,7 @@ func (s *StoreSuite) TestAThreadsMessageQueuedWhileAnEarlierOneCommitsWaitsForIt
 	s.Require().True(queued)
 	byB := make(chan error, 1)
 	go func() {
-		_, err := s.store.QueueChannelInbound(s.ctx, b)
+		_, err := s.queue(b)
 		byB <- err
 	}()
 	s.Require().Eventually(func() bool {
@@ -656,7 +669,7 @@ func (s *StoreSuite) TestTheRepliesThatWaitedAreQueuedAfterTheMessageThatStartsT
 	var queued []string
 	s.Require().NoError(s.store.DB().NewRaw("SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = 'thread-one' ORDER BY seq").Scan(s.ctx, &queued))
 	s.Equal([]string{"1759740000.000100", "1759740000.000300", "1759740000.000200"}, queued)
-	left, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", message.ThreadKey)
+	left, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", message.ThreadKey)
 	s.Require().NoError(err)
 	s.Empty(left)
 }
