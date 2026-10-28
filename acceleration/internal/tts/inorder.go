@@ -100,7 +100,12 @@ func (o *inOrder) Interrupt() error {
 	for _, id := range o.queue {
 		held := o.held[id]
 		if held == nil || !held.complete {
-			o.dropped[id] = struct{}{}
+			// A sentence whose final piece was never sent will get no completion: the
+			// provider throws its unsent text away. Marking it dropped would swallow the
+			// next sentence under the same id.
+			if _, final := o.closed[id]; final {
+				o.dropped[id] = struct{}{}
+			}
 			continue
 		}
 		// Finished while it waited, so its completion is already here and was never
@@ -150,6 +155,7 @@ func (o *inOrder) relay() {
 	}
 	o.queue = nil
 	clear(o.held)
+	clear(o.closed)
 	o.mu.Unlock()
 	for _, event := range rest {
 		o.emitter.Send(event)

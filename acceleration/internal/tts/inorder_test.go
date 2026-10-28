@@ -279,6 +279,31 @@ func (s *InOrderSuite) TestAnIdIsFreeAgainAfterABargeIn() {
 	s.Equal([]string{"a audio"}, s.heard(1))
 }
 
+func (s *InOrderSuite) TestAnIdSentOnlyInPiecesIsFreeAfterABargeIn() {
+	s.Require().NoError(s.voice.Synthesize(Request{ID: "a", Text: "Hello ", Final: false}))
+	s.Require().NoError(s.voice.Interrupt())
+
+	s.say("a", "b")
+	s.chunk("a", 0)
+	s.complete("a")
+	s.complete("b")
+
+	s.Equal([]string{"a audio", "a done", "b done"}, s.heard(3),
+		"the provider threw the pieces away and sent no completion for them")
+}
+
+func (s *InOrderSuite) TestASentenceAskedForAfterTheProviderClosedReachesTheProvider() {
+	s.say("a")
+	s.provider.refuse["a"] = true
+	s.Require().NoError(s.provider.Close())
+	for range s.voice.Events() {
+	}
+
+	err := s.voice.Synthesize(Request{ID: "a", Text: "a", Final: true})
+
+	s.ErrorContains(err, "refused", "the provider answers, not a sentence that can never finish")
+}
+
 func (s *InOrderSuite) TestASentenceWithoutAnIdIsStillKeptInOrder() {
 	s.say("a")
 	s.Require().NoError(s.voice.Synthesize(Request{Text: "unnamed", Final: true}))
