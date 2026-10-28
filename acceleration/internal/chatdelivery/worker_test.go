@@ -242,6 +242,43 @@ func (s *WorkerSuite) TestTwoWorkersAnswerEachDeliveryOnce() {
 	}
 }
 
+// A worker with no store or no answer could only fail later, on its first message.
+func (s *WorkerSuite) TestAWorkerNeedsAStoreAndAnAnswer() {
+	_, err := NewWorker(Options{Answer: (&answers{}).answer(nil)})
+	s.Error(err)
+	_, err = NewWorker(Options{Store: s.store})
+	s.Error(err)
+}
+
+// With every slot taken the loop waits for an answer to end rather than look again.
+func (s *WorkerSuite) TestAWorkerWithEverySlotTakenWaitsForOneToFree() {
+	s.queue()
+	worker, err := NewWorker(Options{Store: s.store, Answer: (&answers{}).answer(nil)})
+	s.Require().NoError(err)
+	for range inFlight {
+		worker.slots <- struct{}{}
+	}
+
+	_, again := worker.answerDue()
+
+	s.False(again)
+}
+
+// A look that could not read the queue is tried again a poll on, so a database that was away
+// for a moment does not leave the queue unanswered.
+func (s *WorkerSuite) TestALookThatFailedIsTriedAgainAPollOn() {
+	closed, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "chatdelivery"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	worker, err := NewWorker(Options{Store: closed, Answer: (&answers{}).answer(nil), Poll: 30 * time.Millisecond})
+	s.Require().NoError(err)
+
+	wait, again := worker.answerDue()
+
+	s.True(again)
+	s.Equal(30*time.Millisecond, wait)
+}
+
 // queue queues a delivery due now and returns its message id.
 func (s *WorkerSuite) queue() string {
 	id := "message-" + uuid.NewString()

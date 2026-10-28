@@ -167,12 +167,43 @@ func (s *ChatDeliveryQueueSuite) TestADeliveryForANodeThatCannotBeReachedIsTried
 		AgentId: &s.channelID, Llm: pointerTo("vision/vision-model"), Incognito: pointerTo(true),
 	})
 	other.Close()
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
 	queued := s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))
 
 	s.answering()
 
 	s.Eventually(func() bool { return s.row(queued).Attempts == 1 }, settleFor+forwardTimeout, 20*time.Millisecond)
 	s.Equal(store.ChatDeliveryQueued, s.row(queued).State)
+	s.False(s.reachesWorker(worker.Messages()), "a worker here answered in the conversation the other node holds")
+}
+
+// A peer that took a delivery answers it itself: handing it on to a third node's worker could
+// pass it back and forth between nodes that each believe the other answers.
+func (s *ChatDeliveryQueueSuite) TestADeliveryAPeerHandedOverIsNotHandedOnAgain() {
+	waiting := s.serverClient.opens("/v1/dispatch")
+	s.await(waiting, "ready")
+	other := s.otherNodeDispatching(dispatch.NewPool())
+
+	answer, err := s.router.handChatDeliveryToPeer(context.Background(), other.Listener.Addr().String(), queuedChatDelivery{StreamApp: suiteStreamApp,
+		Deployment: true, Body: []byte(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))})
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusServiceUnavailable), answer.GetStatus(), "body: %s", answer.GetBody())
+}
+
+// A row that is not a delivery is no answer, and says why, rather than read as nothing to do.
+func (s *ChatDeliveryQueueSuite) TestARowThatIsNotADeliveryIsAnError() {
+	err := s.router.AnswerChatDelivery(context.Background(), store.ChatDelivery{StreamApp: suiteStreamApp, Deployment: true, Body: []byte("not a delivery")})
+
+	s.Error(err)
+	s.NotErrorIs(err, errChatDeliveryUnsettled)
+}
+
+// A channel no agent in the app answers in is settled, not tried again: no later try finds one.
+func (s *ChatDeliveryQueueSuite) TestADeliveryNoAgentAnswersIsSettled() {
+	s.NoError(s.router.AnswerChatDelivery(context.Background(), store.ChatDelivery{StreamApp: suiteStreamApp, Deployment: true,
+		Body: []byte(s.message(suiteStreamApp, "no-such-config", ""))}))
 }
 
 // queue queues body as the endpoint would, from the deployment's own app, due now.

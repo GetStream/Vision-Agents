@@ -137,43 +137,35 @@ func (w *Worker) Close() {
 }
 
 // answerDue claims as many due messages as there are free slots and answers each on its own
-// goroutine, until none is due or no slot is free. It returns how long to wait before looking
-// again, with again false when only an ending answer needs to wake the loop.
+// goroutine. It returns how long to wait before looking again, with again false when only an
+// ending answer needs to wake the loop: every slot is taken, or Close was called.
 func (w *Worker) answerDue() (wait time.Duration, again bool) {
-	for {
-		if w.ctx.Err() != nil {
-			return 0, false
+	free := cap(w.slots) - len(w.slots)
+	if w.ctx.Err() != nil || free == 0 {
+		return 0, false
+	}
+	now := time.Now()
+	claimed, err := w.store.ClaimChatDeliveries(w.ctx, now, free, now.Add(w.lease))
+	if err != nil {
+		if w.ctx.Err() == nil {
+			w.logger.Error("could not take the chat deliveries due", "error", err)
 		}
-		free := cap(w.slots) - len(w.slots)
-		if free == 0 {
-			return 0, false
-		}
-		now := time.Now()
-		claimed, err := w.store.ClaimChatDeliveries(w.ctx, now, free, now.Add(w.lease))
-		if err != nil {
-			if w.ctx.Err() == nil {
-				w.logger.Error("could not take the chat deliveries due", "error", err)
-			}
-			return w.poll, true
-		}
-		for _, delivery := range claimed {
-			w.slots <- struct{}{}
-			w.working.Add(1)
-			go func() {
-				defer w.working.Done()
-				defer func() {
-					<-w.slots
-					select {
-					case w.kick <- struct{}{}:
-					default:
-					}
-				}()
-				w.attempt(delivery)
+		return w.poll, true
+	}
+	for _, delivery := range claimed {
+		w.slots <- struct{}{}
+		w.working.Add(1)
+		go func() {
+			defer w.working.Done()
+			defer func() {
+				<-w.slots
+				select {
+				case w.kick <- struct{}{}:
+				default:
+				}
 			}()
-		}
-		if len(claimed) < free {
-			break
-		}
+			w.attempt(delivery)
+		}()
 	}
 	next, queued, err := w.store.NextChatDeliveryAt(w.ctx)
 	switch {
