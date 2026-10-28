@@ -98,6 +98,23 @@ func (s *SlackChannelSuite) TestAMessageWhoseTurnWasClaimedBeforeIsNotAnsweredAg
 	s.Equal(1, s.turns(channel))
 }
 
+// A router with no LLM router has no sessions (cmd/router buildSessions): the message the
+// worker wrote is handed to nothing, and its turn is left unclaimed, as the message hook
+// answers no thread channel there (linkedThread).
+func (s *SlackChannelSuite) TestARouterWithNoSessionsHandsTheAgentNothing() {
+	s.holdHandOffs()
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	thread, err := s.store.ChannelThread(context.Background(), channel)
+	s.Require().NoError(err)
+	written := channelbridge.Written{ID: s.bridged(channel)[0]["id"].(string), Text: "is the build green?", Author: "U0000ALICE"}
+
+	turn, err := (&Server{store: s.store}).AnswerQueued(context.Background(), thread, written)
+
+	s.NoError(err)
+	s.Nil(turn)
+	s.Zero(s.turns(channel))
+}
+
 // writtenStraightIntoStream writes a message by U0000BOB into a thread channel through Stream
 // Chat, as an app user would, with custom fields, and returns its index in the channel.
 func (s *SlackChannelSuite) writtenStraightIntoStream(channel string, custom map[string]any) int {

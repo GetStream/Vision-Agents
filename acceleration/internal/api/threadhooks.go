@@ -110,6 +110,11 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 // the worker's write was just let into (channelbridge writeInto, streamapp.Clients.ForApp), so
 // the turn asks mayWrite nothing it did not.
 func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
+	// A router with no LLM router has no sessions (cmd/router buildSessions): its hook answers
+	// no thread channel (linkedThread), and neither does the worker.
+	if s.sessions == nil {
+		return nil, nil
+	}
 	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: thread.ChannelID}
 	event.Message.ID, event.Message.Text, event.Message.User.ID = written.ID, written.Text, written.Author
 	attachments, err := json.Marshal(written.Attachments)
