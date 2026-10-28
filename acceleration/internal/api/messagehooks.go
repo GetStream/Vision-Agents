@@ -137,7 +137,8 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		// Every message in the app arrives here; only one written to an agent is worth
 		// recording as delivered.
 		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
-			s.routeArrivingMessage(r, origin, payload, event)
+			origin.handOver = s.replayed(r, payload)
+			s.routeArrivingMessage(r.Context(), origin, event)
 		}
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
@@ -181,34 +182,34 @@ func addressed(event messageEvent) bool {
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
 //
-// The body is carried in rather than read again because the session may be running on
-// another node, which has to be handed the delivery exactly as Stream signed it.
-func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
+// The session may be running on another node, which origin hands the message to. settled is
+// false when nothing took the message and a later try may: the queue's worker tries again.
+func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, event messageEvent) (settled bool) {
 	// A thread channel holds an external thread, such as a Slack thread, which the Router
 	// answers itself: nobody watches it to hand the message to a worker.
-	thread, linked, err := s.linkedThread(r.Context(), origin, event.ChannelID)
+	thread, linked, err := s.linkedThread(ctx, origin, event.ChannelID)
 	if err != nil {
 		s.logger.Error("not answering a message in a channel that may hold an external thread",
 			"channel", event.ChannelID, "error", err)
-		return
+		return false
 	}
 	if linked {
-		go s.answerThread(origin, thread, event)
-		return
+		origin.answer(func() { s.answerThread(origin, thread, event) })
+		return true
 	}
 	// Only a linked thread answers a photo sent without text (addressed).
 	if event.Message.Text == "" {
-		return
+		return true
 	}
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.
 		if found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns); running {
 			if found.Spec().PersistConversation {
-				return
+				return true
 			}
 			if found.Spec().DispatchText {
-				_, err := s.dispatchText(r.Context(), found, dispatch.Message{
+				_, err := s.dispatchText(ctx, found, dispatch.Message{
 					ChannelType: event.ChannelType,
 					ChannelID:   event.ChannelID,
 					Custom:      customOf(event.ChannelCustom),
@@ -221,38 +222,37 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 					s.logger.Error("nobody could answer an arriving message",
 						"channel", event.ChannelID, "session", found.ID(), "error", err)
 				}
-				return
+				return err == nil
 			}
-			// On its own goroutine because a model call takes seconds and Stream is
-			// waiting on this delivery. The answer goes back to the channel rather than
-			// in a response, so there is nothing here to wait for.
-			go s.answerMessage(found, event)
-			return
+			// The answer goes back to the channel rather than in a response, so there is
+			// nothing here to wait for.
+			origin.answer(func() { s.answerMessage(found, event) })
+			return true
 		}
 	}
 
-	if s.forwardedMessage(r, body, event) {
-		return
+	if elsewhere, taken := s.forwardedMessage(ctx, origin, event); elsewhere {
+		return taken
 	}
 
 	if s.store == nil || s.dispatch == nil {
-		return
+		return true
 	}
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found := s.ownerOf(r.Context(), origin, event)
+	customerID, configID, found := s.ownerOf(ctx, origin, event)
 	if !found {
-		return
+		return true
 	}
-	if !s.mayWrite(r.Context(), origin, customerID) {
+	if !s.mayWrite(ctx, origin, customerID) {
 		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
 			"channel", event.ChannelID, "customer", customerID)
-		return
+		return true
 	}
 
-	if s.forwardedToWorkers(r, body, customerID) {
-		return
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+		return taken
 	}
 
 	message := dispatch.Message{
@@ -274,12 +274,13 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 		// most useful error this service can report.
 		s.logger.Error("nobody could answer an arriving message",
 			"channel", event.ChannelID, "customer", customerID, "error", err)
-		return
+		return false
 	}
 	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
 		"config", configID, "worker", worker.ID, "stream_app", origin.app)
+	return true
 }
 
 // ConfigField is the custom field on an agent channel naming the agent config that answers

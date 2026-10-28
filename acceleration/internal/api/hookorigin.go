@@ -35,6 +35,36 @@ type hookOrigin struct {
 	deployment bool
 	// apiKey is the key whose secret signed it.
 	apiKey string
+	// handOver hands what arrived to the node at an address: a hook's signed request replayed
+	// whole (replayed), or a queued delivery over the peer path (queuedHandOver). Nil on the
+	// node a peer handed it to, which answers it itself.
+	handOver func(ctx context.Context, address string) (*node.ForwardResponse, error)
+	// queued is a delivery the queue's worker holds a lease on, whose answer runs in line, so
+	// the worker records it once it has ended.
+	queued bool
+}
+
+// answer runs an answer: in line for a queued delivery, and off the request for a hook,
+// because a model call takes seconds and Stream is waiting on the delivery.
+func (o hookOrigin) answer(answer func()) {
+	if o.queued {
+		answer()
+		return
+	}
+	go answer()
+}
+
+// replayed hands a hook to a peer whole, signature and all, because the node answering it
+// verifies the delivery for itself rather than taking this node's word that it came from
+// Stream. A hook a peer handed here goes nowhere further: two nodes each believing the other
+// answers would pass it back and forth.
+func (s *Server) replayed(r *http.Request, body []byte) func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+	if s.forwarder == nil || r.Header.Get(node.ForwardedHeader) != "" {
+		return nil
+	}
+	return func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+		return s.forwarder.Ask(ctx, address, r, body)
+	}
 }
 
 // scope is what rows a hook from this origin may act on: its app's, and for the
