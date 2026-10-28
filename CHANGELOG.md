@@ -92,7 +92,7 @@ not connect.
 
 ### Dart sessions remember the user, and are listed by when they started
 
-`SessionOptions.memory` in the Dart SDK (a `SessionMemory` with `filter` and `appId`) has the agent remember the user the client was built for, as Swift's and Kotlin's `memory` do: it is sent with the client's own user id, and a device naming anybody else's is refused with a 403. `SessionOptions.timezone` is the zone the agent reads dates in. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort` (`SessionSort.updatedAt` or `relevance`). Each pubspec's `repository` points at the `accelerate` branch, and the README shows the `dependency_overrides` an app needs until the packages are on pub.dev (FLU-1126).
+`SessionOptions.memory` in the Dart SDK (a `SessionMemory` with `filter` and `appId`) has the agent remember the user the client was built for, as Swift's and Kotlin's `memory` do: it is sent with the client's own user id, and a client with no user id remembers nothing. `SessionOptions.timezone` is the zone the agent reads dates in. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort` (`SessionSort.updatedAt` or `relevance`). Each pubspec's `repository` points at the `accelerate` branch, and the README shows the `dependency_overrides` an app needs until the packages are on pub.dev (FLU-1126).
 
 ### The Swift SDK catches up with the other client SDKs
 

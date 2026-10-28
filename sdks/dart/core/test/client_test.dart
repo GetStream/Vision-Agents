@@ -174,28 +174,36 @@ void main() {
       expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
     });
 
-    test('remembers the user the client was built for, in their own time zone', () async {
+    test("memory is the signed-in user's, narrowed by the labels asked for", () async {
       router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
       final ada = agents.withUser('ada');
 
+      await ada.sessions.create(
+        const SessionOptions(
+          memory: SessionMemory(filter: {'topic': 'billing'}, appId: 'web'),
+          timezone: 'Europe/Amsterdam',
+        ),
+      );
+      final narrowed = router.last('POST /v1/agents/sessions').json;
       await ada
           .agent('docs')
           .sessions
-          .create(
-            const SessionOptions(
-              memory: SessionMemory(filter: {'topic': 'billing'}, appId: 'web'),
-              timezone: 'Europe/Amsterdam',
-            ),
-          );
+          .create(const SessionOptions(memory: SessionMemory(), incognito: true));
 
-      expect(router.last('POST /v1/agents/sessions').json, {
-        'agent': 'docs',
+      expect(narrowed, {
         'memory': {
           'app_id': 'web',
           'filter': {'topic': 'billing'},
           'user_id': 'ada',
         },
         'timezone': 'Europe/Amsterdam',
+      });
+      // The router keeps nothing of an incognito session, so the two are sent as asked and it
+      // decides.
+      expect(router.last('POST /v1/agents/sessions').json, {
+        'agent': 'docs',
+        'incognito': true,
+        'memory': {'user_id': 'ada'},
       });
     });
 

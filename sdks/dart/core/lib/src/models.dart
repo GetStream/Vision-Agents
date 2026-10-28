@@ -393,18 +393,19 @@ final class SessionOptions {
 
   /// Has the agent remember the signed-in user: what it learned about them before is recalled
   /// here, and what it learns here is kept for their next session. Null remembers nothing, and
-  /// an [incognito] session never does.
+  /// an [incognito] session recalls but keeps nothing new.
   final SessionMemory? memory;
 
   /// The user's IANA zone, such as `Europe/Amsterdam`, which the device knows and the router
-  /// does not. The agent reads dates in it, and it is remembered as the user's for the
-  /// scheduled tasks that follow. Null sends none, and a zone the router does not know is
-  /// refused.
+  /// does not. Dart's own `DateTime.timeZoneName` is an abbreviation such as `CET`, not a
+  /// zone, so read it with a plugin such as `flutter_timezone`. The agent reads dates in it,
+  /// and it is remembered as the user's for the scheduled tasks that follow. Null sends none,
+  /// and a zone the router does not know is refused.
   final String? timezone;
 }
 
-/// What a session remembers about the user the backend names. It is always theirs: a device
-/// recalls nobody else's.
+/// What a session remembers about the user [Backend.userId] names. It is always theirs: a
+/// device recalls nobody else's. With no user id, nothing is recalled or kept.
 final class SessionMemory {
   const SessionMemory({this.filter = const {}, this.appId});
 

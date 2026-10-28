@@ -125,8 +125,9 @@ chat.declineLogin(toolCallId);
 
 `memory` has the agent recall what it learned about the user in earlier sessions and keep what
 it learns in this one. It is always the `userId` the client was built with: a device recalls
-nobody else's. `filter` narrows what is recalled, and `timezone` is the zone the agent reads
-dates in.
+nobody else's, and a client with no `userId` remembers nothing. `filter` narrows what is
+recalled. `timezone` is the IANA zone the agent reads dates in; Dart's `DateTime.timeZoneName`
+is an abbreviation, so read the zone with a plugin such as `flutter_timezone`.
 
 ```dart
 final chat = await agents.agent('support').chat(
