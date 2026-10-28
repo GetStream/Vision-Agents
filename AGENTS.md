@@ -4,136 +4,6 @@ When running an agent using @acceleration/ or an example using @acceleration/ re
 
 Work happens on the `accelerate` branch here, and the agents docs live in getstream.io's `content/docs` (see the `docs` skill).
 
-## Engineering integrity
-
-These are acceptance criteria for every change, including code, prompts, agent configs,
-tests, benchmarks and reports. A passing test or a higher score does not justify a change
-that violates them. Apply them together with the relevant directory instructions and skills.
-
-### Benchmark neutrality
-
-Improve the behavior a real user receives. The implementation must not gain an advantage
-from knowing it is being evaluated. The same documented inputs and configuration must use
-the same production behavior inside and outside a benchmark.
-
-- **No benchmark detection.** Do not select a favorable execution path from scenario names,
-  fixture IDs, evaluation flags, call metadata, known transcripts, seeds or the runner's
-  environment. Do not move that detection into a prompt, config, helper or dependency.
-- **No answer leakage.** The system under evaluation must not consume expected answers,
-  future caller turns, reference transcripts, expected tool sequences, judge instructions or
-  hidden world state through its code or prompts. Obtain facts through the same user input
-  and public tools available in real use. A published task contract is legitimate input;
-  a scenario's answer key is not.
-- **No rehearsed solutions.** Do not hardcode benchmark phrases, entities, tool arguments,
-  response sequences, pauses or thresholds to satisfy known cases. A rule or fast path needs
-  a general reason grounded in the product contract, protocol or measured workload, plus
-  evidence on inputs beyond the cases that motivated it. Provider-specific behavior is
-  justified by that provider's documented semantics, never by its benchmark result.
-- **No cheaper semantics.** Do not skip authentication, validation, persistence, accounting,
-  cancellation, cleanup or other required work to make a run faster. Do not count queued
-  work as completed, a filler as a substantive answer, or dropped work as a latency win.
-  Performance improvements must preserve correctness and the promised durability and quality.
-- **No moving the goalposts.** Do not weaken assertions, tolerances, timeouts, workload,
-  quality gates, judge prompts or failure classification to make a candidate pass. Do not
-  remove difficult cases, hide failed trials, retry until green or report only favorable runs.
-  An actual evaluation bug needs its own reproducer and an independently reviewable fix;
-  re-evaluate both baseline and candidate with the same corrected methodology.
-- **No favored target.** Give compared systems the same task information and apply the same
-  scoring rules. Match models, tools, resources, warmup, caches and retry budgets for a claim
-  about implementation efficiency. Disclose intentional differences as a comparison of those
-  configurations; do not attribute their effect to a code change.
-
-Fixtures, deterministic seeds, cached caller audio and explicit mock providers belong in
-test or benchmark setup and may isolate a stated cost. They must not supply hidden hints
-or shortcuts to the shared production path. In particular, `performance_benchmark/` measures
-the router with `mock/*` providers: exploiting their fixed text, tone or timing is not a
-router optimization, and its results do not establish live-provider quality.
-
-### Keep code necessary
-
-- Smallest possible diff. Prefer deleting code over adding it.
-- Every added layer, option, dependency, check and log must serve the stated requirement or
-  a demonstrated correctness need. Do not add speculative compatibility, generic frameworks
-  for one caller, or "future-proofing". Validate at trust boundaries; do not scatter redundant
-  checks around internal invariants instead of fixing the code that broke them.
-- Reuse the existing owner of a behavior. Avoid parallel implementations and redundant
-  wrappers. New caches, retries and fallbacks must solve a demonstrated requirement.
-- Match the style and abstraction level of surrounding code. Keep unrelated refactors,
-  formatting changes and generated churn out of the diff. Do not remove valid comments.
-- Fix root causes. Do not swallow exceptions, fabricate successful results, silently return
-  defaults, or add sleeps/retries to hide races. Handle expected failures at the boundary
-  that owns them, with bounded work and observable failure when recovery is exhausted.
-- Keep resource ownership explicit. Background work needs an owner and a defined lifetime,
-  cancellation and shutdown behavior; queues, retries and caches need bounds, and caches
-  need correct invalidation and tenant isolation. Moving work off the hot path must preserve
-  its completion and failure guarantees.
-- Comments explain intent, constraints or a non-obvious tradeoff. Avoid narration of the code,
-  unsupported claims and placeholder TODOs. Remove dead paths, unused config, debug output
-  and abandoned experiments before delivery.
-
-### Tests must catch a defect
-
-Before adding a test, name the incorrect behavior it would catch. If a plausible broken
-implementation would still pass, strengthen the test or leave it out. Coverage and test count
-are not evidence of correctness.
-
-- Assert the contract's observable output, state change or failure. "Did not crash", non-null,
-  non-empty or HTTP 200 alone is insufficient when the requirement concerns returned data,
-  persistence, ordering or side effects. Check the part that could be wrong.
-- Do not test your own setup: a mock returning its configured value, a constructor echoing
-  its arguments, or an assignment followed by an equality check proves no product behavior.
-  Checking that a helper was called is not proof that its promised effect happened.
-- Keep expected results independent. Do not copy the implementation's algorithm into the
-  assertion, regenerate a golden from the candidate and accept it blindly, or inspect source
-  text for tokens instead of executing the behavior.
-- For a regression, show the test failing for the original defect before the fix where
-  practical. Otherwise explain why and identify the wrong result it rejects. A deliberate
-  local perturbation can check sensitivity; do not add a mutation-testing framework just to
-  satisfy this rule.
-- Cover relevant boundaries and negative cases: changed values, input sizes, event order,
-  cancellation and errors. A fix for one transcript needs varied phrasing, not just its
-  literal words. Use table-driven cases when each exercises a distinct risk, not many copies
-  of the happy path. For asynchronous behavior, wait for observable state with a deadline;
-  sleeping and hoping is not synchronization.
-- Do not add tests solely for comments, formatting, trivial forwarding or implementation
-  details with no behavioral contract. Use existing checks for mechanical changes. Do not
-  weaken or delete a meaningful test because new code fails it; justify a contract change
-  explicitly. Test code must meet the same necessity and readability bar as production code.
-
-### Evidence before claims
-
-Before changing behavior, state the user-visible failure or cost, the invariant to preserve,
-and why the proposed mechanism should help. Then validate that explanation:
-
-- For an improvement claim, keep validation cases out of tuning. Record what was used to
-  develop the fix and what was reserved for validation; once inspected and tuned against,
-  a case is no longer held out. Do not call a known scenario pool an unseen evaluation.
-- Define the metric, workload, repetitions and treatment of failures before comparing.
-  Record base and candidate commits, build/run commands, harness revision, seeds, configs,
-  models and relevant hardware/network conditions. Rebuild what is measured. Keep these
-  conditions fixed except for the declared change; follow the benchmark skill's repeat and
-  noise requirements. A microbenchmark improvement alone is not an end-to-end improvement.
-- Preserve the raw artifacts for the comparison, including unsuccessful runs, and link them
-  without secrets or private caller data. Report sample counts, variation, exclusions and
-  regressions alongside gains. Separate infrastructure failures with evidence and keep them
-  visible; a candidate's crash, timeout or dropped work is not disposable infrastructure noise.
-- Say when a result is inconclusive, untested or blocked. Never invent measurements, claim
-  an unrun check passed, or present an unmeasured tradeoff as a free improvement. If evidence
-  does not support an optimization, remove it or keep it explicitly experimental.
-
-### Review before delivery
-
-Read the complete diff against the PR base, including tests, prompts, fixtures and generated
-files. Remove experimental residue and verify every changed file serves the stated problem.
-Use the PR template to give the mechanism, relevant checks and their actual results, limits
-of the evidence, and any correctness, quality, latency or resource tradeoffs.
-
-Do not mark work ready while a neutrality violation is known or a material claim lacks
-evidence. Repair the implementation or narrow the claim; an unexplained green score is not
-a substitute. Reviewers should cite the specific behavior, code path or missing evidence.
-These rules guide implementation and review; documentation and automated review alone
-cannot guarantee that every violation is detected.
-
 ## What is here
 
 | Path              | What it is                                                              |
@@ -260,6 +130,25 @@ To make the router hold more agents for less, read the `loop_performance_bench` 
 (`.claude/skills/loop_performance_bench/SKILL.md`): ten rounds of profiling, cutting API, SQL and
 Redis round trips, deploying to the benchmark cluster and recording agents held and $/voice-minute.
 
+### Benchmark rules
+
+A win must be one a real user gets. For Voicebench, the load benchmark and any measured claim:
+
+- Run the same code in and out of a benchmark. Never branch on scenario names, fixture IDs,
+  seeds, eval flags or the runner's environment.
+- Keep expected answers, future caller turns, judge criteria and hidden world state out of
+  runtime code and prompts.
+- No fixes rehearsed for known cases: hardcoded phrases, entities, tool arguments or thresholds.
+  A rule needs a reason that holds outside the benchmark.
+- Shared code must not exploit the `mock/*` providers' fixed text, tone or timing.
+- Skip no required work (auth, validation, persistence, cleanup). Dropped or queued work is not
+  a latency win.
+- Don't weaken assertions, tolerances, workloads or judge prompts, drop hard cases or failed
+  runs, or retry until green. Fix a real evaluator bug in its own change and rerun both sides.
+- Compare like with like: same models, resources, warmup and retries, or say what differs.
+- Validate on cases you did not tune on. Report base and candidate commits, commands, runs,
+  variance, failures and regressions, with raw results. Say when a result is inconclusive.
+
 ## Connectors
 
 To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`
@@ -297,6 +186,11 @@ slots, merge order and how not to burn tokens.
 - ALWAYS test behavior, not calling a path.
 - Use pytest.fixture for test setup, not helper methods
 - NEVER observe method calls in tests; assert on outputs and state.
+- Every new test catches a defect you can name. If a plausible broken implementation still
+  passes, fix the test or drop it. A regression test fails before the fix.
+- Don't assert what the test set up itself, or compute the expected value with the code's own algorithm.
+- Never weaken or delete a meaningful test to get green.
+- Wait for async state with a deadline, not a sleep.
 
 ## Python rules
 
@@ -347,6 +241,16 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 ### Method order:
 
 - `__init__`, public lifecycle methods, properties, public feature methods, private helpers, dunder methods.
+
+### Other
+
+- Smallest possible diff. Prefer deleting code over adding it.
+- Don't add error handling, logging, validation, comments, abstractions, config options, or "future-proofing" I didn't
+  ask for.
+- Match the style and abstraction level of surrounding code. Don't introduce new patterns or helpers unless asked.
+- Fix root causes, not symptoms. No try/except, silent defaults or sleeps to hide bugs.
+- Change only what I asked for. Don't refactor adjacent code — ask first.
+- Do not remove valid comments when editing/refactoring code.
 
 ## Plugins
 
