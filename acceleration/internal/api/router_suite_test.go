@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,8 +236,9 @@ type RouterSuite struct {
 	deploymentKnown bool
 	// database gives the suite a database of its own, named after it, in place of the one
 	// the suites share, for a suite whose tests act on rows other tests made: a
-	// scheduled-task worker claims every task due in its database, whoever made it. A
-	// suite sets it before SetupSuite runs.
+	// scheduled-task worker claims every task due in its database, whoever made it, and the
+	// channel bridge's inbound worker every queued message. A suite sets it before SetupSuite
+	// runs.
 	database string
 	server   *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
@@ -358,7 +361,9 @@ type RouterSuite struct {
 	// channelProvider, set by a suite about the channel bridge before it starts the harness,
 	// gives the router the real bridge (internal/channelbridge), whose replies dial the address
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
-	// provider. Nil leaves bridge as the suite set it.
+	// provider. Nil leaves bridge as the suite set it. Such a suite has a database of its own
+	// (database): the bridge's inbound worker writes every message queued in its database into
+	// its own suite's Stream Chat, whoever queued it.
 	channelProvider func() string
 	// logs, set by a suite before it starts the harness, is where the router logs, as text at
 	// debug and up, for a suite about what it warns of. Nil discards them.
@@ -505,6 +510,9 @@ func (s *RouterSuite) SetupSuite() {
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
 	// place and the calls, sessions and requests in another.
 	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if s.channelProvider != nil && s.database == "" {
+		s.T().Fatal("a suite with the real channel bridge needs a database of its own: its inbound worker takes every queued message there")
+	}
 	if s.database != "" {
 		options.DSN = testenv.Database(options.DSN, s.database)
 	}
@@ -731,6 +739,33 @@ func (s *RouterSuite) SetupSuite() {
 // resolver, whose replies leave through core.Transports, as cmd/router builds it, with a
 // client that dials channelProvider instead of the egress client, which refuses loopback.
 func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
+	bridge, err := channelbridge.New(s.channelBridgeOptions(logger))
+	s.Require().NoError(err)
+	bridge.Start()
+	s.T().Cleanup(bridge.Close)
+	// As cmd/router hands it the finished replies of the conversations on thread channels.
+	s.conversations.OnFinishedReply(bridge.Reply)
+	return bridge
+}
+
+// writtenByTheInboundWorker requires a thread channel's one message to be the one its inbound
+// worker wrote from the queue: its row is done, and the message has the id the worker gives
+// it, the channel's and the provider's for the message (channelbridge.inboundMessageID).
+func (s *RouterSuite) writtenByTheInboundWorker(channel string) {
+	var providerID string
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = ? AND state = 'done'", channel).Scan(&providerID) == nil
+	}, settleFor, 10*time.Millisecond, "no written row of %s", channel)
+	stored := s.chat.Stored(channel)
+	s.Require().Len(stored, 1)
+	sum := sha256.Sum256([]byte(providerID))
+	s.Contains([]string{channel + "-" + providerID, channel + "=" + hex.EncodeToString(sum[:])}, stored[0]["id"])
+}
+
+// channelBridgeOptions are the options channelBridge builds the bridge with, for a test to
+// build another router's bridge.
+func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Options {
 	transports, err := core.NewTransports(core.TransportsConfig{
 		Resolver: s.resolver,
 		NewClient: func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
@@ -756,13 +791,7 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	if s.forwarder != nil {
 		options.Unanswered = s.forwarder.ForwardUnanswered
 	}
-	bridge, err := channelbridge.New(options)
-	s.Require().NoError(err)
-	bridge.Start()
-	s.T().Cleanup(bridge.Close)
-	// As cmd/router hands it the finished replies of the conversations on thread channels.
-	s.conversations.OnFinishedReply(bridge.Reply)
-	return bridge
+	return options
 }
 
 // pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a

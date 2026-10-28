@@ -6,13 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -20,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
@@ -47,6 +51,7 @@ func TestEventForwardingSuite(t *testing.T) {
 // SetupSuite registers hmac_header, oauth2_code and the real channel bridge, as
 // SlackChannelSuite does, and an event forwarder.
 func (s *EventForwardingSuite) SetupSuite() {
+	s.database = "event_forwarding"
 	verifier := hmacheader.New()
 	code, err := oauth2code.New(oauth2code.Config{HTTP: http.DefaultClient})
 	s.Require().NoError(err)
@@ -194,26 +199,323 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedAndIsNotWrittenDoesNotForward
 	s.Empty(s.chat.Stored(thread.ChannelID), "the reply was not written")
 }
 
-// AI-1001: only the messages a take brought skip unanswered. In a delivery of two original
-// messages (WhatsApp batches them), the second one's failed write still calls it.
-func (s *EventForwardingSuite) TestABatchsSecondMessageThatIsNotWrittenCallsUnanswered() {
+// AI-1001: only the messages a take brought go without the delivery's forward. In a delivery
+// of original messages (WhatsApp batches them), each one never written carries it, and the
+// destinations key it by the delivery: two given up are one forward. A message the provider
+// retried was taken before and queues nothing.
+func (s *EventForwardingSuite) TestABatchsMessagesThatAreNotWrittenAreForwardedOnce() {
 	s.answering(s.connectedBot())
-	inbound := func(ts string) core.InboundMessage {
-		return core.InboundMessage{ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: "C0000CHAN:" + ts,
-			AuthorID: "U0000ALICE", Text: "hi", ProviderMessageID: ts, Raw: s.message("U0000ALICE", "hi", ts)}
-	}
-	first, second := inbound("1759740000.000100"), inbound("1759740000.000300")
-	var calls atomic.Int32
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	first, second, third := s.inbound("1759740000.000100"), s.inbound("1759740000.000300"), s.inbound("1759740000.000500")
 	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first}, nil)
 	s.Require().NoError(err)
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond)
 	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", ID: "Ev" + s.utils.uuid(),
+		Headers: map[string]string{"Content-Type": "application/json", "X-Slack-Signature": "v0=synthetic"}}
 
-	answered, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first, second}, func() { calls.Add(1) })
+	answered, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first, second, third}, &delivery)
 
 	s.Require().NoError(err)
 	s.True(answered)
-	s.Eventually(func() bool { return calls.Load() == 1 }, settleFor, 10*time.Millisecond, "the second original message's failed write calls unanswered")
+	got := s.forwardedTo(target, 1)[0]
+	s.Contains([][]byte{second.Raw, third.Raw}, got.body, "the body of a message given up")
+	s.Equal("application/json", got.header.Get("Content-Type"), "the delivery's headers")
+	s.Equal("v0=synthetic", got.header.Get("X-Slack-Signature"), "a signature that does not age")
+	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond, "one forward for the delivery")
+	var ageing int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND forward ? 'headers_until'", s.customerID()).Scan(&ageing))
+	s.Zero(ageing, "a delivery whose headers do not age is stored without headers_until")
+}
+
+// A message the store fails to queue releases its claim, so the provider's retry of the delivery
+// takes it again. Postgres's jsonb refuses \u0000, and only the queue stores the delivery's
+// headers, so a NUL in one fails the queue and nothing before it.
+func (s *EventForwardingSuite) TestAMessageTheStoreFailsToQueueIsNotClaimed() {
+	s.answering(s.connectedBot())
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+
+	s.Require().Error(err)
+	var claims int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_messages WHERE channel_id = ? AND kind = ?", s.threadChannel(), store.ClaimInbound).Scan(&claims))
+	s.Zero(claims)
+}
+
+// The mention that links a thread takes the replies that waited for it. When the mention then
+// fails to queue, they wait again, so Slack's retry of the mention brings them as well.
+func (s *EventForwardingSuite) TestAReplyThatWaitedIsWrittenWhenItsMentionFailsToQueueAndIsRetried() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	// A NUL fails the queue alone, as in the test above.
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+	s.Require().Error(err)
+
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"},
+		[]any{s.chat.Stored(channel)[0]["id"], s.chat.Stored(channel)[1]["id"]})
+}
+
+// A reply that waited and itself fails to queue waits again too, for the mention's retry.
+func (s *EventForwardingSuite) TestAReplyThatWaitedAndFailsToQueueIsWrittenWhenItsMentionIsRetried() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	drop := s.trigger("failing_waited_queue", "channel_thread_inbound", "INSERT",
+		"NEW.customer_id = '"+s.customerID()+"' AND NEW.provider_message_id = '1759740000.000200'", "RAISE EXCEPTION 'synthetic queue failure';")
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	drop()
+
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+}
+
+// A provider that hangs up while its message is queued cancels the request's context
+// (net/http). The message is queued all the same, so the provider's retry, dropped as one, loses
+// nothing.
+func (s *EventForwardingSuite) TestAMessageWhoseRequestEndsWhileItIsQueuedIsWritten() {
+	s.answering(s.connectedBot())
+	s.trigger("slow_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'", "PERFORM pg_sleep(1);")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().NoError(err)
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A message the store fails to queue after its provider hung up still releases its claim, so the
+// provider's retry queues it.
+func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIsNotClaimed() {
+	s.answering(s.connectedBot())
+	drop := s.trigger("failing_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'",
+		"PERFORM pg_sleep(1); RAISE EXCEPTION 'synthetic queue failure';")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	s.Zero(s.inboundClaims())
+	drop()
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A reply that waited and is put back after its mention failed to queue is put back off the
+// request, so a provider that hung up does not lose it, and only the reply is put back.
+func (s *EventForwardingSuite) TestAReplyThatWaitedIsPutBackWhenItsMentionFailsToQueueAfterTheProviderHungUp() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.trigger("failing_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'",
+		"PERFORM pg_sleep(1); RAISE EXCEPTION 'synthetic queue failure';")
+
+	err := s.deliverHangingUp(s.inbound("1759740000.000100"))
+
+	s.Require().ErrorContains(err, "synthetic queue failure")
+	var waiting int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_waiting WHERE customer_id = ?", s.customerID()).Scan(&waiting))
+	s.Equal(1, waiting, "the reply waits again, and only the reply")
+}
+
+// A queue insert that hangs is cut short by its bound, and the claim is released on a bound of
+// its own, so the provider gets its error in time and its retry queues the message.
+func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNotClaimed() {
+	s.answering(s.connectedBot())
+	drop := s.trigger("hanging_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'", "PERFORM pg_sleep(3);")
+	bounded := s.boundedRouter(200 * time.Millisecond)
+
+	started := time.Now()
+	_, err := bounded.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+
+	s.Require().Error(err)
+	s.Less(time.Since(started), 2*time.Second, "the insert was not cut short")
+	s.Zero(s.inboundClaims())
+	drop()
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+}
+
+// A release that hangs after the queue failed is cut short by its bound too: the provider gets
+// its error in time. The claim stays then, until the claim and the queue are one transaction
+// (AI-2150).
+func (s *EventForwardingSuite) TestAMessageWhoseReleaseHangsIsAnsweredInTime() {
+	s.answering(s.connectedBot())
+	s.trigger("hanging_inbound_release", "channel_thread_messages", "DELETE",
+		"OLD.channel_id IN (SELECT channel_id FROM channel_threads WHERE customer_id = '"+s.customerID()+"')", "PERFORM pg_sleep(3);")
+	bounded := s.boundedRouter(200 * time.Millisecond)
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+
+	started := time.Now()
+	_, err := bounded.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+
+	s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the release's failure is answered")
+	s.Less(time.Since(started), 2*time.Second, "the release was not cut short")
+}
+
+// deliverHangingUp delivers message on a request whose provider hangs up once the message is
+// claimed, as net/http cancels the request's context, and answers what Deliver did.
+func (s *EventForwardingSuite) deliverHangingUp(message core.InboundMessage) error {
+	ctx, hangUp := context.WithCancel(context.Background())
+	defer hangUp()
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.bridge.Deliver(ctx, s.app, []core.InboundMessage{message}, nil)
+		done <- err
+	}()
+	s.Require().Eventually(func() bool { return s.inboundClaims() == 1 }, settleFor, 5*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // the insert is in its trigger
+	hangUp()
+	return <-done
+}
+
+// inboundClaims is how many inbound messages the bridge claimed in the test customer's thread
+// channels.
+func (s *EventForwardingSuite) inboundClaims() int {
+	var claims int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_messages m JOIN channel_threads t USING (channel_id) WHERE t.customer_id = ? AND m.kind = ?",
+		s.customerID(), store.ClaimInbound).Scan(&claims))
+	return claims
+}
+
+// trigger runs body before each op on table for a row where when holds, until the test ends or
+// drop. The table is in the suite's own database (database), and when names the test's
+// customer, so no other test's rows meet it.
+func (s *EventForwardingSuite) trigger(name, table, op, when, body string) (drop func()) {
+	db := s.store.DB()
+	_, err := db.ExecContext(context.Background(), "CREATE OR REPLACE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
+		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
+	s.Require().NoError(err)
+	var once sync.Once
+	drop = func() {
+		once.Do(func() {
+			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+			s.Require().NoError(err)
+			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS "+name+"()")
+			s.Require().NoError(err)
+		})
+	}
+	s.T().Cleanup(drop)
+	return drop
+}
+
+// boundedRouter is another router's bridge whose store writes off the request are bounded by
+// timeout, its worker not started.
+func (s *EventForwardingSuite) boundedRouter(timeout time.Duration) *channelbridge.Bridge {
+	options := s.channelBridgeOptions(slog.New(slog.DiscardHandler))
+	options.QueueTimeout = timeout
+	bridge, err := channelbridge.New(options)
+	s.Require().NoError(err)
+	return bridge
+}
+
+// One thread's messages are given up minutes apart, after the first one's forward was sent and
+// its row deleted: the second given up still forwards nothing.
+func (s *EventForwardingSuite) TestAMessageOfADeliveryGivenUpAfterItsForwardWasSentForwardsNothing() {
+	s.answering(s.connectedBot())
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", ID: "Ev" + s.utils.uuid()}
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+	s.Require().NoError(err)
+	s.forwardedTo(target, 1)
+	s.Require().Eventually(func() bool { return s.pendingForwards() == 0 }, settleFor, 10*time.Millisecond)
+
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000300")}, &delivery)
+
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool {
+		var failed int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'failed'", s.customerID()).Scan(&failed))
+		return failed == 2
+	}, settleFor, 10*time.Millisecond, "the second message was not given up")
+	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A router that stops right after it answered the provider leaves the message queued, and
+// another router's worker writes it, under the provider's id for it.
+func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsWrittenByAnother() {
+	s.answering(s.connectedBot())
+	stopped := s.anotherRouter()
+
+	answered, err := stopped.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	stopped.Close()
+
+	s.Require().NoError(err)
+	s.True(answered)
+	next := s.anotherRouter()
+	next.Start()
+	defer next.Close()
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Equal(channel+"-1759740000.000100", s.chat.Stored(channel)[0]["id"])
+}
+
+// The delivery a message is forwarded with when it is never written is stored with it, so the
+// router that gives it up forwards it, not only the one that took it.
+func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsForwardedByTheOneThatGivesItUp() {
+	s.answering(s.connectedBot())
+	target := newDestination(s.T())
+	s.createDestination("slack_bot", target.URL, store.ForwardUnhandled)
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+	message := s.inbound("1759740000.000100")
+	stopped := s.anotherRouter()
+	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", ID: "Ev" + s.utils.uuid(),
+		Headers:      map[string]string{"Content-Type": "application/json", "X-Slack-Signature": "v0=synthetic"},
+		HeadersUntil: time.Now().Add(-time.Minute)}
+
+	_, err := stopped.Deliver(context.Background(), s.app, []core.InboundMessage{message}, &delivery)
+	stopped.Close()
+
+	s.Require().NoError(err)
+	next := s.anotherRouter()
+	next.Start()
+	defer next.Close()
+	got := s.forwardedTo(target, 1)[0]
+	s.Equal(message.Raw, got.body)
+	s.Equal("application/json", got.header.Get("Content-Type"))
+	s.Empty(got.header.Get("X-Slack-Signature"), "a signature past its window is not sent")
+}
+
+// anotherRouter is the bridge of another router on the suite's database and Stream Chat, its
+// worker not started.
+func (s *EventForwardingSuite) anotherRouter() *channelbridge.Bridge {
+	bridge, err := channelbridge.New(s.channelBridgeOptions(slog.New(slog.DiscardHandler)))
+	s.Require().NoError(err)
+	return bridge
+}
+
+// inbound is a message by U0000ALICE that mentions the bot in C0000CHAN, as the verifier hands
+// it over.
+func (s *EventForwardingSuite) inbound(ts string) core.InboundMessage {
+	return core.InboundMessage{ConnectorID: "slack_bot", ProviderUnitID: s.workspace, ThreadKey: "C0000CHAN:" + ts,
+		AuthorID: "U0000ALICE", Text: "hi", ProviderMessageID: ts, Raw: s.message("U0000ALICE", "hi", ts)}
 }
 
 // Slack's event_id is «A unique identifier for this specific event»
