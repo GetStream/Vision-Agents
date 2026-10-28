@@ -215,6 +215,9 @@ type Options struct {
 	// Without it the Telnyx call webhook answers nothing, since anyone could ask it for a
 	// number's trunk credentials.
 	TelnyxPublicKey ed25519.PublicKey
+	// ChatDeliveryKeys check that a message delivered to the Stream Chat delivery endpoint
+	// came from Stream (ROUTER_STREAM_DELIVERY_KEYS). Without one that endpoint answers 404.
+	ChatDeliveryKeys []ed25519.PublicKey
 	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
 	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
 	TelnyxConnectionID string
@@ -339,6 +342,7 @@ type Server struct {
 	proxyDeclaresKind  bool
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
+	chatDeliveryKeys   []ed25519.PublicKey
 	telnyxConnectionID string
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
@@ -517,6 +521,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
+		chatDeliveryKeys:   options.ChatDeliveryKeys,
 		telnyxConnectionID: options.TelnyxConnectionID,
 		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
@@ -678,6 +683,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
+	mux.HandleFunc("POST "+chatDeliveryPath, s.receiveChatDelivery)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)

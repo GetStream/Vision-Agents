@@ -12830,6 +12830,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveChatDelivery Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
 	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -17897,6 +17904,23 @@ func (c *Client) QueryAuditWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewQueryAuditRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveChatDelivery Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *Client) ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveChatDeliveryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -27385,6 +27409,33 @@ func NewQueryAuditRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewReceiveChatDeliveryRequest constructs an http.Request for the ReceiveChatDelivery method
+func NewReceiveChatDeliveryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/chat/internal/messages")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewClassifyRequest calls the generic Classify builder with application/json body
 func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -33948,6 +33999,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
+
+	// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error)
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
@@ -51429,6 +51489,47 @@ func (r QueryAuditResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveChatDeliveryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveChatDeliveryResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveChatDeliveryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveChatDeliveryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveChatDeliveryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveChatDeliveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ClassifyResponse200Headers the declared response headers of an HTTP 200 response for Classify
 type ClassifyResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -63512,6 +63613,21 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 		return nil, err
 	}
 	return ParseQueryAuditResponse(rsp)
+}
+
+// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *ClientWithResponses) ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error) {
+	rsp, err := c.ReceiveChatDelivery(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveChatDeliveryResponse(rsp)
 }
 
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
@@ -84402,6 +84518,50 @@ func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
 			headers.XStreamBalanceWarning = &value
 		}
 		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReceiveChatDeliveryResponse parses an HTTP response from a ReceiveChatDeliveryWithResponse call
+func ParseReceiveChatDeliveryResponse(rsp *http.Response) (*ReceiveChatDeliveryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveChatDeliveryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
 	}
 
 	return response, nil

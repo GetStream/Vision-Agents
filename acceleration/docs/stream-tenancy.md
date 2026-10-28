@@ -19,6 +19,7 @@ The router holds no customer's secret. The gateway in front (`stream-accelerate`
 | `stream.app_id` | `ROUTER_STREAM_APP_ID` | learned | The env pair's Stream app id. The router learns it from Stream at startup; setting it makes a mismatch refuse to start |
 | `stream.mint_url` | `ROUTER_STREAM_MINT_URL` | empty | App mode only. The gateway's internal mint endpoint |
 | `stream.mint_token` | `ROUTER_STREAM_MINT_TOKEN` | empty | App mode only. The bearer that endpoint expects |
+| `stream.delivery_keys` | `ROUTER_STREAM_DELIVERY_KEYS` | empty | The ed25519 public keys (standard base64 of 32 bytes, comma-separated, at most two while Stream rotates) that Stream Chat signs its delivery of agent-channel messages to `POST /v1/chat/internal/messages` with. Empty answers that endpoint 404 |
 | `auth.proxy_declares_kind` | `ROUTER_AUTH_PROXY_DECLARES_KIND` | false | Proxy mode: trust `Stream-Auth-Type` from the proxy, and read its absence as client-side (fail closed) |
 
 App mode needs Postgres, a keyring (`ROUTER_AUTH_KEK`, or `ROUTER_AUTH_KEK_V<n>` with `ROUTER_AUTH_KEK_VERSION`), `auth.mode=proxy` with `auth.proxy_declares_kind`, and the mint endpoint. It refuses `STREAM_USER_TOKEN`. The deployment's own customer keeps the env pair's identity in both modes.
