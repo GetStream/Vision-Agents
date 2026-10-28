@@ -287,6 +287,21 @@ func (s *scriptedLLM) requests() []llm.ResponseParams {
 	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
+// replies is every request the router has asked this model for a reply on. A session's
+// review is asked on the same model once the session closed, at a moment of its own (a
+// thread's session closes after each turn), so it is left out.
+func (s *scriptedLLM) replies() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var replies []llm.ResponseParams
+	for _, params := range s.asked {
+		if params.Purpose == "reply" {
+			replies = append(replies, params)
+		}
+	}
+	return replies
+}
+
 // answers lets through the replies a held model is sitting on.
 func (s *scriptedLLM) answers() {
 	s.mu.Lock()
