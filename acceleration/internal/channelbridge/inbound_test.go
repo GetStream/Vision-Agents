@@ -668,7 +668,7 @@ func (s *InboundSuite) TestTheWorkerDeletesAWrittenMessagesRowAfterADay() {
 // options, when not nil, set the inbound retries and the forward of what it gives up.
 func (s *InboundSuite) bridge(options *Options) *Bridge {
 	bridge := s.newBridge(options)
-	bridge.Start()
+	bridge.Start(nil)
 	return bridge
 }
 

@@ -733,15 +733,19 @@ func (s *RouterSuite) SetupSuite() {
 	s.server = listener
 	s.router = server
 	s.T().Cleanup(s.server.Close)
+	// After the server, which answers what the worker writes, as cmd/router starts it.
+	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
+		bridge.Start(server.AnswerQueued)
+	}
 }
 
 // channelBridge is the router's channel bridge over the suite's store, Stream Chat and
 // resolver, whose replies leave through core.Transports, as cmd/router builds it, with a
-// client that dials channelProvider instead of the egress client, which refuses loopback.
+// client that dials channelProvider instead of the egress client, which refuses loopback. Its
+// worker starts once the server is built.
 func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 	bridge, err := channelbridge.New(s.channelBridgeOptions(logger))
 	s.Require().NoError(err)
-	bridge.Start()
 	s.T().Cleanup(bridge.Close)
 	// As cmd/router hands it the finished replies of the conversations on thread channels.
 	s.conversations.OnFinishedReply(bridge.Reply)

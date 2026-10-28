@@ -56,11 +56,13 @@ const maxMessageID = 255
 // already there (staging app 1257545, 2026-10-28 05:20:35 UTC).
 var readableID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// Start runs the worker that writes the queued inbound messages until Close. It looks at
-// start, for the ones a router queued before it stopped, then when a write finishes or wake
-// says a message was queued, at the first one due, and at least once a lease: with nothing
+// Start runs the worker that writes the queued inbound messages until Close, and hands each one
+// it writes to answer, the one way a channel message reaches the agent; nil answers none. It
+// looks at start, for the ones a router queued before it stopped, then when a write finishes or
+// wake says a message was queued, at the first one due, and at least once a lease: with nothing
 // queued it sends Postgres 2 queries a minute.
-func (b *Bridge) Start() {
+func (b *Bridge) Start(answer Answer) {
+	b.answer = answer
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
@@ -173,6 +175,9 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 	switch {
 	case err == nil:
 		changed, err = b.store.FinishChannelInbound(recording, message, time.Now())
+		if err == nil && changed {
+			log.Info("an inbound message is done", "attempts", attempts)
+		}
 	case (attempts <= len(b.inboundRetries) || optsOut(message.Message())) && !refusedForGood(err):
 		log.Info("an inbound message was not written into its thread channel and is written again", "attempts", attempts, "error", err)
 		if attempts > len(b.inboundRetries) {
@@ -198,9 +203,12 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 }
 
 // writeQueued admits a queued message (admit), then writes it into its thread channel under its
-// own Stream id, and the card of the episode it opens. Either one already written by an attempt
-// whose answer was lost counts as written. A message admit holds back, such as a keyword or one
-// the gate refuses, is done with nothing written.
+// own Stream id, and the card of the episode it opens, and hands it to the agent (answer).
+// Either write already done by an attempt whose answer was lost counts as written; the
+// message is then rebuilt from its row. A message admit holds back, such as a keyword or one
+// the gate refuses, is done with nothing written. The message is done only once its turn is
+// claimed, so a router that stops between the write and the claim leaves it queued, and the
+// next attempt finds it written and claims it.
 func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) error {
 	thread, err := b.store.ChannelThread(ctx, message.ChannelID)
 	if err != nil {
@@ -225,12 +233,35 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if opened.Episode.ID != "" && opened.Episode.StartedAt.Equal(message.CreatedAt) {
 		opened.New = true
 	}
-	if err := b.writeInto(ctx, thread, config, inbound, inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)); err != nil && !alreadyWritten(err) {
+	id := inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)
+	written, err := b.writeInto(ctx, thread, config, inbound, id)
+	switch {
+	case alreadyWritten(err):
+		written = rewritten(thread, inbound, id)
+	case err != nil:
 		return err
 	}
+	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
+		"seq", message.Seq)
+	log.Info("an inbound message is written into its thread channel", "message", id)
 	if err := b.cards.Write(ctx, opened); err != nil && !alreadyWritten(err) {
 		return err
 	}
+	if b.answer == nil {
+		return nil
+	}
+	turn, err := b.answer(ctx, thread, written)
+	if err != nil || turn == nil {
+		return err
+	}
+	log.Info("an inbound message is handed to the agent", "message", id)
+	// Off the worker's slot: a turn waits for the thread's earlier one and for the reply, up to
+	// minutes, and the thread's next message waits for this row only. Close waits for it.
+	b.working.Add(1)
+	go func() {
+		defer b.working.Done()
+		turn()
+	}()
 	return nil
 }
 

@@ -51,6 +51,31 @@ const configField = "agent_config_id"
 // (conversation.ownedBy, support_agent_id).
 const agentField = "support_agent_id"
 
+// BridgedField is the custom field the bridge sets, to true, on every person's message it
+// writes into a thread channel: the message hook skips a message that has it, since the
+// worker hands that message to the agent itself (Answer). Stream Chat keeps a message's custom
+// fields and its message.new carries them at the top level of the message, as it does the
+// source the agent writes on its own (chatlog.SourceField), which the hook reads the same way.
+const BridgedField = "bridged"
+
+// Written is a person's message as the worker wrote it into its thread channel: what the
+// agent is handed (Answer).
+type Written struct {
+	// ID is its Stream message id, which its turn is claimed by.
+	ID   string
+	Text string
+	// Author is the Stream user the person writes as (AuthorUserID).
+	Author      string
+	Attachments []getstream.Attachment
+}
+
+// Answer hands the agent a message the worker wrote into thread (api.Server.AnswerQueued). It
+// claims the message's turn and returns the turn, which the bridge runs off the worker's slot,
+// as a reply waits up to minutes; nil is a message whose turn was claimed already. An error
+// is the claim failing: the worker tries the message again, and Stream Chat refuses the
+// write as already done, so the next attempt claims it.
+type Answer func(ctx context.Context, thread store.ChannelThread, message Written) (turn func(), err error)
+
 // threadChannelPrefix starts every thread channel's id: conversation.ThreadChannelPrefix,
 // the prefix a persistent conversation may be held on. Never support-, which durable session
 // commands own and the message hook ignores (conversation.SessionCommandChannel). With a UUID
@@ -238,6 +263,8 @@ type Bridge struct {
 	inboundRetries []time.Duration
 	inboundPoll    time.Duration
 	unanswered     func(ctx context.Context, event eventforward.Event) error
+	// answer hands the agent each message the worker writes (Start).
+	answer Answer
 	// queueTimeout bounds the claim and queue transaction Deliver finishes off the request
 	// (Options).
 	queueTimeout time.Duration
@@ -310,8 +337,8 @@ func New(options Options) (*Bridge, error) {
 	}, nil
 }
 
-// Close stops the worker (Start) and waits for the writes and replies in flight. A reply
-// handed over after it is still sent.
+// Close stops the worker (Start) and waits for the writes, the turns they handed the agent and
+// the replies in flight. A reply handed over after it is still sent.
 func (b *Bridge) Close() {
 	b.cancel()
 	b.working.Wait()
@@ -362,6 +389,8 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 			continue
 		}
 		answered = true
+		b.logger.Info("accepted an inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
+			"customer", thread.CustomerID, "config", config.ID, "channel", thread.ChannelID)
 		var waited func(core.InboundMessage) (store.ChannelInbound, error)
 		if waiting != nil {
 			waited = func(reply core.InboundMessage) (store.ChannelInbound, error) {
@@ -380,6 +409,9 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		if !fresh {
 			b.logger.Info("dropped a retried inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 				"customer", app.CustomerID, "connection", thread.ConnectionID, "config", config.ID, "channel", thread.ChannelID)
+		} else {
+			b.logger.Info("queued an inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
+				"customer", thread.CustomerID, "config", config.ID, "channel", thread.ChannelID)
 		}
 		b.wake()
 	}
@@ -752,10 +784,10 @@ func (b *Bridge) read(connection store.ConnectorConnection, definition store.Con
 
 // writeInto writes message into its thread channel as its author under the Stream message id
 // id, creating the channel the first time, with the agent config that answers it.
-func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string) error {
+func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string) (Written, error) {
 	bound, err := b.stream.ForApp(ctx, thread.CustomerID, thread.StreamAppPK)
 	if err != nil {
-		return err
+		return Written{}, err
 	}
 	author := AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
 	name, agentName := message.AuthorID, config.Name
@@ -766,7 +798,7 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		author:           {ID: author, Name: &name},
 		thread.ChannelID: {ID: thread.ChannelID, Name: &agentName},
 	}); err != nil {
-		return stack.Wrap(err)
+		return Written{}, stack.Wrap(err)
 	}
 	// The data creates the channel on the thread's first message; the agent channel type
 	// refuses a server-side create without a creator. The stamps are the ones a persistent
@@ -783,12 +815,26 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		},
 	})
 	if err != nil {
-		return stack.Wrap(err)
+		return Written{}, stack.Wrap(err)
 	}
-	// No source: the message hook answers only a message without one (api.addressed).
-	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &author, Attachments: photos(message.Media)}
-	_, err = bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
-	return stack.Wrap(err)
+	// No source: the conversation reads a message without one as the person's
+	// (conversation.messageFromThread). Bridged: the message hook leaves it to the worker.
+	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &author, Attachments: photos(message.Media),
+		Custom: map[string]any{BridgedField: true}}
+	sent, err := bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
+	if err != nil {
+		return Written{}, stack.Wrap(err)
+	}
+	stored := sent.Data.Message
+	return Written{ID: stored.ID, Text: stored.Text, Author: stored.User.ID, Attachments: stored.Attachments}, nil
+}
+
+// rewritten is the message an attempt whose write Stream Chat refused as already done wrote
+// (alreadyWritten), rebuilt from its row as writeInto wrote it: that refusal carries no
+// message.
+func rewritten(thread store.ChannelThread, message core.InboundMessage, id string) Written {
+	return Written{ID: id, Text: message.Text, Author: AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID),
+		Attachments: photos(message.Media)}
 }
 
 // photos are a message's image files as Stream Chat image attachments, the shape the message
