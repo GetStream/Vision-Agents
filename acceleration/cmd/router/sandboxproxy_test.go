@@ -807,7 +807,7 @@ func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
 	s.Require().NoError(stop())
 
 	s.Equal(1, strings.Count(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over"))
-	s.Contains(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over address="+socket)
+	s.Contains(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over\" address="+socket)
 	var stopped lockedBuffer
 	stop, handOver, err = s.startRouter("second", slog.New(slog.NewTextHandler(&stopped, nil)))
 	s.Require().NoError(err)
