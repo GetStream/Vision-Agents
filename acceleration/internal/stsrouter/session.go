@@ -444,7 +444,7 @@ func (s *Session) billBackend(used sts.BackendUsage) {
 	}
 	_ = routing.Settle(routing.Meter{
 		Recorder:   s.backend,
-		Config:     routing.ProviderConfig{Provider: s.config.Provider, Model: used.Model},
+		Config:     routing.ProviderConfig{Provider: s.config.Provider, Model: used.Model, Region: s.config.Region, BYOK: s.config.BYOK},
 		Owner:      s.owner,
 		UsageID:    routing.UsageID("sts_backend", s.id, used.ResponseID),
 		Attributes: attributes,
@@ -471,7 +471,7 @@ func (s *Session) billTranscription(used sts.TranscriptionUsage) {
 	}
 	_ = routing.Settle(routing.Meter{
 		Recorder:   s.recorder,
-		Config:     routing.ProviderConfig{Provider: s.config.Provider, Model: used.Model},
+		Config:     routing.ProviderConfig{Provider: s.config.Provider, Model: used.Model, Region: s.config.Region, BYOK: s.config.BYOK},
 		Owner:      s.owner,
 		UsageID:    routing.UsageID("sts_transcription", s.id, used.ItemID),
 		Attributes: map[string]string{parentSession: s.id},

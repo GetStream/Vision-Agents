@@ -165,6 +165,10 @@ A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the ag
 
 `POST /v1/tts/recordings`, `POST /v1/stt/recordings`, `POST /v1/search`, `POST /v1/detection` and `POST /v1/image/generations` now answer a top-level `model` with a 400 `invalid_request` that says to name the model in `options.target`. Before, the field was ignored: the request was served by the default model and billed for it (AI-2180).
 
+### A voice that speaks each sentence as its own request no longer goes silent when an id is reused
+
+On `/v1/tts/stream`, a `speak` frame for an id whose final text was already sent, before that utterance has finished, is now refused with an `error` frame (`tts: "<id>" is still being spoken; give the next utterance an id of its own`), and the utterances after it are still heard. An id is free again once its utterance has finished. Before, on a voice such as Gemini, Fish or Speechify, the reused id could leave every later utterance on the socket held and never heard. An utterance sent in pieces (`final: false`, then `final: true`) on such a voice could do the same, and no longer does (AI-2171).
+
 ### A scheduled task's reply cut off as its provider fails is run again
 
 When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
@@ -340,6 +344,14 @@ In the management API, `PriceEntry` and `UpcomingPriceEntry` gain `sku`, `prices
 ### The price list's `markup_bps` columns are dropped
 
 Migration `20261130120000_drop_price_markup` drops `markup_bps` from `price_changes` and `price_entries`, with its checks, and the trigger that lets a change only be cancelled stops comparing it. Nothing has read the column since `20261118120000_price_entry_prices` stored every entry's price. Every router of a deployment must run a release with that migration before this one: a router built earlier can no longer read the price list once this has run. Down brings the columns back `NULL`; the markups they held do not come back (AI-2083).
+
+### Every price has a region, and work on the customer's own key is priced at a fee
+
+Every entry of the price list and every item priced names its region, `us` or `eu` for now, and whether it is BYOK, work done with the customer's own key. Both are matched exactly: EU work is never priced by a US entry, nor BYOK work by an entry that is not BYOK, nor the other way round, and work no entry of its own matches is unpriced. A provider instance runs in the `region` its routing config names, `us` (`pricing.DefaultRegion`) when it names none, as `router.yaml` names none today. Every entry of `prices/vendor.json` is `us`, and a `vendor.json` entry that names no region fails its tests. An entry of `ROUTER_PRICES_FILE` that names none is read as `us`, with a warning naming it, since a router built before this one refuses a `region` field in the file every router of the deployment reads; a later release refuses it. Reading a price file adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at 20% of its vendor's rates (`pricing.BYOKFeeBps`), where every other entry written without a price is priced at 120%: a million tokens that cost the vendor $1 are $1.20, or $0.20 on the customer's key. A file's own BYOK entry wins over the twin. A BYOK row's `base_cost_micros` is 0, since the vendor bills the customer. SKUs end in the region, then `byok`: `llm-anthropic-claude-haiku-5-5-us`, `llm-anthropic-claude-haiku-5-5-us-byok`.
+
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`, adds `region` (`us` on every existing row, and no default after) and `byok` (false), ends every existing SKU in `-us`, and indexes items by region and BYOK state. `requests.sku` and the usage ledger keep the SKU each row was billed under, so rows priced before it name their SKU without the region. A router built before this one can no longer read or write the price list once it has run: it keeps pricing with the list it holds, and reads again on its interval, until it is replaced. The first start after it adds only the BYOK twins, as one `release` change; every US item keeps its price and its SKU. Down refuses a list holding a BYOK or non-US entry.
+
+In the API, `PriceItem`, and so every price entry the management API answers, the preview and `getPrices`'s `Price`, gains `region` (required) and `byok`. `PriceEntryInput` requires `region`, a letter and up to 31 of a-z, 0-9 and hyphens (else 400 `validation_failed`), and takes `byok`. `getPrices` takes an optional `region`. `router prices show`, `sync --dry-run` and `check` name each item's region and BYOK state (AI-2187).
 
 ### The call a tool function is handed is named toolCallContext
 

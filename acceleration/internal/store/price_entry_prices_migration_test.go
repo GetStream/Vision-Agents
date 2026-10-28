@@ -108,6 +108,11 @@ func (s *StoredPricesMigrationSuite) oldList() {
 	)
 }
 
+// migrate runs the migrations up to this one, the last that names the table price_entries.
+func (s *StoredPricesMigrationSuite) migrate() {
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", storedPrices))
+}
+
 // migratedRow is what the migration left on one entry.
 type migratedRow struct {
 	SKU        string
@@ -131,7 +136,7 @@ func (s *StoredPricesMigrationSuite) row(change, model, attributes string) migra
 func (s *StoredPricesMigrationSuite) TestEveryEntryIsPricedAtWhatItWasCharged() {
 	s.oldList()
 
-	s.Require().NoError(s.db.Migrate(s.ctx))
+	s.migrate()
 
 	a := s.row("20261102000000_cheaper_a", "a", "{}")
 	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(0.084), pricing.OutputTokens: perMillionTokens(4.8)}, a.Prices,
@@ -178,25 +183,25 @@ func (s *StoredPricesMigrationSuite) TestTheListChargesWhatItDidBefore() {
 	list, err := pricing.NewList("database", entries, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	quote := func(model string, used pricing.Quantities) pricing.Quote {
-		return list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: model}, used)
+		return list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: model, Region: pricing.RegionUS}, used)
 	}
 
 	a := quote("a", pricing.Quantities{pricing.InputTokens: 1_000_000, pricing.OutputTokens: 1_000_000})
 	s.EqualValues(4_884_000, a.CostMicros, "(0.07 + 4) × 1.2")
 	s.EqualValues(4_070_000, a.BaseCostMicros)
-	s.Equal("llm-openai-a", a.SKU)
+	s.Equal("llm-openai-a-us", a.SKU, "which ends in its region since 20261202120000_price_entry_region")
 	s.EqualValues(2_100_000, quote("own", pricing.Quantities{pricing.InputTokens: 1_000_000}).CostMicros)
 	long := quote("long", pricing.Quantities{pricing.InputTokens: 300_000})
 	s.EqualValues(792_000, long.CostMicros, "300,000 at the tier's 2.2 × 1.2")
 	s.EqualValues(660_000, long.BaseCostMicros)
-	s.False(list.Billable(pricing.Item{Modality: "phone", Provider: "telnyx", Model: "call"}))
-	_, gone := list.Entry(pricing.Item{Modality: "llm", Provider: "openai", Model: "gone"})
+	s.False(list.Billable(pricing.Item{Modality: "phone", Provider: "telnyx", Model: "call", Region: pricing.RegionUS}))
+	_, gone := list.Entry(pricing.Item{Modality: "llm", Provider: "openai", Model: "gone", Region: pricing.RegionUS})
 	s.False(gone)
 }
 
 func (s *StoredPricesMigrationSuite) TestTheGuardStillRefusesEveryUpdate() {
 	s.oldList()
-	s.Require().NoError(s.db.Migrate(s.ctx))
+	s.migrate()
 
 	for _, statement := range []string{
 		`UPDATE price_entries SET prices = '{}' WHERE model = 'a'`,
@@ -220,14 +225,14 @@ func (s *StoredPricesMigrationSuite) TestAnEmptyListMigratesAndSeedsAtTheFactor(
 	s.Require().NoError(s.db.Migrate(s.ctx))
 
 	_, _, _, err := s.db.SyncPrices(s.ctx, PriceLoad{Entries: []pricing.Entry{{Modality: "llm", Provider: "openai", Model: "a",
-		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1)}}}, Source: "files", Release: "v2"})
+		Region: pricing.RegionUS, Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1)}}}, Source: "files", Release: "v2"})
 	s.Require().NoError(err)
 
 	rows, err := s.db.ActivePriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
 	s.Require().Len(rows, 1)
 	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1.2)}, rows[0].Prices)
-	s.Equal("llm-openai-a", rows[0].SKU)
+	s.Equal("llm-openai-a-us", rows[0].SKU)
 	var sku string
 	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
 		"SELECT column_default FROM information_schema.columns WHERE table_name = 'requests' AND column_name = 'sku'").Scan(&sku))

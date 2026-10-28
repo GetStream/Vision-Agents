@@ -15,10 +15,14 @@ final readonly class PricePreviewItem
         public string $modality,
         public string $model,
         public string $provider,
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
         // How it is priced after. Absent when nothing will.
         public ?PricedEntry $after = null,
         // How it is priced before the change. Absent when nothing prices it.
         public ?PricedEntry $before = null,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
         public ?bool $needsConfirmation = null,
         // By meter, the factor its price moves by. Absent for a meter with no price before or after.
         /** @var array<string, mixed>|null */
@@ -40,8 +44,10 @@ final readonly class PricePreviewItem
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
             after: array_key_exists('after', $data) && $data['after'] !== null ? PricedEntry::fromArray(Json::object($data, 'after')) : null,
             before: array_key_exists('before', $data) && $data['before'] !== null ? PricedEntry::fromArray(Json::object($data, 'before')) : null,
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             needsConfirmation: array_key_exists('needs_confirmation', $data) && $data['needs_confirmation'] !== null ? Json::bool($data, 'needs_confirmation') : null,
             priceFactors: array_key_exists('price_factors', $data) && $data['price_factors'] !== null ? Json::object($data, 'price_factors') : null,
             unpriced: array_key_exists('unpriced', $data) && $data['unpriced'] !== null ? Json::bool($data, 'unpriced') : null,
@@ -60,11 +66,15 @@ final readonly class PricePreviewItem
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
         if ($this->after !== null) {
             $out['after'] = $this->after->toArray();
         }
         if ($this->before !== null) {
             $out['before'] = $this->before->toArray();
+        }
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
         }
         if ($this->needsConfirmation !== null) {
             $out['needs_confirmation'] = $this->needsConfirmation;

@@ -81,7 +81,7 @@ func (s *MeteredSuite) SetupTest() {
 func (s *MeteredSuite) priced(modality routing.Modality, provider, model string, attributes map[string]string,
 	used pricing.Quantities,
 ) int64 {
-	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Attributes: attributes}
+	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Region: pricing.DefaultRegion, Attributes: attributes}
 	return pricingtest.Micros(s.T(), s.prices, item, used)
 }
 

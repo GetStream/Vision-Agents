@@ -141,7 +141,7 @@ func (s *TextMeteringSuite) TestAnMMSThatArrivedIsBilledAsOne() {
 // sms is what used costs on a US text in that direction at the vendor list's rates, read from
 // vendor.json so a price change there leaves the tests passing.
 func (s *TextMeteringSuite) sms(direction string, used pricing.Quantities) int64 {
-	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: "sms",
+	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: "sms", Region: pricing.DefaultRegion,
 		Attributes: map[string]string{"country": "US", "direction": direction}}
 	return pricingtest.Micros(s.T(), s.prices, item, used)
 }

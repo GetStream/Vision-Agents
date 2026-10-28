@@ -357,10 +357,45 @@ func (s *RecorderSuite) TestTheRowStoresItsVersionItsSKUAndItsCostAtTheVendorsRa
 	row := s.recordedAt(s.written(), priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
 
 	s.Equal("change_a", row.PriceVersion)
-	s.Equal("llm-vendor-priced", row.SKU)
+	s.Equal("llm-vendor-priced-us", row.SKU)
 	s.EqualValues(3_200, row.BaseCostMicros, "1,000 input tokens at $2 and 100 output at $12 per million")
 	s.EqualValues(4_000, row.CostMicros, "at the entry's prices")
 	s.EqualValues(1_500, row.OutputCostMicros)
+}
+
+// TestARowOfABYOKInstanceCarriesTheBYOKSKUAndCostsTheOperatorNothing: the instance on the
+// customer's own key is priced by its BYOK entry, at a fifth of the vendor's rates, and its
+// vendor bills the customer, so the row's base cost is 0.
+func (s *RecorderSuite) TestARowOfABYOKInstanceCarriesTheBYOKSKUAndCostsTheOperatorNothing() {
+	list, err := pricing.NewList("change_b",
+		pricing.PricedAll(pricing.WithBYOK(PriceEntries(Config{LLM: {Providers: []ProviderConfig{priced}}}))), nil)
+	s.Require().NoError(err)
+	byok := priced
+	byok.BYOK = true
+
+	row := s.recordedAt(list, byok, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
+	plain := s.recordedAt(list, priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
+
+	s.Equal("llm-vendor-priced-us-byok", row.SKU)
+	s.EqualValues(640, row.CostMicros, "a fifth of the 3,200 the vendor bills the customer")
+	s.Zero(row.BaseCostMicros)
+	s.True(row.Billable)
+	s.Equal("llm-vendor-priced-us", plain.SKU)
+	s.EqualValues(3_840, plain.CostMicros)
+	s.EqualValues(3_200, plain.BaseCostMicros)
+}
+
+// TestARowOfAnEUInstanceWithNoEUPriceIsUnpriced: the list prices the model in the us alone, and
+// an instance in the eu is never billed at that price.
+func (s *RecorderSuite) TestARowOfAnEUInstanceWithNoEUPriceIsUnpriced() {
+	eu := priced
+	eu.Region = pricing.RegionEU
+
+	row := s.recordedAt(s.written(), eu, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+
+	s.Zero(row.CostMicros)
+	s.Empty(row.SKU)
+	s.True(row.Billable)
 }
 
 func (s *RecorderSuite) TestARowWithNoPriceNamesNone() {
@@ -379,7 +414,7 @@ func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsResoldAtTheFactor() {
 	s.EqualValues(1_200_000, row.CostMicros)
 	s.EqualValues(1_000_000, row.BaseCostMicros)
 	s.Equal(pricing.QuotedVersion, row.PriceVersion)
-	s.Equal("llm-vendor-number", row.SKU)
+	s.Equal("llm-vendor-number-us", row.SKU)
 	s.True(row.Billable)
 }
 

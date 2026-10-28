@@ -8056,9 +8056,12 @@ pub struct PressDigitsRequest {
     ///Who is carrying the call, e.g. "telnyx".
     pub vendor: ::std::string::String,
 }
-///What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+///What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Price {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub change: ::std::option::Option<::std::string::String>,
@@ -8082,6 +8085,8 @@ pub struct Price {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sku: ::std::option::Option<::std::string::String>,
@@ -8123,6 +8128,9 @@ pub struct PriceChange {
 ///`PriceChangeEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PriceChangeEntry {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub free: ::std::option::Option<bool>,
     ///Such as llm, stt, tts, sms or phone.
@@ -8144,6 +8152,8 @@ pub struct PriceChangeEntry {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
     pub sku: ::std::string::String,
     ///The vendor's cost for long prompts, for reference.
@@ -8247,6 +8257,9 @@ pub struct PriceChangePage {
 ///`PriceEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PriceEntry {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///When the entry took effect, or takes effect.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub effective_at: ::std::option::Option<::std::string::String>,
@@ -8275,6 +8288,8 @@ pub struct PriceEntry {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sku: ::std::option::Option<::std::string::String>,
@@ -8296,6 +8311,9 @@ pub struct PriceEntry {
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
 pub struct PriceEntryInput {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///The vendor charges nothing for it. A free entry has no price.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub free: ::std::option::Option<bool>,
@@ -8308,7 +8326,7 @@ pub struct PriceEntryInput {
     ///What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub price_tiers: ::std::option::Option<::std::vec::Vec<PriceTier>>,
-    ///What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+    ///What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -8321,7 +8339,9 @@ pub struct PriceEntryInput {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
-    ///The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
+    ///The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sku: ::std::option::Option<::std::string::String>,
     ///The vendor's cost for long prompts. Each tier rates every meter the entry does.
@@ -8343,10 +8363,15 @@ pub struct PriceEntryInput {
 ///`PriceItem`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PriceItem {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///Such as llm, stt, tts, sms or phone.
     pub modality: ::std::string::String,
     pub model: ::std::string::String,
     pub provider: ::std::string::String,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
     #[serde(
         default,
@@ -8386,6 +8411,9 @@ pub struct PricePreviewItem {
     ///How it is priced before the change. Absent when nothing prices it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub before: ::std::option::Option<PricedEntry>,
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///Such as llm, stt, tts, sms or phone.
     pub modality: ::std::string::String,
     pub model: ::std::string::String,
@@ -8398,6 +8426,8 @@ pub struct PricePreviewItem {
     )]
     pub price_factors: ::std::collections::BTreeMap<::std::string::String, f64>,
     pub provider: ::std::string::String,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///It is priced before the change and billable with no price after.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub unpriced: ::std::option::Option<bool>,
@@ -8469,7 +8499,7 @@ pub struct PricedEntry {
 pub struct Prices {
     ///The moment the list is read at.
     pub at: ::std::string::String,
-    ///Every item priced now, by modality, provider and model.
+    ///Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
     pub entries: ::std::vec::Vec<Price>,
     ///What the changes scheduled after at will set, soonest first.
     pub upcoming: ::std::vec::Vec<Price>,
@@ -12610,6 +12640,9 @@ pub struct TurnStatsBucket {
 ///`UpcomingPriceEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct UpcomingPriceEntry {
+    ///Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub byok: ::std::option::Option<bool>,
     ///When the entry took effect, or takes effect.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub effective_at: ::std::option::Option<::std::string::String>,
@@ -12640,6 +12673,8 @@ pub struct UpcomingPriceEntry {
     pub rates: ::std::collections::BTreeMap<::std::string::String, PriceRate>,
     ///The change's reason.
     pub reason: ::std::string::String,
+    ///Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+    pub region: ::std::string::String,
     ///The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sku: ::std::option::Option<::std::string::String>,
