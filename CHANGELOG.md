@@ -133,6 +133,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ## Bug Fixes
 
+### A bad key a provider refuses after accepting the websocket handshake is counted as refused
+
+`router_keypool_refused_attempts_total` now counts, with `status` `invalid_key`, a key a provider accepts at the websocket handshake and refuses right after, once per connection: Gemini Live's close 1007 "API key not valid", OpenAI Realtime's and Together's `invalid_api_key` frame, AssemblyAI's Error 1008 "Invalid API key", ElevenLabs Scribe's `auth_error`, ElevenLabs speech's `invalid_api_key` and Inworld's code 7 "API key does not exist or was deleted" or "Invalid authorization credentials". Any other frame or close is not counted, and the key is not rested. OpenAI Realtime and Together Nemotron now report the provider's reason for refusing a session, not "expected session.created" (AI-2164).
+
 ### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
 
 `router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
