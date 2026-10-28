@@ -1,7 +1,6 @@
 package llmrouter
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,17 +14,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/xai"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
-
-// inRegion is a customer whose policies keep their work in one region.
-type inRegion string
-
-func (r inRegion) Admit(context.Context, routing.Owner) (routing.Admission, error) {
-	return routing.Admission{DataPolicy: options.DataPolicy{Region: string(r)}}, nil
-}
 
 // loaded is a router.yaml as a router's start reads it.
 func (s *LLMRouterSuite) loaded(yaml string) (routing.Config, error) {
@@ -67,7 +58,7 @@ func (s *LLMRouterSuite) TestAnEUInstanceIsServedAtItsEndpointWithItsOwnKey() {
 	}))
 	s.T().Cleanup(server.Close)
 	s.T().Setenv("ANTHROPIC_EU_TEST_KEY", "eu-key")
-	router, err := New(Options{Registry: DefaultRegistry(), Gate: inRegion(pricing.RegionEU), Config: s.regionalConfig(`
+	router, err := New(Options{Registry: DefaultRegistry(), Config: s.regionalConfig(`
     - provider: anthropic
       model: claude-haiku-5-5
       languages: [en]
@@ -78,7 +69,7 @@ func (s *LLMRouterSuite) TestAnEUInstanceIsServedAtItsEndpointWithItsOwnKey() {
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 
-	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-haiku-5-5"})
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Region: pricing.RegionEU, Target: "anthropic/claude-haiku-5-5"})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { session.Close() })
 	stream, err := session.Create(s.ctx, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hello"}}})

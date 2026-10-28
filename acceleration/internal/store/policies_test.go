@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // spend stores a request that cost the given amount, some minutes before the suite's base.
@@ -35,7 +33,7 @@ func (s *StoreSuite) TestSavingAPolicyReplacesWhatWasThere() {
 	no, yes := false, true
 	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{
 		Tags:            map[string]string{"team": "a"},
-		DataPolicy:      options.DataPolicy{AllowTraining: &no, Retention: "30d"},
+		DataPolicy:      PolicyDataPolicy{AllowTraining: &no, Retention: "30d"},
 		PromptInjection: &yes,
 	}))
 	s.Require().NoError(s.store.SavePolicy(s.ctx, ScopeOrganization, "org-1", PolicyDocument{
@@ -45,7 +43,7 @@ func (s *StoreSuite) TestSavingAPolicyReplacesWhatWasThere() {
 	document, err := s.store.Policy(s.ctx, ScopeOrganization, "org-1")
 	s.Require().NoError(err)
 	s.Nil(document.Tags)
-	s.False(document.DataPolicy.Asks())
+	s.False(document.DataPolicy.Floor().Asks())
 	s.Require().NotNil(document.PromptInjection)
 	s.False(*document.PromptInjection)
 

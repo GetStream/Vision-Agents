@@ -3011,6 +3011,11 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// Region Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
+	//
+	// Example: us
+	Region string `json:"region"`
+
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
@@ -3090,6 +3095,11 @@ type AgentConfigPatch struct {
 	// Plugins Deprecated: use connectors, a binding to a connector.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
@@ -3178,6 +3188,11 @@ type AgentConfigRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
@@ -5248,7 +5263,7 @@ type DataPolicy struct {
 	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
 	AllowTraining *bool `json:"allow_training,omitempty"`
 
-	// Region Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+	// Region Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region.
 	//
 	// Example: eu
 	Region *string `json:"region,omitempty"`
@@ -6687,8 +6702,8 @@ type Policy struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Budget *map[string]interface{} `json:"budget,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
-	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+	// DataPolicy What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
+	DataPolicy *PolicyDataPolicy `json:"data_policy,omitempty"`
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
@@ -6711,6 +6726,17 @@ type Policy struct {
 	//
 	// Example: 30d
 	ToolOutputRetention *string `json:"tool_output_retention,omitempty"`
+}
+
+// PolicyDataPolicy What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
+type PolicyDataPolicy struct {
+	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+	AllowTraining *bool `json:"allow_training,omitempty"`
+
+	// Retention The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+	//
+	// Example: none
+	Retention *string `json:"retention,omitempty"`
 }
 
 // PolicyScope Whose policy: an organization's, an app's, or one end user's.
@@ -8748,6 +8774,11 @@ type SyncAgentRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`

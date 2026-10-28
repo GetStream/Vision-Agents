@@ -85,6 +85,7 @@ func (r *Runner) converse(
 		CustomerID: simulation.CustomerID,
 		AgentID:    spec.AgentID,
 		CallID:     spec.CallID,
+		Region:     spec.Region,
 		Tags:       spec.Tags,
 		Target:     target(simulation.CallerSTT, defaultCallerSTT),
 	})
@@ -98,6 +99,7 @@ func (r *Runner) converse(
 		CustomerID: simulation.CustomerID,
 		AgentID:    spec.AgentID,
 		CallID:     spec.CallID,
+		Region:     spec.Region,
 		Tags:       spec.Tags,
 		Target:     target(simulation.CallerTTS, defaultCallerTTS),
 		Voice:      simulation.CallerVoice,

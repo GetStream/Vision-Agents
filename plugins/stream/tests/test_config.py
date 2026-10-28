@@ -128,6 +128,7 @@ class Router:
             self.configs,
             {
                 "mode": "voice",
+                "region": "us",
                 **self.configs.get(existing_id, {}),
                 "name": body["name"],
                 "instructions": body.get("instructions", ""),
@@ -183,11 +184,13 @@ class Router:
     async def _config(self, request: web.Request) -> dict[str, Any]:
         """What was asked for, as a config the router would answer with.
 
-        A stored config always says which mode it runs in, whether or not the request
-        mentioned one.
+        A stored config always says which mode and region it runs in, whether or not the
+        request mentioned them.
         """
         body: dict[str, Any] = await request.json()
-        return dict(body, mode=body.get("mode") or "voice")
+        return dict(
+            body, mode=body.get("mode") or "voice", region=body.get("region") or "us"
+        )
 
     def _store(
         self, kept: dict[str, dict[str, Any]], body: dict[str, Any], id: str = ""
@@ -783,6 +786,19 @@ class TestSyncAgent:
         assert "sts" not in stored
         assert "sandbox" not in stored
         assert stored["mode"] == "voice"
+        assert stored["region"] == "us", "the router's own, since the request sent none"
+
+    async def test_the_region_the_declaration_names_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nregion: eu\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["region"] == "eu"
+        assert result.config.region == "eu"
 
     async def test_editing_a_model_stores_the_directory_again(
         self, router: Router, launched_from

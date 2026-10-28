@@ -196,14 +196,15 @@ type DataPolicy struct {
 	AllowTraining *bool `json:"allow_training,omitempty"`
 	// Retention is the longest a provider may keep this audio. Empty asks nothing.
 	Retention Retention `json:"retention,omitempty"`
-	// Region is where the work must be done, such as pricing.RegionEU: only an instance
-	// running there serves it. Empty asks nothing, which is pricing.DefaultRegion.
+	// Region is where a direct call's work must be done, such as pricing.RegionEU: only an
+	// instance running there serves it. Empty asks nothing, which is the region the work is
+	// otherwise done in, an agent's or pricing.DefaultRegion.
 	Region string `json:"region,omitempty"`
 }
 
-// ErrRegionConflict says two policies a request is held to name different regions, so
-// nowhere meets both.
-var ErrRegionConflict = errors.New("options: the data policies name different regions")
+// ErrRegionConflict says a request names two different regions, the one its work is done in
+// and the one its data policy asks for, so nowhere meets both.
+var ErrRegionConflict = errors.New("options: the request names two different regions")
 
 // Asks reports whether this policy requires anything at all.
 func (p DataPolicy) Asks() bool {
@@ -234,21 +235,15 @@ func (p DataPolicy) Validate() error {
 }
 
 // Stricter returns what a provider has to meet to satisfy both policies: training
-// forbidden if either forbids it, the shorter of the two retentions, and the region
-// either names. Two different regions are ErrRegionConflict: no instance runs in both.
-func (p DataPolicy) Stricter(other DataPolicy) (DataPolicy, error) {
+// forbidden if either forbids it, and the shorter of the two retentions. The region is p's:
+// other is a policy's floor, and a policy never says where work is done.
+func (p DataPolicy) Stricter(other DataPolicy) DataPolicy {
 	merged := p
 	if other.AllowTraining != nil && (merged.AllowTraining == nil || !*other.AllowTraining) {
 		merged.AllowTraining = other.AllowTraining
 	}
 	merged.Retention = merged.Retention.Shorter(other.Retention)
-	if other.Region != "" && merged.Region != "" && other.Region != merged.Region {
-		return DataPolicy{}, stack.Wrap(fmt.Errorf("%w: %s and %s", ErrRegionConflict, merged.Region, other.Region))
-	}
-	if merged.Region == "" {
-		merged.Region = other.Region
-	}
-	return merged, nil
+	return merged
 }
 
 // SatisfiedBy reports whether a provider that handles data this way may serve a request

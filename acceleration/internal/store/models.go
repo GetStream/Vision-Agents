@@ -498,6 +498,10 @@ type AgentConfig struct {
 	// Mode is whether the agent is spoken to or written to: AgentModeVoice or
 	// AgentModeText. A text agent uses neither speech target and joins no call.
 	Mode string `bun:"mode,notnull"`
+	// Region is where the agent's work is done, such as pricing.RegionEU: every model its
+	// sessions run, its knowledge base and its sandbox are there, and nothing of it is done
+	// elsewhere (20261202135000_agent_region.sql). Empty is stored as pricing.DefaultRegion.
+	Region string `bun:"region,notnull"`
 	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
 	// default. STS names one native audio model that hears and speaks for itself; naming
 	// one makes the agent native, and the three cascade targets are then not used.

@@ -13,6 +13,7 @@
 package routing
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,7 @@ type Inspector interface {
 	Config() ModalityConfig
 	Providers(ctx context.Context) []Candidate
 	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
+	InRegion(ctx context.Context, target, region string) (bool, error)
 }
 
 // ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
@@ -149,14 +151,6 @@ var ErrModelNotAllowed = errors.New("routing: your policy does not allow this mo
 // and categories are what the customer's limits on them are checked against.
 type Gate interface {
 	Admit(ctx context.Context, owner Owner) (Admission, error)
-}
-
-// Regioner is a Gate that says which region a customer's work is done in when nothing is
-// routed: the region their organization's and app's policies name, pricing.DefaultRegion when
-// neither does. Two policies naming different regions are an error, and no work of the
-// customer's is done anywhere.
-type Regioner interface {
-	Region(ctx context.Context, customerID string) (string, error)
 }
 
 // Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
@@ -336,6 +330,10 @@ type Request struct {
 	AgentID string
 	// CallID is the call the work happens in. Empty outside a conversation.
 	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none, and
+	// the region DataPolicy asks for, else pricing.DefaultRegion, holds. Only instances in it
+	// serve the request.
+	Region string
 	// Tags are the customer's own cost labels, recorded on every row the session writes.
 	Tags Tags
 	// Spent adds up what the session's rows cost for the request or socket that opened it. A
@@ -395,7 +393,8 @@ type Request struct {
 	Search options.Search
 }
 
-// Owner returns who the request is billed to and how it is labelled.
+// Owner returns who the request is billed to and how it is labelled, and the region its work
+// is done in.
 func (r Request) Owner() Owner {
 	return Owner{
 		CustomerID:  r.CustomerID,
@@ -403,9 +402,21 @@ func (r Request) Owner() Owner {
 		Caller:      r.Caller,
 		AgentID:     r.AgentID,
 		CallID:      r.CallID,
+		Region:      cmp.Or(r.Region, r.DataPolicy.Region),
 		Tags:        r.Tags,
 		Spent:       r.Spent,
 	}
+}
+
+// workRegion is the region the request's work is done in: Region, else the one its data policy
+// asks for, empty when neither names one. The two naming different regions is
+// options.ErrRegionConflict, a refusal: no instance runs in both.
+func (r Request) workRegion() (string, error) {
+	if r.Region != "" && r.DataPolicy.Region != "" && r.Region != r.DataPolicy.Region {
+		return "", Refused(stack.Wrap(fmt.Errorf("routing: the work is done in %s and its data policy asks for %s: %w",
+			r.Region, r.DataPolicy.Region, options.ErrRegionConflict)))
+	}
+	return cmp.Or(r.Region, r.DataPolicy.Region), nil
 }
 
 // Candidate is one option for serving a request, in preference order.
@@ -585,6 +596,24 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	return candidates, nil
 }
 
+// InRegion reports whether a request naming target could be served in region, empty being
+// pricing.DefaultRegion: whether one of the instances it resolves to runs there, as a
+// provider/model, a capability shortcut or a vendor's name in a priority list resolves. A
+// customer's own model runs in pricing.DefaultRegion alone. A target that resolves to nothing
+// in any region is the resolution's error.
+func (r *Router[P]) InRegion(ctx context.Context, target, region string) (bool, error) {
+	region = cmp.Or(region, pricing.DefaultRegion)
+	if _, own := CustomName(target); own {
+		return region == pricing.DefaultRegion, nil
+	}
+	candidates, err := r.resolveEntry(ctx, "", target, nil)
+	if err != nil {
+		return false, err
+	}
+	_, err = regional(candidates, region)
+	return err == nil, nil
+}
+
 // Select builds and starts the best provider that will have it, falling back to the next
 // candidate when one fails to start. Failures are recorded so the next request routes
 // around them. A request error (ErrRequest) is not recorded, and when nothing serves it is
@@ -623,6 +652,10 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if err := request.Tags.Validate(); err != nil {
 		return ProviderConfig{}, err
 	}
+	region, err := request.workRegion()
+	if err != nil {
+		return ProviderConfig{}, err
+	}
 
 	admission, err := r.Admit(ctx, request.Owner())
 	if err != nil {
@@ -632,10 +665,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if err := admission.Labelled(request.Tags).Validate(); err != nil {
 		return ProviderConfig{}, err
 	}
-	request.DataPolicy, err = request.DataPolicy.Stricter(admission.DataPolicy)
-	if err != nil {
-		return ProviderConfig{}, Refused(err)
-	}
+	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
 	candidates, err := r.Candidates(ctx, request)
 	if err != nil {
@@ -653,7 +683,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if err != nil {
 		return ProviderConfig{}, err
 	}
-	candidates, err = regional(candidates, request.DataPolicy.Region)
+	candidates, err = regional(candidates, region)
 	if err != nil {
 		return ProviderConfig{}, err
 	}
@@ -786,28 +816,28 @@ func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidat
 	return r.owned(ctx, request, candidates)
 }
 
-// owned puts the customer's own instance of each candidate whose vendor they keep a key for, in
-// the candidate's region, immediately before it: a copy of its config, at the deployment's
+// owned puts the customer's own instance of each candidate in the work's region whose vendor
+// they keep a key for there immediately before it: a copy of its config, at the deployment's
 // endpoint, built with their key and priced at its BYOK entry. The order between models stays
 // the caller's or the ranking's, and each model is asked on the customer's key first; when that
 // fails the walk moves on to the deployment's instance as it would to any next candidate.
 //
 // Only a vendor whose factory honors OverrideAPIKey is asked on a customer's key. A key is
-// looked up once per vendor and region, and one that cannot be read or opened leaves the
-// deployment's instance to serve, logged. request.BYOK keeps one kind of instance.
+// looked up once per vendor, for the work's region alone, since an instance in another never
+// serves the request; one that cannot be read or opened leaves the deployment's instance to
+// serve, logged. request.BYOK keeps one kind of instance.
 func (r *Router[P]) owned(ctx context.Context, request Request, candidates []Candidate) ([]Candidate, error) {
 	if r.customerKeys != nil {
-		type scope struct{ provider, region string }
-		keys := map[scope]string{}
+		region := cmp.Or(request.Owner().Region, pricing.DefaultRegion)
+		keys := map[string]string{}
 		withOwn := make([]Candidate, 0, len(candidates))
 		for _, candidate := range candidates {
 			config := candidate.Config
-			if !config.BYOK && r.TakesCustomerKey(config.Provider) {
-				at := scope{provider: config.Provider, region: regionOf(config)}
-				key, looked := keys[at]
+			if !config.BYOK && regionOf(config) == region && r.TakesCustomerKey(config.Provider) {
+				key, looked := keys[config.Provider]
 				if !looked {
-					key = r.customerKey(ctx, request.CustomerID, at.provider, at.region)
-					keys[at] = key
+					key = r.customerKey(ctx, request.CustomerID, config.Provider, region)
+					keys[config.Provider] = key
 				}
 				if key != "" {
 					withOwn = append(withOwn, r.ownInstance(ctx, candidate, key))
@@ -1322,9 +1352,9 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 		strings.Join(unmet, " and ")))
 }
 
-// regional narrows candidates to the instances running in the region the request's data
-// policy names, pricing.DefaultRegion when it names none. None there is a refusal naming the
-// region: a request is never served in another one, whatever else is available.
+// regional narrows candidates to the instances running in the region the work is done in,
+// pricing.DefaultRegion when it names none. None there is a refusal naming the region: a
+// request is never served in another one, whatever else is available.
 func regional(candidates []Candidate, region string) ([]Candidate, error) {
 	if region == "" {
 		region = pricing.DefaultRegion

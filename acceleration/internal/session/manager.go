@@ -292,7 +292,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	return manager, nil
 }
 
-// owner is who a session's own time is billed to: its runtime and its sandbox's.
+// owner is who a session's own time is billed to, its runtime and its sandbox's, and the region
+// the sandbox runs in.
 func owner(spec Spec) routing.Owner {
 	return routing.Owner{
 		CustomerID:  spec.CustomerID,
@@ -300,6 +301,7 @@ func owner(spec Spec) routing.Owner {
 		Caller:      spec.Caller,
 		AgentID:     spec.AgentID,
 		CallID:      spec.CallID,
+		Region:      spec.Region,
 		Tags:        spec.Tags,
 	}
 }
@@ -744,6 +746,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			AgentID:       spec.AgentID,
 			ConfigID:      spec.ConfigID,
 			CallID:        spec.CallID,
+			Region:        spec.Region,
 			Tags:          spec.Tags,
 			LLM:           m.options.LLM,
 			LLMTarget:     spec.LLMTarget,
@@ -903,7 +906,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.Attribution, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
+				m.reviews.Review(row(created), spec.Attribution, spec.Region, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -1450,6 +1453,12 @@ func (m *Manager) Running(id string) bool {
 	return running
 }
 
+// SandboxesIn reports whether a session's sandbox can be made in region: a config naming a
+// sandbox in a region with no Daytona target here is refused as it is written.
+func (m *Manager) SandboxesIn(region string) bool {
+	return m.options.Sandboxes.Serves(region)
+}
+
 // Len is how many sessions this process is running, which is what a draining router waits
 // on before it ends the rest.
 func (m *Manager) Len() int {
@@ -1665,6 +1674,7 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 			Attribution: spec.Attribution,
 			AgentID:     spec.AgentID,
 			CallID:      spec.CallID,
+			Region:      spec.Region,
 			Tags:        spec.Tags,
 		},
 		Classifier: m.options.Classifier,

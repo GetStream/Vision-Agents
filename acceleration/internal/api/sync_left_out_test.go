@@ -165,13 +165,13 @@ func (s *SyncSuite) TestASyncLeavingNothingOutAnswersAsBefore() {
 		Config map[string]json.RawMessage `json:"config"`
 	}
 	s.Require().NoError(json.Unmarshal(body, &synced))
-	s.Equal("connectors created_at dispatch episode_cards harness id mode name sync_hash tools updated_at video",
+	s.Equal("connectors created_at dispatch episode_cards harness id mode name region sync_hash tools updated_at video",
 		strings.Join(slices.Sorted(maps.Keys(synced.Config)), " "))
 
 	status, body = s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+strings.Trim(string(synced.Config["id"]), `"`), nil)
 	s.Require().Equal(http.StatusOK, status)
 	var got map[string]json.RawMessage
 	s.Require().NoError(json.Unmarshal(body, &got))
-	s.Equal("connectors created_at dispatch duration episode_cards harness id mode name sync_hash tools updated_at video",
+	s.Equal("connectors created_at dispatch duration episode_cards harness id mode name region sync_hash tools updated_at video",
 		strings.Join(slices.Sorted(maps.Keys(got)), " "))
 }

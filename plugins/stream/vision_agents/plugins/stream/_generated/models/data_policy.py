@@ -22,11 +22,10 @@ class DataPolicy:
         Attributes:
             allow_training (bool | Unset): False requires a provider that has said it does not train on what it is sent.
                 Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
-            region (str | Unset): Where the work is done: us or eu for now. Only a model instance running in that region
-                serves the request, and with none there it is refused (400), never served in another region; knowledge and
-                sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an
-                organization's policy, a region set on one of them holds for all of them, and two different regions are refused,
-                naming both. Omitted everywhere, the work is done in us. Example: eu.
+            region (str | Unset): Where this call's work is done: us or eu for now. Only a model instance running in that
+                region serves the request, and with none there it is refused (400), never served in another region. Omitted, the
+                work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request
+                naming another one for it is refused, naming both. A policy has no region. Example: eu.
             retention (str | Unset): The longest a provider may keep this audio - none, or a duration such as 30d or 24h.
                 Omitting it asks nothing. Example: none.
     """

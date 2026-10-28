@@ -1168,7 +1168,7 @@ func (s *RouterSuite) sessionManager(
 	var sandboxes *metered.Sandboxes
 	if s.daytona != nil {
 		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(),
-			Targets: s.sandboxTargets, Regions: policies, Recorder: s.metering, Logger: logger})
+			Targets: s.sandboxTargets, Recorder: s.metering, Logger: logger})
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Sandboxes:     sandboxes,

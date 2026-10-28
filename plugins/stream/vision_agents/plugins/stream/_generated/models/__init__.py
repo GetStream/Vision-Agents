@@ -330,6 +330,7 @@ from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
+from .policy_data_policy import PolicyDataPolicy
 from .policy_scope import PolicyScope
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
@@ -894,6 +895,7 @@ __all__ = (
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
+    "PolicyDataPolicy",
     "PolicyScope",
     "PolicyTags",
     "PostalAddress",

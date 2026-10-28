@@ -183,24 +183,73 @@ func (s *RoutingSuite) TestAShortcutsPinHoldsInEveryRegion() {
 	s.Equal(pricing.RegionUS, config.Region)
 }
 
-func (s *RoutingSuite) TestAPolicysRegionHoldsARequestThatAsksNone() {
+func (s *RoutingSuite) TestTheWorksRegionHoldsARequestItsDataPolicyAsksNoneOf() {
+	builds := &built{}
+	router := s.startedRegional(Admission{}, builds)
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en", Region: pricing.RegionEU})
+
+	s.Require().NoError(err)
+	s.Equal(pricing.RegionEU, config.Region)
+	s.Equal(euEndpoint, builds.last().BaseURL)
+}
+
+func (s *RoutingSuite) TestAPoliciesFloorNamingARegionMovesNoWork() {
 	router := s.startedRegional(Admission{DataPolicy: options.DataPolicy{Region: pricing.RegionEU}}, &built{})
 
 	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en"})
 
 	s.Require().NoError(err)
-	s.Equal(pricing.RegionEU, config.Region)
+	s.Equal(pricing.RegionUS, config.Region, "where work is done is never an admission's to say")
 }
 
-func (s *RoutingSuite) TestARequestAndAPolicyNamingDifferentRegionsAreRefusedNamingBoth() {
-	router := s.startedRegional(Admission{DataPolicy: options.DataPolicy{Region: pricing.RegionEU}}, &built{})
+func (s *RoutingSuite) TestTheWorksRegionAndAnotherAskedByItsDataPolicyAreRefusedNamingBoth() {
+	router := s.startedRegional(Admission{}, &built{})
 
-	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en",
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en", Region: pricing.RegionEU,
 		DataPolicy: options.DataPolicy{Region: pricing.RegionUS}})
 
 	s.Require().ErrorIs(err, options.ErrRegionConflict)
 	s.ErrorIs(err, ErrRequest)
-	s.ErrorContains(err, "us and eu")
+	s.ErrorContains(err, "the work is done in eu and its data policy asks for us")
+}
+
+func (s *RoutingSuite) TestTheWorksRegionAndTheSameAskedByItsDataPolicyAreServedThere() {
+	router := s.startedRegional(Admission{}, &built{})
+
+	_, config, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en", Region: pricing.RegionEU,
+		DataPolicy: options.DataPolicy{Region: pricing.RegionEU}})
+
+	s.Require().NoError(err)
+	s.Equal(pricing.RegionEU, config.Region)
+}
+
+func (s *RoutingSuite) TestARequestsOwnerCarriesTheRegionItsWorkIsDoneIn() {
+	s.Equal(pricing.RegionEU, Request{Region: pricing.RegionEU}.Owner().Region)
+	s.Equal(pricing.RegionEU, Request{DataPolicy: options.DataPolicy{Region: pricing.RegionEU}}.Owner().Region,
+		"a direct call's own data policy")
+	s.Empty(Request{}.Owner().Region, "nothing named is left for the default region")
+}
+
+func (s *RoutingSuite) TestATargetIsInARegionWhenOneOfItsInstancesIs() {
+	router := s.startedRegional(Admission{}, &built{})
+
+	for _, target := range []string{"quick/en", "en", "steady"} {
+		in, err := router.InRegion(s.ctx, target, pricing.RegionEU)
+		s.Require().NoError(err, target)
+		s.True(in, "%s has an instance in the eu", target)
+	}
+	in, err := router.InRegion(s.ctx, "lush/multi", pricing.RegionEU)
+	s.Require().NoError(err)
+	s.False(in, "lush/multi runs in the us alone")
+	in, err = router.InRegion(s.ctx, "lush/multi", "")
+	s.Require().NoError(err)
+	s.True(in, "no region named is the default one")
+	in, err = router.InRegion(s.ctx, "custom/prod", pricing.RegionEU)
+	s.Require().NoError(err)
+	s.False(in, "a customer's own model runs in the us alone")
+	_, err = router.InRegion(s.ctx, "nobody/nothing", pricing.RegionEU)
+	s.Error(err, "a target that names nothing is the resolution's error")
 }
 
 func (s *RoutingSuite) TestAnInstanceOutsideTheDefaultRegionWithNoEndpointIsRefusedAtStart() {

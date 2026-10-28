@@ -164,6 +164,7 @@ func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (
 	session, err := t.llm.Start(routing.WithAttribution(ctx, spec.Attribution), llmrouter.Request{
 		CustomerID: spec.CustomerID,
 		AgentID:    spec.AgentID,
+		Region:     spec.Region,
 		Tags:       spec.Tags,
 		Target:     spec.internalTarget(titleTarget),
 	})

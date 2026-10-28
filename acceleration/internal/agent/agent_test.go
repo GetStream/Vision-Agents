@@ -843,6 +843,11 @@ type AgentSuite struct {
 	logs *logLines
 	// callID is the call the agent serves, empty unless a test names one.
 	callID string
+	// region is where the agent's work is done, and twinned a region every router also
+	// declares its stub in, beside the default one: both empty unless a test is about
+	// regions. builtIn is the region each modality's stub was built in, every time it was.
+	region, twinned string
+	builtIn         *builds
 
 	agent  *Agent
 	events *collector
@@ -882,6 +887,8 @@ func (s *AgentSuite) SetupTest() {
 	s.voiceName = ""
 	s.logs = nil
 	s.backup = nil
+	s.region, s.twinned = "", ""
+	s.builtIn = &builds{}
 	s.over = make(chan struct{})
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -908,12 +915,13 @@ func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
 	}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
+	reasoning.Register("stub", func(spec routing.Spec) (llmrouter.Provider, error) {
+		s.builtIn.add(routing.LLM, spec.Region)
 		provider := models[min(opened, len(models)-1)]
 		opened++
 		return provider, nil
-	})
-	config := stubConfig()
+	}, routing.OverrideRegion)
+	config := s.regional(stubConfig())
 	if s.billing != nil {
 		for i := range config.Providers {
 			config.Providers[i].Price = routing.Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}
@@ -1013,14 +1021,15 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 
 	transcription := sttrouter.NewRegistry()
-	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+	transcription.Register("stub", func(spec routing.Spec) (stt.STT, error) {
+		s.builtIn.add(routing.STT, spec.Region)
 		s.opened.Add(1)
 		if s.holdOpen != nil {
 			<-s.holdOpen
 		}
 		return s.ears, nil
-	})
-	transcribing := stubConfig()
+	}, routing.OverrideRegion)
+	transcribing := s.regional(stubConfig())
 	if s.backup != nil {
 		transcribing.Providers = append(transcribing.Providers, routing.ProviderConfig{
 			Provider: "backup", Model: "backup-model", Languages: []string{"en"}, Realtime: true,
@@ -1043,6 +1052,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	speech := ttsrouter.NewRegistry()
 	opened := false
 	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.builtIn.add(routing.TTS, spec.Region)
 		s.voiceAsked = spec
 		if opened && s.replacement != nil {
 			return s.replacement, nil
@@ -1052,9 +1062,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 			return wrapVoice(s.voice), nil
 		}
 		return s.voice, nil
-	})
+	}, routing.OverrideRegion)
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: stubConfig(), Registry: speech, Logger: logger,
+		Config: s.regional(stubConfig()), Registry: speech, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
@@ -1073,7 +1083,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering, nil)
+		reading = s.knowledgeBase()
 	}
 
 	var finding *searchrouter.Router
@@ -1096,6 +1106,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		AppID:              "router",
 		SessionID:          "session-1",
 		CallID:             s.callID,
+		Region:             s.region,
 		Incognito:          s.incognito,
 		Store:              s.records,
 		Live:               s.live,
