@@ -219,11 +219,15 @@ func (s *TelnyxSandboxSuite) answers(channel string) int {
 }
 
 // holdSandbox puts the test's app under a sandbox for the test: the harness built its gate
-// with none, and the bridge holds the same gate.
+// with none, and the bridge holds the same gate. It puts the gate back once the test's turns
+// and replies ended (turnsEnded), as a reply still sending reads it (Bridge.sent).
 func (s *RouterSuite) holdSandbox(sandbox dlc.Sandbox) {
 	original := *s.gate
 	*s.gate = *dlc.NewGate(s.store, s.live.Redis(), sandbox, nil)
-	s.T().Cleanup(func() { *s.gate = original })
+	s.T().Cleanup(func() {
+		s.turnsEnded()
+		*s.gate = original
+	})
 }
 
 // Slack has no opt-out channel and no gate: a sandboxed customer's Slack user, who is no
