@@ -51,9 +51,9 @@ and billing as a direct API call.
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
-| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM Truss, thinking off, live on Baseten `qvmmvrrq` |
+| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM recipe, thinking off: a Truss for Baseten, the same flags for Nebius |
 
-Three providers are therefore unreachable until someone deploys them. `s2pro` is under the
+Two providers are therefore unreachable until someone deploys them. `s2pro` is under the
 Fish Audio Research License and wants an H100, so both questions are worth settling before
 the push; the hosted `fish` provider serves the same model in the meantime. `breeze` is in
 the same position under the BreezeBlue Research and Non-Commercial License, and there its
@@ -165,8 +165,8 @@ the other commands that read them there.
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
-| `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
-| `GEMMA_API_KEY`         | Optional; the bearer token for `GEMMA_BASE_URL` when it is not on Baseten. `BASETEN_API_KEY` is used when unset |
+| `GEMMA_BASE_URL`        | The root of any OpenAI-compatible Gemma 4 endpoint, ending in `/v1`. On Baseten: `https://model-<model id>.api.baseten.co/environments/production/sync/v1`. On Nebius: `https://<managed host>/v1`, where the host is the endpoint's `https://` public endpoint. See `deploy/gemma-4` |
+| `GEMMA_API_KEY`         | Optional; the host's bearer token for `GEMMA_BASE_URL`. `BASETEN_API_KEY` is used when unset |
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
