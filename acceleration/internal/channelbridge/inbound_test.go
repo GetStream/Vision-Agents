@@ -444,6 +444,51 @@ func (s *InboundSuite) TestAStopPastItsWaitsIsDueAgainAfterTheLastWait() {
 	s.Equal(1, strings.Count(s.logs.String(), "level=WARN msg=\"an opt-out is still not recorded"), "past its waits it logs at WARN")
 }
 
+// The WARN for a STOP that is still not recorded starts past the waits: attempt 1 and the attempt
+// that uses the last wait are retried at INFO only.
+func (s *InboundSuite) TestAStopWithinItsWaitsIsRetriedWithoutAWarning() {
+	_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+		CREATE FUNCTION inbound_suite_refuse_opt_out() RETURNS trigger AS $$
+			BEGIN RAISE EXCEPTION 'refused by the test'; END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER inbound_suite_refuse_opt_out BEFORE INSERT ON opt_outs FOR EACH ROW
+			WHEN (NEW.customer_id = '`+s.customer+`') EXECUTE FUNCTION inbound_suite_refuse_opt_out();
+		COMMIT`)
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(s.ctx, `BEGIN;
+			DROP TRIGGER inbound_suite_refuse_opt_out ON opt_outs;
+			DROP FUNCTION inbound_suite_refuse_opt_out();
+			COMMIT`)
+		s.Require().NoError(err)
+	}()
+	s.emptyQueue()
+	thread := s.thread("telnyx")
+	bridge := s.newBridge(&Options{InboundRetries: []time.Duration{time.Millisecond, time.Hour}})
+	warnings := func() int { return strings.Count(s.logs.String(), "level=WARN") }
+
+	for _, tried := range []int{0, 1, 2} {
+		id := fmt.Sprintf("m-%d", tried)
+		s.emptyQueue()
+		s.queue(thread, id, "STOP", nil)
+		_, err = s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).Set("attempts = ?", tried).
+			Where("channel_id = ? AND provider_message_id = ?", thread.ChannelID, id).Exec(s.ctx)
+		s.Require().NoError(err)
+		claimed, err := s.store.ClaimChannelInbound(s.ctx, time.Now(), 1, time.Now().Add(time.Minute))
+		s.Require().NoError(err)
+		s.Require().Len(claimed, 1)
+		before := warnings()
+
+		bridge.attempt(claimed[0])
+
+		s.Equal(store.ChannelInboundQueued, s.row(thread, id).State)
+		if tried+1 > 2 {
+			s.Equal(before+1, warnings(), "attempt %d is past the waits: one WARN", tried+1)
+		} else {
+			s.Equal(before, warnings(), "attempt %d is within the waits: no WARN", tried+1)
+		}
+	}
+}
+
 // A STOP is held for its opt-out channel (optsOut); a "stop" on a connector with none is not,
 // so it is given up after its waits like any other message.
 func (s *InboundSuite) TestAStopOnAConnectorWithNoOptOutChannelIsGivenUp() {
