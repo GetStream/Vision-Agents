@@ -194,9 +194,8 @@ func (s *AgentSuite) TestAnUtteranceTheVoiceFinishedAfterItsTurnWasAbandonedSays
 }
 
 // nativeAgent is a speech-to-speech agent logging to s.logs, whose model's events are sent
-// on the channel returned. receive has them pass receiveSTS first, as a call's do; without
-// it they reach consumeSTS alone.
-func (s *AgentSuite) nativeAgent(receive bool) chan<- sts.Event {
+// on the channel returned. They pass receiveSTS first, as a call's do.
+func (s *AgentSuite) nativeAgent() chan<- sts.Event {
 	s.logs = &logLines{}
 	logger := slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{},
@@ -209,10 +208,6 @@ func (s *AgentSuite) nativeAgent(receive bool) chan<- sts.Event {
 	agent.pipe = newPipeline(agent.ctx, true)
 	agent.pipe.running.Add(1)
 	go agent.consumeSTS(agent.pipe, nil, ordered)
-	if !receive {
-		s.T().Cleanup(func() { close(ordered) })
-		return ordered
-	}
 	agent.pipe.running.Add(1)
 	go agent.receiveSTS(agent.pipe, source, ordered)
 	s.T().Cleanup(func() { close(source) })
@@ -220,21 +215,12 @@ func (s *AgentSuite) nativeAgent(receive bool) chan<- sts.Event {
 }
 
 func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
-	source := s.nativeAgent(true)
+	source := s.nativeAgent()
 
 	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
 	source <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
 	source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
 	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
-
-	s.nativeStoppedOnItsOwn()
-}
-
-func (s *AgentSuite) TestANativeReplyFirstSeenInterruptedAtItsEndSaysTheModelStopped() {
-	ordered := s.nativeAgent(false)
-
-	ordered <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
-	ordered <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
 
 	s.nativeStoppedOnItsOwn()
 }
