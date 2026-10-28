@@ -39,13 +39,14 @@ const scheduledPeerPath = "/internal/scheduled-tasks/deliver"
 const scheduledWindow = 10 * time.Minute
 
 // scheduledPoll is how often a delivery waiting on the holding session
-// looks again: a call ending, a busy conversation freeing up. A reply finishing
-// is looked for every replyPoll.
+// looks again: a call ending, a peer's directory entry lapsing (a Redis round
+// trip). A reply finishing, or a person's reply a follow-up waits out, is
+// looked for every replyPoll.
 const scheduledPoll = 2 * time.Second
 
 // replyPoll is how often a delivery reading back a follow-up's reply looks at it
 // again. A look reads the conversation held in memory
-// (conversation.Conversation.FollowUpReply: a lock and a map), so it costs
+// (conversation.Conversation.FollowUpReply, Session.FollowUp: a lock and a map), so it costs
 // next to nothing; at scheduledPoll a reply that finished just after a look
 // waited up to 2 s to leave, and every thread task took 2 s at least. 100 ms
 // is not a delay a person waiting for a text notices.
@@ -1043,7 +1044,7 @@ func followUpWithin(ctx context.Context, found *session.Session, delivery schedu
 		if !errors.Is(err, conversation.ErrResponseRunning) || time.Now().After(deadline) {
 			return err
 		}
-		if err := waitFor(ctx, scheduledPoll); err != nil {
+		if err := waitFor(ctx, replyPoll); err != nil {
 			return err
 		}
 	}

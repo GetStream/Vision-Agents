@@ -147,7 +147,7 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ### A thread task's reply is texted as soon as the agent finishes it
 
-A scheduled task made in an SMS, WhatsApp or iMessage thread now sends the agent's reply within 100 ms of the reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
+A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the agent's reply every 100 ms and sends it shortly after the reply finishes. A task's follow-up that meets a reply still being written starts within 100 ms of that reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
 
 ### A scheduled task's reply cut off as its provider fails is run again
 
