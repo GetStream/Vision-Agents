@@ -83,7 +83,7 @@ func ParsePublicKeys(written []string) ([]ed25519.PublicKey, error) {
 func Verify(keys []ed25519.PublicKey, header http.Header, body []byte, now time.Time) error {
 	id, timestamp := header.Get(IDHeader), header.Get(TimestampHeader)
 	seconds, err := strconv.ParseInt(timestamp, 10, 64)
-	if len(keys) == 0 || id == "" || err != nil {
+	if id == "" || err != nil {
 		return stack.Wrap(ErrUnsigned)
 	}
 	if now.Sub(time.Unix(seconds, 0)).Abs() > Tolerance {
@@ -96,7 +96,7 @@ func Verify(keys []ed25519.PublicKey, header http.Header, body []byte, now time.
 			continue
 		}
 		sent, err := base64.StdEncoding.DecodeString(written)
-		if err != nil || len(sent) != ed25519.SignatureSize {
+		if err != nil {
 			continue
 		}
 		for _, key := range keys {

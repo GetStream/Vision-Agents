@@ -171,6 +171,14 @@ func (s *ChatDeliveryRefusalSuite) TestAnEventThatIsNotAMessageIsTakenAndIgnored
 	s.Equal(http.StatusOK, s.send(s.signed(body, s.current)))
 }
 
+// The limit is the webhook's, a megabyte, and is held before the signature is checked, so a
+// stranger cannot make the router read more.
+func (s *ChatDeliveryRefusalSuite) TestADeliveryOverAMegabyteIsTooLarge() {
+	body := `{"type": "message.new", "app_id": 1257545, "padding": "` + strings.Repeat("a", hookBodyLimit) + `"}`
+
+	s.Equal(http.StatusRequestEntityTooLarge, s.send(s.signed(body, s.current)))
+}
+
 // The content type is the sender's to say; the signature says what the body is.
 func (s *ChatDeliveryRefusalSuite) TestAnotherContentTypeIsTaken() {
 	request := s.signed(s.message(deliveryApp), s.current)

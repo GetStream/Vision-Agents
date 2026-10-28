@@ -89,6 +89,17 @@ func (s *ChatDeliverySuite) TestAMessageTheRouterWroteItselfReachesNoWorker() {
 	s.False(s.reachesWorker(worker.Messages()))
 }
 
+// Only a new message is answered: an edit of one carries the same message, already answered.
+func (s *ChatDeliverySuite) TestAnEventThatIsNotANewMessageReachesNoWorker() {
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	body := strings.Replace(s.message(suiteStreamApp, s.config(s.customerID()), ""), `"message.new"`, `"message.updated"`, 1)
+
+	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
+
+	s.False(s.reachesWorker(worker.Messages()))
+}
+
 // The node a delivery lands on hands it over whole, headers and all, and the node with the
 // worker checks Stream's signature for itself.
 func (s *ChatDeliverySuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredThere() {
