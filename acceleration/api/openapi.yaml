@@ -15009,6 +15009,53 @@ paths:
           $ref: '#/components/responses/Unavailable'
       summary: Move a guest's conversations onto the account they turned out to be
   /v1/agents/knowledge:
+    delete:
+      description: |-
+        Everything in it goes, for good: its passages, the documents it was filled with and the pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 naming those agents, so no agent is left looking things up in nothing.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteKnowledge
+      parameters:
+        - description: The knowledge base, as it was named when it was filled.
+          explode: false
+          in: query
+          name: namespace
+          required: true
+          schema:
+            description: The knowledge base, as it was named when it was filled.
+            type: string
+      responses:
+        "204":
+          description: The knowledge base is gone
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Delete a knowledge base
     post:
       description: |-
         The writing half of the lookup a config's knowledge_namespace gives an agent. Each document is cut into passages here rather than by the caller, so a file read off disk by the command and one posted by an SDK are cut the same way and can replace each other.

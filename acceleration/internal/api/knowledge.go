@@ -38,6 +38,13 @@ var errUnknownKnowledgeDocument = APIError{
 	Message: "no such knowledge document",
 }
 
+// errUnknownKnowledgeBase is what a caller is told about a knowledge base they have nothing
+// in, which is the same thing another customer's base of that name is.
+var errUnknownKnowledgeBase = APIError{
+	Type: ErrorTypeNotFound, Code: codeKnowledgeBaseNotFound,
+	Message: "no such knowledge base",
+}
+
 // ingestKnowledge fills a knowledge base with what the business wrote down.
 //
 // The documents are cut into passages here rather than by the caller, so a file read off
@@ -136,6 +143,64 @@ func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKno
 	if err := s.removeKnowledgeDocument(ctx, document); err != nil {
 		return nil, err
 	}
+	return nil, nil
+}
+
+// deleteKnowledge deletes one of the calling customer's knowledge bases: the documents and
+// pages it was filled from, then everything the provider holds of it. One an agent reads is
+// kept, since the agent would go on looking things up in nothing.
+func (s *Server) deleteKnowledge(ctx context.Context, request *deleteKnowledgeRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+	namespace := strings.TrimSpace(request.Namespace)
+	if namespace == "" {
+		return nil, invalidRequest("a namespace is required")
+	}
+
+	configs, err := s.store.CustomerAgentConfigs(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+	var readers []string
+	for _, config := range configs {
+		if config.KnowledgeNamespace == namespace {
+			readers = append(readers, config.Name)
+		}
+	}
+	if len(readers) > 0 {
+		return nil, APIError{
+			Type: ErrorTypeConflict, Code: codeKnowledgeBaseInUse,
+			Message: "these agents read the knowledge base, so it is kept until they read another: " +
+				strings.Join(readers, ", "),
+		}
+	}
+
+	// The rows go first: a page read that writes after the provider's copy is gone then finds
+	// its page gone and takes the write back. A delete that failed at the provider can still be
+	// asked for again, since the provider still has the base.
+	documents, pages, err := s.store.DeleteKnowledgeBase(ctx, customerID, namespace)
+	if err != nil {
+		return nil, err
+	}
+	existed, err := s.knowledgeFor(ctx, customerID, "").Drop(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if !existed && documents == 0 && pages == 0 {
+		return nil, errUnknownKnowledgeBase
+	}
+
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledge, ResourceID: namespace, ResourceName: namespace,
+		AgentID: s.agentOfKnowledge(ctx, customerID, namespace),
+		Action:  store.AuditDeleted,
+		Changes: auditDiff(map[string]any{"namespace": namespace, "documents": documents, "urls": pages}, nil),
+	})
 	return nil, nil
 }
 
@@ -378,6 +443,23 @@ func (s *Server) registerKnowledge(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
 	}, s.ingestKnowledge)
 	huma.Register(api, huma.Operation{
+		OperationID: "deleteKnowledge",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/knowledge",
+		Summary:     "Delete a knowledge base",
+		Description: "Everything in it goes, for good: its passages, the documents it was filled with and the " +
+			"pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 " +
+			"naming those agents, so no agent is left looking things up in nothing.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The knowledge base is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict},
+	}, s.deleteKnowledge)
+	huma.Register(api, huma.Operation{
 		OperationID: "listKnowledgeDocuments",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/knowledge/documents",
@@ -437,6 +519,10 @@ type ingestKnowledgeRequest struct {
 
 type ingestKnowledgeResponse struct {
 	Body IngestedKnowledge
+}
+
+type deleteKnowledgeRequest struct {
+	Namespace string `query:"namespace" required:"true" doc:"The knowledge base, as it was named when it was filled."`
 }
 
 type listKnowledgeDocumentsRequest struct {

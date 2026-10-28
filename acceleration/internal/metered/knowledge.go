@@ -355,6 +355,29 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 	return nil
 }
 
+// Drop deletes a whole knowledge base, one row as a write, where it is kept as Delete does, and
+// reports whether the provider had it. Like Delete it is not admitted.
+func (o OwnedKnowledge) Drop(ctx context.Context, namespace string) (bool, error) {
+	place, kept, err := o.knowledge.keptAt(ctx, o.owner.CustomerID, namespace)
+	if err != nil {
+		return false, err
+	}
+	if !kept {
+		if place, err = o.unwritten(ctx, o.region()); err != nil {
+			return false, err
+		}
+	}
+	backend, err := o.knowledge.at(ctx, o.owner.CustomerID, namespace, place)
+	if err != nil {
+		return false, err
+	}
+	scoped := o.scoped(namespace)
+	dropped, err := routing.Call(ctx, o.knowledge.meter(o.owner, backend, place, KnowledgeWrite), func(ctx context.Context) (knowledge.Dropped, error) {
+		return backend.Drop(ctx, scoped)
+	})
+	return dropped.Existed, err
+}
+
 // Keep keeps a knowledge base nothing has been written to where the owner's first write would,
 // so later work naming no region, such as a page's refresh, finds it there. A base kept in
 // another region than the one the work names is refused, as a write is. The vendor is asked

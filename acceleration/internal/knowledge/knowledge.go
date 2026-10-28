@@ -122,6 +122,13 @@ type Found struct {
 	Billed
 }
 
+// Dropped is what deleting a whole knowledge base found and was billed.
+type Dropped struct {
+	// Existed says the provider had the knowledge base.
+	Existed bool
+	Billed
+}
+
 // Backend is what a knowledge provider implements. Every call says what it was billed, and
 // only internal/metered holds one: everything else is handed a Store or a Writer, which
 // records each call for whoever it is owned by.
@@ -130,6 +137,8 @@ type Backend interface {
 	Fetch(ctx context.Context, namespace string, ids []string) (Found, error)
 	Upsert(ctx context.Context, namespace string, documents []Document) (Billed, error)
 	Delete(ctx context.Context, namespace string, ids []string) (Billed, error)
+	// Drop deletes a whole knowledge base. One the provider does not have is no failure.
+	Drop(ctx context.Context, namespace string) (Dropped, error)
 	// Namespaces lists every knowledge base whose name starts with prefix, every one for an
 	// empty prefix.
 	Namespaces(ctx context.Context, prefix string) ([]string, error)

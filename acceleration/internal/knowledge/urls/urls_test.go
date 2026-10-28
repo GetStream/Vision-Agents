@@ -134,6 +134,10 @@ func (b *base) Delete(_ context.Context, _ string, ids []string) (knowledge.Bill
 	return billed, nil
 }
 
+func (b *base) Drop(context.Context, string) (knowledge.Dropped, error) {
+	return knowledge.Dropped{}, errors.New("the crawler does not delete a knowledge base")
+}
+
 func (b *base) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
