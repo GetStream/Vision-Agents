@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -246,14 +245,23 @@ func (s *TunnelSuite) TestADeadForwarderIsStartedAgainBeforeTheNextRunAndALiveOn
 	second, err := s.pid()
 	s.Require().NoError(err)
 	s.Equal(first, second)
+	// Never and Eventually return with their last check still running, so the checks read
+	// locals: a suite field would race the next test's SetupTest.
+	logFile, address := s.root+"/tmp/va-egress-tunnel.log", "127.0.0.1:"+s.port
 	s.Never(func() bool {
-		log, _ := os.ReadFile(s.root + "/tmp/va-egress-tunnel.log")
+		log, _ := os.ReadFile(logFile)
 		return len(log) > 0
 	}, time.Second, 50*time.Millisecond, "no second forwarder was started")
 	s.Empty(s.wire.sent.String(), "a check opens no connection to the proxy")
 
 	s.Require().NoError(syscall.Kill(first, syscall.SIGKILL))
-	s.Eventually(func() bool { _, err := s.get(); return err != nil }, 5*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool {
+		conn, err := net.Dial("tcp", address)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err != nil
+	}, 5*time.Second, 10*time.Millisecond, "the killed forwarder's port is closed")
 	out, err = s.sh(s.mount.EachRun[0])
 	s.Require().NoError(err, out)
 	third, err := s.pid()
@@ -276,19 +284,20 @@ func (s *TunnelSuite) TestAPidFileOfAnotherProcessStartsTheForwarder() {
 	s.Equal(http.StatusOK, status)
 }
 
-// TestAnotherProcessOnTheTunnelsPortFailsTheRun: it would get the sandbox's proxy traffic.
+// TestAnotherProcessOnTheTunnelsPortFailsTheRun: it would get the sandbox's proxy traffic. The
+// check stops trying once the forwarder it started has exited, rather than after its 50 tries:
+// the shell's trace counts them, as each python3 start takes a time that the machine's load sets.
 func (s *TunnelSuite) TestAnotherProcessOnTheTunnelsPortFailsTheRun() {
 	listener, err := net.Listen("tcp", "127.0.0.1:"+s.port)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = listener.Close() })
 
-	start := time.Now()
-	out, err := s.sh(s.mount.EachRun[0])
+	out, err := s.sh("set -x; " + s.mount.EachRun[0])
 
 	s.Require().Error(err)
 	s.Contains(out, "the TLS tunnel to the proxy did not start")
 	s.Contains(strings.ToLower(out), "address already in use", "the forwarder's own error")
-	s.Less(time.Since(start), 5*time.Second, "no waiting once the forwarder exited: 50 tries sleep 5 s")
+	s.Less(strings.Count(out, "+ sleep 0.1"), 50, "no waiting once the forwarder exited: the tries stopped before their 50")
 }
 
 // TestASecondForwarderLeavesThePidFileToTheFirst: one that cannot have the port exits without
@@ -360,21 +369,23 @@ func (s *TunnelSuite) TestAClientThatStopsSendingStillGetsTheReply() {
 	s.True(strings.HasSuffix(got, "answered"), got)
 }
 
-// holdOpen is a proxy that reads its request, never answers and tells when its connection ends.
-func (s *TunnelSuite) holdOpen() <-chan time.Time {
-	ended := make(chan time.Time, 1)
+// holdOpen is a proxy that reads its request, never answers and tells when it got the request and
+// when its connection ends.
+func (s *TunnelSuite) holdOpen() (got <-chan struct{}, ended <-chan time.Time) {
+	requested, closed := make(chan struct{}, 1), make(chan time.Time, 1)
 	s.wire = newWire(s, s.serveTLS(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requested <- struct{}{}
 		<-r.Context().Done()
-		ended <- time.Now()
+		closed <- time.Now()
 	}), s.rig.handler.ListenerTLS("127.0.0.1")))
-	return ended
+	return requested, closed
 }
 
 // TestAProxyThatNeverAnswersAClientThatStoppedSendingIsClosedAfterTheIdleTime: the timer alone
 // frees the connection of a client that has gone (the router's proxy server has no idle limit).
 func (s *TunnelSuite) TestAProxyThatNeverAnswersAClientThatStoppedSendingIsClosedAfterTheIdleTime() {
 	s.T().Setenv("VA_TUNNEL_IDLE_AFTER_EOF", "1")
-	ended := s.holdOpen()
+	_, ended := s.holdOpen()
 	s.setUp()
 	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
 	s.Require().NoError(err)
@@ -422,13 +433,18 @@ func (s *TunnelSuite) TestAProxyThatKeepsAnsweringIsNotClosedAtTheIdleTime() {
 // waits for an answer (the idle time here is 60 s).
 func (s *TunnelSuite) TestAClientThatIsResetFreesTheProxysConnectionAtOnce() {
 	s.T().Setenv("VA_TUNNEL_IDLE_AFTER_EOF", "60")
-	ended := s.holdOpen()
+	got, ended := s.holdOpen()
 	s.setUp()
 	conn, err := net.Dial("tcp", "127.0.0.1:"+s.port)
 	s.Require().NoError(err)
 	_, err = conn.Write([]byte("GET http://stand.in/ HTTP/1.0\r\nHost: stand.in\r\n\r\n"))
 	s.Require().NoError(err)
-	time.Sleep(300 * time.Millisecond) // the forwarder has read the request and opened its connection
+	// The forwarder has read the request and opened its connection: the proxy got it.
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		s.FailNow("the proxy got no request in 5 s")
+	}
 	s.Require().NoError(conn.(*net.TCPConn).SetLinger(0))
 	s.Require().NoError(conn.Close())
 
@@ -443,6 +459,7 @@ func (s *TunnelSuite) TestAClientThatIsResetFreesTheProxysConnectionAtOnce() {
 // still writing its pid exits, and the check must look once more after it, however late the
 // winner's pid file appears. The winner here is this process, which holds the port and names
 // itself after a delay, tried across the check's whole span (the loop sleeps in 0.1 s steps).
+// The span is measured, as each python3 start takes a time that the machine's load sets.
 func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
 	listener, err := net.Listen("tcp", "127.0.0.1:"+s.port)
 	s.Require().NoError(err)
@@ -456,22 +473,39 @@ func (s *TunnelSuite) TestACheckWhoseForwarderLostThePortFindsTheWinnerUp() {
 			_ = conn.Close()
 		}
 	}()
-	pidFile := s.root + "/tmp/va-egress-tunnel.pid"
-	s.Require().NoError(os.MkdirAll(filepath.Dir(pidFile), 0o755))
-	for delay := 0; delay <= 400; delay += 20 {
-		_ = os.Remove(pidFile)
-		var written atomic.Int64
-		timer := time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
+	// With no winner the check ends once its forwarder has lost the port: that is its span.
+	start := time.Now()
+	out, err := s.sh(s.mount.EachRun[0])
+	s.Require().Error(err, out)
+	span := time.Since(start)
+	for step := range 21 {
+		// A sandbox of its own, so a forwarder of an earlier check that has yet to lose the port
+		// writes to that check's log.
+		s.root = s.T().TempDir()
+		for name, data := range s.mount.Files {
+			s.Require().NoError(os.MkdirAll(filepath.Dir(s.root+name), 0o755))
+			s.Require().NoError(os.WriteFile(s.root+name, data, 0o600))
+		}
+		pidFile, logFile := s.root+"/tmp/va-egress-tunnel.pid", s.root+"/tmp/va-egress-tunnel.log"
+		delay := span * time.Duration(step) / 20
+		// beforeLoss is whether the pid file was there before the forwarder wrote that it lost the
+		// port, so before it exited and the check looked once more.
+		var beforeLoss bool
+		done := make(chan struct{})
+		timer := time.AfterFunc(delay, func() {
+			defer close(done)
 			_ = os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600)
-			written.Store(time.Now().UnixNano())
+			log, _ := os.ReadFile(logFile)
+			beforeLoss = len(log) == 0
 		})
 
 		out, err := s.sh(s.mount.EachRun[0])
 
-		timer.Stop()
-		// A pid file that came after the check ended (a fast python3 ends it sooner) is no test of it.
-		if at := written.Load(); at != 0 && time.Since(time.Unix(0, at)) > 50*time.Millisecond {
-			s.NoError(err, "pid file written after %d ms: %s", delay, out)
+		if !timer.Stop() {
+			<-done
+		}
+		if beforeLoss {
+			s.NoError(err, "pid file written after %s of %s: %s", delay, span, out)
 		}
 	}
 }
