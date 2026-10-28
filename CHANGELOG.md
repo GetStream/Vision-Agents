@@ -82,6 +82,10 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### A Dart tool can answer with pictures
+
+`AgentTool.withPictures` in the Dart SDK takes a tool whose `run` returns a `ToolOutput` (`text` and `images`, each an `AgentImage`), as Swift's and Kotlin's `ToolOutput` do. A result with pictures is sent as `text` and `image_url` parts; one without stays a plain string. `AgentTool.run` now returns a `ToolOutput`, and the default constructor, which still takes a handler answering in words, is no longer `const` (FLU-1126).
+
 ### Dart sessions name where a sign-in goes back to
 
 `SessionOptions.returnUrl` in the Dart SDK is sent as the session's `return_url`, as Swift's
@@ -152,6 +156,10 @@ Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH
 The router now streams to `fish/transcribe-stream-1`, reachable by name or by any shortcut whose terms it satisfies. It needs `FISH_API_KEY`, covers 29 languages, and declares `keyterms`, which can change on an open stream, and `endpointing`; `silence_ms` is its `silence_timeout_ms`, at least 3000 in its own turn detection. It ends a turn when the words read as finished, and a turn the server judges is not the caller's (noise, a television, another voice) is never reported. Sound tags such as `[laughter]` are taken out of the text. `eager_end_of_turn` turns on its early guess. `overwrites` takes `mode` (`auto`, `vad`) and `silence_timeout_ms`. $0.36 an audio hour.
 
 ## Bug Fixes
+
+### A Dart question with images is no longer refused in a saved conversation
+
+`Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. A saved conversation takes its images as data URIs only (FLU-1126).
 
 ### Go clients keep working with a region
 

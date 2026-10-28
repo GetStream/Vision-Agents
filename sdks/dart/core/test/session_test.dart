@@ -51,7 +51,7 @@ void main() {
       await chat.close();
     });
 
-    test('names each question with a fresh request id, unless it shows an image', () async {
+    test('names each question with a fresh request id, one that shows an image too', () async {
       router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
       final chat = await agents.chat();
 
@@ -59,13 +59,14 @@ void main() {
       final first = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
       await chat.responses.create('Hello');
       final again = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
-      await chat.responses.create('Look', images: [const AgentImage('https://x/cat.png')]);
+      await chat.responses.create('Look', images: [const AgentImage('data:image/png;base64,AAAA')]);
       final shown = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
 
       expect(first['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
       expect(again['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
       expect(again['request_id'], isNot(first['request_id']));
-      expect(shown.containsKey('request_id'), isFalse);
+      expect(shown['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(shown['request_id'], isNot(again['request_id']));
       await chat.close();
     });
 
@@ -173,6 +174,84 @@ void main() {
       expect(result['error'], contains('the order service is down'));
       await chat.close();
     });
+
+    test('answers with pictures as parts beside the words', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              run: (_) async => const ToolOutput(
+                'the room',
+                images: [
+                  AgentImage('data:image/jpeg;base64,AAAA', detail: 'low'),
+                  AgentImage('https://example.com/room.jpg'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}"}');
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': [
+          {'type': 'text', 'text': 'the room'},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,AAAA', 'detail': 'low'},
+          },
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'https://example.com/room.jpg'},
+          },
+        ],
+        'error': '',
+      });
+      await chat.close();
+    });
+
+    test(
+      'a picture tool with nothing to show answers in words, and with no words in pictures alone',
+      () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [
+              AgentTool.withPictures(
+                name: 'words',
+                description: 'Words only.',
+                run: (_) async => const ToolOutput('nothing in view'),
+              ),
+              AgentTool.withPictures(
+                name: 'picture',
+                description: 'A picture only.',
+                run: (_) async =>
+                    const ToolOutput('', images: [AgentImage('https://example.com/a.jpg')]),
+              ),
+            ],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket.send('{"type":"tool_call","id":"c1","name":"words","arguments":"{}"}');
+        final words = await socket.next();
+        socket.send('{"type":"tool_call","id":"c2","name":"picture","arguments":"{}"}');
+
+        expect(words['output'], 'nothing in view');
+        expect((await socket.next())['output'], [
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'https://example.com/a.jpg'},
+          },
+        ]);
+        await chat.close();
+      },
+    );
 
     test("repeats a request's ids, so no other request can adopt the result", () async {
       final chat = await agents.chat(

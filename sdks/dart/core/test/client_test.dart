@@ -542,6 +542,7 @@ void main() {
       expect(response.id, 'r1');
       expect(response.status, ResponseStatus.running);
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
         'text': 'What is my name?',
         'images': [
           {'url': 'https://x/cat.png', 'detail': 'low'},
