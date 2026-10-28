@@ -82,6 +82,22 @@ func (s *SlackChannelSuite) TestAMessageWrittenBeforeItsTurnWasClaimedIsAnswered
 	s.Len(s.chat.Messages(channel), 2, "the person's message, written once, and the reply")
 }
 
+// A message whose turn was claimed before the worker hands it over, as by an attempt that
+// claimed it and stopped before its row was done, is not answered again.
+func (s *SlackChannelSuite) TestAMessageWhoseTurnWasClaimedBeforeIsNotAnsweredAgain() {
+	handOver := s.holdHandOffs()
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	fresh, err := s.store.ClaimChannelThreadMessage(context.Background(), channel, store.ClaimTurn, s.bridged(channel)[0]["id"].(string))
+	s.Require().NoError(err)
+	s.Require().True(fresh)
+
+	handOver()
+
+	s.settled()
+	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, dropped, 20*time.Millisecond)
+	s.Equal(1, s.turns(channel))
+}
+
 // writtenStraightIntoStream writes a message by U0000BOB into a thread channel through Stream
 // Chat, as an app user would, with custom fields, and returns its index in the channel.
 func (s *SlackChannelSuite) writtenStraightIntoStream(channel string, custom map[string]any) int {

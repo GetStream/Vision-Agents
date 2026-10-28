@@ -244,10 +244,10 @@ type RouterSuite struct {
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
-	// handOffs, while a test holds them (holdHandOffs), and turns, the hand-offs and their
+	// handOffs, while a test holds them (holdHandOffs), and handedOver, the hand-offs and their
 	// turns running, are the inbound worker's hand-offs to the agent (answerQueued).
-	handOffs atomic.Pointer[chan struct{}]
-	turns    atomic.Int32
+	handOffs   atomic.Pointer[chan struct{}]
+	handedOver atomic.Int32
 
 	// streams, modalities and conversations are what the suite's router was built from,
 	// kept so that otherNode can build a second one over the same routing.
@@ -748,22 +748,22 @@ func (s *RouterSuite) SetupSuite() {
 // they hand over, which each test waits for at its end (useApp): a reply that leaves later goes
 // to the next test's provider (channelProvider).
 func (s *RouterSuite) answerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
-	s.turns.Add(1)
+	s.handedOver.Add(1)
 	if held := s.handOffs.Load(); held != nil {
 		select {
 		case <-*held:
 		case <-ctx.Done():
-			s.turns.Add(-1)
+			s.handedOver.Add(-1)
 			return nil, ctx.Err()
 		}
 	}
 	turn, err := s.router.AnswerQueued(ctx, thread, written)
 	if turn == nil {
-		s.turns.Add(-1)
+		s.handedOver.Add(-1)
 		return nil, err
 	}
 	return func() {
-		defer s.turns.Add(-1)
+		defer s.handedOver.Add(-1)
 		turn()
 	}, nil
 }
@@ -791,7 +791,7 @@ func (s *RouterSuite) turnsEnded() {
 	if _, built := s.bridge.(*channelbridge.Bridge); !built {
 		return
 	}
-	s.Eventually(func() bool { return s.turns.Load() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor,
+	s.Eventually(func() bool { return s.handedOver.Load() == 0 && s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor,
 		10*time.Millisecond, "the inbound worker, or a turn it handed over, still runs")
 }
 
