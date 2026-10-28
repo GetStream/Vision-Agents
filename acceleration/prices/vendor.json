@@ -138,6 +138,7 @@
     {"modality":"tts","provider":"gemini","model":"gemini-3.8-flash-lite-tts","rates":{"audio_ms":{"usd":0.82,"per":3600000},"characters":{"usd":0.125,"per":1000000}}},
     {"modality":"tts","provider":"fish","model":"drama-3","rates":{"characters":{"usd":50,"per":1000000}}},
     {"modality":"tts","provider":"fish","model":"s2-pro","rates":{"characters":{"usd":15,"per":1000000}}},
+    {"modality":"tts","provider":"fish","model":"s2.1-pro","rates":{"characters":{"usd":15,"per":1000000}}},
     {"modality":"tts","provider":"s2pro","model":"s2-pro","rates":{"characters":{"usd":9,"per":1000000}}},
     {"modality":"tts","provider":"breeze","model":"breeze-tts-2","rates":{"characters":{"usd":14.8,"per":1000000}}},
     {"modality":"tts","provider":"cartesia","model":"sonic-3.6","rates":{"characters":{"usd":50,"per":1000000}}},

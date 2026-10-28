@@ -135,6 +135,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
 
+### Fish Audio S2.1 Pro is `fish/s2.1-pro`
+
+Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH_API_KEY` and voices, at $15 per 1M characters. `fish/s2-pro` is still served, and a `fish` target that names no model still gets `drama-3`.
+
 ## Bug Fixes
 
 ### ElevenLabs voices are priced at their current rates

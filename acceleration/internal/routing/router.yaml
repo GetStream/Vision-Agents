@@ -1687,6 +1687,41 @@ tts:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Fish's hosted S2.1 Pro, which Fish recommend over S2 Pro for production: better
+    # quality, latency and throughput, 83 languages, at the same price. The same terms as
+    # S2 Pro above.
+    - provider: fish
+      model: s2.1-pro
+      description: "Fish's hosted S2.1 Pro, S2 Pro's successor, in 83 languages."
+      languages:
+        [
+          ar,
+          de,
+          en,
+          es,
+          fi,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          nl,
+          pl,
+          pt,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # The same weights on our own Baseten deployment, where the price is the GPU.
     - provider: s2pro
       model: s2-pro
