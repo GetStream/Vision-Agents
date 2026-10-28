@@ -561,7 +561,6 @@ func (s *STT) done() {
 	s.finishedOnce.Do(func() { close(s.finished) })
 }
 
-// failure is what the server said went wrong.
 // refusesKey reports whether an error frame is the one the server sends, right after
 // accepting the handshake, on a key it does not take: gRPC code 7 (PERMISSION_DENIED) with one
 // of these texts. Code 7 alone is any permission the key lacks.
@@ -571,6 +570,7 @@ func (e serverError) refusesKey() bool {
 			strings.Contains(e.Message, "Invalid authorization credentials"))
 }
 
+// failure is what the server said went wrong.
 func (e serverError) failure() string {
 	if e.Message == "" {
 		return fmt.Sprintf("unknown error (code %d)", e.Code)

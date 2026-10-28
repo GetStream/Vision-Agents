@@ -304,7 +304,8 @@ func (s *InworldSocketSuite) TestAnInvalidKeyFrameIsCountedOncePerConnection() {
 	s.Equal(1.0, s.refusedBy(invalidKeyFrame, invalidKeyFrame))
 }
 
-// Inworld's answer, at the handshake, to a key that is not base64 of id:secret.
+// Inworld's answer to a key that is not base64 of id:secret: a 101, this frame, then a close
+// with 1000 (probed 2026-10-28), though the same text on a 403 is counted at the handshake.
 func (s *InworldSocketSuite) TestInvalidCredentialsAreAnInvalidKey() {
 	s.Equal(1.0, s.refusedBy(`{"error":{"code":7,"message":"Invalid authorization credentials","details":[]}}`))
 }

@@ -378,8 +378,11 @@ func (s *STT) handshake() error {
 	switch message.Type {
 	case eventBegin:
 	case eventError:
-		if message.refusesKey() {
+		switch {
+		case message.refusesKey():
 			s.keys.InvalidKey()
+		case message.outOfFunds():
+			s.keys.OutOfFunds()
 		}
 		return stack.Wrap(fmt.Errorf("assemblyai: session refused: %s", message.failure()))
 	default:
@@ -558,10 +561,19 @@ func (m serverMessage) failure() string {
 }
 
 // refusesKey reports whether an Error frame is the one the server sent, right after accepting
-// the handshake, on a made-up key on 2026-10-28. Code 1008 alone is any unauthorized
+// the handshake, on a made-up key on 2026-10-28, or the one it documents for a disabled key
+// (streaming/common-session-errors-and-closures). Code 1008 alone is any unauthorized
 // connection.
 func (m serverMessage) refusesKey() bool {
-	return m.ErrorCode == codeUnauthorized && strings.Contains(m.Error, "Invalid API key")
+	return m.ErrorCode == codeUnauthorized &&
+		(strings.Contains(m.Error, "Invalid API key") || strings.Contains(m.Error, "API key is disabled"))
+}
+
+// outOfFunds reports whether an Error frame is one the server documents for an account
+// without money, the frame form of a 402.
+func (m serverMessage) outOfFunds() bool {
+	return m.ErrorCode == codeUnauthorized &&
+		(strings.Contains(m.Error, "Insufficient funds") || strings.Contains(m.Error, "No metronome account found"))
 }
 
 // chunkBytes is how many bytes of audio last this long, at two bytes a sample.
