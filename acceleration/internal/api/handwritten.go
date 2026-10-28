@@ -374,7 +374,7 @@ func documentHandWritten(api huma.API) {
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device. This is the clearest case of why: a worker is offered other people's " +
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +
-			"type has no query parameter, so a browser cannot open one at all.",
+			"type's query parameter never names a backend, so a browser cannot open one at all.",
 		Parameters: []*huma.Param{
 			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Default: 4}},
 			{Name: "active", In: "query", Description: "How much work this worker is still running from before it reconnected, which the router " +

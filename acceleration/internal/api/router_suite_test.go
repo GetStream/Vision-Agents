@@ -210,6 +210,10 @@ type RouterSuite struct {
 	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
 	// writes, so a test names its caller with proxiedClient rather than a key.
 	proxied bool
+	// byCustomer authenticates as a local router in proxy mode with nothing in front, as
+	// every example runs: a caller names its customer itself and is a backend unless it
+	// declares otherwise.
+	byCustomer bool
 	// shipping ships the conversation model's rows to a usage service of the suite's own,
 	// usage, as cmd/router's writer does.
 	shipping bool
@@ -1247,6 +1251,9 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 	if s.proxied {
 		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: true})
 	}
+	if s.byCustomer {
+		return auth.NewProxy(auth.ProxyOptions{})
+	}
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
@@ -2133,7 +2140,7 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 // authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
 // gateway serves, though the suite's callers still sign with the app's key.
 func (s *RouterSuite) authMode() auth.Mode {
-	if s.appMode || s.proxied {
+	if s.appMode || s.proxied || s.byCustomer {
 		return auth.Proxy
 	}
 	return auth.APIKey
