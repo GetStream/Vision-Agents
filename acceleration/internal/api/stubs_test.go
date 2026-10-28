@@ -137,7 +137,9 @@ func reasoningConfig() routing.ModalityConfig {
 	)
 	// Where a socket that names no target goes. It pins the stub as router.yaml pins its
 	// model: the vision model speaks English too, and left to the ranking the default would
-	// be whichever of the two ranks first on the health every suite records in Redis.
+	// be whichever of the two ranks first on the health every suite records in Redis. The pin
+	// holds only while the stub is available (routing.prefer): a fatal error recorded on the
+	// stub by any suite brings the vision model back.
 	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, Prefer: "stub/stub-model"}
 	return config
 }
