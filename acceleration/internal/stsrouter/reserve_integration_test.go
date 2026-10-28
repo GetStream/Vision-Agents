@@ -18,7 +18,7 @@ import (
 
 func TestAConversationWhoseLeaseCannotBeCheckedWaitsAndGoesOn(t *testing.T) {
 	redis, sharing := policytest.SharedHolds(t)
-	money := policytest.Start(t, "stsrouter_reserve", sharing)
+	money := policytest.Start(t, "stsrouter_reserve", sharing, func(settings *policy.Settings) { settings.FlushMaxLag = 200 * time.Millisecond })
 	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model", Price: routing.Price{PerMillionInputTokens: 1}}
 	prices, err := routing.Prices(routing.Config{routing.STS: {Providers: []routing.ProviderConfig{config}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)

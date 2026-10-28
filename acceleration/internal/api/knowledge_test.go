@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 )
 
 type KnowledgeSuite struct {
@@ -62,6 +64,20 @@ func (s *KnowledgeSuite) TestADocumentReadsBackAsThePassagesItWasCutInto() {
 	s.Require().Len(passages, 2)
 	s.Contains(passages[0].Text, "A penny.")
 	s.Contains(passages[1].Text, "A day.")
+}
+
+func (s *KnowledgeSuite) TestAProviderFailureIsAServerErrorThatNamesNoInternalNamespace() {
+	s.knowledge.failWrites(true)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/knowledge", map[string]any{
+		"namespace": s.namespace,
+		"documents": []map[string]string{{"source": s.source, "text": "# Pricing\n\nA penny."}},
+	})
+
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), s.namespace)
+	s.NotContains(string(payload), "turbopuffer")
 }
 
 func (s *KnowledgeSuite) TestADocumentPostedShorterLeavesNoOldTailBehind() {
@@ -201,4 +217,51 @@ func (s *KnowledgeSuite) documents() []IndexedKnowledgeDocument {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/knowledge/documents?namespace="+s.namespace, nil, &listed))
 	return listed
+}
+
+// KnowledgeLimitsSuite runs a router whose knowledge limits are not the defaults.
+type KnowledgeLimitsSuite struct {
+	RouterSuite
+}
+
+func TestKnowledgeLimitsSuite(t *testing.T) {
+	runSuite(t, new(KnowledgeLimitsSuite))
+}
+
+func (s *KnowledgeLimitsSuite) SetupSuite() {
+	s.knowledgeLimits = ingest.Limits{MinChunk: 800, MaxHeading: 6}
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *KnowledgeLimitsSuite) SetupTest() {
+	s.useFixture("standard")
+}
+
+func (s *KnowledgeLimitsSuite) TestADocumentIsCutByTheRoutersLimits() {
+	namespace, source := "namespace-"+s.utils.uuid(), s.utils.uuid()+".md"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",
+		map[string]any{
+			"namespace":  namespace,
+			"chunk_size": 1,
+			"documents": []map[string]string{{
+				"source": source,
+				"text":   "# Refund policy\n\n" + strings.Repeat("Refunds take thirty days.\n\n", 200),
+			}},
+		}, nil))
+	var listed []IndexedKnowledgeDocument
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents?namespace="+namespace, nil, &listed))
+	s.Require().Len(listed, 1)
+
+	var passages []KnowledgePassage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", nil, &passages))
+
+	s.Require().Greater(len(passages), 1)
+	for _, passage := range passages[:len(passages)-1] {
+		s.Greater(len(passage.Text), 700, "a chunk_size of 1 is raised to the router's 800")
+	}
+	for _, passage := range passages[1:] {
+		s.True(strings.HasPrefix(passage.Text, "## Refund\n\n"), "the heading is cut to the router's 6 bytes")
+	}
 }

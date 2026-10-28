@@ -131,6 +131,7 @@ func sandboxed(binding store.ConnectorBinding) store.ConnectorBinding {
 func (s *SandboxGrantsSuite) opened(config store.AgentConfig) (sandbox.Sandbox, *dispatcher) {
 	spec := s.spec(config, "", nil)
 	spec.ID, spec.Sandbox = uuid.NewString(), daytonaProvider
+	spec.Attribution.SessionID = spec.ID
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	box, err := s.manager.box(s.ctx, spec, d)
@@ -340,6 +341,7 @@ func (s *SandboxGrantsSuite) boxed(options sandbox.Config) error {
 	id := s.connection("", "primary")
 	spec := s.spec(s.config(sandboxed(s.fixed("crm", id, "whoami"))), "", nil)
 	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, options
+	spec.Attribution.SessionID = spec.ID
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	_, err = s.manager.box(s.ctx, spec, d)
@@ -385,6 +387,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	config := s.config(binding)
 	spec := s.spec(config, "", nil)
 	spec.ID, spec.Sandbox, spec.SandboxOptions = uuid.NewString(), daytonaProvider, sandbox.Config{AllowedDomains: []string{"PyPI.org", "Files.PythonHosted.org"}}
+	spec.Attribution.SessionID = spec.ID
 	d, _, _, err := s.attach(spec)
 	s.Require().NoError(err)
 	box, err := s.manager.box(s.ctx, spec, d)
@@ -676,6 +679,7 @@ func (s *SandboxGrantsSuite) chat(config store.AgentConfig, begun Consent) Spec 
 	s.manager.options.Connectors.Consents = func(context.Context, ConsentRequest) (Consent, error) { return begun, nil }
 	spec := s.spec(config, "alice", nil)
 	spec.ID, spec.Sandbox, spec.PersistConversation, spec.Text = uuid.NewString(), daytonaProvider, true, true
+	spec.Attribution.SessionID = spec.ID
 	return spec
 }
 

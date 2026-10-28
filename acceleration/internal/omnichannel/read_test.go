@@ -131,6 +131,35 @@ func message(text string, custom map[string]any) getstream.MessageResponse {
 	return getstream.MessageResponse{Text: text, Custom: custom}
 }
 
+// A person's photo on the bridge is a line of the person, its text followed by the note the
+// session's own history writes: a photo sent alone is a line too. Only a person's message on
+// the bridge has its photos told.
+func (s *ReadSuite) TestAPhotoOnTheBridgeIsALineOfThePerson() {
+	kind, url := "image", "https://example.com/cat.jpg"
+	photo := []getstream.Attachment{{Type: &kind, ImageUrl: &url}}
+	withPhoto := func(text string, custom map[string]any) getstream.MessageResponse {
+		m := message(text, custom)
+		m.Attachments = photo
+		return m
+	}
+	for name, tc := range map[string]struct {
+		message getstream.MessageResponse
+		from    string
+		text    string
+	}{
+		"a photo sent alone":             {withPhoto("", nil), fromPerson, "[sent with a photo, not shown again]"},
+		"a photo with a caption":         {withPhoto("look", nil), fromPerson, "look\n\n[sent with a photo, not shown again]"},
+		"words alone":                    {message("look", nil), fromPerson, "look"},
+		"the agent's reply with a photo": {withPhoto("here", map[string]any{"source": "agent", "generating": false}), fromAgent, "here"},
+		"a photo of nobody's turn":       {withPhoto("", map[string]any{"source": "agent", "generating": false}), "", ""},
+	} {
+		from, text, ok := lineOf(tc.message)
+		s.Equal(tc.from != "", ok, name)
+		s.Equal(tc.from, from, name)
+		s.Equal(tc.text, text, name)
+	}
+}
+
 func (s *ReadSuite) TestALineIsFromThePersonOrTheAgentAsItsSourceSays() {
 	deleted := message("gone", nil)
 	deleted.Type = "deleted"
@@ -150,7 +179,7 @@ func (s *ReadSuite) TestALineIsFromThePersonOrTheAgentAsItsSourceSays() {
 		"a deleted message":                   {deleted, ""},
 		"a conversation's message of no role": {message("x", map[string]any{"source": "agent", "support_message": map[string]any{"role": "tool", "state": "completed"}}), ""},
 	} {
-		from, ok := lineOf(tc.message)
+		from, _, ok := lineOf(tc.message)
 		s.Equal(tc.from != "", ok, name)
 		s.Equal(tc.from, from, name)
 	}

@@ -164,7 +164,7 @@ func (s *telnyxLine) scheduledInThread(person string) (store.ScheduledTask, stri
 func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread() {
 	person := "+13125550001"
 	task, channel := s.scheduledInThread(person)
-	sent, replies := len(s.telnyx.sent()), s.repliesIn(channel)
+	sent, replies := len(s.telnyx().sent()), s.repliesIn(channel)
 
 	run := s.deliveredByTheWorker(task)
 
@@ -226,7 +226,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
 	task, _ := s.scheduledInThread(person)
 	report := s.codeHandsBackAReport()
 	s.schedulingScript.saySilently()
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	run := s.deliveredByTheWorker(task)
 
@@ -239,7 +239,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyIsOnlyAFileTextsTheFile() {
 // of after the task's.
 func (s *TelnyxChannelSuite) TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt() {
 	task, channel := s.scheduledInThread("+13125550001")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	ctx := context.Background()
 	taken, err := s.store.TakeChannelThreadTurn(ctx, channel, "another-router", time.Now().Add(time.Minute))
 	s.Require().NoError(err)
@@ -270,7 +270,7 @@ func (s *TelnyxChannelSuite) TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt() {
 func (s *TelnyxChannelSuite) TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread() {
 	task, channel := s.scheduledInThread("+13125550001")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	deliveredTo, sessionID, err := s.router.DeliverScheduledTask(context.Background(),
 		store.ClaimedScheduledTask{Task: task, Run: s.manualRun(task)})
@@ -285,7 +285,7 @@ func (s *TelnyxChannelSuite) TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheT
 // A retried occurrence finds its turn in the thread and does not run or text it again.
 func (s *TelnyxChannelSuite) TestARetriedOccurrenceIsNotTextedTwice() {
 	task, _ := s.scheduledInThread("+13125550001")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	run, deliveredTo, err := s.deliverTask(task)
 	s.Require().NoError(err)
 	s.Equal("sms", deliveredTo)
@@ -296,15 +296,15 @@ func (s *TelnyxChannelSuite) TestARetriedOccurrenceIsNotTextedTwice() {
 	s.Require().NoError(err)
 	s.Equal("sms", deliveredTo)
 	s.Equal(1, s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent+1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent+1 }, dropped, 20*time.Millisecond)
 }
 
 // A reply the line refuses fails the run, which may be tried again; the retry sends the reply
 // the thread holds, without running the task again.
 func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry() {
 	task, _ := s.scheduledInThread("+13125550001")
-	sent := len(s.telnyx.sent())
-	s.telnyx.refuse(http.StatusUnprocessableEntity, nil)
+	sent := len(s.telnyx().sent())
+	s.telnyx().refuse(http.StatusUnprocessableEntity, nil)
 
 	run, _, err := s.deliverTask(task)
 
@@ -312,7 +312,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry()
 	s.Equal(scheduling.ReasonFailed, scheduling.ReasonOf(err))
 	var failure *scheduling.Failure
 	s.False(errors.As(err, &failure) && failure.Final, "final")
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 
 	deliveredTo, err := s.deliverRun(task, run)
 
@@ -335,7 +335,7 @@ func (s *TelnyxChannelSuite) TestATaskTextsTheFileItsCodeMadeWithItsWords() {
 	s.config.Sandbox = string(Daytona)
 	task, _ := s.scheduledInThread(person)
 	report := s.codeHandsBackAReport()
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	run := s.deliveredByTheWorker(task)
 
@@ -350,8 +350,8 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesTextsItsFileOnTheR
 	s.config.Sandbox = string(Daytona)
 	task, _ := s.scheduledInThread(person)
 	report := s.codeHandsBackAReport()
-	sent := len(s.telnyx.sent())
-	s.telnyx.refuse(http.StatusUnprocessableEntity, nil)
+	sent := len(s.telnyx().sent())
+	s.telnyx().refuse(http.StatusUnprocessableEntity, nil)
 	run, _, err := s.deliverTask(task)
 	s.Require().Error(err)
 
@@ -368,8 +368,8 @@ func (s *TelnyxChannelSuite) TestATaskWhoseReplyTheLineRefusesTextsItsFileOnTheR
 func (s *TelnyxChannelSuite) TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried() {
 	person := "+13125550001"
 	task, _ := s.scheduledInThread(person)
-	sent := len(s.telnyx.sent())
-	s.telnyx.refuse(http.StatusServiceUnavailable, func() {
+	sent := len(s.telnyx().sent())
+	s.telnyx().refuse(http.StatusServiceUnavailable, func() {
 		s.Require().NoError(s.store.OptOut(context.Background(), &store.OptOut{
 			CustomerID: task.CustomerID, Recipient: person, Channel: "sms", Source: "keyword",
 		}))
@@ -379,26 +379,26 @@ func (s *TelnyxChannelSuite) TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotText
 
 	s.failedAs(err, scheduling.ReasonUnreachable, true)
 	s.Equal(1, s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // A turn that fails texts nothing, and the run may be tried again.
 func (s *TelnyxChannelSuite) TestATaskWhoseTurnFailsTextsNothing() {
 	task, _ := s.scheduledInThread("+13125550001")
 	s.schedulingScript.failScheduled(1)
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	_, _, err := s.deliverTask(task)
 
 	s.failedAs(err, scheduling.ReasonReplyFailed, false)
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // A turn cancelled before its reply was written texts nothing, and the retry runs it again and
 // texts its reply.
 func (s *TelnyxChannelSuite) TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry() {
 	task, channel := s.scheduledInThread("+13125550001")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	run := s.manualRun(task)
 
 	_, err := s.cutOff(s.router, task, run, func() {
@@ -413,7 +413,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry()
 	s.Equal("sms", deliveredTo)
 	s.Equal("Done.", s.took(sent + 1)[sent].text)
 	s.Equal(2, s.scheduledTurns(), "the retry ran the cancelled turn again")
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent+1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent+1 }, dropped, 20*time.Millisecond)
 }
 
 // A delivery that failed no longer holds its command's reply: one that arrives afterwards, as
@@ -421,7 +421,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry()
 func (s *TelnyxChannelSuite) TestAFailedDeliveryNoLongerHoldsItsCommandsReply() {
 	task, channel := s.scheduledInThread("+13125550001")
 	s.schedulingScript.failScheduled(1)
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	run, _, err := s.deliverTask(task)
 	s.failedAs(err, scheduling.ReasonReplyFailed, false)
 
@@ -439,13 +439,13 @@ func (s *TelnyxChannelSuite) TestAPersonWhoOptedOutIsNotTextedAndTheTaskIsNotRet
 	s.Require().NoError(s.store.OptOut(context.Background(), &store.OptOut{
 		CustomerID: s.customerID(), Recipient: person, Channel: "sms", Source: "keyword",
 	}))
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	_, _, err := s.deliverTask(task)
 
 	s.failedAs(err, scheduling.ReasonUnreachable, true)
 	s.Zero(s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // A line whose connection was removed fails the task for good.
@@ -484,7 +484,7 @@ func (s *RouterSuite) removeThread(channel string) error {
 // the reply has no thread left to go to (AI-1883).
 func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFinally() {
 	task, channel := s.scheduledInThread("+13125550001")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	release := s.schedulingScript.holdScheduled()
 	defer release()
 	removed := make(chan error, 1)
@@ -504,7 +504,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFina
 	s.Equal(scheduling.ReasonThreadGone, *run.Error)
 	s.Equal(1, run.Attempts, "a gone thread is not tried again")
 	s.Equal(1, s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // A reply the conversation finished on a thread that is gone, as a person's turn on a thread
@@ -512,14 +512,14 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFina
 func (s *TelnyxChannelSuite) TestAReplyOnARemovedThreadIsSentNowhereAndLogsNothing() {
 	person := "+13125550001"
 	channel := s.smsTurn(person, "hello")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 	s.Require().NoError(s.removeThread(channel))
 
 	s.bridge.(*channelbridge.Bridge).Reply(conversation.FinishedReply{
 		Customer: s.customerID(), CID: "agent:" + channel, MessageID: s.utils.uuid(), Text: "Too late.",
 	})
 
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 	for line := range strings.Lines(s.logged.String()) {
 		s.False(strings.Contains(line, "could not send a reply to its external thread") && strings.Contains(line, channel), "logged: %s", line)
 	}
@@ -530,13 +530,13 @@ func (s *TelnyxChannelSuite) TestATaskNeverReachesAnotherPersonsThread() {
 	task, _ := s.scheduledInThread("+13125550001")
 	s.smsTurn("+13125550002", "hello")
 	task.ChannelThread = s.threadChannel("+13125550002")
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	_, _, err := s.deliverTask(task)
 
 	s.failedAs(err, scheduling.ReasonThreadGone, true)
 	s.Zero(s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // The same person texting two customers' lines has a thread with each; a task reaches only its
@@ -553,7 +553,7 @@ func (s *TelnyxChannelSuite) TestATaskReachesOnlyItsOwnCustomersThread() {
 	forged.UserID, forged.ChannelThread = first.UserID, firstChannel
 	_, _, err := s.deliverTask(forged)
 	s.failedAs(err, scheduling.ReasonThreadGone, true)
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	_, deliveredTo, err := s.deliverTask(second)
 
@@ -574,7 +574,7 @@ func (s *TelnyxChannelSuite) TestAThreadTaskInItsQuietHoursIsHeld() {
 	task.QuietHours = &store.ScheduledTaskQuietHours{Start: now.Add(-time.Hour).Format("15:04"), End: now.Add(2 * time.Hour).Format("15:04")}
 	run := s.manualRun(task)
 	run.Trigger = store.ScheduledTaskTriggerSchedule
-	sent := len(s.telnyx.sent())
+	sent := len(s.telnyx().sent())
 
 	_, err := s.deliverRun(task, run)
 
@@ -582,7 +582,7 @@ func (s *TelnyxChannelSuite) TestAThreadTaskInItsQuietHoursIsHeld() {
 	s.Require().True(errors.As(err, &postponed), "not held: %v", err)
 	s.WithinDuration(now.Add(2*time.Hour), postponed.Until, 2*time.Minute)
 	s.Zero(s.scheduledTurns())
-	s.Never(func() bool { return len(s.telnyx.sent()) > sent }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > sent }, dropped, 20*time.Millisecond)
 }
 
 // A task the agent made in an SMS thread says it is delivered by SMS, where it goes.
@@ -647,7 +647,7 @@ func (s *TelnyxChannelSuite) TestATaskWithoutAThreadIsDeliveredAsBefore() {
 	s.Equal(store.ScheduledTaskRunDelivered, run.State)
 	s.Equal("conversation", run.DeliveredTo)
 	s.Nil(run.Error)
-	s.Never(func() bool { return len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
 }
 
 // A sandboxed customer past its day's one message is texted nothing; the run may be tried
@@ -667,7 +667,7 @@ func (s *TelnyxSandboxSuite) TestATaskPastTheSandboxsDailyLimitIsHeldBack() {
 	_, _, err := s.deliverTask(task)
 
 	s.failedAs(err, scheduling.ReasonUnreachable, false)
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 }
 
 // scheduledOnWhatsApp has person write on WhatsApp and schedule a task, and returns the task

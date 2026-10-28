@@ -743,6 +743,7 @@ vendor rates in `prices/vendor.json`; customers are charged each entry's price, 
 | `gemma/gemma-4-26B-A4B-it`        | low-latency  | $0.24  | -       | $1.20   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
+| `openai/gpt-6.1-terra`            | high-quality | $1.00  | $0.05   | $5.00   |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
@@ -1488,7 +1489,8 @@ read, and so does adding the page again.
 go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
 ```
 
-A namespace belongs to a customer: turbopuffer stores it as `<customer>__<namespace>`, so two
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<slug>-<hash>`, a
+readable slug of the namespace and a hash of it as given (`examples__docs-<16 hex>`), so two
 apps that both say `default` never read each other's. `-customer` is the app id the agent
 runs under.
 
@@ -1869,11 +1871,11 @@ included, and a change can only be cancelled before it takes effect. The one exc
 outright, such as a number's monthly rental, is charged at that amount times the same factor,
 which no entry stores; its `base_cost_micros` is the vendor's amount.
 
-`markup_bps` on `price_changes` and `price_entries` is left from before prices were stored:
-nothing reads it, rows written now leave it `NULL`, and a later release drops it. Migration
-`20261118120000_price_entry_prices` stored every existing entry's price as what it was
-charged: its rates times its own markup, else the list's in force when it is (or was), and
-gave every item its SKU.
+Migration `20261118120000_price_entry_prices` stored every existing entry's price as what it
+was charged: its rates times its own markup, else the list's in force when it is (or was), and
+gave every item its SKU. Migration `20261130120000_drop_price_markup` then drops the
+`markup_bps` those markups were kept in, on `price_changes` and `price_entries`, which nothing
+had read since.
 
 | Command | What it does |
 | --- | --- |

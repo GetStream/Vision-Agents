@@ -32,6 +32,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
@@ -58,6 +59,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -74,6 +76,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -146,9 +149,13 @@ func (s *RouterSuite) BeforeTest(_, _ string) {
 	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, count, "a task is left from an earlier test or run")
+	// A database that stalls past the driver's 10s read timeout fails the delete, and the next
+	// test would then fail on this one's tasks; the delete is tried again until it lands.
 	t.Cleanup(func() {
-		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
-		require.NoError(t, err)
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+			assert.NoError(c, err)
+		}, time.Minute, 100*time.Millisecond, "the tasks were never deleted")
 	})
 }
 
@@ -335,6 +342,9 @@ type RouterSuite struct {
 	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
 	// the harness. Zero caps nothing.
 	runsPerApp int64
+	// knowledgeLimits is how documents are cut, for a suite about knowledge limits to set
+	// before it starts the harness. Zero is ingest.DefaultLimits.
+	knowledgeLimits ingest.Limits
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -483,6 +493,9 @@ func (s *RouterSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
 	s.forgetPhoneVendors()
+	if s.knowledgeLimits == (ingest.Limits{}) {
+		s.knowledgeLimits = ingest.DefaultLimits
+	}
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
@@ -668,7 +681,8 @@ func (s *RouterSuite) SetupSuite() {
 		OpsKey:            suiteOpsKey,
 		ManageKey:         manageKey,
 		Secrets:           s.sealer,
-		Knowledge:         s.knowledgeWriter(),
+		Knowledge:         s.knowledgeWriter(policies),
+		KnowledgeLimits:   s.knowledgeLimits,
 		KnowledgeURLs:     s.pages(redisAddr),
 		Voices:            s.voiceService(),
 		VoiceLibrary:      voices.NewCatalogue(),
@@ -793,6 +807,16 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)
 	return recorder
+}
+
+// vendorPriced is what used of a phone item costs at the vendor list's rates, as
+// telephonyRecorder prices it, read from vendor.json so a price change there leaves the tests
+// passing. The test names the item, so a row recorded under the wrong one fails.
+func (s *RouterSuite) vendorPriced(provider, model string, attributes map[string]string, used pricing.Quantities) int64 {
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Attributes: attributes}
+	return pricingtest.Micros(s.T(), list, item, used)
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.
@@ -1301,9 +1325,9 @@ func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
 	return recorder
 }
 
-func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
+func (s *RouterSuite) knowledgeWriter(gate routing.Gate) *metered.Knowledge {
 	s.knowledge = newKnowledgeBase()
-	return metered.NewKnowledge(s.knowledge, s.metering)
+	return metered.NewKnowledge(s.knowledge, s.metering, gate)
 }
 
 // pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a
@@ -1318,7 +1342,8 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
 		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
-		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
+		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering, nil),
+		Limits:        s.knowledgeLimits,
 		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)

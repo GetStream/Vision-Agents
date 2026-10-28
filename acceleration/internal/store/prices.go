@@ -35,9 +35,6 @@ var ErrNoPriceChange = errors.New("store: there is no such price change")
 // PriceEntry is one item's price, as a change wrote it. Rows are only ever added: the entry
 // in force for an item is the newest whose EffectiveAt has passed under a change that was not
 // cancelled, and a newer row replaces an older one whole.
-//
-// The table's markup_bps column has no field: nothing reads it, and rows written now leave it
-// NULL.
 type PriceEntry struct {
 	bun.BaseModel `bun:"table:price_entries,alias:pe"`
 
@@ -125,8 +122,7 @@ func priceEntryOf(change string, entry pricing.Entry) PriceEntry {
 }
 
 // PriceChange is one write to the price list. It is never deleted; one not yet in force can
-// be cancelled, once. The table's markup_bps column has no field: nothing reads it, and
-// changes written now leave it NULL.
+// be cancelled, once.
 type PriceChange struct {
 	bun.BaseModel `bun:"table:price_changes,alias:pc"`
 

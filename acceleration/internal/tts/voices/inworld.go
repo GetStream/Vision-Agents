@@ -36,16 +36,15 @@ type Inworld struct {
 
 // NewInworld validates the options and returns a library reader.
 func NewInworld(options InworldOptions) (*Inworld, error) {
-	if options.APIKey == "" {
-		options.APIKey = keypool.FromEnv("", "INWORLD_API_KEY").Peek()
-	}
+	keys := keypool.FromEnv(options.APIKey, "INWORLD_API_KEY")
+	options.APIKey = keys.Peek()
 	if options.APIKey == "" {
 		return nil, errors.New("voices: api key is required (set INWORLD_API_KEY)")
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = inworldBaseURL
 	}
-	return &Inworld{options: options, client: client(options.Timeout)}, nil
+	return &Inworld{options: options, client: client(keys, keypool.Header("Authorization", "Basic "), options.Timeout)}, nil
 }
 
 // List reads Inworld's voices, both the ones it ships and any cloned into the workspace.

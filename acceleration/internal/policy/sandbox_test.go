@@ -221,7 +221,8 @@ func (s *PolicySuite) TestASlowFirstReadOfTheLimitsAllowsTheSandbox() {
 }
 
 func (s *PolicySuite) TestSandboxLimitsUnreadForMaxStaleAreRefusedForATierThatFailsClosed() {
-	enforcer := s.unread(func(settings *Settings) { settings.MaxStale = 100 * time.Millisecond })
+	// A second, so the first ask comes before it however slow the machine.
+	enforcer := s.unread(func(settings *Settings) { settings.MaxStale = time.Second })
 	s.Require().NoError(enforcer.SandboxAllowed(s.ctx, ownerOf(s.app), SandboxAsk{}), "not yet unread for MaxStale")
 
 	var err error

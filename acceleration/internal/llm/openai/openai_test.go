@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,8 +86,8 @@ func (s *OpenAISuite) TestAModelAcceptsImages() {
 	s.Contains(capabilitiesFor("gpt-6-astra").InputModalities, "image")
 }
 
-func (s *OpenAISuite) TestGPT6LunaAndSolCanBeToldNotToThink() {
-	for _, model := range []string{"gpt-6-luna", "gpt-6-sol"} {
+func (s *OpenAISuite) TestGPT6LunaSolAndTerraCanBeToldNotToThink() {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6.1-terra"} {
 		provider, err := New(Options{APIKey: "k", Model: model})
 		s.Require().NoError(err)
 
@@ -335,8 +336,17 @@ func (s *OpenAISuite) TestAnErrorEventOnOpenAIsSideIsTransient() {
 
 func (s *OpenAISuite) TestAFailureOfTheRequestItselfIsNotTransient() {
 	err := s.failedWith(`{"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"invalid_prompt","message":"not this"}}}`)
-	s.ErrorContains(err, "not this")
-	s.False(llm.Transient(err))
+	s.EqualError(err, "openai: invalid_prompt: not this")
+	failure, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.Require().True(ok, "OpenAI named it")
+	s.False(failure.Transient)
+}
+
+func (s *OpenAISuite) TestAnErrorEventWithNoCodeIsLeftUnclassified() {
+	err := s.failedWith(`{"type":"error","code":null,"message":"something","param":null,"sequence_number":1}`)
+	s.EqualError(err, "openai: something")
+	_, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.False(ok)
 }
 
 func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {

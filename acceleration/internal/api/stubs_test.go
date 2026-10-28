@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -134,8 +135,12 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
 	)
-	// Where a socket that names no target goes.
-	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}}
+	// Where a socket that names no target goes. It pins the stub as router.yaml pins its
+	// model: the vision model speaks English too, and left to the ranking the default would
+	// be whichever of the two ranks first on the health every suite records in Redis. The pin
+	// holds only while the stub is available (routing.prefer): a fatal error recorded on the
+	// stub by any suite brings the vision model back.
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, Prefer: "stub/stub-model"}
 	return config
 }
 
@@ -286,6 +291,21 @@ func (s *scriptedLLM) requests() []llm.ResponseParams {
 	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
+// replies is every request the router has asked this model for a reply on. A session's
+// review is asked on the same model once the session closed, at a moment of its own (a
+// thread's session closes after each turn), so it is left out.
+func (s *scriptedLLM) replies() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var replies []llm.ResponseParams
+	for _, params := range s.asked {
+		if params.Purpose == "reply" {
+			replies = append(replies, params)
+		}
+	}
+	return replies
+}
+
 // answers lets through the replies a held model is sitting on.
 func (s *scriptedLLM) answers() {
 	s.mu.Lock()
@@ -423,6 +443,9 @@ type recordingTTS struct {
 	voice string
 	// started is told when the router starts it, which a readiness probe never does.
 	started func(*recordingTTS)
+	// completedByTest is set by a test that completes each synthesis itself, with the audio
+	// it says was made: completed by both, an utterance is recorded twice.
+	completedByTest atomic.Bool
 }
 
 // saidLog is what every voice it is handed to was told to say, in order.
@@ -443,7 +466,7 @@ func (s *recordingTTS) Synthesize(request tts.Request) error {
 	s.said.said = append(s.said.said, request.Text)
 	s.said.mu.Unlock()
 
-	if request.Final {
+	if request.Final && !s.completedByTest.Load() {
 		s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID})
 	}
 	return nil
@@ -873,10 +896,19 @@ type knowledgeBase struct {
 	mu        sync.Mutex
 	namespace string
 	passages  map[string]knowledge.Document
+	// down makes every write fail, naming the namespace as turbopuffer's errors do.
+	down bool
 }
 
 func newKnowledgeBase() *knowledgeBase {
 	return &knowledgeBase{passages: map[string]knowledge.Document{}}
+}
+
+// failWrites makes every write fail until it is called with false.
+func (b *knowledgeBase) failWrites(down bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.down = down
 }
 
 // knowledgeQueried is what the stub bills a query as having searched: the least a small
@@ -892,6 +924,9 @@ func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.down {
+		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
+	}
 	b.namespace = namespace
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {

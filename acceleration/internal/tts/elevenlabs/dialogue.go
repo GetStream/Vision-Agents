@@ -466,6 +466,7 @@ func (d *Dialogue) send(message dialogueClientMessage) error {
 // connection rather than reading the field, so a loop left over from a socket that
 // barge-in replaced cannot report the new one's audio.
 func (d *Dialogue) readLoop(conn *websocket.Conn, key string) {
+	refused := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -487,6 +488,10 @@ func (d *Dialogue) readLoop(conn *websocket.Conn, key string) {
 		}
 		if message.Error == quotaExceeded {
 			d.keys.QuotaExceeded(key)
+		}
+		if message.Error == invalidAPIKey && !refused {
+			refused = true
+			d.keys.InvalidKey()
 		}
 		if d.current(conn) {
 			d.handleMessage(message)

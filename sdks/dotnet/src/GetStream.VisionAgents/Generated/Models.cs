@@ -6448,7 +6448,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500.
+        /// Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("chunk_size")]
         public int? ChunkSize { get; set; } = default!;
@@ -11437,7 +11437,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Filter { get; set; } = default!;
 
         /// <summary>
-        /// Who the memories belong to. Empty means the customer.
+        /// Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string? UserId { get; set; } = default!;

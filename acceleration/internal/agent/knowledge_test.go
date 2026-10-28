@@ -94,7 +94,7 @@ func (s *AgentSuite) TestALookupAnswersOutOfTheKnowledgeBase() {
 
 	asked := s.knows.queries()
 	s.Require().Len(asked, 1)
-	s.Equal("acme__handbook", asked[0].Namespace, "an agent must only read its own customer's knowledge base")
+	s.Equal(knowledge.Scoped("acme", "handbook"), asked[0].Namespace, "an agent must only read its own customer's knowledge base")
 	s.Equal("what does delivery cost", asked[0].Text)
 }
 

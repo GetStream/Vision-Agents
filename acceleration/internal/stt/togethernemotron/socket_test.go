@@ -2,6 +2,7 @@ package togethernemotron
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -199,6 +201,44 @@ func (s *TogetherNemotronSocketSuite) TestStartReportsAHandshakeTheServerRejecte
 
 	err := s.build(fake, Options{}).Start(s.ctx())
 
+	s.ErrorContains(err, "model not available")
+}
+
+// invalidKeyFrame is how Together refused a made-up key on 2026-10-28, right after the
+// handshake.
+const invalidKeyFrame = `{"type":"conversation.item.input_audio_transcription.failed","error":{"message":"Invalid API key provided. You can find your API key at https://api.together.ai/settings/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`
+
+// startRefused starts a provider on a key of its own against a server that opens with this
+// frame, and returns how many invalid keys TOGETHER_API_KEY's pool counted meanwhile and
+// Start's error.
+func (s *TogetherNemotronSocketSuite) startRefused(opening string) (float64, error) {
+	fake := newFakeRealtime()
+	fake.opening = opening
+	defer fake.close()
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+
+	err := s.build(fake, Options{APIKey: rand.Text()}).Start(s.ctx())
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before, err
+}
+
+func (s *TogetherNemotronSocketSuite) TestAnInvalidKeyFrameIsCountedAndItsReasonReported() {
+	counted, err := s.startRefused(invalidKeyFrame)
+
+	s.Equal(1.0, counted)
+	s.ErrorContains(err, "Invalid API key provided")
+}
+
+func (s *TogetherNemotronSocketSuite) TestAnotherFailedFrameIsNotAnInvalidKey() {
+	counted, err := s.startRefused(`{"type":"conversation.item.input_audio_transcription.failed","error":{"message":"audio could not be decoded","code":"invalid_audio"}}`)
+
+	s.Zero(counted)
+	s.ErrorContains(err, "audio could not be decoded")
+}
+
+func (s *TogetherNemotronSocketSuite) TestAnErrorFrameWithoutTheKeyCodeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(`{"type":"error","error":{"message":"model not available"}}`)
+
+	s.Zero(counted)
 	s.ErrorContains(err, "model not available")
 }
 

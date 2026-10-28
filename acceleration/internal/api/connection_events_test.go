@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // issueCreated is the event the suite's bindings declare: the draft's own kind of example
@@ -30,6 +31,12 @@ const issueCreated = "issue.created"
 // at the fake provider, which offers events (fakeprovider.MCPEvents), an app connection holding
 // the fake's token, validated through the API, and an agent config whose fixed binding declares
 // an event. The validate subscribes; the fake checks the callback, then delivers to it.
+//
+// The suite has a database of its own. An MCP events worker claims every subscription due in
+// its database, whoever made it, and AuthorizationsSuite runs one too, with no bearer scheme:
+// on the shared database it took this suite's rows and marked them failed for retryAfter (15
+// min), and this suite's took AuthorizationsSuite's (AI-2119). Two tests here also empty the
+// whole table.
 type ConnectionEventsSuite struct {
 	RouterSuite
 	provider *fakeprovider.Server
@@ -42,6 +49,7 @@ func TestConnectionEventsSuite(t *testing.T) {
 }
 
 func (s *ConnectionEventsSuite) SetupSuite() {
+	s.database = "connection_events"
 	s.provider = fakeprovider.New(s.T(), fakeprovider.ClientCredentials, fakeprovider.MCPEvents)
 	s.connectors = core.Registry{
 		Schemes:     map[string]core.Scheme{bearer.Name: bearer.New()},
@@ -556,7 +564,7 @@ func (s *ConnectionEventsSuite) modelWasAsked(marker string) bool {
 
 // dsn is the suite's own database, as SetupSuite opened it.
 func (s *ConnectionEventsSuite) dsn() string {
-	return testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN"))
+	return testenv.Database(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")), s.database)
 }
 
 // countedQueries counts the queries a pool sends.
