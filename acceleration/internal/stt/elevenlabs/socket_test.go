@@ -2,6 +2,7 @@ package elevenlabs
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -193,6 +195,31 @@ func (s *ElevenlabsSocketSuite) TestARefusedSessionIsReportedFromStart() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s.ErrorContains(provider.Start(ctx), "invalid api key")
+}
+
+// refusedOn is how many invalid keys ELEVENLABS_API_KEY's pool counted while a provider on a
+// key of its own started against a server that greets it with this frame.
+func (s *ElevenlabsSocketSuite) refusedOn(greeting string) float64 {
+	fake := newFakeSTT()
+	fake.greeting = greeting
+	defer fake.close()
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+
+	provider, err := New(Options{APIKey: "sk_" + rand.Text(), URL: fake.endpoint()})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.Require().Error(provider.Start(ctx))
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before
+}
+
+// The frame Scribe sent a made-up key on 2026-10-28, right after the handshake.
+func (s *ElevenlabsSocketSuite) TestAnAuthErrorFrameIsCountedAsAnInvalidKey() {
+	s.Equal(1.0, s.refusedOn(`{"message_type":"auth_error","error":"You must be authenticated to use this endpoint."}`))
+}
+
+func (s *ElevenlabsSocketSuite) TestAnotherFailureFrameIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn(`{"message_type":"unaccepted_terms","error":"You must be authenticated to use this endpoint."}`))
 }
 
 func (s *ElevenlabsSocketSuite) TestAudioArrivesBase64EncodedWithoutCommittingAnything() {

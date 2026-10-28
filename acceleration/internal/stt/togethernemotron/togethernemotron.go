@@ -77,6 +77,9 @@ const (
 	clientTypeCommit = "input_audio_buffer.commit"
 )
 
+// codeInvalidAPIKey is the error code of a frame that refuses the connection's key.
+const codeInvalidAPIKey = "invalid_api_key"
+
 // Server frame types.
 const (
 	eventSessionCreated = "session.created"
@@ -138,6 +141,7 @@ type serverMessage struct {
 
 type serverError struct {
 	Message string `json:"message"`
+	Code    string `json:"code"`
 }
 
 // STT is a Together AI realtime transcription session.
@@ -380,7 +384,12 @@ func (s *STT) handshake() error {
 	if err := json.Unmarshal(raw, &message); err != nil {
 		return stack.Wrap(fmt.Errorf("togethernemotron: decode handshake: %w", err))
 	}
-	if message.Type == eventError {
+	// Together refuses a key it does not take, right after accepting the handshake, with a
+	// failed transcription rather than an error.
+	if message.Type == eventError || message.Type == eventFailed {
+		if message.Error != nil && message.Error.Code == codeInvalidAPIKey {
+			s.keys.InvalidKey()
+		}
 		return stack.Wrap(fmt.Errorf("togethernemotron: handshake rejected: %s", message.failure()))
 	}
 	if message.Type != eventSessionCreated {

@@ -106,8 +106,16 @@ var (
 	shared   = map[string]*Pool{}
 )
 
-// quotaExceededStatus is the status label of a refusal that came as a websocket frame.
-const quotaExceededStatus = "quota_exceeded"
+// The status labels of a refusal that came in a websocket frame or close after the handshake,
+// which has no HTTP status: a spent quota, and a key the provider does not take.
+const (
+	quotaExceededStatus = "quota_exceeded"
+	invalidKeyStatus    = "invalid_key"
+)
+
+// outOfFundsStatus is the label of a refusal in a frame for the lack of money, the one the
+// same refusal gets at the handshake as an HTTP 402.
+var outOfFundsStatus = strconv.Itoa(http.StatusPaymentRequired)
 
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
 // finds under envVars. The first of envVars names the pool's key variable in its metrics.
@@ -304,6 +312,20 @@ func (p *Pool) QuotaExceeded(key string) {
 	p.Cooldown(key, MaxCooldown)
 }
 
+// InvalidKey counts as refused, under the status "invalid_key", a key a provider accepted at
+// the websocket handshake and refused in a frame or close after it. Like a 401 at the
+// handshake it leaves the key in turn: a key to replace, not one to wait out.
+func (p *Pool) InvalidKey() {
+	p.countRefused(invalidKeyStatus)
+}
+
+// OutOfFunds counts as refused, under the status "402", a key a provider accepted at the
+// websocket handshake and then refused in a frame for want of funds: the status the handshake
+// gives the same refusal. Like a 402 there it leaves the key in turn.
+func (p *Pool) OutOfFunds() {
+	p.countRefused(outOfFundsStatus)
+}
+
 // CooldownFromResponse rests key for as long as the response's Retry-After asks, or for
 // DefaultCooldown when it does not say.
 func (p *Pool) CooldownFromResponse(key string, response *http.Response) {
@@ -367,7 +389,7 @@ var badKeyMarkers = []badKeyMarker{
 	// generic text, so it counts on a 403 alone.
 	{http.StatusForbidden, []byte("Authentication failed")},
 	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED), for a key that is not base64 of
-	// id:secret...
+	// id:secret (the websocket answers that one with a 101 and a frame, counted there)...
 	{http.StatusForbidden, []byte("Invalid authorization credentials")},
 	// ...and for a key of that shape that is revoked or made up.
 	{http.StatusForbidden, []byte("API key does not exist or was deleted")},
