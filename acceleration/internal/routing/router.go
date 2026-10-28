@@ -129,6 +129,15 @@ type ModelResolver interface {
 	CustomModel(ctx context.Context, customerID, name string) (ProviderConfig, Endpoint, error)
 }
 
+// CustomerKeys are the keys customers keep with the router for their own accounts at a vendor,
+// one per vendor and region (BYOK). Work routed on one is billed to the customer by the vendor,
+// and priced at its BYOK entry.
+type CustomerKeys interface {
+	// CustomerKey is the customer's key for the provider in region, and false when they keep
+	// none there. Its error never holds the key.
+	CustomerKey(ctx context.Context, customerID, provider, region string) (string, bool, error)
+}
+
 // ErrModelNotAllowed says the customer's policies allow none of the models a request could
 // be routed to.
 var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
@@ -226,6 +235,9 @@ type Options[P Provider] struct {
 	// Models resolves custom/<name>. Nil leaves a deployment with no models of a
 	// customer's own.
 	Models ModelResolver
+	// Keys are the customers' own keys, which each candidate whose factory honors
+	// OverrideAPIKey is asked on first. Nil routes on the deployment's keys alone.
+	Keys CustomerKeys
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate Gate
 	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
@@ -250,8 +262,10 @@ type Router[P Provider] struct {
 	gate     Gate
 	// keys are the instances' own keys, read from the variables their api_key_env names when
 	// the router was made.
-	keys   map[instance]string
-	logger *slog.Logger
+	keys map[instance]string
+	// customerKeys are the keys customers keep for their own accounts. Nil is none.
+	customerKeys CustomerKeys
+	logger       *slog.Logger
 }
 
 // Caller is the end user a request was made on behalf of, and where they made it from. It
@@ -355,6 +369,10 @@ type Request struct {
 	// refused it named here: health would only sort them last, and is written after the
 	// reopen has already read it.
 	Exclude []string
+	// BYOK keeps only the instances built with the customer's own keys (true), or only the
+	// deployment's (false). Nil walks both, each model's on the customer's key first. A model's
+	// two instances share its name, so a caller that saw one fail asks for the other this way.
+	BYOK *bool
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
 	// Tools are what a modality that converses may call. They are here rather than in an
@@ -396,6 +414,8 @@ type Candidate struct {
 	Health live.Health
 	// endpoint is where a customer's own model is served, and empty for the catalogue's.
 	endpoint Endpoint
+	// key is the customer's own key a BYOK instance is built with, and empty for every other.
+	key string
 }
 
 // New validates the options and returns a Router.
@@ -438,6 +458,8 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		gate:     options.Gate,
 		keys:     keys,
 		logger:   logger,
+
+		customerKeys: options.Keys,
 	}, nil
 }
 
@@ -493,6 +515,13 @@ func (r *Router[P]) Quote(config ProviderConfig, used pricing.Quantities) pricin
 // anything, so a provider whose factory would fail (a missing key) still reports true. A
 // candidate with no factory is one Select passes over, as is one Ready refuses.
 func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
+
+// TakesCustomerKey reports whether work on the provider can be routed on a key the customer keeps
+// for their own account at it: its factory builds with an instance's own key. A provider with no
+// factory takes none, and neither does a customer's own model, which keeps its key itself.
+func (r *Router[P]) TakesCustomerKey(provider string) bool {
+	return provider != CustomProvider && r.registry.Honors(provider, OverrideAPIKey)
+}
 
 // Logger returns the router's logger.
 func (r *Router[P]) Logger() *slog.Logger { return r.logger }
@@ -675,10 +704,13 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		}
 		// A model this deployment has no config for fails the same way for every caller, so
 		// it is passed over the way a missing factory is, with no stat to mark it down: its
-		// health is every customer's, and it was never tried.
-		if err := r.ready(candidate.Config); err != nil {
-			failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
-			continue
+		// health is every customer's, and it was never tried. An instance on the customer's
+		// own key is built with that key, which says nothing of whether the deployment's is set.
+		if !candidate.Config.BYOK {
+			if err := r.ready(candidate.Config); err != nil {
+				failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+				continue
+			}
 		}
 
 		provider, err := r.startCandidate(ctx, request, candidate)
@@ -737,13 +769,96 @@ func (r *Router[P]) Admit(ctx context.Context, owner Owner) (Admission, error) {
 }
 
 // Candidates is where a request may go, best first: a priority list where one was given,
-// and the ranked resolution of a single target otherwise. A modality that fails over after
-// it has started walks this, so it falls back in the order the caller wrote.
+// and the ranked resolution of a single target otherwise, each candidate the customer keeps a
+// key for preceded by their own instance of it (owned). A modality that fails over after it
+// has started walks this, so it falls back in the order the caller wrote.
 func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidate, error) {
+	var candidates []Candidate
+	var err error
 	if len(request.Providers) == 0 {
-		return r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
+		candidates, err = r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
+	} else {
+		candidates, err = r.resolveChain(ctx, request)
 	}
-	return r.resolveChain(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return r.owned(ctx, request, candidates)
+}
+
+// owned puts the customer's own instance of each candidate whose vendor they keep a key for, in
+// the candidate's region, immediately before it: a copy of its config, at the deployment's
+// endpoint, built with their key and priced at its BYOK entry. The order between models stays
+// the caller's or the ranking's, and each model is asked on the customer's key first; when that
+// fails the walk moves on to the deployment's instance as it would to any next candidate.
+//
+// Only a vendor whose factory honors OverrideAPIKey is asked on a customer's key. A key is
+// looked up once per vendor and region, and one that cannot be read or opened leaves the
+// deployment's instance to serve, logged. request.BYOK keeps one kind of instance.
+func (r *Router[P]) owned(ctx context.Context, request Request, candidates []Candidate) ([]Candidate, error) {
+	if r.customerKeys != nil {
+		type scope struct{ provider, region string }
+		keys := map[scope]string{}
+		withOwn := make([]Candidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			config := candidate.Config
+			if !config.BYOK && r.TakesCustomerKey(config.Provider) {
+				at := scope{provider: config.Provider, region: regionOf(config)}
+				key, looked := keys[at]
+				if !looked {
+					key = r.customerKey(ctx, request.CustomerID, at.provider, at.region)
+					keys[at] = key
+				}
+				if key != "" {
+					withOwn = append(withOwn, r.ownInstance(ctx, candidate, key))
+				}
+			}
+			withOwn = append(withOwn, candidate)
+		}
+		candidates = withOwn
+	}
+	if request.BYOK == nil {
+		return candidates, nil
+	}
+	kept := slices.DeleteFunc(candidates, func(candidate Candidate) bool { return candidate.Config.BYOK != *request.BYOK })
+	if len(kept) == 0 {
+		whose := "the deployment's own key"
+		if *request.BYOK {
+			whose = "a key of the customer's own"
+		}
+		return nil, stack.Wrap(fmt.Errorf("routing: no candidate for %q is built with %s", request.Target, whose))
+	}
+	return kept, nil
+}
+
+// ownInstance is the customer's instance of a candidate, built with their key. Its health is the
+// vendor's, read and never written: what the customer's key does is theirs, and is kept out of
+// what every customer is routed by (Recorder.Record).
+func (r *Router[P]) ownInstance(ctx context.Context, candidate Candidate, key string) Candidate {
+	config := candidate.Config
+	config.BYOK = true
+	health := candidate.Health
+	// The deployment's instance reads as unavailable when it cannot be built, which the
+	// customer's key can be.
+	if r.ready(candidate.Config) != nil {
+		health = r.vendorHealth(ctx, candidate.Config)
+	}
+	return Candidate{Config: config, Health: health, key: key}
+}
+
+// customerKey is the customer's key for provider in region, and empty when they keep none there
+// or it cannot be read, which is logged without the key.
+func (r *Router[P]) customerKey(ctx context.Context, customerID, provider, region string) string {
+	key, ok, err := r.customerKeys.CustomerKey(ctx, customerID, provider, region)
+	if err != nil {
+		r.logger.Error("could not read a customer's own key, so the deployment's serves",
+			"modality", r.modality, "customer_id", customerID, "provider", provider, "region", region, "error", err)
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	return key
 }
 
 // resolveFor is Resolve, plus the customer's own models, which only a request can name
@@ -859,7 +974,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		voice = overwritten
 	}
 
-	spec := r.instanceSpec(candidate.Config)
+	spec := r.instanceSpec(candidate)
 	spec.LanguageHints = request.LanguageHints
 	spec.Voice = voice
 	spec.Keyterms = request.Keyterms
@@ -1022,22 +1137,29 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 }
 
 // instanceSpec is what every build of this instance is given, whatever the request: the
-// model's own settings, and where the instance is and the key it takes.
-func (r *Router[P]) instanceSpec(config ProviderConfig) Spec {
+// model's own settings, and where the instance is and the key it takes, the customer's own for
+// an instance built with theirs.
+func (r *Router[P]) instanceSpec(candidate Candidate) Spec {
+	config := candidate.Config
+	key := r.keys[instanceOf(config)]
+	if config.BYOK {
+		key = candidate.key
+	}
 	return Spec{
 		Model:           config.Model,
 		Thinking:        config.Thinking,
 		ReasoningEffort: config.ReasoningEffort,
 		BaseURL:         config.Endpoint,
-		APIKey:          r.keys[instanceOf(config)],
+		APIKey:          key,
+		BYOK:            config.BYOK,
 		Region:          regionOf(config),
 		Logger:          r.logger,
 	}
 }
 
-// ready is Registry.Ready for one instance, built as its requests are.
+// ready is Registry.Ready for one of the deployment's instances, built as its requests are.
 func (r *Router[P]) ready(config ProviderConfig) error {
-	return r.registry.ReadyAs(config.Provider, r.instanceSpec(config))
+	return r.registry.ReadyAs(config.Provider, r.instanceSpec(Candidate{Config: config}))
 }
 
 // health reads live health, treating a Redis failure as "no information" so a broken
@@ -1046,11 +1168,18 @@ func (r *Router[P]) ready(config ProviderConfig) error {
 //
 // Health is kept per provider and model, not per instance: a model's instance in one region
 // shares the errors and latency of its twin in another, which is the vendor's health more
-// than the host's, and a request is only ever served in one region anyway.
+// than the host's, and a request is only ever served in one region anyway. Work on a
+// customer's own key is kept out of it.
 func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.Health {
 	if r.ready(provider) != nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model}
 	}
+	return r.vendorHealth(ctx, provider)
+}
+
+// vendorHealth is the provider and model's live health, whether or not this deployment can build
+// it.
+func (r *Router[P]) vendorHealth(ctx context.Context, provider ProviderConfig) live.Health {
 	if r.live == nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
 	}

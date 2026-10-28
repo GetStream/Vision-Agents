@@ -60,6 +60,9 @@ type Spec struct {
 	// APIKey is the instance's own key, in place of the vendor's variable, and empty for that.
 	// Only a factory registered as honoring OverrideAPIKey is ever given one.
 	APIKey string
+	// BYOK says APIKey is a key the customer keeps for their own account at the vendor. A factory
+	// sends nothing of the deployment's account with it, such as Anthropic's workspace.
+	BYOK bool
 	// Region is where the instance runs its work, never empty. A factory registered as
 	// honoring OverrideRegion picks its vendor's host for it.
 	Region string

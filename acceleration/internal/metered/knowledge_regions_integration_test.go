@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // keptIn is a customer's policies keeping their work in a region, admitting everything. A test
@@ -57,10 +58,10 @@ func (s *MeteredSuite) TestAnOwnerKeptInTheEUWritesThereAndIsPricedAtTheEUEntry(
 
 	s.Equal([]string{knowledge.Scoped(s.owner.CustomerID, "docs")}, s.listed(base, pricing.RegionEU))
 	s.Empty(s.listed(base, pricing.RegionUS), "nothing of an eu customer's is written in the us")
-	kept, recorded, err := s.store.KnowledgeRegion(s.ctx, s.owner.CustomerID, "docs")
+	kept, recorded, err := s.store.KnowledgePlace(s.ctx, s.owner.CustomerID, "docs")
 	s.Require().NoError(err)
 	s.True(recorded)
-	s.Equal(pricing.RegionEU, kept)
+	s.Equal(store.KnowledgePlace{Region: pricing.RegionEU, Account: store.KnowledgeAccountStream}, kept)
 	rows := s.rows()
 	s.Require().Len(rows, 1)
 	s.Equal("knowledge-turbopuffer-write-eu", rows[0].SKU)
@@ -118,20 +119,22 @@ func (s *MeteredSuite) TestARegionWithNoKnowledgeBackendIsRefusedNamingIt() {
 
 	s.Require().ErrorIs(err, routing.ErrRequest)
 	s.ErrorContains(err, "keeps no knowledge in region eu")
-	_, recorded, err := s.store.KnowledgeRegion(s.ctx, s.owner.CustomerID, "docs")
+	_, recorded, err := s.store.KnowledgePlace(s.ctx, s.owner.CustomerID, "docs")
 	s.Require().NoError(err)
 	s.False(recorded, "a base nothing was written to is kept nowhere")
 }
 
 func (s *MeteredSuite) TestTwoFirstWritesInTwoRegionsKeepTheBaseWhereTheFirstLanded() {
-	kept, err := s.store.ClaimKnowledgeRegion(s.ctx, s.owner.CustomerID, "docs", pricing.RegionEU)
+	eu := store.KnowledgePlace{Region: pricing.RegionEU, Account: store.KnowledgeAccountCustomer}
+	kept, err := s.store.ClaimKnowledgePlace(s.ctx, s.owner.CustomerID, "docs", eu)
 	s.Require().NoError(err)
-	s.Equal(pricing.RegionEU, kept)
+	s.Equal(eu, kept)
 
-	kept, err = s.store.ClaimKnowledgeRegion(s.ctx, s.owner.CustomerID, "docs", pricing.RegionUS)
+	kept, err = s.store.ClaimKnowledgePlace(s.ctx, s.owner.CustomerID, "docs",
+		store.KnowledgePlace{Region: pricing.RegionUS, Account: store.KnowledgeAccountStream})
 
 	s.Require().NoError(err)
-	s.Equal(pricing.RegionEU, kept)
+	s.Equal(eu, kept, "the region and the account of the first")
 }
 
 func (s *MeteredSuite) TestAnHourOfStorageOutsideTheDefaultRegionIsAUsageOfItsOwn() {

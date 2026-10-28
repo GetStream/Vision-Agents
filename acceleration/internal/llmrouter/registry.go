@@ -93,7 +93,7 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(anthropic.New(anthropic.Options{Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, Logger: spec.Logger}))
+		return Started(anthropic.New(anthropic.Options{Model: spec.Model, APIKey: spec.APIKey, BaseURL: spec.BaseURL, CustomerKey: spec.BYOK, Logger: spec.Logger}))
 	}, instanced...)
 
 	registry.Register(moondream.ProviderName, func(spec routing.Spec) (Provider, error) {

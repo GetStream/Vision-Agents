@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
@@ -69,7 +70,17 @@ func runUsageStorage(ctx context.Context, args []string, settings config.Config,
 		return err
 	}
 	defer stop()
-	return recordStorage(ctx, metered.NewRegionalKnowledge(backends, recording, nil, nil), pgStore, hour, logger, out)
+	base := metered.NewRegionalKnowledge(backends, recording, nil, pgStore)
+	// The bases kept in customers' own accounts are read on their keys, which only the keyring
+	// they were sealed under opens.
+	secrets, err := newSecretSealer(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("usage storage: %w", err)
+	}
+	if secrets != nil {
+		base.WithCustomerAccounts(providerkeys.NewKeyring(pgStore, secrets), knowledgeAccounts(settings.Knowledge, storageReadTimeout, logger))
+	}
+	return recordStorage(ctx, base, pgStore, hour, logger, out)
 }
 
 // storageHourOf is the hour a run records: the one --hour names, or else the last one to have
@@ -138,12 +149,17 @@ func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Sto
 // job's origin, at the size the base holds now, priced in its region. A rerun for the hour
 // writes nothing twice: each row's usage id is the namespace and the hour. A base that holds
 // nothing writes no row. A base of an app this deployment has never seen is another
-// deployment's on the same key, and is left to that one's job. A region or a base it cannot
-// read is logged at ERROR, and the run sends storage_missed for the hour once and fails, so a
-// retry, or a run with --hour, fills the hour in.
+// deployment's on the same key, and is left to that one's job. The bases kept in a customer's
+// own account, which the deployment's listing does not see, are the ones recorded so, each
+// read on the key its owner keeps there and priced at the vendor's BYOK entry; one whose key is
+// gone is not billed. A region or a base it cannot read is logged at ERROR, and the run sends
+// storage_missed for the hour once and fails, so a retry, or a run with --hour, fills the hour in.
 func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.Store, hour time.Time, logger *slog.Logger, out io.Writer) error {
 	at := hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
-	type located struct{ region, namespace string }
+	type located struct {
+		place     store.KnowledgePlace
+		namespace string
+	}
 	var namespaces []located
 	for _, region := range base.Regions() {
 		listed, err := base.Namespaces(ctx, region, "")
@@ -153,8 +169,17 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 			return fmt.Errorf("usage storage: list the knowledge bases in %s: %w", region, err)
 		}
 		for _, namespace := range listed {
-			namespaces = append(namespaces, located{region: region, namespace: namespace})
+			namespaces = append(namespaces, located{place: store.KnowledgePlace{Region: region, Account: store.KnowledgeAccountStream}, namespace: namespace})
 		}
+	}
+	theirs, err := pgStore.KnowledgeInCustomerAccounts(ctx)
+	if err != nil {
+		logger.Error("could not list the knowledge bases in customers' own accounts, so no storage is recorded for the hour", "hour", at, "error", err)
+		alerts.SendItem(storageMissed, at, alerts.Warn, map[string]any{"hour": at, "listing": err.Error()})
+		return fmt.Errorf("usage storage: %w", err)
+	}
+	for _, kept := range theirs {
+		namespaces = append(namespaces, located{place: kept.Place(), namespace: knowledge.Scoped(kept.CustomerID, kept.Namespace)})
 	}
 	customers := map[string]string{}
 	var ids []string
@@ -171,7 +196,7 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 		return fmt.Errorf("usage storage: which apps are this deployment's: %w", err)
 	}
 
-	var recorded, empty, gone, notOurs int
+	var recorded, empty, gone, notOurs, keyless int
 	var missed []string
 	for _, found := range namespaces {
 		customerID, scoped := customers[found.namespace]
@@ -180,7 +205,7 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 			continue
 		}
 		owner := routing.Owner{CustomerID: customerID, Attribution: routing.Attribution{APIKey: storageOrigin}}
-		stored, err := base.Storage(ctx, owner, found.region, found.namespace, hour)
+		stored, err := base.StorageAt(ctx, owner, found.place, found.namespace, hour)
 		switch {
 		case err == nil && stored.ByteHours == 0:
 			empty++
@@ -189,15 +214,20 @@ func recordStorage(ctx context.Context, base *metered.Knowledge, pgStore *store.
 		case errors.Is(err, knowledge.ErrNoNamespace):
 			// Deleted since it was listed, so there is nothing of it to bill.
 			gone++
+		case errors.Is(err, metered.ErrNoAccountKey):
+			// In the customer's own account, which nothing reaches once they delete its key.
+			keyless++
 		default:
 			logger.Error("could not read a knowledge base's size, so this hour of it is not billed",
-				"namespace", found.namespace, "region", found.region, "customer_id", customerID, "hour", at, "error", err)
+				"namespace", found.namespace, "region", found.place.Region, "account", found.place.Account,
+				"customer_id", customerID, "hour", at, "error", err)
 			missed = append(missed, found.namespace)
 		}
 	}
 
-	if _, err := fmt.Fprintf(out, "%s: %d knowledge bases recorded, %d empty, %d missed, %d gone since listed, %d not this deployment's\n",
-		at, recorded, empty, len(missed), gone, notOurs); err != nil {
+	if _, err := fmt.Fprintf(out, "%s: %d knowledge bases recorded, %d empty, %d missed, %d gone since listed, %d not this deployment's, "+
+		"%d in a customer's own account whose key is gone\n",
+		at, recorded, empty, len(missed), gone, notOurs, keyless); err != nil {
 		return err
 	}
 	if len(missed) == 0 {
