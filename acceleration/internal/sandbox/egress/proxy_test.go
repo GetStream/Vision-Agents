@@ -1153,25 +1153,35 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 	}
 }
 
-// fillUntilBlocked writes conn small chunks until a write times out having accepted no byte at
-// all: a write that moves part of a chunk shows the tunnel still takes a trickle. The buffers from
-// conn to the end that reads nothing are full then, and the proxy's copy that carries them is
-// stuck in its write.
-func (s *ProxySuite) fillUntilBlocked(conn net.Conn, stall time.Duration) {
+// fillUntilBlocked writes conn small chunks until `stalls` writes in a row time out having accepted
+// no byte at all. One such write can be a proxy copy that has not run yet, which then moves
+// everything on and goes back to a read that the idle timeout ends; a proxy that takes nothing
+// for several stalls has both its buffers and its write full, and its copy is stuck in the write.
+// It returns an error, not a failed test: the callers run it in goroutines.
+func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
+	// stalls: chosen, not measured: three stalls outlast the longest pause of a proxy copy seen
+	// on this machine under a load of 115 (a single stall was passed by a copy that had not run).
+	const stalls = 3
 	chunk := make([]byte, 32<<10)
 	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
-	for written := 0; written < 1<<30; {
-		s.Require().NoError(conn.SetWriteDeadline(time.Now().Add(stall)))
+	for written, blocked := 0, 0; written < 1<<30; {
+		if err := conn.SetWriteDeadline(time.Now().Add(stall)); err != nil {
+			return err
+		}
 		n, err := conn.Write(chunk)
 		written += n
-		if err != nil {
-			s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the tunnel closed while it was being filled")
-			if n == 0 {
-				return
-			}
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			return fmt.Errorf("the tunnel closed while it was being filled: %w", err)
+		}
+		if n > 0 {
+			blocked = 0
+			continue
+		}
+		if blocked++; blocked == stalls {
+			return nil
 		}
 	}
-	s.Require().Fail("the tunnel took a gigabyte nobody reads")
+	return errors.New("the tunnel took a gigabyte nobody reads")
 }
 
 // TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
@@ -1183,7 +1193,7 @@ func (s *ProxySuite) fillUntilBlocked(conn net.Conn, stall time.Duration) {
 // TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
 	const (
-		idle = time.Second
+		idle = 2 * time.Second
 		// stall: how long a write may make no progress before the buffers count as full. Chosen,
 		// not measured: many scheduler turns on a loaded machine (load 115 here), and below idle.
 		stall = 200 * time.Millisecond
@@ -1202,11 +1212,21 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 			sandbox, host := s.blindTunnel(idle)
 			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
 				5*time.Second, poll, "the tunnel opened")
+			// Both directions at once: a fill that waited for the other would leave a copy idle
+			// with a read pending, and that read's timeout would close the tunnel early.
+			var senders []net.Conn
 			if stalled.sandboxSends {
-				s.fillUntilBlocked(sandbox, stall)
+				senders = append(senders, sandbox)
 			}
 			if stalled.hostSends {
-				s.fillUntilBlocked(host, stall)
+				senders = append(senders, host)
+			}
+			filled := make(chan error, len(senders))
+			for _, sender := range senders {
+				go func() { filled <- fillUntilBlocked(sender, stall) }()
+			}
+			for range senders {
+				s.Require().NoError(<-filled)
 			}
 
 			// Every buffer is full and nothing moves from here: the last byte moved no later than
