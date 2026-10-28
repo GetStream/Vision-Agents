@@ -314,6 +314,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteProviderKey" => {
+          method: :delete, path: "/v1/agents/provider-keys/{provider}",
+          path_params: %w[provider].freeze, query: %w[region].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteRouterConfig" => {
           method: :delete, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -992,6 +998,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listProviderKeys" => {
+          method: :get, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listProviders" => {
           method: :get, path: "/v1/{modality}/providers",
           path_params: %w[modality].freeze, query: [].freeze,
@@ -1284,6 +1296,12 @@ module GetStream
           method: :put, path: "/v1/agents/connections/{id}/credentials",
           path_params: %w[id].freeze, query: [].freeze,
           body: "ConnectionCredentials", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "putProviderKey" => {
+          method: :put, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: [].freeze,
+          body: "ProviderKeyRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "queryAudit" => {
@@ -2544,6 +2562,18 @@ module GetStream
         "ProviderHealth" => {
           properties: %w[available error_rate errors latency_ms_avg requests].freeze,
           required: %w[available error_rate errors latency_ms_avg requests].freeze, open: false
+        }.freeze,
+        "ProviderKey" => {
+          properties: %w[created_at key_hint provider region updated_at].freeze,
+          required: %w[provider region key_hint created_at updated_at].freeze, open: false
+        }.freeze,
+        "ProviderKeyPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ProviderKeyRequest" => {
+          properties: %w[api_key provider region].freeze,
+          required: %w[provider api_key].freeze, open: false
         }.freeze,
         "ProviderPrice" => {
           properties: %w[per_million_input_tokens per_million_output_tokens].freeze,

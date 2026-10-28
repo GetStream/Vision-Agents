@@ -1468,6 +1468,58 @@ impl Client {
         )
         .await
     }
+    /// The keys the calling customer keeps for their own accounts at the vendors
+    ///
+    /// `GET /v1/agents/provider-keys` (`listProviderKeys`).
+    pub async fn list_provider_keys(
+        &self,
+        query: &ListProviderKeysQuery,
+    ) -> Result<types::ProviderKeyPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/provider-keys",
+            Some(query),
+            None::<&()>,
+            "listProviderKeys",
+        )
+        .await
+    }
+    /// Keep a key for the customer's own account at a vendor
+    ///
+    /// `PUT /v1/agents/provider-keys` (`putProviderKey`).
+    pub async fn put_provider_key(
+        &self,
+        body: &types::ProviderKeyRequest,
+    ) -> Result<types::ProviderKey> {
+        self.send(
+            Method::PUT,
+            "/v1/agents/provider-keys",
+            None::<&()>,
+            Some(body),
+            "putProviderKey",
+        )
+        .await
+    }
+    /// Forget a key the customer keeps for a vendor
+    ///
+    /// `DELETE /v1/agents/provider-keys/{provider}` (`deleteProviderKey`).
+    pub async fn delete_provider_key(
+        &self,
+        provider: &str,
+        query: &DeleteProviderKeyQuery,
+    ) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/provider-keys/{provider}",
+                provider = segment(provider)
+            ),
+            Some(query),
+            None::<&()>,
+            "deleteProviderKey",
+        )
+        .await
+    }
     /// Run an agent on one input and wait for its answer
     ///
     /// `POST /v1/agents/runs` (`createRun`).
@@ -4270,6 +4322,23 @@ pub struct PluginOAuthCallbackQuery {
     pub state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+/// The query string `listProviderKeys` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListProviderKeysQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `deleteProviderKey` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteProviderKeyQuery {
+    /// The region the key is kept for. Omitted is us.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
 }
 /// The query string `listScheduledTasks` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
