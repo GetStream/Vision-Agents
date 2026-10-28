@@ -206,8 +206,9 @@ func (p *Pool) Peek() string {
 }
 
 // Next takes the next key that is not resting, or for a pin the key it keeps to while
-// that key is not resting, or for First the first key whether it rests or not. When every key is, it is the one whose cooldown ends first: a
-// request sent on it may still go through, and failing it here would only fail it sooner.
+// that key is not resting, or for First the first key whether it rests or not. When every
+// key is, it is the one whose cooldown ends first: a request sent on it may still go through,
+// and failing it here would only fail it sooner.
 // It is "" for an empty pool.
 func (p *Pool) Next() string {
 	if p.first {

@@ -308,6 +308,23 @@ func (s *KeyPoolSuite) TestEveryVoiceRequestGoesOnTheFirstKey() {
 	s.Empty(added(before, s.refusals("ELEVENLABS_API_KEY")))
 }
 
+// Voice requests take no turn on the shared ring, so the calls that share the pool still take
+// their keys in order from the start.
+func (s *KeyPoolSuite) TestVoiceRequestsTakeNoTurnOnTheSharedPool() {
+	keys := s.newKeys(2)
+	joined := keys[0] + "," + keys[1]
+	lister, err := NewElevenLabs(ElevenLabsOptions{APIKey: joined, BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	for range 3 {
+		_, err := lister.List(s.ctx)
+		s.Require().NoError(err)
+	}
+
+	pool := keypool.FromEnv(joined)
+	s.Equal([]string{keys[0], keys[1], keys[0]}, []string{pool.Next(), pool.Next(), pool.Next()})
+}
+
 // The router builds the library and the cloner as two clients (cmd/router/main.go); a voice
 // one lists is the voice the other cloned only when both send on the same key.
 func (s *KeyPoolSuite) TestTheListerAndTheClonerSendOnTheSameKey() {
