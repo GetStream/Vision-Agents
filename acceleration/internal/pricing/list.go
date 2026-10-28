@@ -15,10 +15,15 @@ import (
 
 // key is the item an entry prices, without the attributes that choose between its entries.
 type key struct {
-	modality, provider, model string
+	modality, provider, model, region string
+	byok                              bool
 }
 
-func keyOf(item Item) key { return key{item.Modality, item.Provider, item.Model} }
+func keyOf(item Item) key { return key{item.Modality, item.Provider, item.Model, item.Region, item.BYOK} }
+
+func keyOfEntry(entry Entry) key {
+	return key{entry.Modality, entry.Provider, entry.Model, entry.Region, entry.BYOK}
+}
 
 // List is a price list: one version of the entries every item is priced by.
 type List struct {
@@ -55,7 +60,7 @@ func NewList(version string, entries []Entry, logger *slog.Logger) (*List, error
 		if err := Validate(entry); err != nil {
 			return nil, err
 		}
-		item := key{entry.Modality, entry.Provider, entry.Model}
+		item := keyOfEntry(entry)
 		for _, other := range list.entries[item] {
 			if ambiguous(entry.When, other.When) {
 				return nil, fmt.Errorf("pricing: %s has two entries an item with %v would match equally", name(entry), entry.When)
@@ -87,7 +92,19 @@ func NewList(version string, entries []Entry, logger *slog.Logger) (*List, error
 }
 
 func compareKeys(a, b key) int {
-	return cmp.Or(strings.Compare(a.modality, b.modality), strings.Compare(a.provider, b.provider), strings.Compare(a.model, b.model))
+	return cmp.Or(strings.Compare(a.modality, b.modality), strings.Compare(a.provider, b.provider), strings.Compare(a.model, b.model),
+		strings.Compare(a.region, b.region), compareBYOK(a.byok, b.byok))
+}
+
+// compareBYOK puts an entry that is not BYOK before its BYOK twin.
+func compareBYOK(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case b:
+		return -1
+	}
+	return 1
 }
 
 // Errors Validate returns for an entry whose price is not in the shape of its vendor cost.
@@ -96,14 +113,23 @@ var (
 	ErrPriceMeters = errors.New("pricing: the prices do not have the meters the rates have")
 	// ErrPriceTiers is a price whose tiers are not the vendor rates' tiers.
 	ErrPriceTiers = errors.New("pricing: the price tiers are not the tiers the rates have")
+	// ErrRegion is an entry that names no region, or one that is not a region.
+	ErrRegion = errors.New("pricing: every entry names its region, such as us")
 )
 
-// Validate checks one entry: an item, an SKU of the right form, rates and prices within
-// bounds, and a price with the meters of the vendor rates and a price tier for each of their
-// tiers, at the same threshold and with the same meters. A free entry carries no price.
+// Validate checks one entry: an item in a region, an SKU of the right form, rates and prices
+// within bounds, and a price with the meters of the vendor rates and a price tier for each of
+// their tiers, at the same threshold and with the same meters. A free entry carries no price.
 func Validate(entry Entry) error {
 	if entry.Modality == "" || entry.Provider == "" || entry.Model == "" {
 		return errors.New("pricing: every entry needs a modality, a provider and a model")
+	}
+	switch {
+	case entry.Region == "":
+		return fmt.Errorf("%w: %s names none", ErrRegion, name(entry))
+	case !ValidRegion(entry.Region):
+		return fmt.Errorf("%w: %s names %q, and a region is a letter and up to 31 of a-z, 0-9 and hyphens",
+			ErrRegion, name(entry), entry.Region)
 	}
 	if entry.SKU != "" && !ValidSKU(entry.SKU) {
 		return fmt.Errorf("pricing: %s has the SKU %q: a SKU is 1 to %d characters of a-z and 0-9 in runs joined by single hyphens",
@@ -220,8 +246,21 @@ func ambiguous(a, b map[string]string) bool {
 	return true
 }
 
+// name is the item an entry prices: modality/provider/model, then its region and byok for a
+// BYOK entry, as in llm/openai/m (us, byok).
 func name(entry Entry) string {
-	return entry.Modality + "/" + entry.Provider + "/" + entry.Model
+	var qualifiers []string
+	if entry.Region != "" {
+		qualifiers = append(qualifiers, entry.Region)
+	}
+	if entry.BYOK {
+		qualifiers = append(qualifiers, "byok")
+	}
+	written := entry.Modality + "/" + entry.Provider + "/" + entry.Model
+	if len(qualifiers) > 0 {
+		written += " (" + strings.Join(qualifiers, ", ") + ")"
+	}
+	return written
 }
 
 // nameWithWhen is the item an entry prices, its When included.
@@ -237,7 +276,7 @@ func nameWithWhen(entry Entry) string {
 }
 
 // match is the item's entry whose conditions all hold in its attributes, with the most of
-// them.
+// them, among the entries of its own region and BYOK state.
 func (l *List) match(item Item) (Entry, bool) {
 	var found Entry
 	ok := false
@@ -266,7 +305,7 @@ func holds(when, attributes map[string]string) bool {
 func (l *List) Quote(item Item, used Quantities) Quote {
 	entry, ok := l.match(item)
 	if !ok {
-		entry = Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model}
+		entry = Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK}
 	}
 	quote := entry.quote(used)
 	quote.Version = l.versionOf(entry, ok)
@@ -278,12 +317,17 @@ func (l *List) Quote(item Item, used Quantities) Quote {
 
 // Quoted resells an amount the vendor quoted outright for the item, such as a number's
 // monthly rental, which no price prices: the amount times PriceFactorBps, under the SKU of the
-// item's entry when it has one.
+// item's entry when it has one. A BYOK item's vendor bills the customer the amount, so it is
+// charged BYOKFeeBps of it and costs the operator nothing.
 func (l *List) Quoted(item Item, micros int64) Quote {
 	entry, _ := l.match(item)
+	bps, base := float64(PriceFactorBps), micros
+	if item.BYOK {
+		bps, base = BYOKFeeBps, 0
+	}
 	return Quote{
-		CostMicros:     roundHalfUp(float64(micros) * PriceFactorBps / 10_000),
-		BaseCostMicros: micros,
+		CostMicros:     roundHalfUp(float64(micros) * bps / 10_000),
+		BaseCostMicros: base,
 		SKU:            entry.SKU,
 		Version:        QuotedVersion,
 		Billable:       micros > 0,
@@ -322,7 +366,8 @@ func (l *List) warn(item Item) {
 			break
 		}
 	}
-	l.logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+	l.logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
+		"region", item.Region, "byok", item.BYOK)
 }
 
 // Billable reports whether work on the item counts toward spend.
@@ -358,8 +403,8 @@ func clonedTiers(tiers []Tier) []Tier {
 	return tiers
 }
 
-// Entries is a copy of every entry of the list, by modality, provider, model and then the
-// fewest conditions.
+// Entries is a copy of every entry of the list, by modality, provider, model, region, the entry
+// that is not BYOK before its twin, and then the fewest conditions.
 func (l *List) Entries() []Entry {
 	var entries []Entry
 	for _, item := range l.entries {
@@ -368,8 +413,7 @@ func (l *List) Entries() []Entry {
 		}
 	}
 	slices.SortFunc(entries, func(a, b Entry) int {
-		return cmp.Or(strings.Compare(a.Modality, b.Modality), strings.Compare(a.Provider, b.Provider),
-			strings.Compare(a.Model, b.Model), cmp.Compare(len(a.When), len(b.When)),
+		return cmp.Or(compareKeys(keyOfEntry(a), keyOfEntry(b)), cmp.Compare(len(a.When), len(b.When)),
 			strings.Compare(fmt.Sprint(a.When), fmt.Sprint(b.When)))
 	})
 	return entries

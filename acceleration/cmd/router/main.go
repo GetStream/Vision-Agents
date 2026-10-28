@@ -2097,7 +2097,8 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 		return nil, err
 	}
 	for _, item := range list.Unpriced(routing.Items(capabilities)) {
-		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
+			"region", item.Region, "byok", item.BYOK)
 	}
 	return list, nil
 }

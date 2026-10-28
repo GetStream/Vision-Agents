@@ -146,7 +146,7 @@ func (s *RecordingSuite) TestAReplyWithNoSplitIsPricedOnItsTotals() {
 
 	s.Empty(row.Meters)
 	s.Empty(row.Attributes)
-	realtime := pricing.Item{Modality: string(routing.STS), Provider: "openai", Model: "gpt-realtime-2.1"}
+	realtime := pricing.Item{Modality: string(routing.STS), Provider: "openai", Model: "gpt-realtime-2.1", Region: pricing.RegionUS}
 	s.Equal(pricingtest.Micros(s.T(), s.prices, realtime, pricing.Quantities{pricing.InputTokens: 500, pricing.CachedInputTokens: 500,
 		pricing.OutputTokens: 100}), row.CostMicros, "500 fresh, 500 cached and 100 generated at the audio rates, as before")
 }

@@ -15,8 +15,12 @@ final readonly class PriceChangeEntry
         public string $modality,
         public string $model,
         public string $provider,
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
         // The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
         public string $sku,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
         public ?bool $free = null,
         // What customers are charged for long prompts.
         /** @var list<PriceTier>|null */
@@ -47,7 +51,9 @@ final readonly class PriceChangeEntry
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
             sku: Json::string($data, 'sku'),
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             free: array_key_exists('free', $data) && $data['free'] !== null ? Json::bool($data, 'free') : null,
             priceTiers: array_key_exists('price_tiers', $data) && $data['price_tiers'] !== null ? array_map(PriceTier::fromArray(...), Json::objects($data, 'price_tiers')) : null,
             prices: array_key_exists('prices', $data) && $data['prices'] !== null ? Json::object($data, 'prices') : null,
@@ -69,7 +75,11 @@ final readonly class PriceChangeEntry
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
         $out['sku'] = $this->sku;
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
+        }
         if ($this->free !== null) {
             $out['free'] = $this->free;
         }

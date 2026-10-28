@@ -13,7 +13,7 @@ final readonly class Prices
     public function __construct(
         // The moment the list is read at.
         public \DateTimeImmutable $at,
-        // Every item priced now, by modality, provider and model.
+        // Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that i...
         /** @var list<Price> */
         public array $entries,
         // What the changes scheduled after at will set, soonest first.
