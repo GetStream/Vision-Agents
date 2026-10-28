@@ -131,6 +131,10 @@ const (
 	eventResponseCancel = "response.cancel"
 )
 
+// codeInvalidAPIKey is the code of the error frame OpenAI sends, right after accepting the
+// handshake, on a key it does not take.
+const codeInvalidAPIKey = "invalid_api_key"
+
 // Server event types. Two of them come in an older spelling as well, which Qwen still uses.
 const (
 	eventSessionCreated    = "session.created"
@@ -880,6 +884,9 @@ func (s *STS) handshake() error {
 	if err != nil {
 		return stack.Wrap(err)
 	}
+	if created.Type == eventError {
+		return stack.Wrap(fmt.Errorf("%s: session refused: %w", s.options.Vendor.Provider, created.Error))
+	}
 	if created.Type != eventSessionCreated {
 		return stack.Wrap(fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type))
 	}
@@ -913,6 +920,9 @@ func (s *STS) next() (serverEvent, error) {
 	}
 	if event.Type == eventError && event.Error == nil {
 		event.Error = &apiError{Message: strings.TrimSpace(string(raw))}
+	}
+	if event.Type == eventError && event.Error.Code == codeInvalidAPIKey {
+		s.keys.InvalidKey()
 	}
 	return event, nil
 }
