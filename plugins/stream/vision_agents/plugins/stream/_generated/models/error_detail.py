@@ -24,12 +24,14 @@ class ErrorDetail:
             unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent
             config, router config or voice, or another skill of the same agent config, already has the name, so another name
             will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and
-            one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a
-            consent found no OAuth client for the connector, and the message names each way the connector lets the app give
-            it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a
-            402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that
-            costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or
-            the month is reached, whatever its credit, and the message names the interval, the amount and when it resets),
+            one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409:
+            the call placed for a phone session already ended with nobody answering, so the session is not opened, and the
+            message names how it ended: busy, no_answer, failed or canceled), no_oauth_client (a 400: a consent found no
+            OAuth client for the connector, and the message names each way the connector lets the app give it one),
+            invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the
+            organization's credit is spent, so work that costs money is refused until credit is added; a model that costs
+            nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the
+            month is reached, whatever its credit, and the message names the interval, the amount and when it resets),
             spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a
             key, a usage category or a team, and the message says which and when it resets, so retrying before then is
             refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which
