@@ -4987,6 +4987,67 @@ func (s *AgentSuite) TestACallThatLeavesARequiredArgumentEmptyIsNotRun() {
 	s.Empty(blankRequired(harness.Tool{Name: "check_outage"}, `{}`), "a tool that requires nothing")
 }
 
+func (s *AgentSuite) TestAnOptionalIDLeftOutRunsAfterAToolReturnedOne() {
+	s.runner = &stubToolRunner{result: `{"id":"P-1"}`}
+	s.tools = harness.Tools{Tools: []harness.Tool{
+		{Name: "create_project", Description: "Create a project.", Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"title": map[string]any{"type": "string"}},
+			"required":   []any{"title"},
+		}},
+		{Name: "list_tasks", Description: "List tasks, in one project or in all of them.", Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"project_id": map[string]any{"type": "string"},
+				"status":     map[string]any{"type": "string"},
+			},
+		}},
+	}}
+	s.join(false)
+	s.model.reply = []string{"Sure."}
+	s.asksFor("create_project", `{"title":"Garden"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "start a project called garden")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the result was never answered")
+
+	s.model.mu.Lock()
+	s.model.calls = []llm.ToolCall{{ID: "call-2", Name: "list_tasks", Arguments: `{"status":"open"}`}}
+	s.model.callsOn = len(s.model.asked) + 1
+	s.model.mu.Unlock()
+	s.says(participant, "what is open across all my projects")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 2 },
+		"a call that leaves out an ID the schema does not require was refused")
+	s.Equal("list_tasks", s.runner.asked()[1].Name)
+}
+
+func (s *AgentSuite) TestAnArgumentTheDescriptionNamesButTheSchemaLeavesOptionalMayBeLeftOut() {
+	s.runner = &stubToolRunner{result: `{"events":[]}`}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "list_events",
+		Description: "List events by city and end date.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"city":     map[string]any{"type": "string"},
+				"end_date": map[string]any{"type": "string"},
+			},
+			"required": []any{"city"},
+		},
+	}}}
+	s.join(false)
+	s.model.reply = []string{"Sure."}
+	s.asksFor("list_events", `{"city":"Lisbon"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is on in Lisbon")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 },
+		"a call that leaves out an argument the schema does not require was refused")
+}
+
 func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke() {
 	booked := llm.ToolCall{ID: "1", Name: "create_reservation", Arguments: `{"time": "7:30"}`}
 	history := []llm.Message{
