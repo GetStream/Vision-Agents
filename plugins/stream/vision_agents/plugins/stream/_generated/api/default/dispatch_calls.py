@@ -110,7 +110,7 @@ def sync_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
     open this socket can answer for the whole app. The auth type's query parameter never names a
-    backend, so a browser cannot open one at all.
+    backend, so it cannot make a browser's socket one.
 
     Args:
         capacity (int | Unset):  Default: 4.
@@ -164,7 +164,7 @@ def sync(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
     open this socket can answer for the whole app. The auth type's query parameter never names a
-    backend, so a browser cannot open one at all.
+    backend, so it cannot make a browser's socket one.
 
     Args:
         capacity (int | Unset):  Default: 4.
@@ -213,7 +213,7 @@ async def asyncio_detailed(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
     open this socket can answer for the whole app. The auth type's query parameter never names a
-    backend, so a browser cannot open one at all.
+    backend, so it cannot make a browser's socket one.
 
     Args:
         capacity (int | Unset):  Default: 4.
@@ -265,7 +265,7 @@ async def asyncio(
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
     This is the clearest case of why: a worker is offered other people's callers, so anything that can
     open this socket can answer for the whole app. The auth type's query parameter never names a
-    backend, so a browser cannot open one at all.
+    backend, so it cannot make a browser's socket one.
 
     Args:
         capacity (int | Unset):  Default: 4.

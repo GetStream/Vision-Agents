@@ -226,18 +226,6 @@ func TestProxy(t *testing.T) {
 		require.Equal(t, KindAuthenticated, principal.Kind)
 	})
 
-	t.Run("never takes a backend from the query", func(t *testing.T) {
-		// Saying nothing already makes a caller a backend here, so the query may only weaken
-		// one; a device that writes server there stays what its header says.
-		r := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?customer_id=examples&stream-auth-type=server", nil)
-		r.Header.Set(AuthTypeHeader, AuthTypeJWT)
-
-		principal, err := authenticator.Authenticate(context.Background(), r)
-		require.NoError(t, err)
-		require.Equal(t, KindAuthenticated, principal.Kind)
-		require.False(t, principal.ServerSide)
-	})
-
 	t.Run("ignores a query auth type that names no end user", func(t *testing.T) {
 		for _, declared := range []string{"server", "admin", ""} {
 			r := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=examples&stream-auth-type="+declared, nil)

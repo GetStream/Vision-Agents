@@ -352,7 +352,7 @@ describe("Backend", () => {
     assert.equal(
       url.searchParams.get("stream-auth-type"),
       null,
-      "there is no query counterpart, so a browser socket cannot claim to be a backend",
+      "a socket by customer id names no auth type, so it stays a backend",
     );
   });
 

@@ -163,7 +163,7 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ### A Flutter app's own tools run against a local proxy router
 
-A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a socket's auth type from the `stream-auth-type` query parameter when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).
+A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a caller's auth type from the `stream-auth-type` query parameter, which is how a socket can send it when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).
 
 ### The Dart SDK's session socket connects to the hosted router
 
