@@ -5,7 +5,7 @@ description: How to build and extend the JavaScript SDK in sdks/js. Read this be
 
 # JavaScript SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions
 [`sdks/js`](../../../sdks/js) already follows, so a change lands consistently rather than
 re-litigating them. Where a rule has an exception, the exception is written down.
 
@@ -46,9 +46,9 @@ a 403 afterwards; it is not an enforcement point, and the router is.
   subset is a screenful. A key it does not recognise is refused rather than dropped, so the
   narrowness is visible rather than silent.
 - **Stream Video calls are created with one `fetch`** (`edge.ts`), not with
-  `@stream-io/node-sdk`. The generic `sdk` skill says to depend on Stream's server SDK; here
-  the SDK needs exactly one endpoint (`POST /api/v2/video/call/{type}/{id}`) and a token it
-  can already sign, and the dependency would land in browser bundles.
+  `@stream-io/node-sdk`. This SDK needs exactly one endpoint
+  (`POST /api/v2/video/call/{type}/{id}`) and a token it can already sign, and the dependency
+  would land in browser bundles.
 
 If a change needs a dependency, that is a design question, not an install. Ask first.
 

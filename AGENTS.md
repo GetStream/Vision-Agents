@@ -24,10 +24,11 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 
 ## SDK changes
 
-When you need to make an SDK change start by only changing Go
-Leave a note in the sdk skill at the bottom that other SDKs also need to udpate.
-We run this periodically, you don't need to change all SDKs at once.
-Go goes first, and later on we update the others.
+For applications that use an SDK, read [sdk](.claude/skills/sdk/SKILL.md).
+For SDK implementation changes, read [sdk-maintenance](.claude/skills/sdk-maintenance/SKILL.md)
+and the target language's skill. Start shared API changes in Go; track the remaining
+languages and required behavior in the feature PR or a linked issue. Update current
+usage guidance in place. Do not append maintenance notes to the application skill.
 
 ## Local dev
 

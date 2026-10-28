@@ -5,7 +5,7 @@ description: How to build and extend the Ruby SDK in sdks/ruby. Read this before
 
 # Ruby SDK conventions
 
-The per-language half of [sdk](../sdk/SKILL.md). It records the decisions
+The per-language half of [sdk-maintenance](../sdk-maintenance/SKILL.md). It records the decisions
 [`sdks/ruby`](../../../sdks/ruby) already follows, so a change lands consistently rather than
 re-litigating them. Server side only: there is no Ruby client for devices.
 
