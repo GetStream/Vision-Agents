@@ -10723,7 +10723,7 @@ components:
       scheme: bearer
       type: http
     AuthType:
-      description: 'Which kind of credential is presented: server for a process the customer runs, jwt for a request made on an end user''s behalf, which is what a caller that names neither is taken to be. It has no query parameter counterpart, so a browser socket cannot claim to be a backend. The header is the caller''s declaration and AppToken is the proof, so both have to say the same thing.'
+      description: 'Which kind of credential is presented: server for a process the customer runs, jwt for a request made on an end user''s behalf, which is what a caller that names neither is taken to be. A socket in proxy mode, with no proxy that declares kinds, may send jwt or anonymous as the stream-auth-type query parameter instead, but never server, so a browser socket cannot claim to be a backend. The header is the caller''s declaration and AppToken is the proof, so both have to say the same thing.'
       in: header
       name: Stream-Auth-Type
       type: apiKey
@@ -19251,7 +19251,7 @@ paths:
         The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
         Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
         A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `request_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `request_id` and text.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type's query parameter never names a backend, so a browser cannot open one at all.
       operationId: dispatchCalls
       parameters:
         - description: How much work this worker takes at once, calls and messages together.
