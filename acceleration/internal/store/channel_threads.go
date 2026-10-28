@@ -279,8 +279,14 @@ func (s *Store) UnwaitChannelThreadMessage(ctx context.Context, customerID strin
 // that is not past channelWaitingKeep, oldest first. Each is taken once: a message that takes
 // itself back at the same time (UnwaitChannelThreadMessage) gets it, or this does.
 func (s *Store) TakeWaitingChannelThreadMessages(ctx context.Context, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
+	return takeWaitingChannelThreadMessages(ctx, s.db, customerID, connectorID, providerUnitID, threadKey)
+}
+
+// takeWaitingChannelThreadMessages is TakeWaitingChannelThreadMessages on db, the store's or a
+// transaction's.
+func takeWaitingChannelThreadMessages(ctx context.Context, db bun.IDB, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
 	var rows []waitingMessage
-	err := s.db.NewRaw(
+	err := db.NewRaw(
 		"DELETE FROM channel_thread_waiting WHERE customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ? AND created_at >= ? "+
 			"RETURNING connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at",
 		customerID, connectorID, providerUnitID, threadKey, time.Now().UTC().Add(-channelWaitingKeep)).Scan(ctx, &rows)
@@ -315,16 +321,21 @@ const (
 // kind, by that step's id for it. False is one already taken: delivered or told again. Ids
 // kept longer than channelMessageKeep are dropped first, so the table holds a day of them.
 func (s *Store) ClaimChannelThreadMessage(ctx context.Context, channelID, kind, messageID string) (bool, error) {
+	return claimChannelThreadMessage(ctx, s.db, channelID, kind, messageID)
+}
+
+// claimChannelThreadMessage is ClaimChannelThreadMessage on db, the store's or a transaction's.
+func claimChannelThreadMessage(ctx context.Context, db bun.IDB, channelID, kind, messageID string) (bool, error) {
 	if channelID == "" || kind == "" || messageID == "" {
 		return false, stack.Wrap(errors.New("store: a channel, a kind and a message id are required"))
 	}
 	now := time.Now().UTC()
-	if _, err := s.db.NewRaw(
+	if _, err := db.NewRaw(
 		"DELETE FROM channel_thread_messages WHERE channel_id = ? AND created_at < ?",
 		channelID, now.Add(-channelMessageKeep)).Exec(ctx); err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: claim channel thread message: %w", err))
 	}
-	result, err := s.db.NewRaw(
+	result, err := db.NewRaw(
 		"INSERT INTO channel_thread_messages (channel_id, kind, message_id, created_at) "+
 			"VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
 		channelID, kind, messageID, now).Exec(ctx)

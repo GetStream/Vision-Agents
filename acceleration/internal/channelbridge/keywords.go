@@ -9,7 +9,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -68,9 +67,11 @@ const optOutSource = "keyword"
 // answer is the use case's text when the line's use case has one (useCase), as
 // internal/channels answers, and it goes out past the sandbox gate: the confirmation is the
 // one message a person is still owed. A keyword the provider answered itself is not answered
-// again. A store that fails releases the message's claim, so the provider's next delivery of
-// it is taken again: an opt-out is never lost to a retry.
-func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, message core.InboundMessage) (bool, error) {
+// again. A store that fails fails the worker's attempt, which runs the row again: an opt-out is
+// never lost. The answer is sent at most once, whatever the attempts: the row records it before
+// it is sent (store.MarkChannelInboundKeywordAnswered), as a reply is claimed before it is sent.
+func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (bool, error) {
+	message := queued.Message()
 	source := episodeSources[message.ConnectorID]
 	channel := source.optOuts
 	if channel == "" {
@@ -81,7 +82,7 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 	if !stop && !start && !help {
 		optedOut, err := b.store.OptedOut(ctx, thread.CustomerID, source.recipientOf(message.AuthorID), channel)
 		if err != nil {
-			return false, b.unclaim(ctx, thread, message, err)
+			return false, err
 		}
 		if optedOut {
 			b.logger.Info("dropped an inbound message from a person who opted out",
@@ -91,7 +92,7 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		// No turn is paid for whose reply the chat may not get (refusesReply).
 		silenced, err := b.silenced(ctx, thread)
 		if err != nil {
-			return false, b.unclaim(ctx, thread, message, err)
+			return false, err
 		}
 		if silenced {
 			b.logger.Info("dropped an inbound message in a chat with a person who opted out",
@@ -112,7 +113,7 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		if group {
 			muted, err = b.store.OptedOut(ctx, thread.CustomerID, source.recipientOf(message.AuthorID), channel)
 			if err != nil {
-				return false, b.unclaim(ctx, thread, message, err)
+				return false, err
 			}
 		}
 		err = b.store.OptOut(ctx, &store.OptOut{
@@ -126,12 +127,12 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 		reply = cmp.Or(useCase.HelpMessage, helpReply)
 	}
 	if err != nil {
-		return false, b.unclaim(ctx, thread, message, err)
+		return false, err
 	}
 	if group && !stop {
 		muted, err = b.silenced(ctx, thread)
 		if err != nil {
-			return false, b.unclaim(ctx, thread, message, err)
+			return false, err
 		}
 	}
 	if muted {
@@ -142,23 +143,28 @@ func (b *Bridge) keyword(ctx context.Context, thread store.ChannelThread, messag
 	if source.answered != nil && source.answered(message.Raw) {
 		return true, nil
 	}
-	b.working.Add(1)
-	go func() {
-		defer b.working.Done()
-		sending, cancel := context.WithTimeout(context.Background(), sendTimeout)
-		defer cancel()
-		err := b.send(sending, thread, reply)
-		var refused refusal
-		switch {
-		case errors.As(err, &refused):
-			// Expected, not a failure: Linq refuses every send to a person who texted STOP with
-			// 403, the confirmation included (AI-2016). The error carries the cause.
-			b.logger.Info("the provider refused a keyword answer", "connector", thread.ConnectorID,
-				"channel", thread.ChannelID, "error", err)
-		case err != nil:
-			b.logger.Error("could not answer a keyword", "connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
-		}
-	}()
+	marked, err := b.store.MarkChannelInboundKeywordAnswered(ctx, queued)
+	if err != nil {
+		return false, err
+	}
+	if !marked {
+		// An earlier attempt answered it, or the row's lease ran out and the worker that took it
+		// since answers.
+		return true, nil
+	}
+	sending, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	err = b.send(sending, thread, reply)
+	var refused refusal
+	switch {
+	case errors.As(err, &refused):
+		// Expected, not a failure: Linq refuses every send to a person who texted STOP with
+		// 403, the confirmation included (AI-2016). The error carries the cause.
+		b.logger.Info("the provider refused a keyword answer", "connector", thread.ConnectorID,
+			"channel", thread.ChannelID, "error", err)
+	case err != nil:
+		b.logger.Error("could not answer a keyword", "connector", thread.ConnectorID, "channel", thread.ChannelID, "error", err)
+	}
 	return true, nil
 }
 
@@ -182,16 +188,9 @@ func telnyxAnswered(raw []byte) bool {
 	return json.Unmarshal(raw, &event) == nil && event.Data.Payload.AutoresponseType != ""
 }
 
-// unclaim releases a message's inbound claim after err, so its next delivery is taken again.
-func (b *Bridge) unclaim(ctx context.Context, thread store.ChannelThread, message core.InboundMessage, err error) error {
-	releasing, cancel := b.detached(ctx)
-	defer cancel()
-	return errors.Join(err, b.store.ReleaseChannelThreadMessage(releasing, thread.ChannelID, store.ClaimInbound, message.ProviderMessageID))
-}
-
-// detached is ctx without its cancellation, bounded by queueTimeout, for a store write Deliver
-// finishes whatever the request does: a provider that hangs up cancels the request's context
-// (net/http), and a claim left with no queued row drops the provider's retry as a retry.
+// detached is ctx without its cancellation, bounded by queueTimeout, for the transaction that
+// claims and queues a message (store.AcceptChannelInbound): a provider that hangs up cancels
+// the request's context (net/http), and the message is queued all the same.
 func (b *Bridge) detached(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), b.queueTimeout)
 }

@@ -191,12 +191,17 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 	}
 }
 
-// writeQueued writes a queued message into its thread channel under its own Stream id, and the
-// card of the episode it opens, as Deliver and write do for a message they take. Either one
-// already written by an attempt whose answer was lost counts as written.
+// writeQueued admits a queued message (admit), then writes it into its thread channel under its
+// own Stream id, and the card of the episode it opens. Either one already written by an attempt
+// whose answer was lost counts as written. A message admit holds back, such as a keyword or one
+// the gate refuses, is done with nothing written.
 func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) error {
 	thread, err := b.store.ChannelThread(ctx, message.ChannelID)
 	if err != nil {
+		return err
+	}
+	admitted, err := b.admit(ctx, thread, message)
+	if err != nil || !admitted {
 		return err
 	}
 	config := store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}

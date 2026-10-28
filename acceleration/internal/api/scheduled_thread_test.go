@@ -513,6 +513,7 @@ func (s *LinqChannelSuite) TestARetriedOneToOneMessageLeavesAGroupChatAGroups() 
 
 	s.Require().Equal(http.StatusOK, s.deliver(first, time.Now()))
 
+	s.settled()
 	s.Empty(s.chatPerson(chat))
 	s.Len(s.chat.Stored(channel), written, "the retried copy was dropped")
 	_, _, err := s.deliverTask(task)
@@ -535,11 +536,11 @@ func (s *SlackChannelSuite) TestASlackThreadIsNotOfferedTheTools() {
 	}
 }
 
-// A store that cannot record the chat's person fails the delivery and releases its claim, so
-// Linq's retry of the same event is taken and records the person. The write is made to fail by
-// renaming the table away: the suite's database is its own (SetupSuite), so no other suite sees
-// it, and a defer puts it back.
-func (s *LinqChannelSuite) TestAChatPersonTheStoreCannotWriteLeavesTheMessageToTheRetry() {
+// A store that cannot record the chat's person fails the worker's attempt, not the delivery, and
+// the next attempt records the person and writes the message, once. The write is made to fail by
+// renaming the table away until the first attempt failed: the suite's database is its own
+// (SetupSuite), so no other suite sees it, and a defer puts it back.
+func (s *LinqChannelSuite) TestAChatPersonTheStoreCannotWriteIsWrittenOnTheNextAttempt() {
 	ctx := context.Background()
 	chat, person := s.utils.uuid(), "+13125550001"
 	body := s.chatSays(s.received(chat, s.line, person, "hello"), false)
@@ -555,14 +556,15 @@ func (s *LinqChannelSuite) TestAChatPersonTheStoreCannotWriteLeavesTheMessageToT
 	}
 	defer restore()
 
-	s.NotEqual(http.StatusOK, s.deliver(body, time.Now()))
-	restore()
-	s.Empty(s.chatPerson(chat))
-
 	s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
+	s.failedOnce()
+	restore()
+
+	s.settled()
 	s.Equal(person, s.chatPerson(chat))
 	channel := s.threadChannel(chat)
 	stored := s.written(channel, 1)
+	s.Len(stored, 1)
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, len(stored)-1))
 	s.answeredAfter(channel, 0)
 	s.took(1)

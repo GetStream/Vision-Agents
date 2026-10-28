@@ -9,9 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -194,6 +192,7 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedAndIsNotWrittenDoesNotForward
 	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100"), 1)
 
 	s.Equal(http.StatusOK, status)
+	s.settled()
 	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond,
 		"the destination got the mention's delivery as unhandled")
 	s.Empty(s.chat.Stored(thread.ChannelID), "the reply was not written")
@@ -223,6 +222,7 @@ func (s *EventForwardingSuite) TestABatchsMessagesThatAreNotWrittenAreForwardedO
 	s.Contains([][]byte{second.Raw, third.Raw}, got.body, "the body of a message given up")
 	s.Equal("application/json", got.header.Get("Content-Type"), "the delivery's headers")
 	s.Equal("v0=synthetic", got.header.Get("X-Slack-Signature"), "a signature that does not age")
+	s.settled()
 	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond, "one forward for the delivery")
 	var ageing int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
@@ -230,8 +230,8 @@ func (s *EventForwardingSuite) TestABatchsMessagesThatAreNotWrittenAreForwardedO
 	s.Zero(ageing, "a delivery whose headers do not age is stored without headers_until")
 }
 
-// A message the store fails to queue releases its claim, so the provider's retry of the delivery
-// takes it again. Postgres's jsonb refuses \u0000, and only the queue stores the delivery's
+// A message the store fails to queue is not claimed either, the two being one transaction, so
+// the provider's retry of the delivery takes it again. Postgres's jsonb refuses \u0000, and only the queue stores the delivery's
 // headers, so a NUL in one fails the queue and nothing before it.
 func (s *EventForwardingSuite) TestAMessageTheStoreFailsToQueueIsNotClaimed() {
 	s.answering(s.connectedBot())
@@ -247,7 +247,8 @@ func (s *EventForwardingSuite) TestAMessageTheStoreFailsToQueueIsNotClaimed() {
 }
 
 // The mention that links a thread takes the replies that waited for it. When the mention then
-// fails to queue, they wait again, so Slack's retry of the mention brings them as well.
+// fails to queue, they wait again, the take being in the same transaction, so Slack's retry of
+// the mention brings them as well.
 func (s *EventForwardingSuite) TestAReplyThatWaitedIsWrittenWhenItsMentionFailsToQueueAndIsRetried() {
 	s.answering(s.connectedBot())
 	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
@@ -300,7 +301,7 @@ func (s *EventForwardingSuite) TestAMessageWhoseRequestEndsWhileItIsQueuedIsWrit
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
-// A message the store fails to queue after its provider hung up still releases its claim, so the
+// A message the store fails to queue after its provider hung up is not claimed either, so the
 // provider's retry queues it.
 func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIsNotClaimed() {
 	s.answering(s.connectedBot())
@@ -318,9 +319,9 @@ func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIs
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
-// A reply that waited and is put back after its mention failed to queue is put back off the
-// request, so a provider that hung up does not lose it, and only the reply is put back.
-func (s *EventForwardingSuite) TestAReplyThatWaitedIsPutBackWhenItsMentionFailsToQueueAfterTheProviderHungUp() {
+// A reply that waited waits again when its mention fails to queue after the provider hung up:
+// the take is undone with the claim, and only the reply waits.
+func (s *EventForwardingSuite) TestAReplyThatWaitedWaitsAgainWhenItsMentionFailsToQueueAfterTheProviderHungUp() {
 	s.answering(s.connectedBot())
 	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
 	s.trigger("failing_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'",
@@ -335,8 +336,8 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedIsPutBackWhenItsMentionFailsT
 	s.Equal(1, waiting, "the reply waits again, and only the reply")
 }
 
-// A queue insert that hangs is cut short by its bound, and the claim is released on a bound of
-// its own, so the provider gets its error in time and its retry queues the message.
+// A queue insert that hangs is cut short by its bound, which undoes the claim with it, so the
+// provider gets its error in time and its retry queues the message.
 func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNotClaimed() {
 	s.answering(s.connectedBot())
 	drop := s.trigger("hanging_inbound_queue", "channel_thread_inbound", "INSERT", "NEW.customer_id = '"+s.customerID()+"'", "PERFORM pg_sleep(3);")
@@ -355,25 +356,59 @@ func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNot
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
-// A release that hangs after the queue failed is cut short by its bound too: the provider gets
-// its error in time. The claim stays then, until the claim and the queue are one transaction
-// (AI-2150).
-func (s *EventForwardingSuite) TestAMessageWhoseReleaseHangsIsAnsweredInTime() {
+// A message whose waiting replies cannot be taken is neither claimed nor queued, so Slack's
+// retry of it is taken, with the reply that waited: the take is in the claim's transaction.
+func (s *EventForwardingSuite) TestAMessageWhoseWaitingRepliesCannotBeTakenIsTakenOnItsRetry() {
 	s.answering(s.connectedBot())
-	s.trigger("hanging_inbound_release", "channel_thread_messages", "DELETE",
-		"OLD.channel_id IN (SELECT channel_id FROM channel_threads WHERE customer_id = '"+s.customerID()+"')", "PERFORM pg_sleep(3);")
-	bounded := s.boundedRouter(200 * time.Millisecond)
-	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", Headers: map[string]string{"X-Synthetic": "a\x00b"}}
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	drop := s.trigger("failing_waiting_take", "channel_thread_waiting", "DELETE", "OLD.customer_id = '"+s.customerID()+"'",
+		"RAISE EXCEPTION 'synthetic take failure';")
 
-	started := time.Now()
-	_, err := bounded.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, &delivery)
+	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
 
-	s.Require().ErrorIs(err, os.ErrDeadlineExceeded, "the release's failure is answered")
-	s.Less(time.Since(started), 2*time.Second, "the release was not cut short")
+	s.Require().ErrorContains(err, "synthetic take failure")
+	s.Zero(s.inboundClaims())
+	drop()
+	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+	s.Require().NoError(err)
+	channel := s.threadChannel()
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
 }
 
-// deliverHangingUp delivers message on a request whose provider hangs up once the message is
-// claimed, as net/http cancels the request's context, and answers what Deliver did.
+// Slack retrying a mention while its first delivery is still being taken claims and queues it
+// once, with the reply that waited for it once: the two transactions take the thread's row in
+// turn.
+func (s *EventForwardingSuite) TestTwoDeliveriesOfAMentionAtOnceQueueItAndTheReplyThatWaitedOnce() {
+	s.answering(s.connectedBot())
+	s.deliver(s.reply("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
+			errs <- err
+		}()
+	}
+	s.Require().NoError(<-errs)
+	s.Require().NoError(<-errs)
+
+	s.settled()
+	channel := s.threadChannel()
+	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"}, messageIDsOf(s.chat.Stored(channel)))
+}
+
+// messageIDsOf are the ids of messages Stream Chat stored, in order.
+func messageIDsOf(stored []map[string]any) []any {
+	ids := make([]any, 0, len(stored))
+	for _, message := range stored {
+		ids = append(ids, message["id"])
+	}
+	return ids
+}
+
+// deliverHangingUp delivers message on a request whose provider hangs up while the queue insert
+// runs, in a trigger that sleeps, as net/http cancels the request's context, and answers what
+// Deliver did.
 func (s *EventForwardingSuite) deliverHangingUp(message core.InboundMessage) error {
 	ctx, hangUp := context.WithCancel(context.Background())
 	defer hangUp()
@@ -382,8 +417,13 @@ func (s *EventForwardingSuite) deliverHangingUp(message core.InboundMessage) err
 		_, err := s.bridge.Deliver(ctx, s.app, []core.InboundMessage{message}, nil)
 		done <- err
 	}()
-	s.Require().Eventually(func() bool { return s.inboundClaims() == 1 }, settleFor, 5*time.Millisecond)
-	time.Sleep(300 * time.Millisecond) // the insert is in its trigger
+	s.Require().Eventually(func() bool {
+		var inserting int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state = 'active'"+
+				" AND query LIKE '%INSERT INTO channel_thread_inbound%'").Scan(&inserting))
+		return inserting == 1
+	}, settleFor, 5*time.Millisecond, "the queue insert never ran")
 	hangUp()
 	return <-done
 }
@@ -396,31 +436,6 @@ func (s *EventForwardingSuite) inboundClaims() int {
 		"SELECT count(*) FROM channel_thread_messages m JOIN channel_threads t USING (channel_id) WHERE t.customer_id = ? AND m.kind = ?",
 		s.customerID(), store.ClaimInbound).Scan(&claims))
 	return claims
-}
-
-// trigger runs body before each op on table for a row where when holds, until the test ends or
-// drop. The table is in the suite's own database (database), and when names the test's
-// customer, so no other test's rows meet it.
-func (s *EventForwardingSuite) trigger(name, table, op, when, body string) (drop func()) {
-	db := s.store.DB()
-	_, err := db.ExecContext(context.Background(), "CREATE OR REPLACE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
-		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
-	s.Require().NoError(err)
-	_, err = db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
-	s.Require().NoError(err)
-	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
-	s.Require().NoError(err)
-	var once sync.Once
-	drop = func() {
-		once.Do(func() {
-			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
-			s.Require().NoError(err)
-			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS "+name+"()")
-			s.Require().NoError(err)
-		})
-	}
-	s.T().Cleanup(drop)
-	return drop
 }
 
 // boundedRouter is another router's bridge whose store writes off the request are bounded by

@@ -56,6 +56,9 @@ type ChannelInbound struct {
 	// answered; nil when none would take it.
 	Forward *ChannelInboundForward `bun:"forward,type:jsonb"`
 	State   string                 `bun:"state,notnull"`
+	// KeywordAnswered is whether a worker answered the message's carrier keyword
+	// (MarkChannelInboundKeywordAnswered).
+	KeywordAnswered bool `bun:"keyword_answered,notnull"`
 	// Attempts is how many writes of the message failed.
 	Attempts int `bun:"attempts,notnull"`
 	// NextAttemptAt is when the message is due; on a claimed row, the end of the claim's lease.
@@ -122,12 +125,67 @@ func (m ChannelInbound) Message() core.InboundMessage {
 	}
 }
 
+// AcceptChannelInbound claims message in its thread channel by the provider's id for it
+// (ClaimInbound) and queues it, due at message.NextAttemptAt, in one transaction, so a message
+// is claimed only with its row: a store that fails leaves it unclaimed, and the provider's
+// retry takes it again. fresh is false for a message claimed before, which is not queued again.
+//
+// With waited not nil, the message starts its external thread, and the transaction also takes
+// the messages that waited on that thread (TakeWaitingChannelThreadMessages), whether or not the
+// message is fresh, and claims and queues the row waited makes of each, after the message's: on
+// a failure they wait again, and each waiting message is taken once.
+func (s *Store) AcceptChannelInbound(ctx context.Context, message ChannelInbound, waited func(core.InboundMessage) (ChannelInbound, error)) (fresh bool, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		fresh, err = acceptChannelInbound(ctx, tx, message)
+		if err != nil || waited == nil {
+			return err
+		}
+		taken, err := takeWaitingChannelThreadMessages(ctx, tx, message.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey)
+		if err != nil {
+			return err
+		}
+		for _, reply := range taken {
+			row, err := waited(reply)
+			if err != nil {
+				return err
+			}
+			if _, err := acceptChannelInbound(ctx, tx, row); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return fresh, stack.Wrap(err)
+}
+
+// acceptChannelInbound claims and queues one message in tx. A message claimed before is not
+// queued.
+func acceptChannelInbound(ctx context.Context, tx bun.Tx, message ChannelInbound) (bool, error) {
+	if err := validChannelInbound(message); err != nil {
+		return false, err
+	}
+	fresh, err := claimChannelThreadMessage(ctx, tx, message.ChannelID, ClaimInbound, message.ProviderMessageID)
+	if err != nil || !fresh {
+		return false, err
+	}
+	_, err = queueChannelInbound(ctx, tx, message)
+	return err == nil, err
+}
+
+// validChannelInbound refuses a message missing what writing it takes.
+func validChannelInbound(message ChannelInbound) error {
+	if message.ChannelID == "" || message.ProviderMessageID == "" || message.CustomerID == "" || message.ConnectorID == "" || message.ConfigID == "" {
+		return stack.Wrap(errors.New("store: a channel, a provider message id, a customer, a connector and an agent config are required"))
+	}
+	return nil
+}
+
 // QueueChannelInbound queues message to be written into its thread channel, due at
 // message.NextAttemptAt. A message already queued for the channel under the same provider id,
 // written or given up within its keep, is not queued again: queued is false.
 func (s *Store) QueueChannelInbound(ctx context.Context, message ChannelInbound) (queued bool, err error) {
-	if message.ChannelID == "" || message.ProviderMessageID == "" || message.CustomerID == "" || message.ConnectorID == "" || message.ConfigID == "" {
-		return false, stack.Wrap(errors.New("store: a channel, a provider message id, a customer, a connector and an agent config are required"))
+	if err := validChannelInbound(message); err != nil {
+		return false, err
 	}
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		queued, err = queueChannelInbound(ctx, tx, message)
@@ -332,6 +390,17 @@ func leaveChannelInbound(ctx context.Context, db bun.IDB, claimed ChannelInbound
 		Set("state = ?", state).
 		Set("attempts = ?", attempts).
 		Set("finished_at = ?", at.UTC()))
+}
+
+// MarkChannelInboundKeywordAnswered records that a claimed message's carrier keyword is being
+// answered, before the answer is sent, so no later attempt of the row sends it again: an
+// answer is sent at most once, as a reply is (ClaimReply). changed is false when an earlier
+// attempt marked it, or when the claim's lease is no longer the row's and the worker that took
+// it since answers it.
+func (s *Store) MarkChannelInboundKeywordAnswered(ctx context.Context, claimed ChannelInbound) (changed bool, err error) {
+	return updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+		Set("keyword_answered = true").
+		Where("NOT keyword_answered"))
 }
 
 // RetryChannelInbound records a failed attempt of a claimed message and when the next one is
