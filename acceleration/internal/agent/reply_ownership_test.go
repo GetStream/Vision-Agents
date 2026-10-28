@@ -100,3 +100,38 @@ func (s *AgentSuite) TestALateCompletionDoesNotEraseTheReplacementToolTag() {
 	s.JSONEq(`{"order":"12"}`, s.runner.asked()[0].Arguments)
 	s.NotContains(strings.Join(s.answered(), " "), "lookup_")
 }
+
+// A reply whose provider breaks as the caller cuts it off is not reported failed: the turn
+// was given up on first. A failure of the turn after it still is.
+func (s *AgentSuite) TestAReplyThatBreaksAsItIsInterruptedIsNotReportedFailed() {
+	s.joinText()
+	s.model.reply = nil
+	s.model.breaks = errors.New("connection reset by peer")
+	first, err := s.agent.RespondTo(s.ctx, "explain the old request", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.model.writes(first, "The old answer was ")
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) > 0 },
+		"the old reply never began")
+	s.agent.Interrupt()
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.streams[first] == nil
+	}, "the old reply was never drained")
+
+	second, err := s.agent.RespondTo(s.ctx, "answer the replacement request", nil, options.LLM{})
+	s.Require().NoError(err)
+	unavailable := errors.New("provider unavailable")
+	s.model.opened(second).Fail(unavailable, "read")
+	// The replies share one channel, so the old reply's failure is handled before this.
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the failed reply never finished")
+
+	var failures []error
+	for _, event := range s.reported() {
+		if failed, ok := event.(Error); ok {
+			failures = append(failures, failed.Err)
+		}
+	}
+	s.Equal([]error{unavailable}, failures, "only the turn still being answered failed")
+}
