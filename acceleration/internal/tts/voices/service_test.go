@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -38,8 +38,6 @@ type ServiceSuite struct {
 	service  *Service
 	resolver *Resolver
 	recorder *routing.Recorder
-	// prices is the list the recorder bills with: vendor.json at cost.
-	prices *pricing.List
 	// reply is what the fake provider hands back when asked to clone.
 	reply  string
 	status int
@@ -107,7 +105,6 @@ func (s *ServiceSuite) SetupTest() {
 	s.Require().NoError(err)
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	s.prices = list
 	s.recorder = routing.NewRecorder(routing.TTS, s.store, nil, list, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.recorder.Close)
 
@@ -155,9 +152,9 @@ func (s *ServiceSuite) TestHearingAVoiceIsBilledTheCharactersItSays() {
 	s.Equal("tts", line.Modality)
 	s.Equal("eleven_flash_v2_5", line.Model, "the model the provider speaks the line with")
 	s.EqualValues(22, line.Characters)
-	flash := pricing.Item{Modality: "tts", Provider: "elevenlabs", Model: "eleven_flash_v2_5"}
-	s.Equal(pricingtest.Micros(s.prices, flash, pricing.Quantities{pricing.Characters: 22}), line.CostMicros,
-		"22 characters at ElevenLabs' rate")
+	rate := vendorRate(s.T(), "elevenlabs", "eleven_flash_v2_5")
+	s.EqualValues(math.Round(float64(rate.Nanos(22))/1000), line.CostMicros,
+		"22 characters at the vendor price table's rate for the model")
 }
 
 func (s *ServiceSuite) TestALineTooLongToHearIsRefusedBeforeTheProvider() {
@@ -171,6 +168,18 @@ func (s *ServiceSuite) TestALineTooLongToHearIsRefusedBeforeTheProvider() {
 	s.Len(s.requests, asked, "the provider is not asked to say it")
 	_, err = s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", strings.Repeat("é", MaxLine))
 	s.Require().NoError(err, "the cap counts characters, not bytes")
+}
+
+// vendorRate is what the embedded vendor price table charges a character of the model.
+func vendorRate(t *testing.T, provider, model string) pricing.Rate {
+	t.Helper()
+	for _, entry := range prices.Vendor().Entries {
+		if entry.Modality == "tts" && entry.Provider == provider && entry.Model == model && entry.When == nil {
+			return entry.Rates[pricing.Characters]
+		}
+	}
+	t.Fatalf("no vendor price for %s %s", provider, model)
+	return pricing.Rate{}
 }
 
 // recorded is a voice with one recording already stored, which is the state every

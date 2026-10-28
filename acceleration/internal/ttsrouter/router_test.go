@@ -1218,7 +1218,7 @@ func (s *TTSRouterSuite) TestAnUtteranceIsStampedWithWhenTheCustomerAsked() {
 	askedAt := time.Now().Add(-2 * time.Second)
 
 	session.observe(tts.SynthesisStarted{SynthesisID: "u1", At: askedAt})
-	settled := session.settle("u1")
+	settled, _ := session.settle("u1")
 
 	s.WithinDuration(askedAt.UTC(), settled.startedAt, time.Millisecond,
 		"a stat row should cover the whole wait, not just the audio")
@@ -1227,7 +1227,7 @@ func (s *TTSRouterSuite) TestAnUtteranceIsStampedWithWhenTheCustomerAsked() {
 func (s *TTSRouterSuite) TestAnUtteranceTheSessionNeverSawStartIsStillTimed() {
 	session, _ := s.newSession()
 
-	settled := session.settle("never-seen")
+	settled, _ := session.settle("never-seen")
 
 	s.WithinDuration(time.Now().UTC(), settled.startedAt, time.Second)
 	s.Empty(settled.errorCode)
@@ -1240,7 +1240,7 @@ func (s *TTSRouterSuite) TestAFailedUtteranceIsOneFailedRowRatherThanTwo() {
 	session.observe(tts.Error{SynthesisID: "u1", Err: context.Canceled, Context: "audio"})
 
 	// The failure is remembered, not recorded, so the completion is what settles it.
-	settled := session.settle("u1")
+	settled, _ := session.settle("u1")
 	s.Equal("audio", settled.errorCode,
 		"the completion should report the failure instead of adding a second row")
 }
@@ -1252,7 +1252,8 @@ func (s *TTSRouterSuite) TestTheFirstFailureIsTheOneThatExplainsAnUtterance() {
 	session.observe(tts.Error{SynthesisID: "u1", Err: context.Canceled, Context: "request"})
 	session.observe(tts.Error{SynthesisID: "u1", Err: context.Canceled, Context: "audio"})
 
-	s.Equal("request", session.settle("u1").errorCode)
+	settled, _ := session.settle("u1")
+	s.Equal("request", settled.errorCode)
 }
 
 func (s *TTSRouterSuite) TestSettlingAnUtteranceTwiceCannotBillItTwice() {
@@ -1260,10 +1261,14 @@ func (s *TTSRouterSuite) TestSettlingAnUtteranceTwiceCannotBillItTwice() {
 	askedAt := time.Now().Add(-time.Second)
 
 	session.observe(tts.SynthesisStarted{SynthesisID: "u1", At: askedAt})
-	s.WithinDuration(askedAt.UTC(), session.settle("u1").startedAt, time.Millisecond)
+	settled, repeated := session.settle("u1")
+	s.False(repeated)
+	s.WithinDuration(askedAt.UTC(), settled.startedAt, time.Millisecond)
 
-	// The second settle finds nothing in flight and so cannot reuse the utterance.
-	s.WithinDuration(time.Now().UTC(), session.settle("u1").startedAt, time.Second)
+	// The second settle finds the utterance settled and not started again, so it is a
+	// repeat that records nothing.
+	_, repeated = session.settle("u1")
+	s.True(repeated)
 }
 
 func (s *TTSRouterSuite) TestAFatalErrorIsGradedWorseThanAContextualOne() {

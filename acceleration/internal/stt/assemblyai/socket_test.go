@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -199,6 +200,56 @@ func (s *AssemblyAISocketSuite) TestARefusedSessionIsReportedFromStart() {
 
 	s.ErrorContains(err, "Invalid API key")
 	s.ErrorContains(err, "code 1008")
+}
+
+// refusedOn is how many invalid keys ASSEMBLYAI_API_KEY's pool counted while a provider
+// started against a server that greets it with this frame.
+func (s *AssemblyAISocketSuite) refusedOn(greeting string) float64 {
+	return s.countedUnder("invalid_key", greeting)
+}
+
+// countedUnder is how many refusals ASSEMBLYAI_API_KEY's pool counted under status while a
+// provider started against a server that greets it with this frame.
+func (s *AssemblyAISocketSuite) countedUnder(status, greeting string) float64 {
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, status)
+	s.Require().Error(s.startAgainst(greeting, Options{}))
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, status) - before
+}
+
+func (s *AssemblyAISocketSuite) TestAnInvalidKeyFrameIsCountedAsAnInvalidKey() {
+	s.Equal(1.0, s.refusedOn("error_invalid_key.json"))
+}
+
+// AssemblyAI documents this frame for a key, its project or its account that is disabled.
+func (s *AssemblyAISocketSuite) TestADisabledKeyFrameIsCountedAsAnInvalidKey() {
+	s.Equal(1.0, s.refusedOn("error_key_disabled.json"))
+}
+
+// The frame form of a 402: counted under the status the handshake gives it, not as an
+// invalid key.
+func (s *AssemblyAISocketSuite) TestAFrameForWantOfFundsIsCountedAs402() {
+	for _, greeting := range []string{"error_insufficient_funds.json", "error_no_metronome_account.json"} {
+		s.Equal(1.0, s.countedUnder("402", greeting), greeting)
+		s.Zero(s.refusedOn(greeting), greeting)
+	}
+}
+
+func (s *AssemblyAISocketSuite) TestTheFundsTextUnderAnotherCodeIsNotCounted() {
+	s.Zero(s.countedUnder("402", "error_insufficient_funds_other_code.json"))
+}
+
+func (s *AssemblyAISocketSuite) TestAnotherErrorFrameIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_input_duration.json"))
+	s.Zero(s.countedUnder("402", "error_input_duration.json"))
+}
+
+// The two frames below are made up, each with only one half of the invalid key's signal.
+func (s *AssemblyAISocketSuite) TestAnotherUnauthorizedConnectionIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_unauthorized_other.json"))
+}
+
+func (s *AssemblyAISocketSuite) TestTheKeyTextUnderAnotherCodeIsNotAnInvalidKey() {
+	s.Zero(s.refusedOn("error_invalid_key_other_code.json"))
 }
 
 func (s *AssemblyAISocketSuite) TestASessionOpenedOnAnotherModelIsRefused() {

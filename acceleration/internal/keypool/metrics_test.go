@@ -462,6 +462,26 @@ func (s *RefusedAttemptsSuite) TestAQuotaFrameIsCountedAndRestsTheKey() {
 	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()})
 }
 
+// A key refused after the handshake is counted but, like a 401 at the handshake, not rested.
+func (s *RefusedAttemptsSuite) TestAKeyRefusedAfterTheHandshakeIsCountedAndStaysInTurn() {
+	p := s.pool("invalid")
+
+	p.InvalidKey()
+
+	s.Equal(map[string]float64{"invalid_key": 1}, s.counted(p.keyVars[0]))
+	s.Equal([]string{p.keys[0], p.keys[1], p.keys[0]}, []string{p.Next(), p.Next(), p.Next()})
+}
+
+// A frame for want of funds is counted under 402, as the handshake counts it, and not rested.
+func (s *RefusedAttemptsSuite) TestAFrameForWantOfFundsIsCountedAs402AndStaysInTurn() {
+	p := s.pool("funds")
+
+	p.OutOfFunds()
+
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
+	s.Equal([]string{p.keys[0], p.keys[1], p.keys[0]}, []string{p.Next(), p.Next(), p.Next()})
+}
+
 // refusedAlert is the key_refused condition, fresh, after a first check a limit before start
 // that takes in what earlier tests counted, so its next checks hold only what the test did.
 func (s *RefusedAttemptsSuite) refusedAlert(start time.Time) alerts.ItemCheck {
