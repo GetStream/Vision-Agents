@@ -160,7 +160,8 @@ func (s *WorkerSuite) TestAnAnswerCloseCutShortIsLeftForItsLease() {
 	s.True(row.NextAttemptAt.After(time.Now().Add(Lease-time.Minute)), "the lease was let go of: %s", row.NextAttemptAt)
 }
 
-// One router answers at most inFlight messages at once; the next waits for a slot.
+// One router answers at most inFlight messages at once; the next is left unclaimed, for
+// another router to take, until a slot frees.
 func (s *WorkerSuite) TestAtMostInFlightAnswersRunAtOnce() {
 	release := make(chan struct{})
 	var mu sync.Mutex
@@ -183,6 +184,9 @@ func (s *WorkerSuite) TestAtMostInFlightAnswersRunAtOnce() {
 
 	s.Eventually(func() bool { return count() == inFlight }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return count() > inFlight }, 300*time.Millisecond, 10*time.Millisecond)
+	unclaimed, err := s.store.DB().NewSelect().Model((*store.ChatDelivery)(nil)).Where("next_attempt_at <= now()").Count(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(1, unclaimed)
 	close(release)
 	s.Eventually(func() bool { return count() == inFlight+1 }, 5*time.Second, 10*time.Millisecond)
 }
