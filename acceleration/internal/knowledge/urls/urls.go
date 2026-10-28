@@ -417,9 +417,15 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	}
 
 	written := page.Passages
-	read, err := s.reader.Read(ctx, page.URL)
+	owned := s.knowledge.For(payload.owner())
+	// A read is paid for, so a customer whose write would be refused is not read for.
+	var read search.Page
+	err = owned.Admit(ctx)
 	if err == nil {
-		err = s.write(ctx, s.knowledge.For(payload.owner()), &page, read)
+		read, err = s.reader.Read(ctx, page.URL)
+	}
+	if err == nil {
+		err = s.write(ctx, owned, &page, read)
 	}
 	last := false
 	if err != nil {

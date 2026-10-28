@@ -877,10 +877,19 @@ type knowledgeBase struct {
 	mu        sync.Mutex
 	namespace string
 	passages  map[string]knowledge.Document
+	// down makes every write fail, naming the namespace as turbopuffer's errors do.
+	down bool
 }
 
 func newKnowledgeBase() *knowledgeBase {
 	return &knowledgeBase{passages: map[string]knowledge.Document{}}
+}
+
+// failWrites makes every write fail until it is called with false.
+func (b *knowledgeBase) failWrites(down bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.down = down
 }
 
 // knowledgeQueried is what the stub bills a query as having searched: the least a small
@@ -896,6 +905,9 @@ func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.down {
+		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
+	}
 	b.namespace = namespace
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {

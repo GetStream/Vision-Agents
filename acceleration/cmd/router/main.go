@@ -1044,7 +1044,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), logger)
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, logger)
 	if base != nil {
 		defer base.Close()
 	}
@@ -1968,14 +1968,14 @@ func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
 }
 
 // newKnowledge is the knowledge base every lookup and write goes through, recorded by
-// recorder, or nil without a turbopuffer key.
-func newKnowledge(settings config.Config, recorder *routing.Recorder, logger *slog.Logger) *metered.Knowledge {
+// recorder and each write admitted by gate, or nil without a turbopuffer key.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, logger *slog.Logger) *metered.Knowledge {
 	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
 	if err != nil {
 		logger.Debug("nothing will be looked up or written down", "error", err)
 		return nil
 	}
-	return metered.NewKnowledge(backend, recorder)
+	return metered.NewKnowledge(backend, recorder, gate)
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.

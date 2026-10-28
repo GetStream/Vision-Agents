@@ -88,7 +88,7 @@ func (s *MeteredSuite) fixture() (*Knowledge, *turbopuffertest.Server) {
 	server := turbopuffertest.Start(s.T())
 	backend, err := turbopuffer.New(turbopuffer.Options{APIKey: "test-key", BaseURL: server.URL, Cost: listCost})
 	s.Require().NoError(err)
-	return NewKnowledge(backend, s.recorder), server
+	return NewKnowledge(backend, s.recorder, nil), server
 }
 
 func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
@@ -322,7 +322,7 @@ func (s *MeteredSuite) TestEveryKnowledgeCallIsRecorded() {
 	}
 	backend, err := turbopuffer.New(turbopuffer.Options{Cost: listCost, Timeout: 30 * time.Second})
 	s.Require().NoError(err)
-	owned := NewKnowledge(backend, s.recorder).For(s.owner)
+	owned := NewKnowledge(backend, s.recorder, nil).For(s.owner)
 	namespace := fmt.Sprintf("acceleration-test-metered-%d", time.Now().UnixNano())
 	passages := []knowledge.Document{{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"}}
 
