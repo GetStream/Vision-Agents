@@ -4334,6 +4334,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
+             * @example us
+             */
+            readonly region: string;
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             /** @description Absent when calls are reviewed by Stream's default guide. */
             readonly review?: components["schemas"]["AgentReview"];
@@ -4391,6 +4396,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
+             * @example eu
+             */
+            readonly region?: string;
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             readonly review?: components["schemas"]["AgentReview"];
             readonly role?: components["schemas"]["AgentRole"];
@@ -4448,6 +4458,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
+             * @example eu
+             */
+            readonly region?: string;
             /** @description How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay. */
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             /** @description How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay. */
@@ -6256,7 +6271,7 @@ export type components = {
             /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
             readonly allow_training?: boolean;
             /**
-             * @description Where the work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region; knowledge and sandboxes are kept in the region an organization's or app's policy names. On a request, an app's policy and an organization's policy, a region set on one of them holds for all of them, and two different regions are refused, naming both. Omitted everywhere, the work is done in us.
+             * @description Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region.
              * @example eu
              */
             readonly region?: string;
@@ -7565,7 +7580,7 @@ export type components = {
             readonly budget?: {
                 readonly [key: string]: unknown;
             };
-            readonly data_policy?: components["schemas"]["DataPolicy"];
+            readonly data_policy?: components["schemas"]["PolicyDataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
             readonly quota?: components["schemas"]["Quota"];
@@ -7587,6 +7602,16 @@ export type components = {
              * @example 30d
              */
             readonly tool_output_retention?: string;
+        };
+        /** @description What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have. */
+        readonly PolicyDataPolicy: {
+            /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
+            readonly allow_training?: boolean;
+            /**
+             * @description The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+             * @example none
+             */
+            readonly retention?: string;
         };
         /**
          * @description Whose policy: an organization's, an app's, or one end user's.
@@ -9401,6 +9426,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
+             * @example eu
+             */
+            readonly region?: string;
             /** @description How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored. */
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             readonly role?: components["schemas"]["AgentRole"];

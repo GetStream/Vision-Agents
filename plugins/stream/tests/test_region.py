@@ -48,6 +48,7 @@ class RegionalRouter:
                     "id": "config-1",
                     "name": "docs",
                     "mode": "text",
+                    "region": "us",
                     "created_at": WHEN,
                     "updated_at": WHEN,
                 }
