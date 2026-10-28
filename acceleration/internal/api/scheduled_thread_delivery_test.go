@@ -181,7 +181,9 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 
 // A task's reply is texted as soon as its turn ends: the delivery looks at the reply every
 // replyPoll, not at its next look at the session (scheduledPoll), which kept every reply up to
-// 2 s and every thread task 2 s at least.
+// 2 s and every thread task 2 s at least. The turn is let go of once it started, about when the
+// delivery first looks, so a delivery that waits for its next look answers about scheduledPoll
+// later; the bound is three quarters of that, leaving a loaded machine time for the send.
 func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
 	person := "+13125550001"
 	task, _ := s.scheduledInThread(person)
@@ -201,7 +203,7 @@ func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
 	select {
 	case err := <-done:
 		s.Require().NoError(err)
-	case <-time.After(scheduledPoll / 2):
+	case <-time.After(scheduledPoll * 3 / 4):
 		s.FailNow("the reply waited for the delivery's next look at the session")
 	}
 	s.Equal(telnyxMessage{from: s.line, to: person, text: "Done."}, s.took(sent + 1)[sent].withoutAuthorization())
