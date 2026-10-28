@@ -29,6 +29,11 @@ var errNoRecordings = notConfigured("this deployment does not run recordings")
 // come back for is worse than a refusal.
 var errNoRecordingStore = notConfigured("recordings are not available: no database configured")
 
+// errTopLevelModel refuses a model named beside the options rather than in them. The body
+// takes unknown fields, so without it the request would be served, and billed, by the
+// default model the caller never asked for.
+var errTopLevelModel = invalidRequest("a request takes no top-level model: name it in options.target")
+
 // recordingDeadline bounds one job. Transcription runs far faster than real time, but a
 // feature-length recording is still minutes of work, and a job that hangs is a row that
 // stays queued forever.
@@ -51,6 +56,9 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
+	}
+	if request.Body.Model != nil {
+		return nil, errTopLevelModel
 	}
 
 	config, err := s.routerOptions(ctx, customerID, value(request.Body.ConfigId))
@@ -166,6 +174,9 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
+	}
+	if request.Body.Model != nil {
+		return nil, errTopLevelModel
 	}
 	if strings.TrimSpace(request.Body.Text) == "" {
 		return nil, invalidRequest("there is nothing to say")
@@ -641,6 +652,9 @@ type SpeechRequest struct {
 	Options  *TtsOptions        `json:"options,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	Text     string             `json:"text" doc:"What to say. Whole paragraphs rather than the sentence at a time a socket takes."`
+
+	// Model is never accepted: it is read only to refuse it (errTopLevelModel).
+	Model any `json:"model,omitempty" hidden:"true"`
 }
 
 // TranscriptEntity Something the recording named, for the providers that pick them out.
@@ -693,4 +707,7 @@ type TranscriptionRequest struct {
 	Options  *SttOptions        `json:"options,omitempty"`
 	Source   RecordingSource    `json:"source"`
 	Tags     *map[string]string `json:"tags,omitempty" doc:"Cost labels for this job."`
+
+	// Model is never accepted: it is read only to refuse it (errTopLevelModel).
+	Model any `json:"model,omitempty" hidden:"true"`
 }

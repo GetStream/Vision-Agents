@@ -157,6 +157,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the agent's reply every 100 ms and sends it shortly after the reply finishes. A task's follow-up that meets a reply still being written starts within 100 ms of that reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
 
+### A request that names its model outside the options is refused
+
+`POST /v1/tts/recordings`, `POST /v1/stt/recordings`, `POST /v1/search`, `POST /v1/detection` and `POST /v1/image/generations` now answer a top-level `model` with a 400 `invalid_request` that says to name the model in `options.target`. Before, the field was ignored: the request was served by the default model and billed for it (AI-2180).
+
 ### A scheduled task's reply cut off as its provider fails is run again
 
 When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
