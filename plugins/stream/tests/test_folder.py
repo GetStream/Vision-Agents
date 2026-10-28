@@ -699,6 +699,14 @@ class TestFolder:
         with pytest.raises(ValueError, match="tools"):
             load(root)
 
+    def test_the_declaration_names_the_region_the_agents_work_is_done_in(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nregion: eu\n")
+
+        assert load(root).settings.region == "eu"
+
     def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
@@ -706,6 +714,7 @@ class TestFolder:
         settings = load(root).settings
 
         assert settings.llm == ""
+        assert settings.region == ""
         assert settings.sandbox == ""
         assert settings.tools is None
         assert settings.tags == {}

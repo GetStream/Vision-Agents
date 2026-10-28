@@ -218,6 +218,11 @@ class Settings:
     name: str = ""
     description: str = ""
     mode: str = ""
+    region: str = ""
+    """Where the agent's work is done: `us` or `eu` for now. Every model it names needs an
+    instance there, and its knowledge base and sandbox are kept there; the router refuses a
+    sync naming one that has none. Empty sends none, which leaves the stored region, and a
+    new agent is in `us`."""
     stt: str = ""
     tts: str = ""
     sts: str | None = None
@@ -466,6 +471,8 @@ def _declare(path: Path) -> Settings:
             settings.description = _word(value)
         elif field_name == "mode":
             settings.mode = _word(value)
+        elif field_name == "region":
+            settings.region = _word(value)
         elif field_name == "stt":
             settings.stt = _word(value)
         elif field_name == "tts":

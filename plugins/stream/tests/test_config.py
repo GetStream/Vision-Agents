@@ -788,6 +788,18 @@ class TestSyncAgent:
         assert stored["mode"] == "voice"
         assert stored["region"] == "us", "the router's own, since the request sent none"
 
+    async def test_the_region_the_declaration_names_is_sent(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\nregion: eu\n")
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.configs[result.config.id]["region"] == "eu"
+        assert result.config.region == "eu"
+
     async def test_editing_a_model_stores_the_directory_again(
         self, router: Router, launched_from
     ):
