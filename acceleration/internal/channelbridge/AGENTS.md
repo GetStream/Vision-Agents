@@ -28,6 +28,19 @@ Slack -> POST /v1/connectors/events/{connector}/{app}   api.receiveProviderAppEv
     author user, agent user (the channel's id), channel (agent_config_id,
     support_customer_id, support_agent_id), message without source -> Stream Chat
     omnichannel.Cards.Write: a new episode's card (source slack) -> the omni-channel
+inbound worker (every router; nothing queues yet: Deliver writes as above)   off the request
+  wakes: at start, on wake (a message queued), on a finished write, at the first
+    queued row due (at least 1 s), and at least once a lease (1 min)
+  store.ClaimChannelInbound: the oldest queued row of each thread channel, due,
+    lease 1 min, SKIP LOCKED, at most 16 in flight per router
+  omnichannel.Cards.Open from the row (config id + name, author)
+  writeInto with id <thread channel>-<provider message id>   (inboundMessageID)
+  omnichannel.Cards.Write: the episode's card (card id episode-<id>)
+  ok, or 400 code 4 "a message with ID ... already exists" (alreadyWritten): done
+  else again after 2 s, 10 s, 30 s, 2 min, 10 min, then failed: WARN, and the
+    row's forward -> Options.Unanswered (Forwarder.ForwardUnanswered)
+  a Stream Chat 4xx other than 429 (refusedForGood): failed at once, as above
+  store.PruneChannelInbound once an hour: done rows after a day, failed after 30
 Stream Chat -> message.new -> api.receiveMessageEvent -> api.answerThread
   claim (thread channel, turn, Stream message id)
   lease the turn on channel_threads (one router per thread at a time)
@@ -59,6 +72,9 @@ conversation flush: final text stored (UpdateMessagePartial, no webhook)
 ## Rules
 
 - **Acknowledge fast, write later.** `Deliver` touches Postgres only, so the provider gets its answer within its limit (Slack: three seconds, https://docs.slack.dev/apis/events-api/). Stream Chat writes and replies run on goroutines; `Close` waits for them. A write that fails after the answer is logged; the provider does not retry it. `Deliver` then calls its `unanswered`, so the customer's event destinations of unhandled events get the delivery (AI-924).
+- **A queued inbound message is written once, under its own id** (`inbound.go`). The worker writes a row of `channel_thread_inbound` under the Stream message id `inboundMessageID`: the thread channel's id, `-`, and the provider's id for the message. Stream Chat keeps a message id unique in the whole app, so the thread channel is part of it. A provider id longer than the 255 characters Stream Chat takes leaves room for, or with a character other than letters, digits, `.`, `_` and `-`, is its SHA-256 in hex after `=`. A write whose answer was lost, or whose lease ran out while Stream Chat stored it, is refused the second time with HTTP 400, code 4 and «a message with ID … already exists»; `alreadyWritten` takes that as written, for the message and for the episode card (whose id is the episode's). Example: Slack `1793125611.816139` in `thread-0b7c…` is message `thread-0b7c…-1793125611.816139`. Check: `go test -tags integration -run TestInboundSuite ./internal/channelbridge`.
+- **A queued message that fails is written again, then given up.** Any failure (the thread, the episode, Stream Chat) but a refusal retries the row after each of `Options.InboundRetries` (2 s, 10 s, 30 s, 2 min, 10 min); the thread's later messages wait behind it, so a thread stays in order. After the last, the row is `failed` (kept 30 days), the worker logs a WARN, and the row's `forward` goes to `Options.Unanswered`, which cmd/router binds to `Forwarder.ForwardUnanswered`. The forward is keyed by the delivery, so two given-up messages of one delivery are one forward. Stream Chat answering a 4xx other than 429 refuses the next attempt too (`refusedForGood`, as a reply's `retryable`): the row is given up at once, so the thread's later messages do not wait 13 minutes. A message whose episode started after it was queued writes the episode card again, since an earlier attempt may have opened the episode and stopped before its card (failed, router stopped, lease ran out); a later message of the episode writes none. Example: Stream Chat answers 429 for 13 minutes; the customer's `unhandled` destination gets the Slack delivery once.
+- **Close stops the worker and waits for the writes in flight.** A write Close finds running finishes and records itself (`writeTimeout` is under the lease); the next router takes what is still queued. A reply handed over after Close is still sent.
 - **A retried delivery is dropped by the provider's message id**, in the thread channel (`channel_thread_messages`). Example: Slack sends the same `message` event with `X-Slack-Retry-Num: 1`; the claim fails and nothing is written.
 - **The agent gets the person's words without the mention of the account** (AI-990 F29). `take` writes `MessageRule.WithoutMention` of the connection's pinned revision: in Slack «<@U0000BOT> is the build green?» is written as «is the build green?». A mention of anybody else stays; a message that is only the mention is written as it is. A connector without `addressed.mention` is written as the provider sent it. Check: `go test -tags integration -run 'TestSlackChannelSuite/(TestAMessageIsWritten|TestAMentionInAThread)' ./internal/api`.
 - **A photo goes with the person's message** (AI-2094). `take` carries the files of the message as the connection's pinned revision reads them (`MessageRule.Media`), and `writeInto` writes each one whose MIME type is `image/*` as a Stream Chat `image` attachment (`image_url`) on the thread message, which the message hook hands the model (`api.threadPhotos`, AI-2093). Another file, such as a video, is not written: the agent gets the text alone, and a message with neither text nor a photo is not answered. A connection on a revision without `media` (Linq revision 2, until its API key is saved again) writes no photo. Example: a Linq [photo, «What is in this photo?»] is one message with that text and one image attachment. Check: `go test -tags integration -run 'TestLinqChannelSuite/(TestAPhoto|TestAVideo|TestAConnectionStillOnRevision2)' ./internal/api`.
@@ -95,6 +111,7 @@ go test ./internal/channelbridge
 ROUTER_POSTGRES_DSN=... ROUTER_REDIS_ADDR=... \
   go test -tags integration -run 'TestSlackChannelSuite|TestConnectorEventsSuite|TestMessageHooksSuite' ./internal/api
 ROUTER_POSTGRES_DSN=... go test -tags integration -run 'TestStoreSuite/(TestTheFirst|TestASecondMessage|TestARetried)' ./internal/store
+ROUTER_POSTGRES_DSN=... go test -tags integration -run TestInboundSuite ./internal/channelbridge
 ```
 
 `SlackChannelSuite` (`internal/api/provider_app_events_test.go`) runs the whole flow against Postgres, the suite's Stream Chat (`chattest`), real persistent sessions and `fakeprovider` with `SlackChannel`. `chattest` sends no webhooks, so the suite delivers the `message.new` Stream Chat would send, built from the message `chattest` stored. `go test -run TestThreadChannelSuite ./internal/conversation` covers the conversation side: history and the hand-off.

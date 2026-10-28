@@ -183,6 +183,7 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 // A thread is one episode: its first message opens one card in the omni-channel of whoever
 // started it, and the messages after it, the starter's or anybody's, open none (T41).
 func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoeverStartedIt() {
+	delivered := time.Now()
 	s.deliver(s.message("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", ""), 0)
 	s.deliver(s.message("U0000ALICE", "the release one", "1759740000.000200", "1759740000.000100"), 0)
 	s.deliver(s.message("U0000BOB", "it was an hour ago", "1759740000.000300", "1759740000.000100"), 0)
@@ -196,7 +197,9 @@ func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoever
 	s.Equal("slack", custom["source"])
 	s.Equal("in_progress", custom["status"])
 	s.Equal("agent:"+thread, custom["thread_channel"])
-	s.NotEmpty(custom["started_at"])
+	started, err := time.Parse(time.RFC3339, fmt.Sprint(custom["started_at"]))
+	s.Require().NoError(err)
+	s.WithinDuration(delivered, started, 5*time.Second, "the episode starts when its first message is delivered")
 	s.Equal(1, s.threadChannels(), "one thread channel for the thread")
 }
 
