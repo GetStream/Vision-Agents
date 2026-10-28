@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -26,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -43,6 +46,8 @@ type LinqChannelSuite struct {
 	RouterSuite
 
 	linq *fakeLinq
+	// images serves a JPEG at /photo.jpeg and nothing anywhere else, for photos sent in a chat.
+	images *httptest.Server
 	// logged is what the router logs, for the tests about what a refused keyword answer logs.
 	logged *lockedLog
 	// app is the Linq account's provider app id, secret its whsec_ signing secret, apiKey the
@@ -73,6 +78,15 @@ func (s *LinqChannelSuite) SetupSuite() {
 	s.channelProvider = func() string { return s.linq.server.Listener.Addr().String() }
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	s.imageHTTP = &http.Client{}
+	s.images = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/photo.jpeg" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(jpegStart)
+	}))
+	s.T().Cleanup(s.images.Close)
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -127,43 +141,159 @@ func (s *LinqChannelSuite) TestAnIMessageIsAnsweredInTheSameChatOnTheCustomersLi
 	s.True(sent.authorization == "Bearer "+s.apiKey, "sent with the line's API key")
 }
 
-// AI-2088: an iPhone sends a photo with its caption as [media, text] (staging, 2026-10-27),
-// and revision 1 read only the first part, so the message reached the agent without text and
-// went unanswered. Revision 2 reads every text part, so the caption is answered, in a chat
-// with one person and in a group.
-func (s *LinqChannelSuite) TestAPhotosCaptionIsAnsweredInAChatAndInAGroup() {
+// AI-2088: an iPhone sends a photo with its caption as [media, text] (staging, 2026-10-27).
+// Revision 2 read the caption; revision 3 writes the photo on the person's message too, so
+// the model is handed the photo's bytes with the caption (AI-2094), in a chat with one person
+// and in a group.
+func (s *LinqChannelSuite) TestAPhotoWithItsCaptionReachesTheModelInAChatAndInAGroup() {
+	s.answersWith("vision/vision-model")
 	for i, isGroup := range []bool{false, true} {
-		chat := s.utils.uuid()
-		body := s.chatSays(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{linqPhoto, {"type": "text", "value": "What is in this photo?"}}), isGroup)
+		chat, asked := s.utils.uuid(), len(s.vision.replies())
+		body := s.chatSays(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg"), linqCaption}), isGroup)
 		s.Require().Equal(http.StatusOK, s.deliver(body, time.Now()))
 		channel := s.threadChannel(chat)
-		s.Equal("What is in this photo?", s.written(channel, 1)[0]["text"], "is_group %v", isGroup)
+		stored := s.written(channel, 1)[0]
+		s.Equal("What is in this photo?", stored["text"], "is_group %v", isGroup)
+		s.Equal([]string{s.images.URL + "/photo.jpeg"}, photoURLs(stored), "is_group %v", isGroup)
 
 		s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 		sent := s.took(i + 1)[i]
 		s.Equal(chat, sent.chat)
-		s.Equal("Noted.", sent.text)
+		s.Equal("Two roses.", sent.text)
+		turn := s.turnWithImages(s.vision.replies()[asked:])
+		s.Contains(turn.Content+llm.TextOf(turn.Parts), "What is in this photo?")
+		s.Equal([]llm.ImagePart{{Data: jpegStart, MIME: "image/jpeg"}}, imagesIn(turn), "is_group %v", isGroup)
 	}
 }
 
-// The false positive: a photo without a caption has no text, so it is written as before and
-// reaches no agent (messagehooks addressed).
-func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsNotAnswered() {
-	chat := s.utils.uuid()
-	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{linqPhoto}), time.Now()))
+// A photo without a caption has no text; it is written with its photo, so the thread answers
+// it (AI-2094). On revision 2 it reached no agent.
+func (s *LinqChannelSuite) TestAPhotoWithoutACaptionIsAnswered() {
+	s.answersWith("vision/vision-model")
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg")}), time.Now()))
 	channel := s.threadChannel(chat)
-	s.Empty(s.written(channel, 1)[0]["text"])
+	stored := s.written(channel, 1)[0]
+	s.Empty(stored["text"])
+	s.Equal([]string{s.images.URL + "/photo.jpeg"}, photoURLs(stored))
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
-	s.Never(func() bool { return len(s.linq.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Equal("Two roses.", s.took(1)[0].text)
+	turn := s.turnWithImages(s.vision.replies()[asked:])
+	s.Empty(strings.TrimSpace(turn.Content+llm.TextOf(turn.Parts)), "nothing was written with it")
+	s.Len(imagesIn(turn), 1)
 }
 
-// linqPhoto is a media part as Linq's events page shows one (events, message.received).
-var linqPhoto = map[string]any{
-	"type": "media", "id": "f13dda7d-ecac-49eb-b3fe-16fe286abf19", "filename": "IMG_7564.jpeg", "mime_type": "image/jpeg",
-	"size_bytes": 245678, "url": "https://cdn.linqapp.com/attachments/a1b2c3d4/IMG_7564.jpeg?signature=synthetic",
+// A photo whose URL answers 404, such as one Linq deleted, is answered with a short reply
+// that it could not be opened (api.threadPhotos), not left in silence.
+func (s *LinqChannelSuite) TestAPhotoLinqNoLongerServesIsAnsweredThatItCouldNotBeOpened() {
+	s.answersWith("vision/vision-model")
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/gone.jpeg")}), time.Now()))
+	channel := s.threadChannel(chat)
+	s.written(channel, 1)
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Two roses.", s.took(1)[0].text)
+	said := s.lastTurn(s.vision.replies()[asked:])
+	s.Equal(unfetchedPhoto, said.Content)
+	s.Empty(imagesIn(said))
+}
+
+// A file that is no image, such as a video, is not passed on: its caption is answered from
+// the text alone, and a video without one reaches no agent, as on revision 2.
+func (s *LinqChannelSuite) TestAVideoIsNotPassedOn() {
+	s.answersWith("vision/vision-model")
+	video := map[string]any{"type": "media", "filename": "IMG_7565.MOV", "mime_type": "video/quicktime", "url": s.images.URL + "/photo.jpeg"}
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{video, linqCaption}), time.Now()))
+	channel := s.threadChannel(chat)
+	s.Empty(photoURLs(s.written(channel, 1)[0]))
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Two roses.", s.took(1)[0].text)
+	said := s.lastTurn(s.vision.replies()[asked:])
+	s.Equal("What is in this photo?", said.Content)
+	s.Empty(imagesIn(said))
+
+	alone := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(alone, s.line, "+12025550199", []map[string]any{video}), time.Now()))
+	aloneChannel := s.threadChannel(alone)
+	s.Empty(photoURLs(s.written(aloneChannel, 1)[0]))
+	s.Require().Equal(http.StatusOK, s.streamDelivers(aloneChannel, 0))
+	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+}
+
+// A connection reads a message with its own revision (channelbridge take), so one still on
+// revision 2, until its next write, passes no photo on: the caption is answered from its text,
+// as on revision 2.
+func (s *LinqChannelSuite) TestAConnectionStillOnRevision2PassesNoPhotoOn() {
+	ctx := context.Background()
+	raw, err := fs.ReadFile(providers.FS, "linq.yaml")
+	s.Require().NoError(err)
+	revision2 := strings.NewReplacer("\nrevision: 3\n", "\nrevision: 2\n",
+		"    media:\n      url: $.data.parts[*].url\n      mime_type: $.data.parts[*].mime_type\n", "").Replace(string(raw))
+	s.Require().NotContains(revision2, "mime_type: $")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(ctx, fstest.MapFS{"linq.yaml": {Data: []byte(revision2)}}))
+	// Its credentials are sealed for its revision, so that stays.
+	s.Require().NoError(s.store.WithLockedConnectorConnection(ctx, s.customerID(), s.connection.ID,
+		func(connection *store.ConnectorConnection, _ func() error) (bool, error) {
+			connection.DefinitionRevision = 2
+			return true, nil
+		}))
+	s.answersWith("vision/vision-model")
+	chat, asked := s.utils.uuid(), len(s.vision.replies())
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.receivedParts(chat, s.line, "+12025550199", []map[string]any{s.photo("/photo.jpeg"), linqCaption}), time.Now()))
+	channel := s.threadChannel(chat)
+	stored := s.written(channel, 1)[0]
+	s.Equal("What is in this photo?", stored["text"])
+	s.Empty(photoURLs(stored))
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+
+	s.Equal("Two roses.", s.took(1)[0].text)
+	said := s.lastTurn(s.vision.replies()[asked:])
+	s.Equal("What is in this photo?", said.Content)
+	s.Empty(imagesIn(said))
+}
+
+// answersWith has the line's agent answer with model.
+func (s *LinqChannelSuite) answersWith(model string) {
+	s.config.LLM = model
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+}
+
+// photo is a media part as Linq's events page shows one (events, message.received), its url
+// served by the suite at path.
+func (s *LinqChannelSuite) photo(path string) map[string]any {
+	return map[string]any{
+		"type": "media", "id": s.utils.uuid(), "filename": "IMG_7564.jpeg", "mime_type": "image/jpeg",
+		"size_bytes": 245678, "url": s.images.URL + path,
+	}
+}
+
+// linqCaption is the text part an iPhone sends after a photo (staging, 2026-10-27).
+var linqCaption = map[string]any{"type": "text", "value": "What is in this photo?"}
+
+// jpegStart is the start of a JPEG, which is all the router reads to tell one.
+var jpegStart = []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00")
+
+// photoURLs are the image_url of each image attachment of a message stored in Stream Chat.
+func photoURLs(message map[string]any) []string {
+	attachments, _ := message["attachments"].([]any)
+	var urls []string
+	for _, raw := range attachments {
+		attachment, _ := raw.(map[string]any)
+		if attachment["type"] == "image" {
+			urls = append(urls, fmt.Sprint(attachment["image_url"]))
+		}
+	}
+	return urls
 }
 
 // A chat is one thread, so its messages are one thread channel and one episode card, in the
@@ -422,6 +552,11 @@ func (s *LinqChannelSuite) written(channel string, count int) []map[string]any {
 func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 	data, _ := s.chat.Channel(channel)
 	message := s.chat.Delivered(channel)[index]
+	// message.new carries the message's attachments (Stream Chat docs, «Webhook Events»),
+	// which the fake's Delivered leaves out.
+	if attachments, ok := s.chat.Stored(channel)[index]["attachments"]; ok {
+		message["attachments"] = attachments
+	}
 	// The hook carries the author as Chat keeps them, which the bridge named after their
 	// number (channelbridge writeInto), not after their id as the fake's messages do.
 	if author, ok := message["user"].(map[string]any); ok {

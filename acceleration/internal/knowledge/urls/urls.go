@@ -73,6 +73,9 @@ type Options struct {
 	Knowledge *metered.Knowledge
 	// ChunkSize is how much of a page goes in one passage. Zero is the ingest default.
 	ChunkSize int
+	// Limits bound how much larger a page's passages can be than the page, as the router's
+	// settings name them.
+	Limits ingest.Limits
 	// CheckInterval is how often the worker looks for reads that are due, and how long a
 	// failed one waits before it is tried again. Zero is asynq's defaults: a second between
 	// checks and exponential backoff between retries.
@@ -97,6 +100,7 @@ type Service struct {
 	reader    search.Reader
 	knowledge *metered.Knowledge
 	chunkSize int
+	limits    ingest.Limits
 	sweep     time.Duration
 	logger    *slog.Logger
 	// stop ends the sweep, and swept is closed once it has. Both are nil until Start.
@@ -152,6 +156,7 @@ func New(options Options) (*Service, error) {
 		reader:    options.Reader,
 		knowledge: options.Knowledge,
 		chunkSize: options.ChunkSize,
+		limits:    options.Limits,
 		sweep:     every,
 		logger:    options.Logger,
 	}, nil
@@ -412,9 +417,15 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	}
 
 	written := page.Passages
-	read, err := s.reader.Read(ctx, page.URL)
+	owned := s.knowledge.For(payload.owner())
+	// A read is paid for, so a customer whose write would be refused is not read for.
+	var read search.Page
+	err = owned.Admit(ctx)
 	if err == nil {
-		err = s.write(ctx, s.knowledge.For(payload.owner()), &page, read)
+		read, err = s.reader.Read(ctx, page.URL)
+	}
+	if err == nil {
+		err = s.write(ctx, owned, &page, read)
 	}
 	last := false
 	if err != nil {
@@ -450,7 +461,7 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 // past the end of this one. Writing first means a lookup landing mid-update reads the new
 // passages or the old ones rather than a gap.
 func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *store.KnowledgeURL, read search.Page) error {
-	passages := ingest.Split(page.URL, read.Text, s.chunkSize)
+	passages := ingest.Split(page.URL, read.Text, s.chunkSize, s.limits)
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}

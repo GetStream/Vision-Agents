@@ -15,6 +15,10 @@ final readonly class PriceItem
         public string $modality,
         public string $model,
         public string $provider,
+        // Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only b...
+        public string $region,
+        // Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry...
+        public ?bool $byok = null,
         // The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default en...
         /** @var array<string, string>|null */
         public ?array $when = null,
@@ -30,6 +34,8 @@ final readonly class PriceItem
             modality: Json::string($data, 'modality'),
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
+            region: Json::string($data, 'region'),
+            byok: array_key_exists('byok', $data) && $data['byok'] !== null ? Json::bool($data, 'byok') : null,
             when: array_key_exists('when', $data) && $data['when'] !== null ? Json::stringMap($data, 'when') : null,
         );
     }
@@ -45,6 +51,10 @@ final readonly class PriceItem
         $out['modality'] = $this->modality;
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
+        $out['region'] = $this->region;
+        if ($this->byok !== null) {
+            $out['byok'] = $this->byok;
+        }
         if ($this->when !== null) {
             $out['when'] = $this->when;
         }

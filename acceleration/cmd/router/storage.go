@@ -72,7 +72,7 @@ func runUsageStorage(ctx context.Context, args []string, settings config.Config,
 		return err
 	}
 	defer stop()
-	return recordStorage(ctx, metered.NewKnowledge(backend, recording), pgStore, hour, logger, out)
+	return recordStorage(ctx, metered.NewKnowledge(backend, recording, nil), pgStore, hour, logger, out)
 }
 
 // storageHourOf is the hour a run records: the one --hour names, or else the last one to have

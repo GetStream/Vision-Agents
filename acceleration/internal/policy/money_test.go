@@ -146,16 +146,24 @@ func (s *PolicySuite) admit(enforcer *Enforcer, appID string) routing.Admission 
 	return admitted
 }
 
-// read waits for the organization's account to have landed a read since now.
+// read waits for the organization's account to have landed a read asked since now. A read
+// stamps when it landed, so the first to land since now may have been asked before; the pass
+// after it was asked after.
 func (s *PolicySuite) read(enforcer *Enforcer, organization string) {
 	since := time.Now()
-	s.eventually(func() bool {
-		_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
-		enforcer.money.mu.Lock()
-		defer enforcer.money.mu.Unlock()
-		acct := enforcer.money.accounts[organization]
-		return acct != nil && acct.read.After(since)
-	}, 5*time.Second, 5*time.Millisecond, "the account is read")
+	for range 2 {
+		s.eventually(func() bool {
+			_, _ = enforcer.Admit(s.ctx, ownerOf(s.app))
+			enforcer.money.mu.Lock()
+			defer enforcer.money.mu.Unlock()
+			acct := enforcer.money.accounts[organization]
+			if acct == nil || !acct.read.After(since) {
+				return false
+			}
+			since = acct.read
+			return true
+		}, 5*time.Second, 5*time.Millisecond, "the account is read")
+	}
 }
 
 // pending is what the account still holds in either ledger.
@@ -529,7 +537,7 @@ func (s *PolicySuite) TestJoinWarmsTheDecisionAndTheAccount() {
 	elapsed := time.Since(started)
 
 	s.Require().NoError(err)
-	s.Less(elapsed, 10*time.Millisecond, "answered from memory with the policies locked")
+	s.Less(elapsed, joinTimeout, "answered from memory with the policies locked, not after a read of them gives up")
 	s.Require().NotNil(admitted.DataPolicy.AllowTraining)
 	s.False(*admitted.DataPolicy.AllowTraining, "the app's floor")
 	s.ErrorIs(admitted.Spend, ErrNoCredits, "the account's balance, which is nothing")
@@ -726,7 +734,9 @@ func (s *PolicySuite) counted() (*Enforcer, *usagetest.Service, rueidis.Client) 
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh = service.Client, counters, time.Hour
-		settings.MaxStale = 2 * time.Hour
+		// The first admission waits for its read however slow the machine, so it is answered on
+		// what the counters say, never on the tier's fail mode.
+		settings.MaxStale, settings.FirstRead = 2*time.Hour, readTimeout
 	})
 	return enforcer, service, counters
 }
@@ -808,6 +818,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	s.Require().NoError(err)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh, settings.MaxStale = client, counters, time.Hour, 2*time.Hour
+		settings.FirstRead = readTimeout
 	})
 	s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
 	service.Credit(s.T(), s.org, 10_000_000)
@@ -1090,7 +1101,7 @@ func (s *PolicySuite) TestASubjectSeenAgainAfterIdleIsReadBeforeItsAdmission() {
 	s.spend(s.app, 400_000)
 	configs, err := appconfig.New(appconfig.Options{Store: s.store})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.SumEvery = time.Hour })
+	enforcer := s.newEnforcer(configs, nil, idle, func(settings *Settings) { settings.SumEvery = time.Hour })
 	s.Require().NoError(s.admit(enforcer, s.app).Spend)
 	s.eventually(func() bool {
 		enforcer.money.mu.Lock()
@@ -1183,9 +1194,20 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 	s.T().Cleanup(func() { _ = db.Close() })
 	reads := &limitsReads{}
 	db.DB().AddQueryHook(reads)
-	configs, err := appconfig.New(appconfig.Options{Store: db})
+	// Policies cached in Redis, as a router has them, so the admissions reach their first read
+	// of money together rather than as each read of its policies lands.
+	configs, err := appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
 	s.Require().NoError(err)
-	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) { settings.Fresh, settings.SumEvery = time.Hour, time.Hour })
+	s.T().Cleanup(configs.Close)
+	// The loops read nothing on their own, and an admission waits for its read as long as the
+	// read may take, however slow a loaded machine makes the batch, with the balance not read
+	// yet refusing nothing. Spend is read from the usage service, whose windows a first read asks
+	// for every subject it reads, even those a pass of the limits loop read first.
+	billed := s.billedOn(configs, func(settings *Settings) {
+		settings.Fresh, settings.SpendEvery, settings.SumEvery, settings.FirstRead = time.Hour, time.Hour, time.Hour, readTimeout
+		settings.MaxStale = time.Hour
+	})
+	enforcer := billed.Enforcer
 	const accounts = 60
 	apps := make([]string, accounts)
 	for i := range apps {
@@ -1193,15 +1215,21 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 		organization := fmt.Sprintf("%s-%02d", s.org, i)
 		s.Require().NoError(s.store.JoinOrganization(s.ctx, apps[i], organization))
 		s.limit(store.Limit{Subject: usage.SubjectApp, Level: store.LevelApp, OrganizationID: organization, AppID: apps[i], LimitMicros: 1})
-		s.spendAs(store.Request{CustomerID: apps[i], CostMicros: 1})
+		s.usage().Credit(s.T(), organization, 1_000_000)
+		s.usage().Spend(s.T(), organization, 1, func(event *usage.Event) { event.AppID = apps[i] })
+		_, _, _, err := enforcer.policies(s.ctx, apps[i])
+		s.Require().NoError(err)
+		_, err = configs.HasUserPolicies(s.ctx, apps[i])
+		s.Require().NoError(err)
 	}
-	before := reads.reads.Load()
+	before, windowsBefore := reads.reads.Load(), billed.front.windows.Load()
 
 	var refused atomic.Int64
 	var admitting sync.WaitGroup
 	for _, app := range apps {
 		admitting.Go(func() {
-			if admitted, err := enforcer.Admit(s.ctx, ownerOf(app)); err == nil && errors.Is(admitted.Spend, ErrBudgetSpent) {
+			admitted, err := enforcer.Admit(s.ctx, ownerOf(app))
+			if err == nil && errors.Is(admitted.Spend, ErrBudgetSpent) {
 				refused.Add(1)
 			}
 		})
@@ -1210,6 +1238,7 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 
 	s.EqualValues(accounts, refused.Load(), "every first admission read its limit and spend first")
 	s.LessOrEqual(reads.reads.Load()-before, int64(accounts/10), "in batches, not a read of the limits per account")
+	s.LessOrEqual(billed.front.windows.Load()-windowsBefore, int64(accounts/10), "in batches, not a read of the spend per account")
 }
 
 func (s *PolicySuite) TestAChangedLimitIsHeldToTheLastSpendReadAtOnce() {
@@ -1348,7 +1377,9 @@ func (s *PolicySuite) TestAnAccountNeverReadFollowsItsTiersFailMode() {
 	s.never(func() bool { return s.admit(learned.Enforcer, other).Spend != nil }, 500*time.Millisecond, 10*time.Millisecond,
 		"a tier whose row was read open admits an organization not read yet")
 
-	unknown := s.billed()
+	// Unread for a second before the default fails closed, so its first admission comes before
+	// that however slow the machine.
+	unknown := s.billed(func(settings *Settings) { settings.MaxStale = time.Second })
 	unknown.front.down.Store(true)
 	unknown.Join(s.app, s.org, openTier)
 	s.NoError(s.admit(unknown.Enforcer, s.app).Spend, "admitted until the first read is due")
@@ -1402,12 +1433,15 @@ func (s *PolicySuite) TestAnAppInNoOrganizationWithNoLimitIsNeverRefused() {
 }
 
 func (s *PolicySuite) TestAnIdleDecisionIsDropped() {
-	s.admit(s.enforcer, s.app)
-	_, kept := s.enforcer.decided(s.app)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, nil, idle)
+	s.admit(enforcer, s.app)
+	_, kept := enforcer.decided(s.app)
 	s.Require().True(kept)
 
 	s.eventually(func() bool {
-		_, kept := s.enforcer.decided(s.app)
+		_, kept := enforcer.decided(s.app)
 		return !kept
 	}, 5*time.Second, 10*time.Millisecond, "dropped once unused for Idle")
 }

@@ -231,6 +231,10 @@ type stubLLM struct {
 	// time to notice cancellation does.
 	holdCompletion <-chan struct{}
 
+	// breaks, if set, is what a response fails with once the agent cancels it, as a
+	// connection that broke as the turn was cut off does.
+	breaks error
+
 	// refuses, if set, is returned instead of a response: the model a session opens onto
 	// happily but that answers nothing, which is what a rejected key looks like.
 	refuses error
@@ -275,7 +279,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
 	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
-	hold, completion, refuses := s.holdCreate, s.holdCompletion, s.refuses
+	hold, completion, refuses, breaks := s.holdCreate, s.holdCompletion, s.refuses, s.breaks
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -295,6 +299,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if breaks != nil {
+		script.FailOnCancel(ctx, breaks)
+	}
 	if completion != nil {
 		script.Stream().Observe(func(event llm.Event) {
 			if _, done := event.(llm.ResponseCompleted); done {
@@ -494,6 +501,10 @@ type stubTTS struct {
 	silent bool
 	// refuses, if set, is what every synthesis fails with.
 	refuses error
+	// synthesizing, if set, is closed when a synthesis is taken, which then waits for
+	// synthesisRelease.
+	synthesizing     chan struct{}
+	synthesisRelease <-chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -532,7 +543,13 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		delete(s.active, request.ID)
 	}
+	synthesizing, release := s.synthesizing, s.synthesisRelease
+	s.synthesizing = nil
 	s.mu.Unlock()
+	if synthesizing != nil {
+		close(synthesizing)
+		<-release
+	}
 
 	if refuses != nil {
 		return refuses
@@ -836,6 +853,8 @@ type AgentSuite struct {
 	logs *logLines
 	// callID is the call the agent serves, empty unless a test names one.
 	callID string
+	// timezone is the user's zone a text agent joins with, empty unless a test names one.
+	timezone string
 
 	agent  *Agent
 	events *collector
@@ -851,6 +870,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.callID = ""
+	s.timezone = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -938,7 +958,7 @@ func (s *AgentSuite) joinText() {
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering)
+		reading = metered.NewKnowledge(s.knows, s.metering, nil)
 	}
 	var running ToolRunner
 	if s.runner != nil {
@@ -958,6 +978,7 @@ func (s *AgentSuite) joinText() {
 		Sandbox:            box,
 		Publish:            publish,
 		Instructions:       "be brief",
+		Timezone:           s.timezone,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		SubagentTarget:     subagentTarget,
@@ -1066,7 +1087,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering)
+		reading = metered.NewKnowledge(s.knows, s.metering, nil)
 	}
 
 	var finding *searchrouter.Router
@@ -1562,7 +1583,7 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	request := s.model.requests()[0]
-	s.Equal("be brief", request.Instructions)
+	s.Equal("be brief", withoutClock(request.Instructions))
 	s.Require().Len(request.Input, 1)
 	s.Equal("hello", request.Input[0].Content)
 	s.Equal(llm.User, request.Input[0].Role)
@@ -2076,7 +2097,7 @@ func (s *AgentSuite) TestWithoutAMemoryStoreTheAgentOnlyKnowsItsInstructions() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWhatIsRememberedIsToldToTheModel() {
@@ -2115,7 +2136,7 @@ func (s *AgentSuite) TestAVoiceThatCannotActDirectionsAsksForNone() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions,
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions),
 		"a voice that would read a direction out must not be offered one")
 }
 
@@ -2262,7 +2283,7 @@ func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"a memory store that is down is not a broken conversation")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
@@ -3069,7 +3090,7 @@ func (s *AgentSuite) TestWithoutASubagentTheModelAnswersEverythingItself() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions, "nothing is offered that nobody can do")
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions), "nothing is offered that nobody can do")
 }
 
 func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
@@ -3401,7 +3422,7 @@ func (s *AgentSuite) TestATurnItHeardClearlyIsJustAnswered() {
 	s.mumbles(participant, "book a table for four", 0.95)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
@@ -3415,7 +3436,7 @@ func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
 	s.mumbles(participant, "book a table for four", 0)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {

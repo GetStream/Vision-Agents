@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -261,9 +262,23 @@ func (s *OpenAICompatSuite) TestAnErrorSentMidStreamWithAServerStatusIsTransient
 }
 
 func (s *OpenAICompatSuite) TestAnErrorSentMidStreamAboutTheRequestIsNotTransient() {
-	s.False(llm.Transient(s.failedWith(`{"error":{"code":400,"message":"not this"}}`)))
-	s.False(llm.Transient(s.failedWith(`{"error":{"type":"invalid_request_error","message":"not this"}}`)))
-	s.False(llm.Transient(s.failedWith(`{"error":{"message":"something"}}`)), "nothing named")
+	for _, frame := range []string{
+		`{"error":{"code":400,"message":"not this"}}`,
+		`{"error":{"code":1301,"message":"a code of the provider's own"}}`,
+		`{"error":{"type":"invalid_request_error","message":"not this"}}`,
+	} {
+		failure, ok := errors.AsType[*llm.ProviderFailure](s.failedWith(frame))
+		s.Require().True(ok, frame)
+		s.False(failure.Transient, frame)
+	}
+}
+
+func (s *OpenAICompatSuite) TestAnErrorSentMidStreamWithNothingNamedIsLeftUnclassified() {
+	err := s.failedWith(`{"error":{"message":"something"}}`)
+	s.ErrorContains(err, "something")
+	_, ok := errors.AsType[*llm.ProviderFailure](err)
+	s.False(ok)
+	s.False(llm.Transient(err))
 }
 
 // hello is the simplest request a test can make.
@@ -372,7 +387,7 @@ func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
 	s.EqualValues(9_550, response.Usage.VendorCostMicros)
 	list, err := pricing.NewList("vendor", prices.Vendor().Entries, nil)
 	s.Require().NoError(err)
-	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
+	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7", Region: pricing.RegionUS}, response.Used())
 	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
 }
 

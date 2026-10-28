@@ -1,3 +1,5 @@
+import 'models.dart';
+
 /// One thing a client can do to a running conversation over its socket.
 ///
 /// These are the commands `readCommands` in the router accepts, less `respond`: asking goes
@@ -28,12 +30,14 @@ final class InterruptCommand extends Command {
   Map<String, Object?> toJson() => {'type': 'interrupt'};
 }
 
-/// Answer a tool call. One of [output] or [error] says how it went.
+/// Answer a tool call. One of [output] or [error] says how it went, and [images] are pictures
+/// beside the output.
 final class ToolResultCommand extends Command {
   const ToolResultCommand(
     this.toolCallId, {
     this.output,
     this.error,
+    this.images = const [],
     this.requestId = '',
     this.turnId = '',
   });
@@ -41,6 +45,7 @@ final class ToolResultCommand extends Command {
   final String toolCallId;
   final String? output;
   final String? error;
+  final List<AgentImage> images;
 
   /// Repeated from the call when it carried one, so the result cannot be adopted by another
   /// request or turn.
@@ -52,8 +57,9 @@ final class ToolResultCommand extends Command {
     'type': 'tool_result',
     'tool_call_id': toolCallId,
     // The router reads both off one struct and treats the empty string as absent, so sending
-    // the empty string and sending nothing are the same thing.
-    'output': output ?? '',
+    // the empty string and sending nothing are the same thing. Pictures make the output an
+    // array of parts, which is how the router takes them.
+    'output': images.isEmpty ? output ?? '' : _parts(output ?? '', images),
     'error': error ?? '',
     // Only with a request id: a turn id on its own routes the result to the voice path,
     // which refuses it for a conversation kept in chat.
@@ -62,7 +68,8 @@ final class ToolResultCommand extends Command {
 }
 
 /// A person's answer to a tool call that waited for them. A declined call's step shows
-/// [summary]. The call is still answered with [ToolResultCommand] either way.
+/// [summary]. The call is still answered with [ToolResultCommand] either way, except a
+/// connector's sign-in declined with [allowed] false, which the router answers itself.
 final class ToolApprovalCommand extends Command {
   const ToolApprovalCommand(
     this.toolCallId, {
@@ -96,3 +103,13 @@ final class CloseCommand extends Command {
   @override
   Map<String, Object?> toJson() => {'type': 'close'};
 }
+
+/// A tool's output as the router reads one that is not just words.
+List<Map<String, Object?>> _parts(String text, List<AgentImage> images) => [
+  if (text.isNotEmpty) {'type': 'text', 'text': text},
+  for (final image in images)
+    {
+      'type': 'image_url',
+      'image_url': {'url': image.url, 'detail': ?image.detail},
+    },
+];

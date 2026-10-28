@@ -27,6 +27,9 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
+	if request.Body.Model != nil {
+		return nil, errTopLevelModel
+	}
 	if strings.TrimSpace(request.Body.Query) == "" {
 		return nil, invalidRequest("there is nothing to look for")
 	}
@@ -125,6 +128,9 @@ type SearchRequest struct {
 	Options  *SearchOptions     `json:"options,omitempty"`
 	Query    string             `json:"query" doc:"The question, in the caller's own words." example:"perioperative antibiotic guidance"`
 	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Model is never accepted: it is read only to refuse it (errTopLevelModel).
+	Model any `json:"model,omitempty" hidden:"true"`
 }
 
 // SearchResult is the SearchResult schema.

@@ -1,6 +1,11 @@
+import 'models.dart';
+
 /// Runs a tool. What it returns is given to the model as the result; throwing tells the model
 /// the tool failed, and why.
 typedef ToolHandler = Future<String> Function(Map<String, Object?> arguments);
+
+/// Runs a tool that shows pictures as well as words, as [ToolHandler] does.
+typedef ToolOutputHandler = Future<ToolOutput> Function(Map<String, Object?> arguments);
 
 /// Who runs a tool, as a persistent conversation shows it.
 enum ToolExecutor {
@@ -18,7 +23,27 @@ enum ToolExecutor {
 /// the signed-in user's data, or something only the device knows, without any of it leaving
 /// the device. The router asks over the session socket and waits for the answer.
 final class AgentTool {
-  const AgentTool({
+  /// A tool that answers in words. For one that shows pictures too, see
+  /// [AgentTool.withPictures].
+  AgentTool({
+    required this.name,
+    required this.description,
+    required ToolHandler run,
+    this.parameters,
+    this.displayTitle,
+    this.executor,
+    this.approval,
+  }) : run = ((arguments) async => ToolOutput(text: await run(arguments)));
+
+  /// A tool that answers with pictures as well as words, such as a frame from the camera.
+  ///
+  ///     AgentTool.withPictures(
+  ///       name: 'photograph_room',
+  ///       description: 'Take a photo of the room.',
+  ///       run: (_) async =>
+  ///           ToolOutput(text: 'the room', images: [AgentImage('data:image/jpeg;base64,...')]),
+  ///     )
+  const AgentTool.withPictures({
     required this.name,
     required this.description,
     required this.run,
@@ -36,7 +61,10 @@ final class AgentTool {
 
   /// A JSON Schema object describing the arguments, or null for a tool that takes none.
   final Map<String, Object?>? parameters;
-  final ToolHandler run;
+
+  /// Runs the tool. What it returns is given to the model as the result; throwing tells the
+  /// model the tool failed, and why.
+  final ToolOutputHandler run;
 
   /// What a call is doing, in words for the people in the conversation, such as "Checking
   /// your location". Up to 80 characters, shown on the reply's tool call attachment.
@@ -65,6 +93,24 @@ final class AgentTool {
     },
     'required': required,
   };
+}
+
+/// What a tool gives the model: words, and pictures beside them, such as a photo the person
+/// picked or a frame from the camera.
+///
+/// The router hands a result's pictures to the agent's `vision` skill on a call, which looks at
+/// them and tells the conversation what it found. With no such worker, as in a chat, a model
+/// that sees images is shown them with its next reply alone; one that reads only text is told
+/// the tool failed. Each picture is a data URI or an https URL, and one socket message holds at
+/// most 5 MB, so shrink a photo before returning it.
+final class ToolOutput {
+  const ToolOutput({this.text = '', this.images = const []});
+
+  /// What the tool says.
+  final String text;
+
+  /// What the tool shows.
+  final List<AgentImage> images;
 }
 
 /// A tool's question to the person whose message a call answers.

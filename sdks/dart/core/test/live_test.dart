@@ -204,6 +204,52 @@ void main() {
         );
       });
 
+      test(
+        "a sign-in goes back to the app's own scheme, and a scheme of no app's is refused",
+        () async {
+          final sessions = agents.agent(_agent).sessions;
+
+          final session = await sessions.create(
+            const SessionOptions(
+              returnUrl: 'io.getstream.visionagents.flutterassistant:/connected',
+            ),
+          );
+          await sessions.delete(session.id);
+
+          await expectLater(
+            sessions.create(const SessionOptions(returnUrl: 'flutterassistant:/connected')),
+            throwsA(
+              isA<RouterException>()
+                  .having((e) => e.status, 'status', 400)
+                  .having((e) => e.type, 'type', RouterErrorType.invalidRequest)
+                  .having((e) => e.message, 'message', startsWith('return_url: ')),
+            ),
+          );
+        },
+      );
+
+      test('declining a sign-in no call waits for is ignored, and the socket carries on', () async {
+        final session = await chat();
+        final ignored = session
+            .events()
+            .where((event) => event.type == 'tool_approval_ignored')
+            .take(2)
+            .toList();
+
+        session
+          ..declineLogin('no-such-call')
+          ..declineLogin('no-such-call');
+
+        final answers = await ignored.timeout(const Duration(seconds: 10));
+        expect(
+          [for (final answer in answers) answer['tool_call_id']],
+          ['no-such-call', 'no-such-call'],
+        );
+        expect(session.isConnected, isTrue);
+        expect(session.failure, isNull);
+        await session.delete();
+      });
+
       test('a guest holds a conversation of its own', () async {
         final store = MemoryGuestStore();
         final guest = await agents.guestUser(name: 'Dart Guest', store: store);

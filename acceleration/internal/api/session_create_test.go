@@ -512,6 +512,64 @@ func (s *SessionCreateSuite) TestAForkOfARunningSessionKeepsTheInstructionsItWas
 	s.Equal(brief, value(forked.Instructions))
 }
 
+// An agent with no scheduling and no zone for its user still knows what day it is, so
+// "next Wednesday" is a date it can work out rather than one it asks the user for.
+func (s *SessionCreateSuite) TestASessionWithNoZoneIsToldTodaysDateInUTC() {
+	brief := "Book appointments " + s.utils.uuid() + "."
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model"), Instructions: &brief})
+
+	told := s.answerTo(opened.Id, "Can I come in next Wednesday?")
+
+	s.Contains(told, brief)
+	s.Contains(told, "Today is "+today(time.UTC)+" in UTC, between ")
+	s.Contains(told, "The user's timezone is not known")
+}
+
+func (s *SessionCreateSuite) TestASessionIsToldTheUsersDayInTheZoneItWasOpenedIn() {
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		Llm: pointerTo("echo/echo-model"), Timezone: pointerTo("Asia/Tokyo"),
+	})
+
+	told := s.answerTo(opened.Id, "Can I come in tomorrow?")
+
+	s.Contains(told, "Today is "+today(s.zone("Asia/Tokyo"))+" for the user (Asia/Tokyo), between ")
+	s.Contains(told, " UTC.")
+	s.NotContains(told, "timezone is not known")
+}
+
+// The zone a user's session named is theirs for the sessions that follow, scheduling or not.
+func (s *SessionCreateSuite) TestALaterSessionOfTheUserIsToldTheDayInTheZoneTheyLastNamed() {
+	backend := s.serverClient.actingFor(s.data.createUser())
+	backend.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model"), Timezone: pointerTo("Asia/Tokyo")})
+
+	later := backend.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model")})
+
+	s.Contains(s.answerAs(backend, later.Id, "Hello?"), "for the user (Asia/Tokyo)")
+}
+
+// The control: an incognito session speaks for nobody, so it is not told the zone either.
+func (s *SessionCreateSuite) TestAnIncognitoSessionOfTheUserIsNotToldTheirZone() {
+	backend := s.serverClient.actingFor(s.data.createUser())
+	backend.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model"), Timezone: pointerTo("Asia/Tokyo")})
+
+	incognito := backend.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model"), Incognito: pointerTo(true)})
+
+	told := s.answerAs(backend, incognito.Id, "Hello?")
+	s.NotContains(told, "Asia/Tokyo")
+	s.Contains(told, "The user's timezone is not known")
+}
+
+// today is the date as the clock line writes it, in zone.
+func today(zone *time.Location) string {
+	return time.Now().In(zone).Format("Monday, 2 January 2006")
+}
+
+func (s *SessionCreateSuite) zone(name string) *time.Location {
+	zone, err := time.LoadLocation(name)
+	s.Require().NoError(err)
+	return zone
+}
+
 // A device is never given what its agent was told, here its config's instructions.
 func (s *SessionCreateSuite) TestADeviceReadsNoInstructionsFromTheSessionItOpens() {
 	configured := "Answer about " + s.utils.uuid()
@@ -584,6 +642,27 @@ func (s *SessionCreateSuite) TestADeviceIsToldWhichServerSideFieldItMayNotSend()
 	}
 }
 
+func (s *SessionCreateSuite) TestADeviceMayNotOpenAnotherUsersMemories() {
+	request := textSession(nil)
+	request.Memory = &SessionMemory{UserId: pointerTo(s.data.createUser().userID)}
+
+	for _, device := range []*testClient{s.client, s.guestClient} {
+		status, failure := device.failure(http.MethodPost, "/v1/agents/sessions", request)
+		s.Equal(http.StatusForbidden, status, "%s", device.kind)
+		s.Equal(errDeviceMemoryUser.Message, failure, "%s", device.kind)
+	}
+}
+
+func (s *SessionCreateSuite) TestAnAnonymousCallerMayNotOpenMemoriesEvenUnderItsOwnName() {
+	request := textSession(nil)
+	request.Memory = &SessionMemory{UserId: pointerTo(s.anonymousClient.userID)}
+
+	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/sessions", request)
+
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(errAnonymousMemory.Message, failure)
+}
+
 // historySession is a conversation in writing on the model that recites what it was handed.
 func historySession(incognito bool) CreateSessionRequest {
 	request := textSession(nil)
@@ -593,9 +672,15 @@ func historySession(incognito bool) CreateSessionRequest {
 
 // answerTo asks a running session a question and returns what it answered.
 func (s *SessionCreateSuite) answerTo(id, question string) string {
-	watching := s.serverClient.opens("/v1/agents/sessions/" + id + "/events")
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
-		"/v1/agents/sessions/"+id+"/responses", CreateResponseRequest{Text: question}, nil))
+	return s.answerAs(s.serverClient, id, question)
+}
+
+// answerAs is answerTo asked by as, for a session only its user's caller may reach. A
+// user's conversation is kept in Stream Chat, which takes each question by its request id.
+func (s *SessionCreateSuite) answerAs(as *testClient, id, question string) string {
+	watching := as.opens("/v1/agents/sessions/" + id + "/events")
+	s.Require().Equal(http.StatusAccepted, as.do(http.MethodPost, "/v1/agents/sessions/"+id+"/responses",
+		CreateResponseRequest{Text: question, RequestId: pointerTo(s.utils.uuid())}, nil))
 	answered, _ := s.await(watching, "responded")["text"].(string)
 	return answered
 }

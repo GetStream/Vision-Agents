@@ -2,9 +2,15 @@
 
 ## Features
 
+### An iMessage photo reaches the agent
+
+A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).
+
 ### A photo in a thread channel reaches the agent
 
 A message in a `thread-` channel with an image attachment (`type: image`, `image_url` or `asset_url`), with or without text, is answered, and the agent sees the photo; an agent with no vision skill and a model that takes text alone says it cannot see it rather than staying silent (AI-2093).
+
+A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
 ### A Node.js tool's parameters can be a Zod schema
 
@@ -17,6 +23,10 @@ Every call's arguments are checked against the schema the model was told before 
 ### Python describes a tool's arguments with Pydantic
 
 A function registered with `register_function` is described to the model by Pydantic from its signature: a parameter can be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit. A function that takes one Pydantic model is given the model's fields as its arguments, and is handed the parsed model. Each call's arguments are checked and converted before the function runs; arguments that do not fit raise `ToolArgumentsError`, a `TypeError`, naming each one and why, which the model is told. `parameters_schema=` is unchanged. `pydantic>=2.7` is now a dependency.
+
+### Sandbox code reads BigQuery
+
+A `bigquery` binding with `sandbox: true` lets code in the session's sandbox call BigQuery's REST API (`https://bigquery.googleapis.com`) with `Authorization: Bearer $BIGQUERY_TOKEN`. Behind the egress proxy, GETs pass, and a jobs.query POST (`client.query_and_wait`) passes only when BigQuery's own dry run of it says it is one `SELECT`; a script, DML, DDL, `EXPORT DATA` and jobs.insert (`client.query()`) get 403. A connection made at revision 3 or earlier gives the sandbox nothing until it connects again (AI-2114).
 
 ### Sandbox code reads Linear
 
@@ -72,6 +82,22 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### A Dart tool can answer with pictures
+
+`AgentTool.withPictures` in the Dart SDK takes a tool whose `run` returns a `ToolOutput` (`text` and `images`, each an `AgentImage`, both empty by default), as Swift's and Kotlin's `ToolOutput` do. A result with pictures is sent as `text` and `image_url` parts; one without stays a plain string (FLU-1126).
+
+### Dart sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Dart SDK is sent as the session's `return_url`, as Swift's
+`returnURL` and Kotlin's `returnUrl` are. Left null or empty, nothing is sent and the sign-in
+goes back to the dashboard, as before. `AgentSession.declineLogin(toolCallId)` answers such a
+sign-in with Not now: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
+### Dart sessions remember the user, and are listed by when they started
+
+`SessionOptions.memory` in the Dart SDK (a `SessionMemory` with `filter` and `appId`) has the agent remember the user the client was built for, as Swift's and Kotlin's `memory` do: it is sent with the client's own user id, and a client with no user id remembers nothing. `SessionOptions.timezone` is the zone the agent reads dates in. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort` (`SessionSort.updatedAt` or `relevance`). Each pubspec's `repository` points at the `accelerate` branch, and the README shows the `dependency_overrides` an app needs until the packages are on pub.dev (FLU-1126).
+
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
@@ -117,7 +143,95 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
 
+### The knowledge passage limits are configurable
+
+`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
+
+### GPT-6.1 Terra is `openai/gpt-6.1-terra`
+
+OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
+
+### Fish Audio S2.1 Pro is `fish/s2.1-pro`
+
+Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH_API_KEY` and voices, at $15 per 1M characters. `fish/s2-pro` is still served, and a `fish` target that names no model still gets `drama-3`.
+
+### Fish Audio's live transcriber is `fish/transcribe-stream-1`
+
+The router now streams to `fish/transcribe-stream-1`, reachable by name or by any shortcut whose terms it satisfies. It needs `FISH_API_KEY`, covers 29 languages, and declares `keyterms`, which can change on an open stream, and `endpointing`; `silence_ms` is its `silence_timeout_ms`, at least 3000 in its own turn detection. It ends a turn when the words read as finished, and a turn the server judges is not the caller's (noise, a television, another voice) is never reported. Sound tags such as `[laughter]` are taken out of the text. `eager_end_of_turn` turns on its early guess. `overwrites` takes `mode` (`auto`, `vad`) and `silence_timeout_ms`. $0.36 an audio hour.
+
+### The agent says why it stopped talking
+
+Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
+
 ## Bug Fixes
+
+### Every agent knows the date and the hour
+
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+
+### A Dart question with images is no longer refused in a saved conversation
+
+`Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. With a request id, a conversation kept in Stream Chat takes its images as data URIs only, so an `https` image that one without a user used to accept is now refused, as it is from Swift and Kotlin (FLU-1126).
+
+### Go clients keep working with a region
+
+An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
+
+### A thread task's reply is texted as soon as the agent finishes it
+
+A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the agent's reply every 100 ms and sends it shortly after the reply finishes. A task's follow-up that meets a reply still being written starts within 100 ms of that reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
+
+### A request that names its model outside the options is refused
+
+`POST /v1/tts/recordings`, `POST /v1/stt/recordings`, `POST /v1/search`, `POST /v1/detection` and `POST /v1/image/generations` now answer a top-level `model` with a 400 `invalid_request` that says to name the model in `options.target`. Before, the field was ignored: the request was served by the default model and billed for it (AI-2180).
+
+### A voice that speaks each sentence as its own request no longer goes silent when an id is reused
+
+On `/v1/tts/stream`, a `speak` frame for an id whose final text was already sent, before that utterance has finished, is now refused with an `error` frame (`tts: "<id>" is still being spoken; give the next utterance an id of its own`), and the utterances after it are still heard. An id is free again once its utterance has finished. Before, on a voice such as Gemini, Fish or Speechify, the reused id could leave every later utterance on the socket held and never heard. An utterance sent in pieces (`final: false`, then `final: true`) on such a voice could do the same, and no longer does (AI-2171).
+
+### A scheduled task's reply cut off as its provider fails is run again
+
+When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
+
+### A deleted agent's scheduled tasks are paused when its caller hangs up after the delete
+
+`DELETE /v1/agents/configs/{id}` now pauses the deleted config's scheduled tasks even if the caller hangs up after the delete is made. Before, those tasks could stay active, and every occurrence failed because the config was gone (AI-2183).
+
+### An audit row is kept when its caller hangs up after the change
+
+A caller that hangs up right after a change is made no longer loses the change's audit row. In `GET /v1/agents/connector-audit` this is the `grant_revoked` row of a delete (a connection's, a user's or a connector's) and the `grant_created` row of a consent or a credentials save. In `POST /v1/audit/query` it is every configuration change. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
+
+### A bad key a provider refuses after accepting the websocket handshake is counted as refused
+
+`router_keypool_refused_attempts_total` now counts, with `status` `invalid_key`, a key a provider accepts at the websocket handshake and refuses right after, once per connection: Gemini Live's close 1007 "API key not valid", OpenAI Realtime's and Together's `invalid_api_key` frame, AssemblyAI's Error 1008 "Invalid API key" or "API key is disabled", ElevenLabs Scribe's `auth_error`, ElevenLabs speech's `invalid_api_key` and Inworld's code 7 "API key does not exist or was deleted" or "Invalid authorization credentials". AssemblyAI's 1008 "Insufficient funds" and "No metronome account found" frames are counted with status `402`. Any other frame or close is not counted, and the key is not rested. OpenAI Realtime and Together Nemotron now report the provider's reason for refusing a session, not "expected session.created" (AI-2164).
+
+### ElevenLabs voices are priced at their current rates
+
+`eleven_flash_v2_5` and `eleven_v3_conversational` are $40, and `eleven_multilingual_v2` and `eleven_v3` $80, per 1M characters in `prices/vendor.json`, ElevenLabs' current API rates. A deployment whose database already holds these four keeps its prices until they are edited there.
+
+### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
+
+`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
+
+### A key refused while voices are listed or cloned is counted
+
+The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a key the pool rests on them (a 429, a spent quota) rests for calls too. They still send on the provider's first key and never move to another, so a cloned voice is listed and deleted on the account that made it. Before, they sent on the first key outside the pool, so a refused key went uncounted there.
+
+### Every 401 and 402 on a pooled key is counted as refused
+
+`router_keypool_refused_attempts_total` now counts every 401 and 402 a provider answers on a pooled key, whatever the body says, with `status` `401` or `402`. Before, it counted one only when the body said `quota_exceeded`, so Gemini's 402 "prepayment credits are depleted" raised no `key_refused` alert. Which keys rest and when a request moves to the next key is unchanged (AI-2123).
+
+### Sandbox code can no longer write through a method-override header
+
+Under the egress proxy broker, a request from sandbox code to a connector's host that carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` now gets the read-only 403 and reaches no host. Google runs a GET with `X-HTTP-Method-Override: POST` as the POST, so a read-only Google grant let code write with the connection's token (AI-2120).
+
+### An end user's device opens only its own memories
+
+A session created by an end user's device (`POST /v1/agents/sessions` or the session socket's start frame) with a `memory.user_id` other than the caller's own user id is refused with `403`, and an anonymous caller naming any `memory.user_id` is refused too. Before, a signed-in user could name another user of the same app, read that user's memories through the agent and add to them. A backend may still name any of its users. `MEM0_API_KEY` is read as one key: a comma-separated list or `MEM0_API_KEY_1` is no longer taken as a pool, since a mem0 key belongs to one project.
+
+### A saved policy applies at once and stays applied
+
+The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for a few milliseconds. A save whose request was cancelled just after it committed also left the old value in place; it now clears it. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
 
 ### An iMessage photo's caption is answered
 
@@ -134,6 +248,14 @@ A question asked with photos was answered as though none came when the model cal
 ### A knowledge document no longer grows thousands of times when it is cut into passages
 
 Only the first 128 bytes of a heading, cut between characters, are now repeated at the top of each later passage of its section and in each passage's `source`; the first passage keeps the heading as written. A `chunk_size` under 500 on `POST /v1/agents/knowledge` is raised to 500, and so is the URL crawler's and `cmd/knowledge`'s. Before, a long heading over one-character paragraphs with `chunk_size` 1 turned 1 MiB into about 1 GB of passages, and an 8 MiB request could run a router out of memory (AI-1988).
+
+### A knowledge base can have any name
+
+A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
+
+### A knowledge write is refused when its organization may not pay for it
+
+`POST /v1/agents/knowledge`, a directory sync with knowledge and the URL crawler are admitted as a model call is before they write: a suspended organization is a 403 `account_suspended`, no credit or a spent limit a 402, one end user's spent limit a 429 with Retry-After. Nothing is written. Deleting a document is never refused for money. The URL crawler does not read a page for an organization that is refused: the page fails with the reason and is retried like any other. A provider failure while writing is now a 500 "something went wrong" rather than a 400 carrying the provider's response (AI-1990).
 
 ### The agent tells people apart in a group text chat
 
@@ -217,6 +339,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### A Dart tool's `run` returns a `ToolOutput`
+
+`AgentTool.run` in the Dart SDK returns a `ToolOutput` rather than a `String`, as Swift's and Kotlin's `run` do, so a tool that shows pictures is the same type as one that answers in words. The `AgentTool(...)` constructor still takes a handler returning a `String` and wraps it, but is no longer `const`; `AgentTool.withPictures` is. Code that called `tool.run(arguments)` itself reads `.text` from what it returns (FLU-1126).
+
 ### The SDKs go to production in us-east4 by default
 
 Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 removes along with `accelerate-prod.gcp.stream-io-api.com`: production is only `accelerate-<region>`, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host authenticates through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
@@ -238,6 +364,18 @@ Each entry of the router's price list now stores what its item is charged, `pric
 Migration `20261118120000_price_entry_prices` adds `price_entries.sku`, `prices` and `price_tiers` and `requests.sku`, stores every existing entry's price as what it was charged (its rates times its own markup, else the list's in force when it is or was) and gives every item its SKU; the immutability trigger covers the new columns. The usage service's migration `00005_usage_event_sku` adds `usage_events.sku`. `markup_bps` on `price_changes` and `price_entries` is read by nothing and left `NULL` on new rows, and goes in a later release. A router built before this one cannot write a price change against the new schema, and its reads of the list fail until it is replaced, while it keeps pricing with the list it last read.
 
 In the management API, `PriceEntry` and `UpcomingPriceEntry` gain `sku`, `prices` and `price_tiers` and lose `markup_bps`, `charged_markup_bps`, `charged_rates` and `charged_tiers`; `PriceChangeEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PriceList`, `PriceChange` and `PriceChangeInput` lose `markup_bps`; `PriceEntryInput` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`; `PricedEntry` gains `sku`, `prices` and `price_tiers` and loses `markup_bps`, `charged_rates` and `charged_tiers`; `PricePreviewItem` replaces `rate_factors` and `markup_factor` with `price_factors`; `PricePreview` loses `markup_bps_before` and `markup_bps_after`. A change's entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters (else 400 `price_meters_mismatch`) and a price tier for each tier (else 400 `price_tiers_mismatch`); a SKU another item has in force is 400 `sku_in_use`, and another SKU for an item in force 400 `sku_changed`. `confirmation_required` is worked out on prices. `getPrices` gains each item's `sku`; its `rates` and `tiers` are the price, as before. A price file may set `prices`, `price_tiers` and `sku` on an entry; its top-level `markup_bps` is ignored with a warning (AI-2083).
+
+### The price list's `markup_bps` columns are dropped
+
+Migration `20261130120000_drop_price_markup` drops `markup_bps` from `price_changes` and `price_entries`, with its checks, and the trigger that lets a change only be cancelled stops comparing it. Nothing has read the column since `20261118120000_price_entry_prices` stored every entry's price. Every router of a deployment must run a release with that migration before this one: a router built earlier can no longer read the price list once this has run. Down brings the columns back `NULL`; the markups they held do not come back (AI-2083).
+
+### Every price has a region, and work on the customer's own key is priced at a fee
+
+Every entry of the price list and every item priced names its region, `us` or `eu` for now, and whether it is BYOK, work done with the customer's own key. Both are matched exactly: EU work is never priced by a US entry, nor BYOK work by an entry that is not BYOK, nor the other way round, and work no entry of its own matches is unpriced. A provider instance runs in the `region` its routing config names, `us` (`pricing.DefaultRegion`) when it names none, as `router.yaml` names none today. Every entry of `prices/vendor.json` is `us`, and a `vendor.json` entry that names no region fails its tests. An entry of `ROUTER_PRICES_FILE` that names none is read as `us`, with a warning naming it, since a router built before this one refuses a `region` field in the file every router of the deployment reads; a later release refuses it. Reading a price file adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at 20% of its vendor's rates (`pricing.BYOKFeeBps`), where every other entry written without a price is priced at 120%: a million tokens that cost the vendor $1 are $1.20, or $0.20 on the customer's key. A file's own BYOK entry wins over the twin. A BYOK row's `base_cost_micros` is 0, since the vendor bills the customer. SKUs end in the region, then `byok`: `llm-anthropic-claude-haiku-5-5-us`, `llm-anthropic-claude-haiku-5-5-us-byok`.
+
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`, adds `region` (`us` on every existing row, and no default after) and `byok` (false), ends every existing SKU in `-us`, and indexes items by region and BYOK state. `requests.sku` and the usage ledger keep the SKU each row was billed under, so rows priced before it name their SKU without the region. A router built before this one can no longer read or write the price list once it has run: it keeps pricing with the list it holds, and reads again on its interval, until it is replaced. The first start after it adds only the BYOK twins, as one `release` change; every US item keeps its price and its SKU. Down refuses a list holding a BYOK or non-US entry.
+
+In the API, `PriceItem`, and so every price entry the management API answers, the preview and `getPrices`'s `Price`, gains `region` (required) and `byok`. `PriceEntryInput` requires `region`, a letter and up to 31 of a-z, 0-9 and hyphens (else 400 `validation_failed`), and takes `byok`. `getPrices` takes an optional `region`. `router prices show`, `sync --dry-run` and `check` name each item's region and BYOK state (AI-2187).
 
 ### The call a tool function is handed is named toolCallContext
 
