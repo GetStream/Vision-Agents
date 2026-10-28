@@ -689,7 +689,9 @@ func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, conne
 	if change != (core.CredentialChange{}) {
 		event.Credential = store.AuditCredential(change)
 	}
-	err := s.store.RecordConnectorAudit(context.WithoutCancel(ctx), event)
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
+	err := s.store.RecordConnectorAudit(ctx, event)
 	if err != nil {
 		s.logger.Error("could not record a connector audit row", "connection", connectionID, "action", action, "error", err)
 	}
@@ -704,7 +706,9 @@ func (s *Server) recordClient(ctx context.Context, connectionID string, credenti
 	if !ok {
 		return
 	}
-	err := s.store.PutConnectorConnectionClient(context.WithoutCancel(ctx), &store.ConnectorConnectionClient{
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
+	err := s.store.PutConnectorConnectionClient(ctx, &store.ConnectorConnectionClient{
 		ConnectionID: connectionID, Registration: client.Registration, ClientID: client.ID,
 	})
 	if err != nil {

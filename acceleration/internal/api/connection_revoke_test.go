@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -248,6 +250,68 @@ func (s *AuthorizationsSuite) TestTheClientOfAConsentWhoseCallerHungUpIsKept() {
 	s.Require().NoError(err)
 	s.Require().Contains(clients, pending)
 	s.Equal(recorded[consented].ClientID, clients[pending].ClientID)
+}
+
+// A detached write gives up at auditWriteTimeout when the pool has no free connection
+// (AI-2163): database/sql waits for one without a limit. The test holds every connection of
+// the suite's pool, runs the four detached writes at once and reads, per write, how long it
+// took to return.
+func (s *AuthorizationsSuite) TestADetachedWriteGivesUpWhenThePoolIsFull() {
+	ctx := context.Background()
+	consented := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	s.connect(consented)
+	stored, _ := s.held(consented)
+	var held []*sql.Conn
+	defer func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+	for range suiteConnections {
+		conn, err := s.store.DB().DB.Conn(ctx)
+		s.Require().NoError(err)
+		held = append(held, conn)
+	}
+	gone, hangUp := context.WithCancel(context.WithValue(ctx, customerContextKey{}, s.customerID()))
+	hangUp()
+	connection := store.ConnectorConnection{CustomerID: s.customerID(), ID: "conn_" + s.utils.uuid(), ConnectorID: "x", OwnerType: "app"}
+	writes := map[string]func(){
+		"audit": func() {
+			s.router.audit(gone, auditRecord{ResourceType: store.AuditAgentConfig, ResourceID: "cfg_x", ResourceName: "x",
+				Action: store.AuditDeleted, Changes: []store.AuditChange{{Field: "llm", Before: "a"}}})
+		},
+		"grant": func() {
+			s.router.auditGrant(gone, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+				store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", core.CredentialChange{})
+		},
+		"client": func() { s.router.recordClient(gone, connection.ID, stored) },
+		"proxy":  func() { s.router.auditProxyCall(gone, connection, "example.com", nil, 1) },
+	}
+	took := make(map[string]time.Duration, len(writes))
+	var mu sync.Mutex
+	var group sync.WaitGroup
+	start := time.Now()
+	for name, write := range writes {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			write()
+			mu.Lock()
+			took[name] = time.Since(start)
+			mu.Unlock()
+		}()
+	}
+	// Past the bound, free the pool: a write with no bound returns now, too late.
+	release := time.AfterFunc(auditWriteTimeout+time.Second, func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	})
+	defer release.Stop()
+	group.Wait()
+	for name := range writes {
+		s.Less(took[name], auditWriteTimeout+time.Second, "the %s write waits on a full pool past its bound", name)
+	}
 }
 
 // A connection that never finished a consent holds no grant, so its delete asks nothing of the
