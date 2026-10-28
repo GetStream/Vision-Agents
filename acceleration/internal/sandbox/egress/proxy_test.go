@@ -1164,6 +1164,12 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
 		s.Run(stalled.name, func() {
 			sandbox, host := s.blindTunnel(idle)
+			// macOS loopback buffers can absorb a whole 64 MiB write while the proxy still relays
+			// it (two plain loopback sockets that read nothing finished 7 of 80 such writes);
+			// 64 KiB receive buffers (a size picked by measurement: 0 of 80) keep the write blocked.
+			for _, end := range []net.Conn{sandbox, host} {
+				s.Require().NoError(end.(*net.TCPConn).SetReadBuffer(64 << 10))
+			}
 			stuck := time.Now()
 			// The test reads nothing: a flood's write returns only when the proxy closes its end,
 			// 5 s being past any idle timeout here.
