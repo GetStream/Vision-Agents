@@ -19,7 +19,7 @@ const unnamedKeyVar = "unknown"
 var refusedAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "keypool_refused_attempts_total",
-	Help:      "Requests and handshakes a provider refused on a pooled key, by the variable the keys come from and the refusal's HTTP status (every 401 and 402, and 429), or quota_exceeded for a socket frame; a 429 or a spent quota moves to the next key or, on the last, is handed back to fail over, any other 401 or 402 is handed back at once",
+	Help:      "Requests and handshakes a provider refused on a pooled key, by the variable the keys come from and the refusal's HTTP status (every 401 and 402, a 400 or 403 whose body says the key is not valid, and 429), or quota_exceeded for a socket frame; a 429 or a spent quota moves to the next key or, on the last, is handed back to fail over, any other 400, 401, 402 or 403 counted is handed back at once",
 }, []string{"key_var", "status"})
 
 // Alerts are the conditions of a provider refusing one of the router's keys, one alert per key
