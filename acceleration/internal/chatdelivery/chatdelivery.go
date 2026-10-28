@@ -48,6 +48,14 @@ const Tolerance = 5 * time.Minute
 // while Stream rotates.
 const maxKeys = 2
 
+// maxSignatures is the most signature entries Verify reads; it ignores the rest. Stream
+// signs once with each key it holds, so two entries are what a delivery carries; twice that
+// leaves room for a symmetric v1 entry beside each. Without a bound, anyone could send a
+// 1 MiB header of 11,275 forged signatures and cost the router 811 ms of ed25519 checks
+// (review of #1435, R1.1). Ignored rather than refused: what Stream signs comes first, and
+// the work stays bounded either way.
+const maxSignatures = 2 * maxKeys
+
 // ErrUnsigned is a request Stream cannot be proven to have sent: no id, timestamp or
 // signature, one in another shape, or none that a key verifies. It never says which, so an
 // answer teaches a forger nothing.
@@ -90,7 +98,12 @@ func Verify(keys []ed25519.PublicKey, header http.Header, body []byte, now time.
 		return stack.Wrap(ErrStale)
 	}
 	signed := append([]byte(id+"."+timestamp+"."), body...)
-	for _, signature := range strings.Fields(header.Get(SignatureHeader)) {
+	read := 0
+	for signature := range strings.FieldsSeq(header.Get(SignatureHeader)) {
+		if read == maxSignatures {
+			break
+		}
+		read++
 		written, ok := strings.CutPrefix(signature, signaturePrefix)
 		if !ok {
 			continue
