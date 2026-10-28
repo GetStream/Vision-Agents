@@ -1464,7 +1464,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}()
 
 	handler := server.Handler()
-	public, err := listen(settings.Addr, settings.ListenFD)
+	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
 	if err != nil {
 		return err
 	}
@@ -1493,8 +1493,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
-		settings.ListenFD != 0, serve, logger)
+	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr,
+		settings.CodeSandbox.ProxyListenFD, settings.CodeSandbox.ProxyPublicURL, settings.ListenFD != 0, serve, logger)
 	if err != nil {
 		return err
 	}
@@ -1525,9 +1525,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 }
 
-// listen opens the public listener: the socket a supervisor handed down when there is one,
-// so the process before this one and this one take connections from the same queue.
-func listen(address string, fd int) (net.Listener, error) {
+// listen opens a listener: the socket a supervisor handed down when there is one, so the
+// process before this one and this one take connections from the same queue. setting names
+// fd in the error.
+func listen(address string, fd int, setting string) (net.Listener, error) {
 	if fd == 0 {
 		return net.Listen("tcp", address)
 	}
@@ -1535,7 +1536,7 @@ func listen(address string, fd int) (net.Listener, error) {
 	defer inherited.Close()
 	listener, err := net.FileListener(inherited)
 	if err != nil {
-		return nil, fmt.Errorf("could not serve on the inherited socket %d (listen_fd): %w", fd, err)
+		return nil, fmt.Errorf("could not serve on the inherited socket %d (%s): %w", fd, setting, err)
 	}
 	return listener, nil
 }

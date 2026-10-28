@@ -82,8 +82,13 @@ const proxyListenRetry = 100 * time.Millisecond
 // sandboxes' until the router stops. Either may be called more than once, and after the other.
 // Without overlap a held address fails the start, as on any listener, and handOver does nothing:
 // the proxy takes connections until stop.
-func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool, serve func(*http.Server, net.Listener),
-	logger *slog.Logger) (stop func() error, handOver func(), err error) {
+//
+// fd, when not zero, is the proxy socket a supervisor handed down (code_sandbox.proxy_listen_fd),
+// served in place of addr: the router before this one and this one accept from the same queue,
+// so there is nothing to wait for. handOver then closes this router's copy of it alone, which
+// stops it accepting while the supervisor's copy keeps the socket listening for the next router.
+func serveSandboxProxy(proxy *egress.Proxy, addr string, fd int, publicURL string, overlap bool,
+	serve func(*http.Server, net.Listener), logger *slog.Logger) (stop func() error, handOver func(), err error) {
 	if proxy == nil {
 		return func() error { return nil }, func() {}, nil
 	}
@@ -97,14 +102,17 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 	var mu sync.Mutex
 	var serving net.Listener
 	finished := false
+	setting := "code_sandbox.proxy_addr"
+	if fd != 0 {
+		setting = "code_sandbox.proxy_listen_fd"
+	}
 	// start serves on listener; mu is held.
 	start := func(listener net.Listener) {
 		serving = listener
 		if secure {
 			listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
 		}
-		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
-			"tls", secure)
+		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", setting, "tls", secure)
 		go serve(server, listener)
 	}
 	// retry takes addr unless the router is done with it, and says whether to stop trying.
@@ -121,7 +129,7 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		start(listener)
 		return true
 	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listen(addr, fd, setting)
 	switch {
 	case err == nil:
 		start(listener)
@@ -149,13 +157,15 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		finished = true
 		if handingOver {
 			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
-				"setting", "code_sandbox.proxy_addr")
+				"setting", setting)
 		}
 		// The listener alone: the connections the proxy took are still served, a request
 		// they have yet to send included, which a Shutdown would drop. Serve ends with the
 		// closed listener's error, which no one reads once the router drains. A stop closes
 		// it too, because Serve runs on its own goroutine and the server only closes a
-		// listener Serve has already started on: one it has not keeps the address held.
+		// listener Serve has already started on: one it has not keeps the address held. An
+		// inherited socket's listener is this router's duplicate of it: closing it leaves
+		// the socket, and the connections queued on it, to the supervisor and the next router.
 		if serving != nil {
 			_ = serving.Close()
 		}
@@ -169,7 +179,7 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		}
 		return nil
 	}
-	if !overlap {
+	if !overlap && fd == 0 {
 		return stop, func() {}, nil
 	}
 	return stop, func() { finish(true) }, nil

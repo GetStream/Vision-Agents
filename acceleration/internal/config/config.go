@@ -408,6 +408,11 @@ type CodeSandbox struct {
 	// ProxyAddr is where the router serves the sandbox egress proxy (internal/sandbox/egress),
 	// such as :8091; empty serves none.
 	ProxyAddr string `koanf:"proxy_addr"`
+	// ProxyListenFD is a listening socket this process inherited, served in place of
+	// ProxyAddr, as ListenFD is for Addr: a supervisor that keeps it open across processes
+	// passes it, so no sandbox's CONNECT is refused while one router hands over to the next.
+	// Zero means listen on ProxyAddr, which must still be set to serve the proxy at all.
+	ProxyListenFD int `koanf:"proxy_listen_fd"`
 	// ProxyCACert and ProxyCAKey are the PEM certificate and private key of the CA the proxy
 	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
 	ProxyCACert string `koanf:"proxy_ca_cert"`
@@ -531,6 +536,7 @@ var variables = map[string]string{
 	"code_sandbox.broker":           "ROUTER_CODE_SANDBOX_BROKER",
 	"code_sandbox.secret_prefix":    "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
 	"code_sandbox.proxy_addr":       "ROUTER_CODE_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_listen_fd":  "ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD",
 	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
 	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
@@ -777,6 +783,9 @@ func (c Config) validate() error {
 		return errors.New("config: code_sandbox.broker is proxy, so this router serves the proxy: set " +
 			"code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR)")
 	}
+	if err := c.validateProxyListenFD(); err != nil {
+		return err
+	}
 	if strings.Contains(c.CodeSandbox.ProxyCACert, "PRIVATE KEY") {
 		return errors.New("config: code_sandbox.proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_CA_CERT) holds a private key, " +
 			"which every sandbox would be given: keep the certificate there and the key in proxy_ca_key")
@@ -866,6 +875,24 @@ func ProxyURL(raw string) (*url.URL, bool) {
 	}
 	port, err := strconv.Atoi(parsed.Port())
 	return parsed, err == nil && port >= 1 && port <= 65535
+}
+
+// validateProxyListenFD refuses an inherited proxy socket the router would not serve: one
+// without the proxy on, a descriptor that cannot be one, or the public listener's own.
+func (c Config) validateProxyListenFD() error {
+	fd := c.CodeSandbox.ProxyListenFD
+	switch {
+	case fd == 0:
+		return nil
+	case fd < 0:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is a file descriptor, got %d", fd)
+	case c.CodeSandbox.ProxyAddr == "":
+		return errors.New("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is the proxy's socket, " +
+			"and the proxy is served only with code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR) set")
+	case fd == c.ListenFD:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd and listen_fd are both %d: the proxy and the API need a socket each", fd)
+	}
+	return nil
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader
@@ -985,6 +1012,7 @@ func (c Config) export() error {
 		"code_sandbox.broker":           c.CodeSandbox.Broker,
 		"code_sandbox.secret_prefix":    c.CodeSandbox.SecretPrefix,
 		"code_sandbox.proxy_addr":       c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_listen_fd":  listenFD(c.CodeSandbox.ProxyListenFD),
 		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
 		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
 		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
