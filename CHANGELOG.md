@@ -161,6 +161,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### Every agent knows the date and the hour
+
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+
 ### A Dart question with images is no longer refused in a saved conversation
 
 `Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. With a request id, a conversation kept in Stream Chat takes its images as data URIs only, so an `https` image that one without a user used to accept is now refused, as it is from Swift and Kotlin (FLU-1126).

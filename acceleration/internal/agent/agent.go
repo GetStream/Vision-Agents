@@ -35,6 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -79,6 +80,9 @@ type Options struct {
 	Text bool
 	// Instructions is the system prompt, sent with every turn.
 	Instructions string
+	// Timezone is the end user's IANA zone, which every turn's clock line tells the day and
+	// the hour in beside UTC. Empty when it is not known.
+	Timezone string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
 	// Attribution is who beside the customer every request the agent makes is billed to and
@@ -354,6 +358,8 @@ type Agent struct {
 	// and lives here rather than in the options because a caller may change what the
 	// agent is part way through a call.
 	prompt string
+	// zone is Options.Timezone loaded, nil when the user's zone is not known.
+	zone *time.Location
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
@@ -375,7 +381,7 @@ type Agent struct {
 	// and a session opened for it would stay open until the agent closes. Each holds when
 	// the first such frame was dropped, zero until one is (see departedGrace).
 	departed map[string]time.Time
-	// now is the clock departedGrace is measured on.
+	// now is the clock departedGrace is measured on and the clock line is read from.
 	now func() time.Time
 	// hearings tally what each participant has been heard to say, kept for the whole call
 	// so a line at its end covers those who left.
@@ -579,6 +585,14 @@ func New(options Options) (*Agent, error) {
 	if err := options.Tags.Validate(); err != nil {
 		return nil, err
 	}
+	var zone *time.Location
+	if options.Timezone != "" {
+		loaded, err := scheduling.LoadZone(options.Timezone)
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("agent: timezone: %w", err))
+		}
+		zone = loaded
+	}
 	// Memories belong to the customer unless the caller named someone more specific, and
 	// are always kept under the customer as the app id, so no caller can reach another
 	// customer's and a customer's can be deleted without knowing how its callers labelled
@@ -628,6 +642,7 @@ func New(options Options) (*Agent, error) {
 		logger:           logger,
 		emitter:          emitter,
 		prompt:           options.Instructions,
+		zone:             zone,
 		listeners:        map[string]*sttrouter.Session{},
 		departed:         map[string]time.Time{},
 		now:              time.Now,
@@ -2318,9 +2333,15 @@ func composedKind(purpose string) string {
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
-// it whatever it already knew about the person it is talking to.
-func (a *Agent) instructions() string {
-	parts := make([]string, 0, 3)
+// it whatever it already knew about the person it is talking to, and the clock last. The
+// clock is the one part that moves on during a session, and a provider caches a prompt by
+// its prefix.
+func (a *Agent) instructions() string { return a.instructionsFor(len(a.speakers)) }
+
+// instructionsFor is instructions for a conversation of that many people, which a reply
+// written before its turn is counted asks for ahead of the count.
+func (a *Agent) instructionsFor(people int) string {
+	parts := make([]string, 0, 4)
 	if a.recalled != "" {
 		parts = append(parts, a.recalled)
 	}
@@ -2335,11 +2356,12 @@ func (a *Agent) instructions() string {
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
 	}
-	if len(a.speakers) > 1 && a.writers {
+	if people > 1 && a.writers {
 		parts = append(parts, severalWriters)
-	} else if len(a.speakers) > 1 {
+	} else if people > 1 {
 		parts = append(parts, severalSpeakers)
 	}
+	parts = append(parts, clockLine(a.now(), a.zone))
 	return strings.Join(parts, "\n\n")
 }
 

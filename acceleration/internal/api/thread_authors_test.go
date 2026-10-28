@@ -19,6 +19,16 @@ import (
 const severalWriters = "Several people are writing in this conversation. Each of their messages starts with " +
 	"the name of who wrote it, then a colon. Never start your reply with such a label."
 
+// withoutClock is a turn's instructions without the clock line the agent ends every turn
+// with, which says the hour and so cannot be written down here.
+func withoutClock(instructions string) string {
+	if strings.HasPrefix(instructions, "Today is ") {
+		return ""
+	}
+	before, _, _ := strings.Cut(instructions, "\n\nToday is ")
+	return before
+}
+
 // forgetNoted forgets the noted models earlier tests of the suite opened.
 func (s *RouterSuite) forgetNoted() {
 	s.notedMu.Lock()
@@ -65,7 +75,7 @@ func (s *LinqChannelSuite) TestAGroupChatTellsTheModelWhoWroteEachMessage() {
 	s.linqTurn(chat, kanat, true, "hi")
 
 	names, _ := s.askedWith("What are our names?")
-	s.Equal(severalWriters, names.Instructions)
+	s.Equal(severalWriters, withoutClock(names.Instructions))
 	s.Equal([]string{
 		"Speaker 1: Hi all, I'm Kanat", "Noted.",
 		"Speaker 2: I'm Ana. What is your return policy?", "Noted.",
@@ -77,8 +87,9 @@ func (s *LinqChannelSuite) TestAGroupChatTellsTheModelWhoWroteEachMessage() {
 	s.NotContains(everything, "5550001", "nor its digits")
 }
 
-// The control: a 1:1 chat sends the model what base af17ef057 sends. The expected request is
-// the one a probe of these two turns printed on af17ef057.
+// The control: a 1:1 chat sends the model what base af17ef057 sends, and the clock line every
+// turn has had since. The expected request is the one a probe of these two turns printed on
+// af17ef057.
 func (s *LinqChannelSuite) TestAOneToOneChatReachesTheModelAsAtBase() {
 	s.forgetNoted()
 	chat := s.utils.uuid()
@@ -87,7 +98,7 @@ func (s *LinqChannelSuite) TestAOneToOneChatReachesTheModelAsAtBase() {
 	s.linqTurn(chat, "+13125550001", false, "What is my name?")
 
 	asked, _ := s.askedWith("What is my name?")
-	s.Empty(asked.Instructions)
+	s.Empty(withoutClock(asked.Instructions))
 	s.Equal([]string{"Hi all, I'm Kanat", "Noted.", "What is my name?"}, contentsOf(asked.Input))
 	for _, message := range asked.Input {
 		s.Empty(message.Speaker)
@@ -113,7 +124,7 @@ func (s *SlackChannelSuite) TestAThreadOfTwoPeopleTellsTheModelWhoWroteEachMessa
 	s.posted(3)
 
 	bob, _ := s.askedWith("and the deploy?")
-	s.Equal(severalWriters, bob.Instructions, "Bob is the second person")
+	s.Equal(severalWriters, withoutClock(bob.Instructions), "Bob is the second person")
 	s.Equal([]string{"is the build green?", "Noted.", "Speaker 2: and the deploy?"}, contentsOf(bob.Input),
 		"Alice's turn was read back before anybody else wrote")
 	alice, everything := s.askedWith("thanks")
