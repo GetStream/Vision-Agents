@@ -3510,7 +3510,9 @@ type AttachNumberRequest struct {
 
 // AttachedNumber defines model for AttachedNumber.
 type AttachedNumber struct {
-	RouteId string `json:"route_id"`
+	// AgentConfigId The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+	AgentConfigId *string `json:"agent_config_id,omitempty"`
+	RouteId       string  `json:"route_id"`
 
 	// SipUri Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
 	SipUri  string `json:"sip_uri"`
@@ -6501,6 +6503,8 @@ type PhoneCapability string
 
 // PhoneNumber defines model for PhoneNumber.
 type PhoneNumber struct {
+	// AgentConfigId The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+	AgentConfigId     *string           `json:"agent_config_id,omitempty"`
 	Capabilities      []PhoneCapability `json:"capabilities"`
 	Country           string            `json:"country"`
 	E164              string            `json:"e164"`
@@ -8152,6 +8156,15 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetNumberAgentRequest defines model for SetNumberAgentRequest.
+type SetNumberAgentRequest struct {
+	// Agent The name of the agent config that answers the number. Give this or config_id.
+	Agent *string `json:"agent,omitempty"`
+
+	// ConfigId The id of the agent config that answers the number. Give this or agent.
+	ConfigId *string `json:"config_id,omitempty"`
 }
 
 // SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
@@ -10705,6 +10718,9 @@ type PressPhoneDigitsJSONRequestBody = PressDigitsRequest
 // BuyPhoneNumberJSONRequestBody defines body for BuyPhoneNumber for application/json ContentType.
 type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
 
+// SetPhoneNumberAgentJSONRequestBody defines body for SetPhoneNumberAgent for application/json ContentType.
+type SetPhoneNumberAgentJSONRequestBody = SetNumberAgentRequest
+
 // AttachPhoneNumberJSONRequestBody defines body for AttachPhoneNumber for application/json ContentType.
 type AttachPhoneNumberJSONRequestBody = AttachNumberRequest
 
@@ -11405,7 +11421,7 @@ type ClientInterface interface {
 
 	// DeleteAgentConfig Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -13332,6 +13348,31 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemovePhoneNumberAgent Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgent Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DetachPhoneNumber Stop a number taking calls, keeping it
 	//
 	// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
@@ -14796,7 +14837,7 @@ func (c *Client) CreateAgentConfig(ctx context.Context, body CreateAgentConfigJS
 
 // DeleteAgentConfig Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -18762,6 +18803,61 @@ func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumb
 // Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleasePhoneNumberRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemovePhoneNumberAgent Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *Client) RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemovePhoneNumberAgentRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequestWithBody(c.Server, e164, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgent Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequest(c.Server, e164, body)
 	if err != nil {
 		return nil, err
 	}
@@ -28851,6 +28947,87 @@ func NewReleasePhoneNumberRequest(server string, e164 string) (*http.Request, er
 	return req, nil
 }
 
+// NewRemovePhoneNumberAgentRequest constructs an http.Request for the RemovePhoneNumberAgent method
+func NewRemovePhoneNumberAgentRequest(server string, e164 string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetPhoneNumberAgentRequest calls the generic SetPhoneNumberAgent builder with application/json body
+func NewSetPhoneNumberAgentRequest(server string, e164 string, body SetPhoneNumberAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPhoneNumberAgentRequestWithBody(server, e164, "application/json", bodyReader)
+}
+
+// NewSetPhoneNumberAgentRequestWithBody constructs an http.Request for the SetPhoneNumberAgent method, with any body, and a specified content type
+func NewSetPhoneNumberAgentRequestWithBody(server string, e164 string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDetachPhoneNumberRequest constructs an http.Request for the DetachPhoneNumber method
 func NewDetachPhoneNumberRequest(server string, e164 string) (*http.Request, error) {
 	var err error
@@ -32703,7 +32880,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteAgentConfigWithResponse Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -34825,6 +35002,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*ReleasePhoneNumberResponse, error)
+
+	// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
 
 	// DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
 	//
@@ -38462,6 +38666,8 @@ type DeleteAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -38495,6 +38701,11 @@ func (r DeleteAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -54140,6 +54351,222 @@ func (r ReleasePhoneNumberResponse) ContentType() string {
 	return ""
 }
 
+// RemovePhoneNumberAgentResponse204Headers the declared response headers of an HTTP 204 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// RemovePhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type RemovePhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *RemovePhoneNumberAgentResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *RemovePhoneNumberAgentResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RemovePhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemovePhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemovePhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemovePhoneNumberAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetPhoneNumberAgentResponse200Headers the declared response headers of an HTTP 200 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// SetPhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type SetPhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PhoneNumber
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SetPhoneNumberAgentResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *SetPhoneNumberAgentResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON200() *PhoneNumber {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPhoneNumberAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DetachPhoneNumberResponse204Headers the declared response headers of an HTTP 204 response for DetachPhoneNumber
 type DetachPhoneNumberResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -61619,7 +62046,7 @@ func (c *ClientWithResponses) CreateAgentConfigWithResponse(ctx context.Context,
 
 // DeleteAgentConfigWithResponse Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -64974,6 +65401,51 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseReleasePhoneNumberResponse(rsp)
+}
+
+// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *ClientWithResponses) RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error) {
+	rsp, err := c.RemovePhoneNumberAgent(ctx, e164, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemovePhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgentWithBody(ctx, e164, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgent(ctx, e164, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
 }
 
 // DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
@@ -69565,6 +70037,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -87833,6 +88312,261 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 		response.Headers204 = &headers
 	case rsp.StatusCode == 402:
 		var headers ReleasePhoneNumberResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemovePhoneNumberAgentResponse parses an HTTP response from a RemovePhoneNumberAgentWithResponse call
+func ParseRemovePhoneNumberAgentResponse(rsp *http.Response) (*RemovePhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemovePhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers RemovePhoneNumberAgentResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers RemovePhoneNumberAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetPhoneNumberAgentResponse parses an HTTP response from a SetPhoneNumberAgentWithResponse call
+func ParseSetPhoneNumberAgentResponse(rsp *http.Response) (*SetPhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PhoneNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SetPhoneNumberAgentResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers SetPhoneNumberAgentResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
