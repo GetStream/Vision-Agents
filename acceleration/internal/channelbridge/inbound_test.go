@@ -766,3 +766,44 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// The person a Linq chat is with is decided by the message admitted alone: a group message
+// deletes the person the thread arrives with, as store.ChannelThread returns it for a queued row.
+func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
+	for name, test := range map[string]struct {
+		isGroup bool
+		want    string
+	}{
+		"a group message deletes the stored person": {isGroup: true, want: ""},
+		"a one-to-one message names its author":     {isGroup: false, want: "U0000ALICE"},
+	} {
+		s.Run(name, func() {
+			thread := s.thread("linq")
+			s.Require().NoError(s.store.SetChannelThreadChatPerson(s.ctx, thread.ChannelID, "U0000BOB"))
+			s.queueLinq(thread, "m1", test.isGroup)
+			stored, err := s.store.ChannelThread(s.ctx, thread.ChannelID)
+			s.Require().NoError(err)
+			s.Require().Equal("U0000BOB", stored.ChatPerson, "the thread arrives with a stored person")
+
+			admitted, err := s.newBridge(nil).admit(s.ctx, stored, s.row(thread, "m1"))
+			s.Require().NoError(err)
+			s.True(admitted)
+
+			after, err := s.store.ChannelThread(s.ctx, thread.ChannelID)
+			s.Require().NoError(err)
+			s.Equal(test.want, after.ChatPerson)
+		})
+	}
+}
+
+// queueLinq queues a Linq message of U0000ALICE in thread, whose raw event says whether the chat is a group.
+func (s *InboundSuite) queueLinq(thread store.ChannelThread, providerMessageID string, isGroup bool) {
+	queued, err := s.store.QueueChannelInbound(s.ctx, store.ChannelInbound{
+		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
+		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
+		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: "hi",
+		Raw: []byte(fmt.Sprintf(`{"data":{"chat":{"is_group":%t}}}`, isGroup)), NextAttemptAt: time.Now(),
+	})
+	s.Require().NoError(err)
+	s.Require().True(queued)
+}

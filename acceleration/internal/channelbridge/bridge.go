@@ -406,8 +406,10 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 // admit runs the steps a claimed message passes before it is written into its thread channel:
 // it records the chat's person and member, answers a keyword, and asks the sandbox gate.
 // admitted is whether the message goes on to be written, for an agent to answer. It reads
-// only the queued row (message, store.ChannelInbound) and the row's thread channel, so it can
-// run from a queued row as well as on the request. A store that fails releases the message's
+// only the queued row (message, store.ChannelInbound) and the row's thread channel, never the
+// chat person the thread arrives with (store.ChannelThread brings the stored one, the thread
+// the claim linked brings none), so it can run from a queued row as well as on the request,
+// with the same result. A store that fails releases the message's
 // claim, so the provider's retry takes it again.
 func (b *Bridge) admit(ctx context.Context, thread store.ChannelThread, queued store.ChannelInbound) (admitted bool, err error) {
 	message := queued.Message()
@@ -415,6 +417,8 @@ func (b *Bridge) admit(ctx context.Context, thread store.ChannelThread, queued s
 	// chat became a group, does not name the chat's person again. A store that fails releases
 	// the claim, so the provider's retry records it.
 	if source := episodeSources[message.ConnectorID]; source.oneToOne != nil {
+		// The latest message decides, not the person the thread arrives with.
+		thread.ChatPerson = ""
 		if source.oneToOne(message.Raw) {
 			thread.ChatPerson = message.AuthorID
 		}
