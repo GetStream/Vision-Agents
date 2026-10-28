@@ -83,6 +83,21 @@ func (s *DetectionSuite) TestSomethingThatIsNotAnImageIsRefused() {
 	s.Equal(http.StatusBadRequest, s.refused(DetectionRequest{Image: []byte("not a picture")}))
 }
 
+func (s *DetectionSuite) TestAModelNamedOutsideTheOptionsIsRefused() {
+	for _, model := range []any{"nobody/nothing", "", 5, map[string]any{}, []string{"nobody/nothing"}} {
+		request := map[string]any{"image": drawn.Images[0].Data}
+		request["model"] = model
+		s.assertTopLevelModelRefused("/v1/detection", request)
+	}
+}
+
+func (s *DetectionSuite) TestANullModelIsServedAsNoModel() {
+	request := map[string]any{"image": drawn.Images[0].Data}
+	request["model"] = nil
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/detection", request)
+	s.Equal(http.StatusOK, status, string(payload))
+}
+
 func (s *DetectionSuite) TestOnlyTheCustomersOwnBackendMayDetect() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		status, _ := as.call(http.MethodPost, "/v1/detection", DetectionRequest{Image: drawn.Images[0].Data})

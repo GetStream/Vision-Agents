@@ -82,6 +82,14 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### Dart sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Dart SDK is sent as the session's `return_url`, as Swift's
+`returnURL` and Kotlin's `returnUrl` are. Left null or empty, nothing is sent and the sign-in
+goes back to the dashboard, as before. `AgentSession.declineLogin(toolCallId)` answers such a
+sign-in with Not now: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
@@ -145,9 +153,29 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### Go clients keep working with a region
+
+An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
+
+### A thread task's reply is texted as soon as the agent finishes it
+
+A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the agent's reply every 100 ms and sends it shortly after the reply finishes. A task's follow-up that meets a reply still being written starts within 100 ms of that reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
+
+### A request that names its model outside the options is refused
+
+`POST /v1/tts/recordings`, `POST /v1/stt/recordings`, `POST /v1/search`, `POST /v1/detection` and `POST /v1/image/generations` now answer a top-level `model` with a 400 `invalid_request` that says to name the model in `options.target`. Before, the field was ignored: the request was served by the default model and billed for it (AI-2180).
+
+### A voice that speaks each sentence as its own request no longer goes silent when an id is reused
+
+On `/v1/tts/stream`, a `speak` frame for an id whose final text was already sent, before that utterance has finished, is now refused with an `error` frame (`tts: "<id>" is still being spoken; give the next utterance an id of its own`), and the utterances after it are still heard. An id is free again once its utterance has finished. Before, on a voice such as Gemini, Fish or Speechify, the reused id could leave every later utterance on the socket held and never heard. An utterance sent in pieces (`final: false`, then `final: true`) on such a voice could do the same, and no longer does (AI-2171).
+
 ### A scheduled task's reply cut off as its provider fails is run again
 
 When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
+
+### A deleted agent's scheduled tasks are paused when its caller hangs up after the delete
+
+`DELETE /v1/agents/configs/{id}` now pauses the deleted config's scheduled tasks even if the caller hangs up after the delete is made. Before, those tasks could stay active, and every occurrence failed because the config was gone (AI-2183).
 
 ### An audit row is kept when its caller hangs up after the change
 
