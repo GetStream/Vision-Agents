@@ -156,7 +156,7 @@ func (s *ServiceSuite) TestHearingAVoiceIsBilledTheCharactersItSays() {
 	s.Equal("eleven_flash_v2_5", line.Model, "the model the provider speaks the line with")
 	s.EqualValues(22, line.Characters)
 	flash := pricing.Item{Modality: "tts", Provider: "elevenlabs", Model: "eleven_flash_v2_5"}
-	s.Equal(pricingtest.Micros(s.T(), s.prices, flash, pricing.Quantities{pricing.Characters: 22}), line.CostMicros,
+	s.Equal(pricingtest.Micros(s.prices, flash, pricing.Quantities{pricing.Characters: 22}), line.CostMicros,
 		"22 characters at ElevenLabs' rate")
 }
 

@@ -105,7 +105,7 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Require().Len(rows, 2)
 	s.EqualValues(15, rows[0].Characters, "the runes handed to the voice, not the 17 the adapter counted")
 	s.Equal("u1", rows[0].OperationID)
-	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "tts", Provider: "inworld", Model: "inworld-tts-2-flash"}, pricing.Quantities{pricing.Characters: 15}),
+	s.Equal(pricingtest.Micros(s.prices, pricing.Item{Modality: "tts", Provider: "inworld", Model: "inworld-tts-2-flash"}, pricing.Quantities{pricing.Characters: 15}),
 		rows[0].CostMicros, "15 characters at Inworld's rate")
 	s.EqualValues(4, rows[1].Characters, "an adapter that counted nothing is billed what it was sent")
 	s.Equal(named, rows[1].OperationID)

@@ -526,7 +526,7 @@ func (s *MeteringSuite) TestTheSweepDeletesEveryRowKeptForADayInBatches() {
 func (s *MeteringSuite) outboundMinutes(seconds int64) int64 {
 	item := pricing.Item{Modality: string(routing.Phone), Provider: "telnyx", Model: ModelCallMinutes,
 		Attributes: map[string]string{"country": "US", "direction": "outbound"}}
-	return pricingtest.Micros(s.T(), s.prices, item, pricing.Quantities{pricing.CallSeconds: seconds})
+	return pricingtest.Micros(s.prices, item, pricing.Quantities{pricing.CallSeconds: seconds})
 }
 
 // kept is how many joins and leaves of the call are kept for a leg yet to open.

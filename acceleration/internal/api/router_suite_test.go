@@ -815,7 +815,7 @@ func (s *RouterSuite) vendorPriced(row store.Request) int64 {
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	item := pricing.Item{Modality: row.Modality, Provider: row.Provider, Model: row.Model, Attributes: row.Attributes}
-	return pricingtest.Micros(s.T(), list, item, row.Quantities())
+	return pricingtest.Micros(list, item, row.Quantities())
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.

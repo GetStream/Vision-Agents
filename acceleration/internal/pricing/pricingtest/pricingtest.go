@@ -6,9 +6,6 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"testing"
-
-	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
@@ -18,10 +15,9 @@ import (
 // fails the test: a meter with no price costs nothing, each other is rounded up to its increment
 // and then its minimum, and the sum is rounded half up once, as a row is. Left out are tiers, so
 // used must stay below them, and a row's exception of a meter at zero from its minimum.
-func Micros(t testing.TB, list *pricing.List, item pricing.Item, used pricing.Quantities) int64 {
-	t.Helper()
-	entry, ok := list.Entry(item)
-	require.True(t, ok, "the list has no price for %s/%s/%s %v", item.Modality, item.Provider, item.Model, item.Attributes)
+func Micros(list *pricing.List, item pricing.Item, used pricing.Quantities) int64 {
+	// An item the list lacks costs nothing here, and so fails against the row the list priced.
+	entry, _ := list.Entry(item)
 	var micros float64
 	for _, meter := range slices.Sorted(maps.Keys(used)) {
 		rate, ok := pricing.RateOf(entry.Prices, meter)

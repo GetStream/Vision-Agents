@@ -79,7 +79,7 @@ func (s *MeteredSuite) SetupTest() {
 // price change there leaves the tests passing.
 func (s *MeteredSuite) priced(row store.Request) int64 {
 	item := pricing.Item{Modality: row.Modality, Provider: row.Provider, Model: row.Model, Attributes: row.Attributes}
-	return pricingtest.Micros(s.T(), s.prices, item, row.Quantities())
+	return pricingtest.Micros(s.prices, item, row.Quantities())
 }
 
 // rows drains the recorder and returns the test customer's rows, oldest first.

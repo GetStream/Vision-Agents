@@ -192,7 +192,7 @@ func (s *MeteringSuite) TestARouterMeasuredTranscriberIsBilledEveryMillisecondIt
 			"what the caller said before hanging up is billed as the session ends")
 	var priced []int64
 	for _, ms := range audio {
-		priced = append(priced, pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "cartesia", Model: "ink-2"},
+		priced = append(priced, pricingtest.Micros(s.prices, pricing.Item{Modality: "stt", Provider: "cartesia", Model: "ink-2"},
 			pricing.Quantities{pricing.AudioMs: ms}))
 	}
 	s.Equal(priced, costs, "what was streamed at Cartesia's rate")
@@ -258,7 +258,7 @@ func (s *MeteringSuite) TestAFailoverBillsEachVendorTheAudioItTook() {
 	s.EqualValues(700, rows[0].AudioMs, "the vendor that refused is billed what it took before it did")
 	s.Equal("gemini-3.5-transcribe-live", rows[1].Model)
 	s.EqualValues(300, rows[1].AudioMs, "the next vendor is billed only what it took")
-	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "gemini", Model: "gemini-3.5-transcribe-live"}, pricing.Quantities{pricing.AudioMs: 300}),
+	s.Equal(pricingtest.Micros(s.prices, pricing.Item{Modality: "stt", Provider: "gemini", Model: "gemini-3.5-transcribe-live"}, pricing.Quantities{pricing.AudioMs: 300}),
 		rows[1].CostMicros, "300 ms at Gemini's rate")
 }
 
@@ -285,7 +285,7 @@ func (s *MeteringSuite) TestATurnTheVendorDidNotMeasureIsBilledForWhatWasStreame
 	s.EqualValues(1_500, rows[0].AudioMs, "the audio streamed since the session opened")
 	s.Equal(map[string]string{routing.AttributeUsageEstimated: "true"}, rows[0].Attributes)
 	s.True(rows[0].Billable)
-	s.Equal(pricingtest.Micros(s.T(), s.prices, pricing.Item{Modality: "stt", Provider: "deepgram", Model: "flux-general-en"}, pricing.Quantities{pricing.AudioMs: 1_500}),
+	s.Equal(pricingtest.Micros(s.prices, pricing.Item{Modality: "stt", Provider: "deepgram", Model: "flux-general-en"}, pricing.Quantities{pricing.AudioMs: 1_500}),
 		rows[0].CostMicros, "1.5 s at Flux's rate")
 	s.EqualValues(480, rows[1].AudioMs, "a turn the vendor measured keeps its figure")
 	s.Empty(rows[1].Attributes)
