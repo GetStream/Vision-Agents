@@ -179,6 +179,34 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
 }
 
+// A task's reply is texted as soon as its turn ends: the delivery looks at the reply every
+// replyPoll, not at its next look at the session (scheduledPoll), which kept every reply up to
+// 2 s and every thread task 2 s at least.
+func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
+	person := "+13125550001"
+	task, _ := s.scheduledInThread(person)
+	sent := len(s.telnyx().sent())
+	release := s.schedulingScript.holdScheduled()
+	defer release()
+	run := s.manualRun(task)
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.deliverRun(task, run)
+		done <- err
+	}()
+	s.Require().Eventually(func() bool { return s.scheduledTurns() > 0 }, settleFor, 10*time.Millisecond, "the task's turn never started")
+
+	release()
+
+	select {
+	case err := <-done:
+		s.Require().NoError(err)
+	case <-time.After(scheduledPoll / 2):
+		s.FailNow("the reply waited for the delivery's next look at the session")
+	}
+	s.Equal(telnyxMessage{from: s.line, to: person, text: "Done."}, s.took(sent + 1)[sent].withoutAuthorization())
+}
+
 // A task made in a 1:1 Linq chat is sent back into the chat by the worker, and the run says it
 // went by iMessage.
 func (s *LinqChannelSuite) TestATaskMadeInALinqChatIsSentBackIntoTheChat() {
