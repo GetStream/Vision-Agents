@@ -121,20 +121,20 @@ func (unmetered) Gone()            {}
 // A cancellable gate serializes creation, execution and deletion. Identity survives a
 // failed delete so Close can be retried; a closed sandbox can never create another VM.
 type Sandbox struct {
-	client              *sdk.Client
-	box                 *sdk.Sandbox
-	gate                chan struct{}
-	closed              atomic.Bool
+	client *sdk.Client
+	box    *sdk.Sandbox
+	gate   chan struct{}
+	closed atomic.Bool
 	// abandoned says a Close gave up waiting for the gate, so deleted nothing.
-	abandoned atomic.Bool
+	abandoned           atomic.Bool
 	timeout, runTimeout time.Duration
 	// check bounds the checks before each run: the timeout, but at most defaultTimeout, as a
 	// built sandbox's timeout is buildTimeout and a hung check holds the gate, so every other
 	// run of the session waits. Shorter in tests.
-	check               time.Duration
-	config              sandbox.Config
-	grants              []sandbox.Grant
-	broker              sandbox.CredentialBroker
+	check  time.Duration
+	config sandbox.Config
+	grants []sandbox.Grant
+	broker sandbox.CredentialBroker
 	// mount is what the broker's Prepare gave the sandbox being created, and files and setup
 	// the ones of its files and setup commands not yet done in it.
 	mount sandbox.Mount
