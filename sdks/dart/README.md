@@ -188,7 +188,11 @@ ever fails.
 | Renaming a session or changing its models | `updateSession`, which is server-side only |
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
-device, even against a local router with no proxy in front.
+device, even against a local router with no proxy in front. On iOS, Android and macOS the socket
+sends it the way Swift's and Kotlin's do, with the credentials, as headers on the handshake, and
+keeps the token out of its URL. A browser cannot set a socket's headers, so on the web the
+credentials go in the URL as the JavaScript SDK sends them. A router with no proxy in front
+cannot tell that socket is a device, so a tool declared from the web is not asked of it there.
 
 ## Regenerating the client
 

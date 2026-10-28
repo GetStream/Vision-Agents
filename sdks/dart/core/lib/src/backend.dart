@@ -1,3 +1,5 @@
+import 'connect.dart';
+
 /// Hands over the token to present, asked for on every request and socket handshake.
 ///
 /// A function rather than a value so a long-lived client never wakes up holding an expired
@@ -29,8 +31,9 @@ final class StreamCredentials {
 /// so Stream is set up once. Beside a `customerId` the key is Stream's alone, and the router
 /// is still reached by customer id.
 ///
-/// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests,
-/// and no auth type at all on a socket, which the router reads the same way.
+/// Every request and handshake is sent as a device's: `Stream-Auth-Type: jwt` on requests and,
+/// where the platform can set headers, on a socket's handshake too. A browser's socket has
+/// only its query.
 final class Backend {
   Backend({
     Uri? url,
@@ -84,6 +87,17 @@ final class Backend {
 
   bool get _byCustomer => customerId.isNotEmpty;
 
+  /// Whether [url] is Stream's hosted router, which every hosted deployment reaches through
+  /// Stream's proxy. Read off the URL as the JavaScript SDK reads it: the default router or
+  /// one [regionUrl] names.
+  bool get _hosted {
+    const prefix = 'https://accelerate-', suffix = '.gcp.stream-io-api.com';
+    final named = '$url'.replaceFirst(RegExp(r'/+$'), '');
+    return named.startsWith(prefix) &&
+        named.endsWith(suffix) &&
+        _region.hasMatch(named.substring(prefix.length, named.length - suffix.length));
+  }
+
   /// Whether this holds the app's key and no token yet, which is how a guest is asked for
   /// before there is one: `Stream-Auth-Type: anonymous` and no token.
   bool get anonymous => !_byCustomer && token == null;
@@ -122,21 +136,45 @@ final class Backend {
     );
   }
 
-  /// The URL of a socket under the router, credentials included.
+  /// The URL of a socket under the router and the headers its handshake carries, the token
+  /// asked for once.
   ///
-  /// In the query because a browser WebSocket cannot set headers, and one URL shape for every
-  /// platform is worth more than keeping a token out of a URL the VM could have avoided.
-  /// There is deliberately no auth type here: the spec gives it no query counterpart, so a
-  /// socket cannot claim to be a backend.
-  Future<Uri> socketUri(String path, [Map<String, String> query = const {}]) async {
-    final credentials = _byCustomer
-        ? {'customer_id': customerId, if (userId.isNotEmpty) 'user_id': userId}
-        : {'api_key': apiKey, 'token': await _token()};
-    return url.replace(
+  /// Where the handshake can carry headers ([inHeaders], everywhere but a browser) they are
+  /// [headers], as on every request, and the token stays out of the URL, as Swift's and
+  /// Kotlin's sockets keep it: a URL ends up in every log it passes through.
+  ///
+  /// A browser cannot set headers, so there the credentials go in the query as the
+  /// JavaScript SDK sends them: the key and the token, which a router verifying tokens reads,
+  /// and the user. To Stream's hosted router the token goes again as `authorization` with
+  /// `stream-auth-type=jwt`, which is how its proxy reads a socket's credential; it refuses
+  /// one carrying only `token`. The router reads no auth type from a query, so a socket
+  /// cannot claim to be a backend.
+  Future<({Uri uri, Map<String, String> headers})> socket(
+    String path, [
+    Map<String, String> query = const {},
+    bool inHeaders = handshakeHeaders,
+  ]) async {
+    final headers = inHeaders ? await this.headers() : const <String, String>{};
+    final Map<String, String> credentials;
+    if (_byCustomer) {
+      credentials = {'customer_id': customerId, if (userId.isNotEmpty) 'user_id': userId};
+    } else if (inHeaders) {
+      credentials = {'api_key': apiKey};
+    } else {
+      final token = await _token();
+      credentials = {
+        'api_key': apiKey,
+        'token': token,
+        if (_hosted) ...{'authorization': token, 'stream-auth-type': 'jwt'},
+        if (userId.isNotEmpty) 'user_id': userId,
+      };
+    }
+    final uri = url.replace(
       scheme: url.scheme == 'https' ? 'wss' : 'ws',
       path: _join(url.path, path),
       queryParameters: {...query, ...credentials},
     );
+    return (uri: uri, headers: headers);
   }
 
   /// The key, user and token Stream's own clients connect with, the token asked for afresh.

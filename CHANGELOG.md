@@ -153,6 +153,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
+### A Flutter app's own tools are asked of it
+
+A tool a Flutter app declares on a session is now asked of that app on iOS, Android and macOS when the router runs with no proxy in front (`ROUTER_AUTH_MODE=proxy`, as the examples do). The Dart SDK's socket sent no headers, so the router took it for the app's backend and never addressed the device's tools to it, and each call failed at once. It now sends the same headers as every request on its handshake, as Swift's and Kotlin's sockets do, and keeps the token out of the URL. On the web, where a socket cannot carry headers, the credentials go in the URL as the JavaScript SDK sends them, `authorization` and `stream-auth-type=jwt` included for Stream's hosted router.
+
 ### Go clients keep working with a region
 
 An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.

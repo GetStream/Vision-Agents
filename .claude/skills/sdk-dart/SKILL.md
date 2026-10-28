@@ -32,7 +32,9 @@ releasing, publish `core` first and check the others resolve against the hosted 
 override removed.
 
 - `core` has no Flutter import and no Stream dependency. `dart:io` stays out of `lib/` too, so
-  it runs on the web: `package:http` and `package:web_socket` pick the platform themselves.
+  it runs on the web: `package:http` and `package:web_socket` pick the platform themselves. The
+  one exception is `src/connect_io.dart`, which opens a native socket with headers and is only
+  reached through the conditional export in `src/connect.dart`; a browser build never compiles it.
 - `rtc` keeps Stream Video's types out of `core`. `VoiceState.call` is the one Stream type it
   exposes, because rendering video needs it.
 - `ui` depends on `stream_chat_flutter_core`, not `stream_chat_flutter`: the transcript is drawn
@@ -82,6 +84,13 @@ stream property. Answering a tool call does not depend on anybody listening: it 
 ## The socket
 
 `package:web_socket`, one read loop per connection.
+
+- Opened by `connect` (`src/connect.dart`). Natively it is `dart:io`'s socket with the request
+  headers on the handshake, as Swift's and Kotlin's are, and `Backend.socket` keeps the token out
+  of the URL; without them a router with no proxy in front reads the socket as a backend and
+  never asks it the device's tools. In a browser there are no headers, so the credentials go in
+  the URL as the JavaScript SDK sends them: `token`, and to the hosted router `authorization`
+  and `stream-auth-type=jwt` too.
 
 - A close with 1000 (the router's "the session ended") or one we asked for finishes the stream;
   anything else throws `SocketClosedException` with the code.
@@ -222,7 +231,7 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
 
 Reject it if it:
 
-- imports Flutter, `dart:io` or a Stream package into `core/lib`;
+- imports Flutter, `dart:io` or a Stream package into `core/lib`, `src/connect_io.dart` aside;
 - exports generated code, or hand-edits it;
 - adds a method for an operation the spec does not mark `x-client-accessible`;
 - sends a default the caller did not choose;

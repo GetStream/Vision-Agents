@@ -120,17 +120,78 @@ void main() {
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
-    test('puts credentials in a socket url and no auth type, which has no query form', () async {
+    test('puts a customer in a socket url, and the request headers on its handshake', () async {
       final backend = Backend(
         url: Uri.parse('https://router.example/base'),
         customerId: 'acme',
       ).withUser('ada');
 
-      final url = await backend.socketUri('/v1/agents/sessions/s1/events', {'decisions': 'false'});
+      final socket = await backend.socket('/v1/agents/sessions/s1/events', {'decisions': 'false'});
 
-      expect(url.scheme, 'wss');
-      expect(url.path, '/base/v1/agents/sessions/s1/events');
-      expect(url.queryParameters, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
+      expect(socket.uri.scheme, 'wss');
+      expect(socket.uri.path, '/base/v1/agents/sessions/s1/events');
+      expect(socket.uri.queryParameters, {
+        'decisions': 'false',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+      });
+      expect(socket.headers, await backend.headers());
+    });
+
+    test('keeps a token out of a socket url where the handshake can carry it', () async {
+      final backend = Backend(apiKey: 'key', token: () async => 'tok');
+
+      final socket = await backend.socket('/v1/agents/sessions/s1/events');
+
+      expect(socket.uri.queryParameters, {'api_key': 'key'});
+      expect(socket.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
+    });
+
+    test('puts a browser socket\'s credentials in its url, as the JavaScript SDK does', () async {
+      final backend = Backend(
+        url: Uri.parse('http://localhost:8080'),
+        apiKey: 'key',
+        userId: 'ada',
+        token: () async => 'tok',
+      );
+
+      final socket = await backend.socket('/v1/agents/sessions/s1/events', const {}, false);
+
+      expect(socket.uri.queryParameters, {'api_key': 'key', 'token': 'tok', 'user_id': 'ada'});
+      expect(socket.headers, isEmpty);
+    });
+
+    test(
+      'names a browser socket\'s credential to the hosted router as its proxy reads it',
+      () async {
+        for (final url in [Backend.defaultUrl, Backend.regionUrl('europe-west4')]) {
+          final backend = Backend(url: url, apiKey: 'key', userId: 'ada', token: () async => 'tok');
+
+          final socket = await backend.socket('/v1/agents/sessions/s1/events', const {}, false);
+
+          expect(socket.uri.queryParameters, {
+            'api_key': 'key',
+            'token': 'tok',
+            'authorization': 'tok',
+            'stream-auth-type': 'jwt',
+            'user_id': 'ada',
+          });
+        }
+      },
+    );
+
+    test('sends a native socket to the hosted router as Swift and Kotlin do', () async {
+      final backend = Backend(
+        url: Backend.defaultUrl,
+        apiKey: 'key',
+        userId: 'ada',
+        token: () async => 'tok',
+      );
+
+      final socket = await backend.socket('/v1/agents/sessions/s1/events');
+
+      expect(socket.uri.queryParameters, {'api_key': 'key'});
+      expect(socket.headers, {'Authorization': 'Bearer tok', 'Stream-Auth-Type': 'jwt'});
     });
   });
 

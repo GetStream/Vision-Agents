@@ -4,21 +4,26 @@ import 'package:web_socket/web_socket.dart';
 
 import 'agent_event.dart';
 import 'command.dart';
+import 'connect.dart';
 import 'errors.dart';
 
 /// The socket carrying one conversation.
 ///
-/// Hand-written because OpenAPI stops at the upgrade. `package:web_socket` rather than
-/// `dart:io` because it is the same code in a browser, and the platform answers the router's
-/// pings itself, so there is no keepalive here.
+/// Hand-written because OpenAPI stops at the upgrade. `package:web_socket` so it is the same
+/// code in a browser, opened by [connect] so a native platform also sends [headers]; the
+/// platform answers the router's pings itself, so there is no keepalive here.
 ///
 /// There is no automatic reconnection, on purpose: `respond` and `tool_result` are not
 /// idempotent and the protocol has nothing to resume from, so replaying after a reconnect
 /// would duplicate turns and tool results. The stream ends and the caller decides.
 final class SessionSocket {
-  SessionSocket(this.uri);
+  SessionSocket(this.uri, {this.headers = const {}});
 
   final Uri uri;
+
+  /// What the handshake carries where the platform lets it: the same credentials and auth
+  /// type as every request. A browser sends none, and the router reads [uri]'s query.
+  final Map<String, String> headers;
   WebSocket? _socket;
   bool _closing = false;
 
@@ -33,7 +38,7 @@ final class SessionSocket {
     }
     final WebSocket socket;
     try {
-      socket = await WebSocket.connect(uri);
+      socket = await connect(uri, headers);
     } on WebSocketException catch (error) {
       throw TransportException(error);
     }

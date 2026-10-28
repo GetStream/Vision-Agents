@@ -29,8 +29,27 @@ void main() {
       final upgrade = router.upgrades.single;
       expect(upgrade.path, '/v1/agents/sessions/s1/events');
       expect(upgrade.query, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
-      expect(upgrade.header('Stream-Auth-Type'), isNull);
+      expect(upgrade.header('Stream-Auth-Type'), 'jwt');
+      expect(upgrade.header('X-Customer-Id'), 'acme');
+      expect(upgrade.header('X-Stream-User-Id'), 'ada');
       await chat.close();
+    });
+
+    test('opens the socket with a key as the requests are made, the token in a header', () async {
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        userId: 'ada',
+        token: () async => 'tok',
+      );
+      final chat = await keyed.chat();
+
+      final upgrade = router.upgrades.single;
+      expect(upgrade.query, {'decisions': 'false', 'api_key': 'key'});
+      expect(upgrade.header('Authorization'), 'Bearer tok');
+      expect(upgrade.header('Stream-Auth-Type'), 'jwt');
+      await chat.close();
+      keyed.close();
     });
 
     test('shows what was asked at once, and asks with a request rather than a frame', () async {
