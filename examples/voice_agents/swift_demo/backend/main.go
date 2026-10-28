@@ -9,7 +9,7 @@
 // "whoever they say", because a demo has nobody to sign in; the comment where that happens
 // says what a real one would do instead.
 //
-//	STREAM_API_SECRET=<the secret of the Stream app the router runs in> go run ./backend
+//	STREAM_API_SECRET=<the secret of your Stream app> go run ./backend
 package main
 
 import (
@@ -45,7 +45,7 @@ func main() {
 func run(ctx context.Context, addr string) error {
 	secret := os.Getenv("STREAM_API_SECRET")
 	if secret == "" {
-		return errors.New("STREAM_API_SECRET is needed: the secret of the Stream app the router runs in")
+		return errors.New("STREAM_API_SECRET is needed: the secret of your Stream app")
 	}
 
 	mux := http.NewServeMux()

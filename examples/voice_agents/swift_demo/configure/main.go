@@ -1,6 +1,8 @@
 // Command configure stores the agent this directory describes on the router.
 //
 // This is the server-side half of the Swift demo, and it is deliberately a separate program.
+// It stores the agent on Stream's hosted router, under the app STREAM_API_KEY names, which is
+// the one the iOS app is built with.
 // Writing an agent config, defining its skills and filling its knowledge base are none of
 // them marked x-client-accessible in the OpenAPI spec, so the router refuses all three from a
 // phone. The app only ever names the agent this leaves behind.
@@ -16,8 +18,8 @@
 //
 // Run it from the agent directory once, and again whenever that directory changes:
 //
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
+//	STREAM_API_KEY=<your Stream app's key> \
+//	STREAM_API_SECRET=<its secret> \
 //	go run ./configure
 package main
 

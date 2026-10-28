@@ -16,7 +16,7 @@ struct RootView: View {
             ContentUnavailableView {
                 Label("No Stream key yet", systemImage: "key")
             } description: {
-                Text("Put the STREAM_API_KEY the router runs with in Assistant.streamAPIKey.")
+                Text("Put your Stream app's STREAM_API_KEY in Assistant.streamAPIKey.")
             }
         } else {
             conversation

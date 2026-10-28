@@ -10,9 +10,11 @@
 // A demo has nobody signed in, so it acts for whichever user the phone names. A real one
 // would act for the user its own sign-in vouched for.
 //
-//	STREAM_API_SECRET=<the secret of the Stream app the router runs in> \
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
+// It reaches Stream's hosted router as the app STREAM_API_KEY names, the one the iOS app is
+// built with:
+//
+//	STREAM_API_KEY=<your Stream app's key> \
+//	STREAM_API_SECRET=<its secret> \
 //	go run ./backend
 package main
 
@@ -62,7 +64,7 @@ func main() {
 func run(ctx context.Context, addr string) error {
 	secret := os.Getenv("STREAM_API_SECRET")
 	if secret == "" {
-		return errors.New("STREAM_API_SECRET is needed: the secret of the Stream app the router runs in")
+		return errors.New("STREAM_API_SECRET is needed: the secret of your Stream app")
 	}
 
 	mux := http.NewServeMux()

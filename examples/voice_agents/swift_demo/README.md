@@ -15,32 +15,25 @@ app/                 the phone half: chat, voice, and tools that run on the devi
 
 ## Run it
 
-Start the router and its Postgres and Redis, from the repo root, with `ROUTER_AUTH_MODE=proxy`
-in the repo `.env` so it trusts the customer and user ids it is given. Not `noauth`, which takes
-every caller for the backend: the phone's user would never join its own chat channel.
-
-```bash
-docker compose up --build
-```
+The app talks to Stream's hosted router, which `VisionAgents(apiKey:)` reaches unless told
+otherwise, so all it takes is a Stream app: its key and its secret. Leave
+`STREAM_ACCELERATION_URL` and `STREAM_ACCELERATION_CUSTOMER_ID` unset, or the Go programs below
+go to that router instead.
 
 Store the agent. This is the Go SDK doing the things a phone is not allowed to do:
 
 ```bash
 cd examples/voice_agents/swift_demo
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
+STREAM_API_KEY=<your Stream app's key> \
+STREAM_API_SECRET=<its secret> \
 go run ./configure
 ```
 
-A config belongs to one customer, and `compose.yaml` builds the dashboard with
-`NEXT_PUBLIC_CUSTOMER_ID: examples` — baked in at build time, since Next inlines a
-`NEXT_PUBLIC_` variable into the bundle. So store the agent under `examples` and it shows up
-on the dashboard; store it under anything else and the app will find it but
-[the agents page](http://localhost:3000/agents) will not. `Demo.customerID` in
-`app/SwiftDemo/Demo.swift` has to match whatever you use here.
+The hosted router keeps the agent under the app the key names, so put the same key in
+`Demo.streamAPIKey` in `app/SwiftDemo/Demo.swift`.
 
 ```
-agent      swift_demo (config 581427bbd7a40e71d6c049e225a59ca0)
+agent      swift_demo (config 5740714b87c00f458859e694cb87f09d)
 skill      refund_decision (20s)
 knowledge  policy.md (774 characters)
 ```
@@ -50,11 +43,10 @@ knowledge  policy.md (774 characters)
 reading the configs is server-side only.
 
 Leave the other backend running, which signs the Stream token the phone is its user with. It
-takes the secret of the Stream app the router runs in, and `Demo.streamAPIKey` takes that app's
-`STREAM_API_KEY`:
+takes the same app's secret:
 
 ```bash
-STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
+STREAM_API_SECRET=<its secret> go run ./backend
 ```
 
 Then open `app/SwiftDemo.xcodeproj` in Xcode 27 and run it on a simulator. Ask about an order
@@ -63,20 +55,39 @@ with Stream Chat's AI components (`StreamChatAI`), which need it to add with SPM
 `stream-chat-swift` from its `develop` branch, because the voice glow (`AIVoiceGlowView`) is not
 in a released `StreamChatAI` yet.
 
-The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
-`XAI_API_KEY`; a call keeps the agent's faster model.
+The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning; a call keeps the
+agent's faster model.
 
-Knowledge needs `TURBOPUFFER_API_KEY` on the router. Without it the sync says so and carries on:
-the agent keeps its instructions and its skill and loses the returns policy, and the refund
-skill then cannot say a refund is owed.
+### On a local router
+
+The hosted router is deployed less often than `accelerate` moves, so a router change is tried
+on one built from this checkout. Start it, from the repo root, with `ROUTER_AUTH_MODE=proxy` in
+the repo `.env` so it trusts the customer and user ids it is given. Not `noauth`, which takes
+every caller for the backend: the phone's user would never join its own chat channel.
+
+```bash
+docker compose up --build
+```
+
+Run `configure` with `STREAM_ACCELERATION_URL=http://localhost:8080` and
+`STREAM_ACCELERATION_CUSTOMER_ID=examples` in place of the key and secret, `examples` being the
+customer `compose.yaml` builds the dashboard with. In `Demo.swift`, build the app's
+`VisionAgents` with
+`VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "examples", apiKey: streamAPIKey)`,
+with the `STREAM_API_KEY` the router runs with, and run `backend` with that app's secret. On a
+device, put your Mac's address on the network in place of `localhost`.
+
+The router then needs `XAI_API_KEY` for the Chat tab, and `TURBOPUFFER_API_KEY` for knowledge.
+Without it the sync says so and carries on: the agent keeps its instructions and its skill and
+loses the returns policy, and the refund skill then cannot say a refund is owed.
 
 ## What each half is allowed to do
 
-`configure` sends only `X-Customer-Id`, which a router with no proxy in front of it reads as a
-backend, so it may write configs, define skills and ingest knowledge. The app sends
-`Stream-Auth-Type: jwt` as well, which declares it a device, and the router answers 403 for all
-three. `backend` never talks to the router: it holds the Stream secret, which is all signing a
-user's token takes.
+`configure` signs its requests with the app's secret, in a token that names no user, which the
+router reads as the app's own backend, so it may write configs, define skills and ingest
+knowledge. The app's token names its user, which declares it a device, and the router answers
+403 for all three. `backend` never talks to the router: it holds the Stream secret, which is all
+signing a user's token takes.
 
 The router is server-side only by default, and opens five operations: search, and opening,
 listing, closing and watching a session. That is everything the app does. Nothing in the Swift
@@ -118,18 +129,19 @@ nothing.
   (`AIToolApprovalView`); on a call it is a card under the glow (`AIToolApprovalCard`).
   Refund and the tool runs; Not now and the agent is told you declined.
 
-## No auth
+## No sign-in
 
-Five constants in `app/SwiftDemo/Demo.swift`: the router's URL, this backend's URL, the
-customer id, the Stream key and the agent's name. That is the whole configuration, because
-the router is running in the mode where it trusts the customer and user ids it is given, and
-the key is Stream Chat's and Stream Video's alone. In front of a real deployment the router is
-reached by the key and the same token, and nothing else in the app would change.
+Three constants in `app/SwiftDemo/Demo.swift`: this backend's URL, the Stream key and the
+agent's name. That is the whole configuration, because the hosted router knows the app by the
+key and the user by the token `backend` signs, and `backend` signs for whoever the app says it
+is. A real app signs its person in first and its backend signs for them alone; nothing else in
+the app would change.
 
 The app is the user `demo-caller`, and a session belongs to whoever opened it, so it reaches
-its own sessions and nothing else. A deployment verifying tokens draws the same boundary around
-the `user_id` its token names, which is what stops one person reading another's conversation.
+its own sessions and nothing else. The router verifies the token, so that boundary is drawn
+around the `user_id` it names, which is what stops one person reading another's conversation.
 
-The simulator reaches your Mac's localhost, so it works as it stands. On a device, put your
-Mac's address on the network in `Demo.routerURL`; `NSAllowsLocalNetworking` in `Info.plist` is
-what lets plain HTTP through to it.
+The router is reached over HTTPS; `backend` runs on your Mac. The simulator reaches your Mac's
+localhost, so it works as it stands. On a device, put your Mac's address on the network in
+`Demo.backendURL`; `NSAllowsLocalNetworking` in `Info.plist` is what lets plain HTTP through
+to it.

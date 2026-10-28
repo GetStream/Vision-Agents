@@ -1,19 +1,16 @@
 import Foundation
 import VisionAgentsCore
 
-/// Where the router is, where the token backend is, and who this phone is.
+/// Which Stream app this is, where the token backend is, and who this phone is.
 ///
-/// There is no sign-in. The router runs in the mode where it trusts the customer and user ids
-/// it is given, `ROUTER_AUTH_MODE=proxy`, so these constants are the whole configuration. In
-/// front of a real deployment the router is reached by the key and the same token, and
-/// nothing else here would change.
+/// The app talks to Stream's hosted router, which knows the app by its key and this phone's
+/// user by the token the backend signs. There is no sign-in: the backend signs for whoever
+/// the app says it is, so these constants are the whole configuration.
 enum Assistant {
-    /// The simulator reaches the Mac's localhost. On a device, put your Mac's address on the
-    /// network here, for example http://192.168.1.20:8080.
-    static let routerURL = URL(string: "http://localhost:8080")!
-
     /// This app's backend, `go run ./backend`. A phone holds no secret to sign a Stream token
     /// with and may not reach its person's Gmail connection on the router, so it asks this.
+    /// The simulator reaches the Mac's localhost. On a device, put your Mac's address on the
+    /// network here, for example http://192.168.1.20:8098.
     static let backendURL = URL(string: "http://localhost:8098")!
 
     /// The scheme the router sends a sign-in sheet back to, once the person has answered the
@@ -24,11 +21,8 @@ enum Assistant {
     /// Where the sign-ins a conversation asks for go back to, kept with its session.
     static let returnURL = URL(string: callbackScheme + ":/connected")!
 
-    /// The customer `go run ./configure` stored the agent under.
-    static let customerID = "examples"
-
-    /// The `STREAM_API_KEY` the router runs with, which the conversations' channels and calls
-    /// are in.
+    /// Your Stream app's `STREAM_API_KEY`: the hosted router keeps the agent under that app,
+    /// and the conversations' channels and calls are in it.
     static let streamAPIKey = ""
 
     /// The agent `go run ./configure` stored, by the name in `agent.yaml`.
@@ -42,7 +36,7 @@ enum Assistant {
     static let user = User(id: "juno-owner", name: "Alex")
 
     static let agents: VisionAgents = {
-        let agents = VisionAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
+        let agents = VisionAgents(apiKey: streamAPIKey)
         agents.setUser(user) { try await streamToken() }
         return agents
     }()

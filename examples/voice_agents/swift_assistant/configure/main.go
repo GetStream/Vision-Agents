@@ -3,12 +3,13 @@
 // It is the server-side half of the assistant: writing an agent config is not marked
 // x-client-accessible, so the router refuses it from a phone, and the app only ever names
 // the agent this leaves behind. agent.yaml says what runs it and instructions.md what it is
-// told; the Go SDK reads both and syncs them in one request.
+// told; the Go SDK reads both and syncs them in one request, to Stream's hosted router under
+// the app STREAM_API_KEY names, which is the one the iOS app is built with.
 //
 // Run it once, and again whenever the directory changes:
 //
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
+//	STREAM_API_KEY=<your Stream app's key> \
+//	STREAM_API_SECRET=<its secret> \
 //	go run ./configure
 package main
 
@@ -68,7 +69,7 @@ func run(ctx context.Context, dir string) error {
 	}
 	fmt.Printf("visible    %v\n", visible)
 	fmt.Printf("skills     %v\n", skills)
-	fmt.Printf("\nnext       STREAM_API_SECRET=<the router's> go run ./backend\n")
+	fmt.Printf("\nnext       STREAM_API_KEY=<the same key> STREAM_API_SECRET=<its secret> go run ./backend\n")
 	fmt.Printf("           open examples/voice_agents/swift_assistant/app/SwiftAssistant.xcodeproj and run it\n")
 	return nil
 }

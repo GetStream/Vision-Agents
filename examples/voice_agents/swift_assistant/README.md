@@ -15,15 +15,16 @@ app/                 the phone half: SwiftUI over VisionAgentsCore and StreamCha
 
 ## Run it
 
-Start the router in proxy mode, as in the [Swift demo](../swift_demo/README.md#run-it), so it
-trusts the customer and user ids the phone sends.
+The app talks to Stream's hosted router, as the [Swift demo](../swift_demo/README.md#run-it)
+does: all it takes is a Stream app's key and secret. Leave `STREAM_ACCELERATION_URL` and
+`STREAM_ACCELERATION_CUSTOMER_ID` unset.
 
 Store the agent:
 
 ```bash
 cd examples/voice_agents/swift_assistant
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
+STREAM_API_KEY=<your Stream app's key> \
+STREAM_API_SECRET=<its secret> \
 go run ./configure
 ```
 
@@ -36,26 +37,38 @@ demo's does, and does what only a server may with the person's Gmail connection:
 through it.
 
 ```bash
-STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
+STREAM_API_KEY=<your Stream app's key> \
+STREAM_API_SECRET=<its secret> \
 go run ./backend
 ```
 
 It listens on `:8098`, beside the Swift demo's on `:8099`.
 
-Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
-`app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
-run it on a simulator. The app
+Put the same key in `Assistant.streamAPIKey`, in `app/SwiftAssistant/Assistant.swift`, then
+open `app/SwiftAssistant.xcodeproj` in Xcode 27 and run it on a simulator. The app
 takes `stream-chat-swift` from its `develop` branch, because the AI components it uses
 (`AIConversationView`, `AIToolAuthorizationView`) are not in a released `StreamChatAI` yet.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
-The router needs `XAI_API_KEY` for the chat's model and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY`
-and `INWORLD_API_KEY` for a call. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or
-`PERPLEXITY_API_KEY`; without one the agent is never offered the tool, and only the router's
-log says so.
+On a device, put your Mac's address on the network in `Assistant.backendURL`.
+
+### On a local router
+
+To try a router change before it is deployed, run one from this checkout in proxy mode, as in
+the Swift demo's [On a local router](../swift_demo/README.md#on-a-local-router). Run
+`configure` and `backend` with `STREAM_ACCELERATION_URL=http://localhost:8080` and
+`STREAM_ACCELERATION_CUSTOMER_ID=examples`, `backend` with the router's `STREAM_API_SECRET`
+too, and build `Assistant.agents` with
+`VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "examples", apiKey: streamAPIKey)`.
+
+The router then needs `XAI_API_KEY` for the chat's model and `GOOGLE_API_KEY`,
+`DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web search needs one of `EXA_API_KEY`,
+`TAVILY_API_KEY` or `PERPLEXITY_API_KEY`; without one the agent is never offered the tool, and
+only the router's log says so. Connectors need `ROUTER_CONNECTORS_ENABLED=true`,
+`ROUTER_AUTH_KEK` and `ROUTER_PUBLIC_URL=http://localhost:8080` in the repo-root `.env`
+(restart the router after a change), and Gmail's redirect URI below is
+`http://localhost:8080/v1/agents/connectors/oauth/callback` instead.
 
 ## Gmail and Linear
 
@@ -89,9 +102,7 @@ tells the agent to call a Gmail tool first, which asks for the sign-in.
 To try the sign-in again, delete the person's connection in the Volt dashboard, under Library ›
 Connectors › Connections, or with `DELETE /v1/agents/connections/{id}`.
 
-What it takes, once, besides the router's `ROUTER_CONNECTORS_ENABLED=true`, `ROUTER_AUTH_KEK`
-and `ROUTER_PUBLIC_URL=http://localhost:8080` in the repo-root `.env` (restart the router after
-a change), and `go run ./configure` again, which binds both:
+What it takes, once, besides `go run ./configure`, which binds both:
 
 - Linear needs nothing more, since its MCP server registers the router's client by itself
   (dynamic client registration).
@@ -100,11 +111,12 @@ a change), and `go run ./configure` again, which binds both:
   [Workspace Developer Preview](https://developers.google.com/workspace/preview), which the
   Gmail MCP server is part of. Set up the consent screen with the `gmail.readonly` and
   `gmail.compose` scopes, then create a client of type Web application, marked for an
-  AI-powered agent, with `http://localhost:8080/v1/agents/connectors/oauth/callback` as an
-  authorized redirect URI. Give it to the router as `GOOGLE_MCP_CLIENT_ID` and
-  `GOOGLE_MCP_CLIENT_SECRET`, or as the app's own with
-  `PUT /v1/agents/connectors/gmail/oauth-client`. Without one, the agent says Gmail cannot be
-  connected here.
+  AI-powered agent, with
+  `https://accelerate-us-east4.gcp.stream-io-api.com/v1/agents/connectors/oauth/callback` as an
+  authorized redirect URI. Give it to the router as the app's own with
+  `PUT /v1/agents/connectors/gmail/oauth-client`, or on a local router as
+  `GOOGLE_MCP_CLIENT_ID` and `GOOGLE_MCP_CLIENT_SECRET`. Without one, the agent says Gmail
+  cannot be connected here.
 
 ## What the app shows
 
