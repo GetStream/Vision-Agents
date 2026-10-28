@@ -179,7 +179,7 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 			log.Info("an inbound message is done", "attempts", attempts)
 		}
 	case (attempts <= len(b.inboundRetries) || optsOut(message.Message())) && !refusedForGood(err):
-		log.Info("an inbound message was not written into its thread channel and is written again", "attempts", attempts, "error", err)
+		log.Info("an inbound message was not written into its thread channel or not handed to the agent, and is tried again", "attempts", attempts, "error", err)
 		if attempts > len(b.inboundRetries) {
 			log.Warn("an opt-out is still not recorded and is tried again", "attempts", attempts, "error", err)
 		}
@@ -189,7 +189,7 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 		cause := err
 		changed, err = b.store.FailChannelInbound(recording, message, time.Now(), b.forwardUnanswered(message))
 		if changed {
-			log.Warn("gave up an inbound message: it was never written into its thread channel, so no agent answers it",
+			log.Warn("gave up an inbound message: it was never written into its thread channel or handed to the agent, so no agent answers it",
 				"attempts", attempts, "error", cause)
 		}
 	}
