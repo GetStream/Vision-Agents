@@ -214,6 +214,28 @@ func (s *InboundSuite) TestALaterMessageOfAnOpenEpisodeWritesNoCard() {
 	s.Equal([]string{"first", "second"}, s.chat.Messages(thread.ChannelID))
 }
 
+// A message whose episode another message opened after it was queued, as Deliver does at the
+// router's time, finds it open with its card written, and writes nothing into the omni-channel.
+func (s *InboundSuite) TestAMessageOfAnEpisodeOpenedAfterItWasQueuedWritesNoCard() {
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.000002", "second", nil)
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE channel_thread_inbound SET created_at = created_at - interval '1 hour' WHERE channel_id = ?", thread.ChannelID)
+	s.Require().NoError(err)
+	message := s.row(thread, "1793125611.000002")
+	bridge := s.newBridge(nil)
+	opened, err := bridge.episode(s.ctx, thread, store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}, message.Message(), time.Time{})
+	s.Require().NoError(err)
+	s.Require().NoError(bridge.cards.Write(s.ctx, opened))
+	omni, card := s.card(thread)
+	asked := s.asked(omni)
+
+	s.bridge(nil)
+
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.000002").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(asked, s.asked(omni), "no request to the omni-channel")
+	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
+}
+
 // Each failed write is due again after the next wait of the schedule.
 func (s *InboundSuite) TestAFailedWriteIsDueAgainAfterEachWait() {
 	thread := s.thread("fake_line")
