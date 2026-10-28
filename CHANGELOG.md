@@ -145,10 +145,6 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 ## Bug Fixes
 
-### A voice that reports one utterance finished twice bills it once
-
-A second completion for an utterance that has already settled, and has not started again, now writes no request row. Before, it wrote a second row with a new usage id and the voice's own character count, which billed the utterance twice. An utterance that the voice starts again after it settled, because more text came for it, still gets its own row (AI-2141).
-
 ### ElevenLabs voices are priced at their current rates
 
 `eleven_flash_v2_5` and `eleven_v3_conversational` are $40, and `eleven_multilingual_v2` and `eleven_v3` $80, per 1M characters in `prices/vendor.json`, ElevenLabs' current API rates. A deployment whose database already holds these four keeps its prices until they are edited there.
