@@ -107,7 +107,7 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry names its `region`, such as `us`; a file with an entry that names none stops the start. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -1880,8 +1880,12 @@ longer in force.
 service tier where a vendor charges one), all in the `us`, embedded in the binary: rates only,
 no price of the operator's and no negotiated figure. A deployment may lay a price file of its
 own over it with `ROUTER_PRICES_FILE`: for one item, region, BYOK state and `when`, the first
-file with an entry wins. Every entry of either file names its `region`; one that names none is
-refused, naming the entry. An entry may set `prices`, `price_tiers` and `sku`. One with no price
+file with an entry wins. Every entry of `vendor.json` names its `region`, and one that names
+none is refused, naming the entry. A deployment's own file should too, but for now an entry of
+it that names none is read as `us`, with a warning naming the entries: every router of a
+deployment reads the same file at its start, and a router built before regions refuses a
+`region` field, so the file can name regions only once none of its routers is that old. An
+entry may set `prices`, `price_tiers` and `sku`. One with no price
 is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), or a BYOK one at
 `pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
 which older files have, is ignored with a warning.

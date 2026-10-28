@@ -99,6 +99,35 @@ func (s *PricesSuite) TestAFileEntryWithoutARegionIsRefused() {
 	s.ErrorContains(err, "own.json: llm/openai/m names no region: every entry names its region, such as us")
 }
 
+// TestADeploymentFileEntryWithoutARegionIsReadInTheUS: only a deployment's own file may leave
+// it out, and each entry that does is logged.
+func (s *PricesSuite) TestADeploymentFileEntryWithoutARegionIsReadInTheUS() {
+	path := filepath.Join(s.T().TempDir(), "own.json")
+	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
+		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}},
+		{"modality": "stt", "provider": "own", "model": "m", "region": "eu", "rates": {"audio_ms": {"usd": 1, "per": 3600000}}}]}`), 0o600))
+	var logs bytes.Buffer
+
+	file, err := LoadDeployment(path, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	s.Require().NoError(err)
+	s.Equal(pricing.RegionUS, s.named(file, "llm/openai/m (us)").Region)
+	s.Equal(pricing.RegionUS, s.named(file, "llm/openai/m (us, byok)").Region)
+	s.Equal(pricing.RegionEU, s.named(file, "stt/own/m (eu)").Region)
+	s.Contains(logs.String(), "llm/openai/m")
+	s.NotContains(logs.String(), "stt/own/m")
+}
+
+func (s *PricesSuite) TestADeploymentFileEntryOfAnotherFormOfRegionIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "own.json")
+	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [{"modality": "llm", "provider": "openai", "model": "m",
+		"region": "EU", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
+
+	_, err := LoadDeployment(path, slog.New(slog.DiscardHandler))
+
+	s.ErrorIs(err, pricing.ErrRegion)
+}
+
 func (s *PricesSuite) TestAFileEntryOfAnotherFormOfRegionIsRefused() {
 	_, err := Parse("own.json", []byte(`{"entries": [{"modality": "llm", "provider": "openai", "model": "m", "region": "EU",
 		"rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`))

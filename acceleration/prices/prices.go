@@ -61,10 +61,46 @@ func Load(path string) (File, error) {
 	return Parse(path, data)
 }
 
+// LoadDeployment is Load for a deployment's own file, ROUTER_PRICES_FILE: an entry that names
+// no region is read as pricing.DefaultRegion, which is logged. A router built before regions
+// refuses a region field, and every router of a deployment reads the same file at its start,
+// so the file can name regions only once none of them is that old.
+func LoadDeployment(path string, logger *slog.Logger) (File, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return File{}, fmt.Errorf("prices: %w", err)
+	}
+	file, err := decode(path, data)
+	if err != nil {
+		return File{}, err
+	}
+	var unnamed []string
+	for i, entry := range file.Entries {
+		if entry.Region == "" {
+			unnamed = append(unnamed, Name(entry))
+			file.Entries[i].Region = pricing.DefaultRegion
+		}
+	}
+	if len(unnamed) > 0 {
+		logger.Warn("price file entries name no region and are read as "+pricing.DefaultRegion+
+			"; name one on every entry once every router reading the file is built with regions",
+			"file", path, "entries", unnamed)
+	}
+	return file.finish(path)
+}
+
 // Parse reads a price file and checks it builds a price list. name is what an error says
 // the file is. A field nobody reads is refused rather than dropped, so a misspelt rate is
 // an error and never a price of zero.
 func Parse(name string, data []byte) (File, error) {
+	file, err := decode(name, data)
+	if err != nil {
+		return File{}, err
+	}
+	return file.finish(name)
+}
+
+func decode(name string, data []byte) (File, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var file File
@@ -74,6 +110,12 @@ func Parse(name string, data []byte) (File, error) {
 	if _, err := decoder.Token(); err != io.EOF {
 		return File{}, fmt.Errorf("prices: %s: more than one JSON value", name)
 	}
+	return file, nil
+}
+
+// finish checks a decoded file, adds its BYOK twins and prices it, and checks it builds a
+// price list.
+func (file File) finish(name string) (File, error) {
 	if err := file.check(); err != nil {
 		return File{}, fmt.Errorf("prices: %s: %w", name, err)
 	}

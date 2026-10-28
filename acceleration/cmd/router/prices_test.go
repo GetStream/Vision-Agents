@@ -197,14 +197,41 @@ func (s *PriceFileSuite) TestCheckingABadFileNamesTheFileAndTheEntry() {
 	s.ErrorContains(err, path+": pricing: llm/openai/m (us) rates input_tokens below zero")
 }
 
-func (s *PriceFileSuite) TestCheckingAFileWithAnEntryInNoRegionNamesTheEntry() {
+// TestCheckingAFileWithAnEntryInNoRegionReadsItInTheUS: chat's file names no region while a
+// router built before regions may still read it, and the check reads it as a start does.
+func (s *PriceFileSuite) TestCheckingAFileWithAnEntryInNoRegionReadsItInTheUS() {
 	path := filepath.Join(s.T().TempDir(), "own-prices.json")
 	s.Require().NoError(os.WriteFile(path, []byte(`{"entries": [
-		{"modality": "llm", "provider": "openai", "model": "m", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
+		{"modality": "runtime", "provider": "stream", "model": "voice", "free": true}]}`), 0o600))
+	var out bytes.Buffer
 
-	err := runPricesCheck([]string{"--file", path}, &bytes.Buffer{})
+	s.Require().NoError(runPricesCheck([]string{"--file", path}, &out))
 
-	s.ErrorContains(err, path+": llm/openai/m names no region: every entry names its region, such as us")
+	s.Equal(fmt.Sprintf("%s: 1 entries, us 1; %d entries laid over vendor.json\n", path, len(prices.Vendor().Entries)+1),
+		out.String())
+}
+
+// TestADeploymentsOwnEntryInNoRegionIsLoadedInTheUS: the router starts, says so, and loads the
+// entry as a US one; an item no region names would otherwise be unpriced.
+func (s *PriceFileSuite) TestADeploymentsOwnEntryInNoRegionIsLoadedInTheUS() {
+	settings := config.Defaults()
+	settings.PricesFile = filepath.Join(s.T().TempDir(), "own-prices.json")
+	s.Require().NoError(os.WriteFile(settings.PricesFile, []byte(`{"entries": [
+		{"modality": "llm", "provider": "own", "model": "m", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`), 0o600))
+	var logs bytes.Buffer
+
+	load, err := loadPriceFiles(settings, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	s.Require().NoError(err)
+	s.Contains(logs.String(), "price file entries name no region and are read as us")
+	s.Contains(logs.String(), "llm/own/m")
+	var own []string
+	for _, entry := range load.Entries {
+		if entry.Provider == "own" {
+			own = append(own, prices.Name(entry))
+		}
+	}
+	s.ElementsMatch([]string{"llm/own/m (us)", "llm/own/m (us, byok)"}, own)
 }
 
 // TestCheckingAFileCountsItsEntriesByRegion: an eu entry and its BYOK twin beside a us one.

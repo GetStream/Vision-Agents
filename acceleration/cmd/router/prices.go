@@ -135,7 +135,7 @@ func loadPriceFiles(settings config.Config, logger *slog.Logger) (store.PriceLoa
 	var files []prices.File
 	var names []string
 	if settings.PricesFile != "" {
-		own, err := prices.Load(settings.PricesFile)
+		own, err := prices.LoadDeployment(settings.PricesFile, logger)
 		if err != nil {
 			return store.PriceLoad{}, err
 		}
@@ -679,7 +679,7 @@ func runPricesCheck(args []string, out io.Writer) error {
 	merged := ""
 	if *path != "" {
 		var err error
-		if file, err = prices.Load(*path); err != nil {
+		if file, err = prices.LoadDeployment(*path, slog.New(slog.NewTextHandler(os.Stderr, nil))); err != nil {
 			return err
 		}
 		name = *path
