@@ -673,9 +673,10 @@ func (s *Server) connectionDeleted(ctx context.Context, customerID string, conne
 // auditGrant records one grant the API created or revoked (T47), with the request's id
 // (core.CorrelationOf) and the tokens change names (AI-990), and logs it as one line, as the
 // resolver logs a refresh. The change is committed when it is called, so a row that cannot be
-// written is logged and the change stands. revision is the connection's once it committed, 0
-// when the change names none. change is zero when no token is known, as on a delete, whose
-// credentials went sealed with the row.
+// written is logged and the change stands. Detached, as auditProxyCall is: nothing writes a row
+// lost to a caller who hung up after the commit (AI-2163). revision is the connection's once
+// it committed, 0 when the change names none. change is zero when no token is known, as on a
+// delete, whose credentials went sealed with the row.
 func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, connectorID, ownerType, action, reason string, revision int, attemptID string, change core.CredentialChange) {
 	s.logger.Info("connector credential event", append([]any{"event", action,
 		"connection", connectionID, "connector", connectorID, "revision", revision, "reason", reason},
@@ -688,6 +689,8 @@ func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, conne
 	if change != (core.CredentialChange{}) {
 		event.Credential = store.AuditCredential(change)
 	}
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
 	err := s.store.RecordConnectorAudit(ctx, event)
 	if err != nil {
 		s.logger.Error("could not record a connector audit row", "connection", connectionID, "action", action, "error", err)
@@ -697,12 +700,14 @@ func (s *Server) auditGrant(ctx context.Context, customerID, connectionID, conne
 // recordClient keeps which OAuth client a consent's credentials were issued to, for a scheme
 // that names it (core.ClientNamer), so the connection's reads show it (AI-990 F16). The consent
 // is committed when it is called, so a row that cannot be written is logged and the consent
-// stands.
+// stands. Detached, as auditGrant is: only the next consent would write it again.
 func (s *Server) recordClient(ctx context.Context, connectionID string, credentials core.StoredCredentials) {
 	client, ok := core.ClientOf(s.connectors.Schemes, credentials)
 	if !ok {
 		return
 	}
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
 	err := s.store.PutConnectorConnectionClient(ctx, &store.ConnectorConnectionClient{
 		ConnectionID: connectionID, Registration: client.Registration, ClientID: client.ID,
 	})

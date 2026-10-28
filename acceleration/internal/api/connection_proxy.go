@@ -410,7 +410,9 @@ func waitSeconds(wait time.Duration) string {
 // (20261007170000_connector_invocations_and_audit.sql). The call happened whatever the row
 // does, so a row that cannot be written is logged.
 func (s *Server) auditProxyCall(ctx context.Context, connection store.ConnectorConnection, host string, status *int, latency int64) {
-	err := s.store.RecordConnectorAudit(context.WithoutCancel(ctx), &store.ConnectorAuditEvent{
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
+	err := s.store.RecordConnectorAudit(ctx, &store.ConnectorAuditEvent{
 		CustomerID: connection.CustomerID, ConnectionID: connection.ID, ConnectorID: connection.ConnectorID,
 		OwnerType: connection.OwnerType, Action: store.AuditProxyCall, RequestID: core.CorrelationOf(ctx).RequestID,
 		StatusCode: status, LatencyMs: &latency, Target: host,
