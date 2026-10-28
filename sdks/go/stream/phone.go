@@ -186,7 +186,8 @@ func (p *Phone) Detach(ctx context.Context, number string) error {
 }
 
 // SetAgent has the agent config named agent (a name or an id) answer the number's calls,
-// so no worker is needed. A number a worker is attached to is refused.
+// so no worker is needed. A number that is not attached, or one attached to a call of its
+// own, is refused.
 func (p *Phone) SetAgent(ctx context.Context, number, agent string) (acceleration.PhoneNumber, error) {
 	var updated acceleration.PhoneNumber
 

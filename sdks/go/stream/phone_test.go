@@ -62,14 +62,14 @@ func TestSetAgentPutsTheAgentOnTheNumber(t *testing.T) {
 
 func TestSetAgentSaysWhyTheRouterRefused(t *testing.T) {
 	server := refusing(t, http.StatusConflict, "application/json", `{"error": {
-		"message": "+15125551234 is attached to a worker",
-		"type": "conflict", "code": "phone_number_conflict",
-		"doc_url": "https://getstream.io/agents/docs/api/errors/#phone_number_conflict"}}`)
+		"message": "The number is not attached: attach the number first.",
+		"type": "conflict", "code": "conflict",
+		"doc_url": "https://getstream.io/agents/docs/api/errors/#conflict"}}`)
 	client, err := acceleration.NewClientWithResponses(server.URL)
 	require.NoError(t, err)
 
 	_, err = NewPhone(client).SetAgent(t.Context(), "+15125551234", "support")
-	require.ErrorContains(t, err, "+15125551234 is attached to a worker")
+	require.ErrorContains(t, err, "The number is not attached: attach the number first.")
 }
 
 func TestRemoveAgentDeletesIt(t *testing.T) {

@@ -46,7 +46,7 @@ The structure of an agent folder is like this
 - agent.yaml (use this to detect/validate the folder for syncing)
 - instructions.md
 - guardrail.md
-- skills
+- skills 
 - knowledge (markdown files and urls)
 - simulations (`*.yaml`, each a list of simulations: `name`, `scenario`, `assertion`, and optionally `mode`, `variations`, `max_turns`, `caller_target`, `judge_target`, `caller_stt`, `caller_tts`, `caller_voice`, `tags`)
 
@@ -158,7 +158,7 @@ Guest users
 
 user = client.guestUser(options); // gets or creates a guest user (searches in cookie or device storage)
 
-client.claimGuestUser(guestUser, realUser); // only supported server side.
+client.claimGuestUser(guestUser, realUser); // only supported server side. 
 ```
 
 ## Server side SDKs
@@ -168,19 +168,19 @@ client.claimGuestUser(guestUser, realUser); // only supported server side.
 * placing an outbound call
 * syncing the folder config for an agent
 
-Include Stream's server side SDK as a dependency.
+Include Stream's server side SDK as a dependency. 
 
-Here's an example of python
+Here's an example of python 
 
 Normal call
 
 ```
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
-	    config="simple_voice_ai",
+	    config="simple_voice_ai", 
 	    cost_tracking={env: "production"},
 	    memory_filter={user_id: 123}, # memory visibility
-    )
+    ) 
     return agent
 
 

@@ -1876,6 +1876,8 @@ func (s *Store) NumbersAnsweredBy(ctx context.Context, customerID, configID stri
 		Where("customer_id = ?", customerID).
 		Where("config_id = ?", configID).
 		Where("released_at IS NULL").
+		// A router from before agents on numbers detaches without clearing the agent.
+		Where("attached_at IS NOT NULL").
 		Order("e164").
 		Scan(ctx, &numbers)
 	if err != nil {

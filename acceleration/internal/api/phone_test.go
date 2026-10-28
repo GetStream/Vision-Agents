@@ -669,6 +669,37 @@ func (s *PhoneSuite) TestAConfigCanBeDeletedOnceNoNumberAnswersWithIt() {
 	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
 }
 
+func (s *PhoneSuite) TestANumberDetachedByAnOlderRouterDoesNotKeepItsConfig() {
+	// A router from before agents on numbers detaches without clearing the number's agent.
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	number := s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().NoError(s.store.SetNumberAgent(ctx, s.customerID(), number, config))
+	_, err := s.store.DB().NewUpdate().Model((*store.PhoneNumber)(nil)).
+		Set("attached_at = NULL").Where("e164 = ?", number).Exec(ctx)
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+config, nil, nil))
+}
+
+func (s *PhoneSuite) TestTheRefusedDeleteSaysHowToFreeTheConfig() {
+	s.useApp(s.data.createApp())
+	first, second := s.attachedForSessions(s.customerID()), s.attachedForSessions(s.customerID())
+	config := s.config("echo/local-model")
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), first, config))
+
+	_, failure := s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+config, nil)
+	s.Contains(failure, "number "+first+" answers")
+	s.Contains(failure, "DELETE /v1/phone/numbers/{e164}/agent")
+
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), second, config))
+	_, failure = s.serverClient.failure(http.MethodDelete, "/v1/agents/configs/"+config, nil)
+	s.Contains(failure, "numbers ")
+	s.Contains(failure, first)
+	s.Contains(failure, second)
+}
+
 func (s *PhoneSuite) TestANumberThatIsNotAttachedCannotBeGivenAnAgent() {
 	s.useApp(s.data.createApp())
 	number := s.utils.number()

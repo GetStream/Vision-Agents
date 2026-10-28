@@ -541,8 +541,12 @@ var errAgentRoleTaken = APIError{
 // configAnswersNumbers is a delete of a config that phone numbers still answer with: deleting
 // it would leave their callers reaching no agent.
 func configAnswersNumbers(numbers []string) APIError {
-	return conflict(fmt.Sprintf("these numbers answer with this agent: %s. Remove the agent from them or detach them",
-		strings.Join(numbers, ", ")))
+	if len(numbers) == 1 {
+		return conflict(fmt.Sprintf("The number %s answers with this agent: remove the agent from it with "+
+			"DELETE /v1/phone/numbers/{e164}/agent, or detach the number.", numbers[0]))
+	}
+	return conflict(fmt.Sprintf("The numbers %s answer with this agent: remove the agent from each with "+
+		"DELETE /v1/phone/numbers/{e164}/agent, or detach them.", strings.Join(numbers, ", ")))
 }
 
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
