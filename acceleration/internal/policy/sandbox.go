@@ -121,8 +121,8 @@ func (e *Enforcer) Sandbox(ctx context.Context, owner routing.Owner, ask Sandbox
 		refusal: func(running int) error {
 			return refusedWith(ErrSandboxLimit, "the organization already runs %d of its sandboxes, and %s allows at most %d at a time; "+
 				"run the code again once one has stopped", running, found.whose(found.overridden(func(l usage.SandboxLimits) bool {
-					return l.MaxConcurrent != nil
-				})), most)
+				return l.MaxConcurrent != nil
+			})), most)
 		},
 	}, nil
 }

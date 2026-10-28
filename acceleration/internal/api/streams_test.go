@@ -619,7 +619,7 @@ func (s *StreamsSuite) TestATypedTurnReachesTheModel() {
 
 	s.Require().NoError(conversation.WriteJSON(frame{"type": "text", "text": "hello"}))
 
-	s.Equal("hello", s.told(model.typed))
+	s.Equal("hello", told(s, model.typed))
 }
 
 func (s *StreamsSuite) TestWhatATooRanReachesTheModelAsItsResult() {
@@ -628,7 +628,7 @@ func (s *StreamsSuite) TestWhatATooRanReachesTheModelAsItsResult() {
 	s.Require().NoError(conversation.WriteJSON(frame{
 		"type": "tool_result", "tool_call_id": "c1", "output": "sunny"}))
 
-	s.Equal("c1=sunny", s.told(model.answers))
+	s.Equal("c1=sunny", told(s, model.answers))
 }
 
 func (s *StreamsSuite) TestAToolsUpdateIsSpokenByTheModelWhileItsCallIsOpen() {
@@ -638,7 +638,7 @@ func (s *StreamsSuite) TestAToolsUpdateIsSpokenByTheModelWhileItsCallIsOpen() {
 	s.Require().NoError(conversation.WriteJSON(frame{
 		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
 
-	update := s.told(model.updates)
+	update := told(s, model.updates)
 	s.Equal("c1", update.CallID)
 	s.Equal("Checking the book", update.Status)
 	s.False(update.Verbatim)
@@ -653,7 +653,7 @@ func (s *StreamsSuite) TestWordsAToolAsksForAreSpokenAsWritten() {
 	s.Require().NoError(conversation.WriteJSON(frame{
 		"type": "tool_update", "tool_call_id": "c1", "text": "Bear with me.", "verbatim": true}))
 
-	update := s.told(model.updates)
+	update := told(s, model.updates)
 	s.True(update.Verbatim)
 	s.Contains(update.Guidance, "Bear with me.")
 }
@@ -669,7 +669,7 @@ func (s *StreamsSuite) TestAnUpdateWaitsForTheReplyInFlight() {
 	s.untold(model.updates, "an update must not talk over the reply in flight")
 
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
-	s.Equal("Checking the book", s.told(model.updates).Status)
+	s.Equal("Checking the book", told(s, model.updates).Status)
 }
 
 func (s *StreamsSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
@@ -683,7 +683,7 @@ func (s *StreamsSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
 	s.untold(model.updates, "an update must not talk over the caller")
 
 	model.emitter.Send(sts.SpeechStopped{})
-	s.Equal("Checking the book", s.told(model.updates).Status)
+	s.Equal("Checking the book", told(s, model.updates).Status)
 }
 
 func (s *StreamsSuite) TestANewerUpdateReplacesOneNotYetSaid() {
@@ -701,7 +701,7 @@ func (s *StreamsSuite) TestANewerUpdateReplacesOneNotYetSaid() {
 	s.Require().Equal("tool_held", s.nextConversationFrame(conversation)["type"])
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
 
-	s.Equal("Nearly there", s.told(model.updates).Status)
+	s.Equal("Nearly there", told(s, model.updates).Status)
 	s.untold(model.updates, "the replaced update is not said as well")
 }
 
@@ -715,7 +715,7 @@ func (s *StreamsSuite) TestTheResultDropsAnUpdateNotYetSaid() {
 		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
 	s.Require().NoError(conversation.WriteJSON(frame{
 		"type": "tool_result", "tool_call_id": "c1", "output": "a table at 7:30"}))
-	s.Equal("c1=a table at 7:30", s.told(model.answers))
+	s.Equal("c1=a table at 7:30", told(s, model.answers))
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
 
 	s.untold(model.updates, "the result says more than the update did")
@@ -759,7 +759,7 @@ func (s *StreamsSuite) TestAnInterruptionSaysHowMuchOfTheReplyWasHeard() {
 
 	s.Require().NoError(conversation.WriteJSON(frame{"type": "interrupt", "played_ms": 120}))
 
-	s.Equal(120, s.told(model.interrupts))
+	s.Equal(120, told(s, model.interrupts))
 }
 
 func (s *StreamsSuite) TestAudioFromAnInterruptedReplyDoesNotFollowItsCompletion() {
@@ -967,7 +967,7 @@ func (s *StreamsSuite) converse(opening frame) (*websocket.Conn, *stubConversati
 }
 
 // told is what the model was sent, which crosses a socket and a channel to reach it.
-func (s *StreamsSuite) told[T any](sent <-chan T) T {
+func told[T any](s *StreamsSuite, sent <-chan T) T {
 	select {
 	case value := <-sent:
 		return value
