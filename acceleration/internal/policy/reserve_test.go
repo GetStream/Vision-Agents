@@ -222,12 +222,18 @@ func (s *PolicySuite) TestTwoRoutersSeeEachOthersHolds() {
 	s.usage().Credit(s.T(), s.org, 1_000_000)
 	a, b := s.sharer(redisA), s.sharer(redisB)
 
-	s.Require().NoError(a.Reserve(s.owner(), newID(), 900_000, time.Minute))
-	reserved := time.Now()
-
-	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 900_000 }, 2*defaultHoldRefresh, 5*time.Millisecond,
+	s.Require().NoError(a.Reserve(s.owner(), newID(), 500_000, time.Minute))
+	s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == 500_000 }, 2*defaultHoldRefresh, 5*time.Millisecond,
 		"the other router reads it")
-	s.Less(time.Since(reserved), defaultHoldRefresh, "within a flush and this test's refresh, not a refresh at the default pace")
+	// Each hold after the first is made once the other router read the one before, so each is
+	// read by a refresh of its own: four of them take four refreshes at the default pace.
+	first := time.Now()
+	for held := int64(600_000); held <= 900_000; held += 100_000 {
+		s.Require().NoError(a.Reserve(s.owner(), newID(), 100_000, time.Minute))
+		s.eventually(func() bool { return remoteHeld(b.Enforcer, s.org) == held }, 2*defaultHoldRefresh, 5*time.Millisecond,
+			"the other router reads it")
+	}
+	s.Less(time.Since(first), 3*defaultHoldRefresh, "four refreshes at this test's pace, not at the default one")
 	s.NoError(b.Reserve(s.owner(), newID(), 200_000, time.Minute), "$0.10 is left, so the next unit may start")
 	s.ErrorIs(b.Reserve(s.owner(), newID(), 200_000, time.Minute), ErrNoCredits)
 	s.EqualValues(200_000, pending(b.Enforcer, s.org), "a refusal holds nothing")
