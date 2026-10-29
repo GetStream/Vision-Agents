@@ -220,8 +220,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   static String _troubleText(String context) => switch (context) {
     'stt' => "Juno can't hear you right now: speech recognition isn't working.",
-    'llm' ||
-    'sts' => "Juno can't answer right now: its model isn't working.",
+    'llm' || 'sts' => "Juno can't answer right now: its model isn't working.",
     'tts' => "Juno can't speak right now: its voice isn't working.",
     _ => "Something went wrong on Juno's side.",
   };
@@ -321,34 +320,43 @@ class _VoiceScreenState extends State<VoiceScreen> {
               child: Column(
                 spacing: 16,
                 children: [
-                  const Spacer(),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: 320,
-                      maxHeight: 320,
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: 1,
-                      child: AIVoiceGlowView(
-                        state: presence.state,
-                        colors: _heard?.isPerson ?? false
-                            ? _personColors
-                            : _agentColors,
-                        audioLevel: _heard?.level,
-                      ),
+                  // The glow shrinks to what is left, as the camera's preview takes room.
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      spacing: 16,
+                      children: [
+                        Flexible(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: 320,
+                              maxHeight: 320,
+                            ),
+                            child: AspectRatio(
+                              aspectRatio: 1,
+                              child: AIVoiceGlowView(
+                                state: presence.state,
+                                colors: _heard?.isPerson ?? false
+                                    ? _personColors
+                                    : _agentColors,
+                                audioLevel: _heard?.level,
+                              ),
+                            ),
+                          ),
+                        ),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: Text(
+                            presence.status,
+                            key: ValueKey(presence.status),
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Text(
-                      presence.status,
-                      key: ValueKey(presence.status),
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
                   CaptionView(
                     caption: _captions.caption,
                     isVisible: _captions.isVisible,
