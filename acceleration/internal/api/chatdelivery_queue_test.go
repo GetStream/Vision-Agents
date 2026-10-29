@@ -5,7 +5,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -405,6 +407,42 @@ func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryForADispatchingSessionNoWork
 	s.Equal(store.ChatDeliveryQueued, s.row(queued.MessageID).State)
 }
 
+// A dispatching session's message went to a worker on another node, whose reply never came
+// back within its deadline: that node placed it, so the row stays settled and the next try
+// places nothing.
+func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryAnotherNodePlacedIsNotPlacedAgainWhenItsReplyWasLate() {
+	worker, router, queued := s.dispatchingBesideAWorkerElsewhere()
+
+	s.ErrorIs(router.AnswerChatDelivery(context.Background(), queued), errChatDeliveryUnsettled)
+	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+
+	s.Equal(store.ChatDeliveryDone, s.row(queued.MessageID).State, "left settled")
+	s.NoError(router.AnswerChatDelivery(context.Background(), queued), "a try after the answer started is settled")
+	s.False(s.receives(worker, "message"), "one queued delivery is one answer")
+}
+
+// Close cut a try short while it waited on the reply of the node it gave the message to, which
+// had placed it: the row stays settled and the next try places nothing.
+func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryAnotherNodePlacedIsNotPlacedAgainAfterCloseCutTheWaitShort() {
+	worker, router, queued := s.dispatchingBesideAWorkerElsewhere()
+	ctx, cancel := context.WithCancel(context.Background())
+	ended := make(chan error, 1)
+	go func() { ended <- router.AnswerChatDelivery(ctx, queued) }()
+	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+
+	cancel()
+
+	select {
+	case err := <-ended:
+		s.ErrorIs(err, errChatDeliveryUnsettled)
+	case <-time.After(settleFor):
+		s.Fail("the try never ended")
+	}
+	s.Equal(store.ChatDeliveryDone, s.row(queued.MessageID).State, "left settled")
+	s.NoError(router.AnswerChatDelivery(context.Background(), queued), "a try after the answer started is settled")
+	s.False(s.receives(worker, "message"), "one queued delivery is one answer")
+}
+
 // A row that could not be settled before the answer is no answer: tried again, here with the
 // context Close cancelled.
 func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryWhoseRowCouldNotBeSettledIsTriedAgain() {
@@ -437,6 +475,45 @@ func (s *ChatDeliveryQueueSuite) TestAQueuedDeliveryOnAThreadChannelLeavesItsRow
 	s.NoError(s.router.AnswerChatDelivery(context.Background(), queued))
 
 	s.Equal(store.ChatDeliveryQueued, s.row(queued.MessageID).State)
+}
+
+// dispatchingBesideAWorkerElsewhere is a router running a session that leaves text to a
+// dispatch worker, with the only worker waiting on another node, and a delivery queued for the
+// session. The router no longer hears that node's replies, as one whose subscription to them
+// broke.
+func (s *ChatDeliveryQueueSuite) dispatchingBesideAWorkerElsewhere() (*websocket.Conn, *Server, store.ChatDelivery) {
+	elsewhere := s.otherNodeDispatching(dispatch.NewPool())
+	worker := s.serverClient.on(elsewhere).opens("/v1/dispatch")
+	s.await(worker, "ready")
+	logger := slog.New(slog.DiscardHandler)
+	here, router, _ := s.otherNodeHolding(dispatch.NewPool(), s.sealer, logger)
+	router.workers = s.deafWorkers(logger)
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "en-low-latency", DispatchText: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	s.serverClient.on(here).createSession(CreateSessionRequest{AgentId: &s.channelID, Agent: &config.Name, Incognito: pointerTo(true)})
+	return worker, router, s.row(s.queue(s.message(suiteStreamApp, "", "")))
+}
+
+// deafWorkers is a node's view of the deployment's workers that carries work to its peers and
+// hears none of their replies.
+func (s *ChatDeliveryQueueSuite) deafWorkers(logger *slog.Logger) *node.Workers {
+	listener := httptest.NewUnstartedServer(nil)
+	s.T().Cleanup(listener.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	workers, err := node.NewWorkers(ctx, dispatch.NewPool(), s.nodeDirectory(listener, s.otherShard, logger), s.workBus(logger), logger)
+	s.Require().NoError(err)
+	redis := s.live.Redis()
+	pattern := "*replies:" + listener.Listener.Addr().String()
+	subscribed, err := redis.Do(context.Background(), redis.B().PubsubChannels().Pattern(pattern).Build()).AsStrSlice()
+	s.Require().NoError(err)
+	s.Require().Len(subscribed, 1, "the node hears its peers' replies on no channel named so")
+	cancel()
+	s.Require().Eventually(func() bool {
+		subscribed, err := redis.Do(context.Background(), redis.B().PubsubChannels().Pattern(pattern).Build()).AsStrSlice()
+		return err == nil && len(subscribed) == 0
+	}, settleFor, 20*time.Millisecond, "the node still hears its peers' replies")
+	return workers
 }
 
 // inAppMode has the suite's Stream answer as in app mode until the test ends, and returns the

@@ -35,6 +35,11 @@ const assignTimeout = 5 * time.Second
 // round trip over Redis to a session that answers from memory.
 const holdTimeout = 2 * time.Second
 
+// ErrNoReply is work carried to another node whose reply never came: its deadline passed or
+// the asking ctx ended. The other node may have done it all the same (take does the work
+// before it replies), so it is not to be done again.
+var ErrNoReply = errors.New("node: the node with the worker did not reply")
+
 // Kinds of request one node carries to another's workers.
 const (
 	toolKind    = "tool"
@@ -283,9 +288,9 @@ func (w *Workers) ask(ctx context.Context, address string, request workRequest, 
 			if err := w.bus.Publish(context.WithoutCancel(ctx), w.directory.requestsFor(address), stop); err != nil {
 				w.logger.Warn("could not tell the node with the worker to stop", "kind", request.Kind, "error", err)
 			}
-			return workReply{}, fmt.Errorf("stopped: %w", err)
+			return workReply{}, fmt.Errorf("%w: stopped: %w", ErrNoReply, err)
 		}
-		return workReply{}, fmt.Errorf("the node with the worker did not answer within %s", timeout)
+		return workReply{}, fmt.Errorf("%w within %s", ErrNoReply, timeout)
 	}
 }
 

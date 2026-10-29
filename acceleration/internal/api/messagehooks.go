@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -224,7 +225,14 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				if err != nil {
 					s.logger.Error("nobody could answer an arriving message",
 						"channel", event.ChannelID, "session", found.ID(), "error", err)
-					s.unanswered(ctx, origin)
+					if errors.Is(err, node.ErrNoReply) {
+						// The other node may have placed it before its reply was lost: queued
+						// again, it would be placed twice.
+						s.logger.Warn("a queued chat delivery another node may have placed is left settled",
+							"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
+					} else {
+						s.unanswered(ctx, origin)
+					}
 				}
 				return err == nil
 			}
