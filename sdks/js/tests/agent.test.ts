@@ -18,6 +18,7 @@ import {
   type Schemas,
 } from "../src/index.js";
 import { loadFolder } from "../src/node.js";
+import { inPage } from "./device.js";
 import { TestRouter } from "./router.js";
 
 // The sync body of a connector entry with neither sandbox nor require_approval, probed on
@@ -139,6 +140,50 @@ describe("Agent", () => {
     await chatting(new Agent({ name: "John", client: api, costTracking: { team: "support" } }));
 
     assert.deepEqual(requested().tags, { team: "support" });
+  });
+
+  it("puts a session in the agent's zone when the call names none", async () => {
+    await chatting(new Agent({ name: "John", client: api, timezone: "Europe/Lisbon" }));
+
+    assert.equal(requested().timezone, "Europe/Lisbon");
+  });
+
+  it("lets a call name the zone of the person on it, over the agent's", async () => {
+    const agent = new Agent({ name: "John", client: api, timezone: "Europe/Lisbon" });
+
+    for (const timezone of ["America/New_York", ""]) {
+      const opening = agent.chat({ timezone });
+      const connection = await router.socket();
+      const held = await opening;
+      connection.socket.close();
+      await held.wait();
+    }
+    const answering = agent.answer(
+      {
+        callId: "sess_1",
+        callType: "agent",
+        sessionId: "sess_1",
+        calledNumber: "+15551234567",
+        callerNumber: "+15557654321",
+        custom: {},
+      },
+      { timezone: "Asia/Tokyo" },
+    );
+    const connection = await router.socket();
+    const held = await answering;
+    connection.socket.close();
+    await held.wait();
+
+    const zones = router
+      .requestsTo("POST", "/v1/agents/sessions")
+      .map((one) => (one.body as Schemas["CreateSessionRequest"]).timezone);
+    assert.deepEqual(zones, ["America/New_York", "Europe/Lisbon", "Asia/Tokyo"]);
+  });
+
+  it("sends no zone when neither the agent nor the call names one, whatever the machine is in", async () => {
+    await inPage("Europe/Lisbon", () => chatting(new Agent({ name: "John", client: api })));
+
+    assert.equal("timezone" in requested(), false);
   });
 
   it("stores a harness on the config rather than on each session, since a session runs its config's", async () => {
