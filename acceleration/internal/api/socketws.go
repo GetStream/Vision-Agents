@@ -162,11 +162,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	rate := start.SampleRate
-	if rate <= 0 {
-		rate = stt.SampleRate
-	}
-	if err := writeFrame(frame{"type": "session", "session": sessionOf(ctx, created), "sample_rate": rate}); err != nil {
+	if err := writeFrame(frame{"type": "session", "session": sessionOf(ctx, created), "sample_rate": edge.SampleRate()}); err != nil {
 		return
 	}
 

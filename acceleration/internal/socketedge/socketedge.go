@@ -116,6 +116,9 @@ func (e *Edge) Join(context.Context) error {
 	return nil
 }
 
+// SampleRate is the rate the socket carries in both directions.
+func (e *Edge) SampleRate() int { return e.rate }
+
 // Left reports whether the call has been left.
 func (e *Edge) Left() bool {
 	e.mu.Lock()
