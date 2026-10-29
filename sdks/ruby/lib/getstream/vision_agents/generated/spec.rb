@@ -1437,7 +1437,7 @@ module GetStream
           socket: false, client_accessible: false
         }.freeze,
         "runRollup" => {
-          method: :post, path: "/v1/stats/rollup",
+          method: :post, path: "/v1/ops/stats/rollup",
           path_params: [].freeze, query: [].freeze,
           body: "RollupRequest", body_required: true,
           socket: false, client_accessible: false

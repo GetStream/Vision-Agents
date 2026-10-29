@@ -1878,11 +1878,9 @@ func toolStatsOf(usage store.ToolUsage) ToolStats {
 	}
 }
 
-// runRollup aggregates request rows into a rollup table.
+// runRollup aggregates every customer's request rows into a rollup table. It is a
+// maintenance job over the whole deployment, so it takes the ops key and no customer.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, errMissingCustomer
-	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
@@ -2176,14 +2174,17 @@ func (s *Server) registerServer(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "runRollup",
 		Method:      http.MethodPost,
-		Path:        "/v1/stats/rollup",
+		Path:        "/v1/ops/stats/rollup",
 		Summary:     "Aggregate request rows into a rollup table",
-		Description: "Covers every modality and customer in the window. Idempotent: re-running it over the " +
-			"same window recomputes those buckets, so a missed run is fixed by running it again.",
+		Description: "Covers every modality and customer in the window, widened to whole buckets. " +
+			"Idempotent: re-running it over the same window recomputes those buckets, so a missed run " +
+			"is fixed by running it again.\n\nStream staff only: it needs the ops key.",
+		Tags:     []string{staffTag},
+		Security: opsSecurity,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The rollup completed"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized},
 	}, s.runRollup)
 }
 

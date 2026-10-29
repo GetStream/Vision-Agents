@@ -10781,9 +10781,6 @@ type ResetLimitUsageJSONRequestBody = LimitResetInput
 // UpdateLimitJSONRequestBody defines body for UpdateLimit for application/json ContentType.
 type UpdateLimitJSONRequestBody = LimitChange
 
-// RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
-type RunRollupJSONRequestBody = RollupRequest
-
 // TranscribeRecordingJSONRequestBody defines body for TranscribeRecording for application/json ContentType.
 type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
@@ -14028,24 +14025,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollupWithBody Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollup Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSpend What the calling customer spent, grouped
 	//
@@ -20224,44 +20203,6 @@ func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, req
 // Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 func (c *Client) GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentStatsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollupWithBody Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollup Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -31443,46 +31384,6 @@ func NewGetAgentStatsRequest(server string, params *GetAgentStatsParams) (*http.
 	return req, nil
 }
 
-// NewRunRollupRequest calls the generic RunRollup builder with application/json body
-func NewRunRollupRequest(server string, body RunRollupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRunRollupRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRunRollupRequestWithBody constructs an http.Request for the RunRollup method, with any body, and a specified content type
-func NewRunRollupRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/stats/rollup")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetSpendRequest constructs an http.Request for the GetSpend method
 func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, error) {
 	var err error
@@ -35747,24 +35648,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStatsWithResponse(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*GetAgentStatsResponse, error)
-
-	// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
-
-	// RunRollupWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
 
 	// GetSpendWithResponse What the calling customer spent, grouped
 	//
@@ -59889,107 +59772,6 @@ func (r GetAgentStatsResponse) ContentType() string {
 	return ""
 }
 
-// RunRollupResponse200Headers the declared response headers of an HTTP 200 response for RunRollup
-type RunRollupResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// RunRollupResponse402Headers the declared response headers of an HTTP 402 response for RunRollup
-type RunRollupResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type RunRollupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RollupResult
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *RunRollupResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *RunRollupResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RunRollupResponse) GetJSON200() *RollupResult {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r RunRollupResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r RunRollupResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r RunRollupResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r RunRollupResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r RunRollupResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r RunRollupResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r RunRollupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RunRollupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RunRollupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RunRollupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetSpendResponse200Headers the declared response headers of an HTTP 200 response for GetSpend
 type GetSpendResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -66590,36 +66372,6 @@ func (c *ClientWithResponses) GetAgentStatsWithResponse(ctx context.Context, par
 		return nil, err
 	}
 	return ParseGetAgentStatsResponse(rsp)
-}
-
-// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollupWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
-}
-
-// RunRollupWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollup(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
 }
 
 // GetSpendWithResponse What the calling customer spent, grouped
@@ -94807,125 +94559,6 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetAgentStatsResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseRunRollupResponse parses an HTTP response from a RunRollupWithResponse call
-func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RunRollupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RollupResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers RunRollupResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers RunRollupResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

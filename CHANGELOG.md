@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### The stats rollup takes the ops key and writes whole buckets
+
+`runRollup` recomputes every app's rollups, so it is Stream's maintenance job and not an app's: it moves from `POST /v1/stats/rollup` to `POST /v1/ops/stats/rollup`, reached with the ops key (`X-Ops-Key`) and no app (AI-1735). The Go, JavaScript and Python clients drop it; Ruby's and Rust's call the new path. Its window is widened to whole buckets (the start of the hour or day holding `from` to the end of the one holding `to`), so a window that starts or ends inside a bucket recomputes all of it rather than replacing its totals with part of them.
+
 ### A dispatch worker's capacity is at most 1024
 
 `GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).

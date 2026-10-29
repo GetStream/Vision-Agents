@@ -4028,26 +4028,6 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/stats/rollup": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Aggregate request rows into a rollup table
-         * @description Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-         */
-        readonly post: operations["runRollup"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/v1/stats/spend": {
         readonly parameters: {
             readonly query?: never;
@@ -19909,40 +19889,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentStats"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly runRollup: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["RollupRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The rollup completed */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["RollupResult"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

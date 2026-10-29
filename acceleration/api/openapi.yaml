@@ -20927,6 +20927,37 @@ paths:
       summary: Suspend an app's telephony
       tags:
         - Staff
+  /v1/ops/stats/rollup:
+    post:
+      description: |-
+        Covers every modality and customer in the window, widened to whole buckets. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
+
+        Stream staff only: it needs the ops key.
+      operationId: runRollup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollupRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollupResult'
+          description: The rollup completed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Aggregate request rows into a rollup table
+      tags:
+        - Staff
   /v1/ops/use-cases:
     get:
       description: |-
@@ -24074,45 +24105,6 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: How the calling customer's agents ran, across all of them
-  /v1/stats/rollup:
-    post:
-      description: 'Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.'
-      operationId: runRollup
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RollupRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RollupResult'
-          description: The rollup completed
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Aggregate request rows into a rollup table
   /v1/stats/spend:
     get:
       description: |-

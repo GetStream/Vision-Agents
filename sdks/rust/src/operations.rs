@@ -2951,6 +2951,19 @@ impl Client {
         )
         .await
     }
+    /// Aggregate request rows into a rollup table
+    ///
+    /// `POST /v1/ops/stats/rollup` (`runRollup`).
+    pub async fn run_rollup(&self, body: &types::RollupRequest) -> Result<types::RollupResult> {
+        self.send(
+            Method::POST,
+            "/v1/ops/stats/rollup",
+            None::<&()>,
+            Some(body),
+            "runRollup",
+        )
+        .await
+    }
     /// List use cases waiting on Stream
     ///
     /// `GET /v1/ops/use-cases` (`listUseCasesForReview`).
@@ -3921,19 +3934,6 @@ impl Client {
             Some(query),
             None::<&()>,
             "getAgentStats",
-        )
-        .await
-    }
-    /// Aggregate request rows into a rollup table
-    ///
-    /// `POST /v1/stats/rollup` (`runRollup`).
-    pub async fn run_rollup(&self, body: &types::RollupRequest) -> Result<types::RollupResult> {
-        self.send(
-            Method::POST,
-            "/v1/stats/rollup",
-            None::<&()>,
-            Some(body),
-            "runRollup",
         )
         .await
     }
