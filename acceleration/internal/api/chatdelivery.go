@@ -207,7 +207,8 @@ func (s *Server) answerChatDeliveryForPeer(w http.ResponseWriter, r *http.Reques
 // this router or another, answers nothing (store.StartChatDeliveryAnswer). answer is false when
 // the message is not to be answered now, and settled then says whether that holds: its answer
 // already started, or the row could not be written and a later try may. A hook is never tried
-// again, so it settles nothing.
+// again, so it settles nothing. A router that stops mid-answer leaves the message answered at
+// most once (internal/chatdelivery/AGENTS.md «Rules»).
 func (s *Server) answerOnce(ctx context.Context, origin hookOrigin, event messageEvent) (answer, settled bool) {
 	if origin.queuedMessage == "" {
 		return true, true
