@@ -481,9 +481,9 @@ func (w *ResponseWriter) settle(failure error) {
 	}
 	// A failed response asks for nothing: refused by a screen or broken off by its provider,
 	// it is not an answer that stands, and a caller running its calls would act on it anyway.
-	var calls []ToolCall
-	if w.status != StatusFailed {
-		calls = w.assembled()
+	calls, dropped := w.assembled(), []ToolCall(nil)
+	if w.status == StatusFailed {
+		calls, dropped = nil, calls
 	}
 
 	w.emit(ResponseCompleted{Response: Response{
@@ -494,6 +494,7 @@ func (w *ResponseWriter) settle(failure error) {
 		OutputText:         w.text.String(),
 		ReasoningText:      w.reasoning.String(),
 		ToolCalls:          calls,
+		DroppedToolCalls:   dropped,
 		Usage:              w.usage,
 		UsageReported:      w.usageReported,
 		TimedOut:           w.timedOut,

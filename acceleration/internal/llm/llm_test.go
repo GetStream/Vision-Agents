@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -189,6 +190,19 @@ func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
 
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAResponseThatTimedOutIsEstimatedOnTheCallsItDropped() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{asksToLookUpAnOrder,
+		func(w *ResponseWriter) { w.TimedOut() }}, err: context.DeadlineExceeded})
+
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Empty(response.ToolCalls, "a response that timed out asks for nothing")
+	s.Equal(pricing.Quantities{pricing.InputTokens: 1, pricing.OutputTokens: 7},
+		Estimate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}, response),
+		"the provider billed the call it wrote: lookup_order is 3 tokens, its arguments 4")
 }
 
 func (s *LLMSuite) TestAResponseItsProviderFailedSettlesWithNoCalls() {
