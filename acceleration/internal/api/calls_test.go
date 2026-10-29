@@ -75,7 +75,12 @@ func (s *CallsSuite) TestAJoinTokenSaysWhichCallToJoinAndWhoAsIt() {
 }
 
 func (s *CallsSuite) TestAJoinTokenIsMintedForTheUserTheCallerAsksFor() {
-	call := s.started(store.Call{})
+	// In its own Stream app every user id is the customer's to name.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	key := "key-" + s.customerID()
+	s.giveApp(s.customerID(), id, key)
+	call := s.started(store.Call{StreamAppPK: id})
 
 	var minted CallToken
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
@@ -87,10 +92,97 @@ func (s *CallsSuite) TestAJoinTokenIsMintedForTheUserTheCallerAsksFor() {
 
 	claimed := jwt.MapClaims{}
 	_, err := jwt.ParseWithClaims(minted.Token, claimed, func(*jwt.Token) (any, error) {
-		return []byte(suiteStreamSecret), nil
+		return []byte(key + "-secret"), nil
 	})
 	s.Require().NoError(err)
 	s.Equal("thierry", claimed["user_id"])
+}
+
+func (s *CallsSuite) TestAJoinTokenInASharedAppIsMintedOnlyForAUserTheCustomerHolds() {
+	// A Stream token is good for everything its user may do in the app, not for one call,
+	// and in the deployment's app every customer's users are side by side.
+	call := s.started(store.Call{})
+	mine, theirs := s.guestOf(s.app), s.guestOf(s.data.createApp())
+
+	for _, user := range []string{"listener-" + call.ID, mine} {
+		var minted CallToken
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
+			"/v1/agents/calls/"+call.ID+"/token", map[string]any{"user_id": user}, &minted), user)
+		s.Equal(user, minted.UserId)
+	}
+	for _, user := range []string{"thierry", theirs, "listener-" + s.utils.uuid()} {
+		status, failure := s.serverClient.failure(http.MethodPost,
+			"/v1/agents/calls/"+call.ID+"/token", map[string]any{"user_id": user})
+		s.Equal(http.StatusBadRequest, status, user)
+		s.Equal(errUserInSharedApp.Message, failure, user)
+	}
+}
+
+func (s *CallsSuite) TestAChatTokenInASharedAppIsMintedOnlyForAUserTheCustomerHolds() {
+	mine, theirs := s.guestOf(s.app), s.guestOf(s.data.createApp())
+
+	for _, user := range []string{"reader-" + s.customerID(), mine} {
+		agent := "agent-" + s.utils.uuid()
+		var minted ChatToken
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/chat-token",
+			map[string]any{"agent_id": agent, "user_id": user}, &minted), user)
+		s.Equal(user, minted.UserId)
+		s.Contains(s.chat.Members(agent), user)
+	}
+	for _, user := range []string{"thierry-" + s.utils.uuid(), theirs, "reader-" + s.utils.uuid()} {
+		agent := "agent-" + s.utils.uuid()
+		_, existed := s.chat.User(user)
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/chat-token",
+			map[string]any{"agent_id": agent, "user_id": user})
+		s.Equal(http.StatusBadRequest, status, user)
+		s.Equal(errUserInSharedApp.Message, failure, user)
+		_, opened := s.chat.Channel(agent)
+		s.False(opened, "a refused reader opens no channel")
+		_, exists := s.chat.User(user)
+		s.Equal(existed, exists, "nor is made a user")
+	}
+}
+
+func (s *CallsSuite) TestAChatTokenIsRefusedForAnotherCustomersAgentChannel() {
+	// Agent ids are the customers' own words, so in a shared app two customers can name
+	// the same channel; the stamp says whose it is.
+	agent := "agent-" + s.utils.uuid()
+	s.inChannel(agent, s.data.createApp().app.ID, s.base, "said to another customer")
+	before := s.chat.Members(agent)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/chat-token",
+		map[string]any{"agent_id": agent})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(errChannelOfAnother.Message, failure)
+	s.Equal(before, s.chat.Members(agent), "nobody is added to it")
+}
+
+func (s *CallsSuite) TestAChatTokenReadsTheCustomersOwnAndUnstampedChannels() {
+	stamped, unstamped := "agent-"+s.utils.uuid(), "agent-"+s.utils.uuid()
+	s.inChannel(stamped, s.customerID(), s.base, "said to this customer")
+	creator := "vision-agent"
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(context.Background(), chatlog.ChannelType, unstamped,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
+	s.Require().NoError(err)
+
+	for _, agent := range []string{stamped, unstamped} {
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/chat-token",
+			map[string]any{"agent_id": agent}, nil), agent)
+		s.Contains(s.chat.Members(agent), "reader-"+s.customerID(), agent)
+	}
+}
+
+func (s *CallsSuite) TestAChannelAChatTokenOpensIsStampedForTheCustomer() {
+	// Stamped, a channel opened before the agent first speaks is not another customer's
+	// to join afterwards.
+	agent := "agent-" + s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/chat-token",
+		map[string]any{"agent_id": agent}, nil))
+
+	opened, _ := s.chat.Channel(agent)
+	custom, _ := opened["custom"].(map[string]any)
+	s.Equal(s.customerID(), custom[conversation.CustomerField])
 }
 
 func (s *CallsSuite) TestACallAnotherAppHoldsCannotBeJoined() {
@@ -396,6 +488,16 @@ func (s *CallsSuite) inChannelAs(channel, customer, speaker string, at time.Time
 	_, err = s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, channel,
 		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &speaker}})
 	s.Require().NoError(err)
+}
+
+// guestOf is a guest an app's page made, the suite's app being the one given afterwards.
+func (s *CallsSuite) guestOf(app testApp) string {
+	mine := s.app
+	s.useApp(app)
+	defer s.useApp(mine)
+	var guest GuestUser
+	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, &guest))
+	return guest.Id
 }
 
 // started records a call the suite's app is on, filling in whatever the test did not name.

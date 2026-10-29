@@ -154,7 +154,11 @@ func (s *StreamAppsSuite) TestAChatTokenNamesTheCallingAppsKey() {
 
 func (s *StreamAppsSuite) TestAChatTokenLeavesAnExistingReaderAlone() {
 	// The reader is a real person in the customer's app; minting them a token must not
-	// write them back as an id and a name.
+	// write them back as an id and a name. Only in an app of its own does a customer name
+	// its readers.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
 	s.own.PutUser(map[string]any{"id": "reader-ada", "name": "Ada Lovelace", "image": "https://example.com/ada.png"})
 
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/chat-token",
