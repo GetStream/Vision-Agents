@@ -131,10 +131,10 @@ type writtenReply struct {
 	notes []noted
 }
 
-// Turn is what the harness is asked to answer.
-// toolReplyEffort is how hard the model thinks before answering a tool result.
+// toolReplyEffort is the least a model thinks before answering a tool result.
 const toolReplyEffort = "low"
 
+// Turn is what the harness is asked to answer.
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
 	ID string
@@ -396,11 +396,12 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	model := session.Capabilities()
 	h.mu.Unlock()
 
-	// A reply to a tool result is given a little thinking. The caller was told to wait
-	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
-	// answers a free table with "may I book it?" instead of booking it.
+	// A reply to a tool result is given at least a little thinking. The caller was told to
+	// wait while the tool ran, so it costs them nothing they notice, and at no effort a
+	// model tends to ask permission for what the result already lets it do. A model set
+	// to think more than that keeps its own effort.
 	var reasoning llm.ReasoningParams
-	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+	if turn.AfterTool && model.Below(model.DefaultEffort, toolReplyEffort) {
 		reasoning.Effort = toolReplyEffort
 	}
 

@@ -16,8 +16,8 @@ import (
 // rather than invent a common scale that would be wrong everywhere, each model declares
 // the words it answers to and a request naming anything else is refused.
 type Capabilities struct {
-	// ReasoningEfforts are the efforts this model accepts. Empty means it does not
-	// reason, and a request asking it to is refused.
+	// ReasoningEfforts are the efforts this model accepts, least thinking first. Empty
+	// means it does not reason, and a request asking it to is refused.
 	ReasoningEfforts []string
 	// DefaultEffort is what the provider uses when a request names none.
 	DefaultEffort string
@@ -119,6 +119,13 @@ func (c Capabilities) Accepts(modality string) bool {
 		return true
 	}
 	return slices.Contains(c.InputModalities, modality)
+}
+
+// Below reports whether effort thinks less than floor on this model. An effort the model
+// does not declare is below nothing, since where it falls is not known.
+func (c Capabilities) Below(effort, floor string) bool {
+	i, j := slices.Index(c.ReasoningEfforts, effort), slices.Index(c.ReasoningEfforts, floor)
+	return i >= 0 && j >= 0 && i < j
 }
 
 // Effort is the reasoning effort to send, which is the request's when it named one and the

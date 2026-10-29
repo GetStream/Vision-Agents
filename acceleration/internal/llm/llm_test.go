@@ -510,6 +510,16 @@ func (s *LLMSuite) TestCapabilitiesRefuseAnEffortTheModelDoesNotAccept() {
 	s.NoError(model.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "low"}}))
 }
 
+func (s *LLMSuite) TestAnEffortIsRankedOnlyAgainstTheModelsOwnLevels() {
+	model := Capabilities{ReasoningEfforts: []string{"none", "low", "high"}}
+
+	s.True(model.Below("none", "low"))
+	s.False(model.Below("high", "low"))
+	s.False(model.Below("low", "low"))
+	s.False(model.Below("", "low"), "no effort named is the provider's default, whose rank is unknown")
+	s.False(model.Below("minimal", "low"), "an effort this model does not declare has no rank on it")
+}
+
 func (s *LLMSuite) TestASchemaIsSentOnlyToAModelThatTakesOne() {
 	schema := &JSONSchema{Name: "ruling", Schema: map[string]any{"type": "object"}}
 	text := TextParams{Format: FormatJSONSchema, Schema: schema}

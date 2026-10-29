@@ -465,19 +465,62 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 
 func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 	s.build(false)
-	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "none"}
 
-	s.respond("turn-1", "a table for four at 7:30")
+	s.respond("turn-1", "what is on my calendar today")
 	s.answer(Turn{
 		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		History:   []llm.Message{{Role: llm.User, Content: "what is on my calendar today"}},
 		AfterTool: true,
 	})
 
 	s.Require().Len(s.fast.requests(), 2)
 	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the caller is waiting on every word")
 	s.Equal("low", s.fast.requests()[1].Reasoning.Effort,
-		"at none the model asks to book a free table instead of booking it")
+		"a model that would not think at all is given a little")
+}
+
+func (s *HarnessSuite) TestAReplyToAToolResultNeverThinksLessThanTheModelIsSetTo() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}, DefaultEffort: "high"}
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "what is on my calendar today"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "a request naming low would override the model's high")
+}
+
+func (s *HarnessSuite) TestAReplyToAToolResultIsNotRaisedFromAnEffortWhoseRankIsUnknown() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"minimal", "low", "high"}}
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "what is on my calendar today"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "the provider's own default may already be above low")
+}
+
+func (s *HarnessSuite) TestTheSessionsEffortWinsOverTheToolReplyFloor() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "high"}, DefaultEffort: "none"}
+	s.harness.SetOverwrites(llmoptions.LLM{ReasoningEffort: "none"})
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "what is on my calendar today"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Equal("none", s.fast.requests()[0].Reasoning.Effort)
 }
 
 func (s *HarnessSuite) TestACallerTurnKeepsTheModelsDefaultEvenWhenThatIsNoThinking() {
@@ -498,7 +541,7 @@ func (s *HarnessSuite) TestWhatATurnAskedForWinsOverWhatTheHarnessWouldChoose() 
 
 	s.answer(Turn{
 		ID:        "tool-1",
-		History:   []llm.Message{{Role: llm.User, Content: "a table for four at 7:30"}},
+		History:   []llm.Message{{Role: llm.User, Content: "what is on my calendar today"}},
 		AfterTool: true,
 		Asked:     llmoptions.LLM{ReasoningEffort: "none", MaxOutputTokens: &limit},
 	})
