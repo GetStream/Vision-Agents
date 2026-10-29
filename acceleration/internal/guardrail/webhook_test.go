@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -45,7 +47,8 @@ func verify(timestamp, signature string, body []byte) bool {
 }
 
 // server stands in for a customer's own endpoint. It checks the signature the way a
-// customer would and records whether it was satisfied.
+// customer would and records whether it was satisfied. It listens on loopback, which the
+// webhook's own client refuses, so a test reaches it through the server's client.
 type server struct {
 	http *httptest.Server
 
@@ -60,7 +63,7 @@ type server struct {
 
 func newServer() *server {
 	stub := &server{answer: Answer{Allow: true}, status: http.StatusOK}
-	stub.http = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	stub.http = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stub.calls++
 		body, _ := io.ReadAll(r.Body)
 		stub.stamped = r.Header.Get(TimestampHeader)
@@ -96,18 +99,25 @@ func (s *WebhookSuite) SetupTest() {
 
 // guardrail builds a webhook guardrail pointed at the stub server.
 func (s *WebhookSuite) guardrail() Guardrail {
+	return s.webhookAt(s.server.http.URL, s.server.http.Client())
+}
+
+// webhookAt builds a webhook guardrail posting to url through client; nil is the client
+// the router uses.
+func (s *WebhookSuite) webhookAt(url string, client *http.Client) Guardrail {
 	screening, err := New(s.ctx, Policy{
 		Kind:    KindWebhook,
 		Mode:    ModeParallel,
-		URL:     s.server.http.URL,
+		URL:     url,
 		Refusal: "I can only help with questions about Stream.",
 		Text:    "My server decides.",
 	}, Deps{
 		Owner: routing.Owner{
 			CustomerID: "acme", AgentID: "support", CallID: "call-9",
 		},
-		Secret: secret,
-		Logger: slog.New(slog.DiscardHandler),
+		Secret:     secret,
+		HTTPClient: client,
+		Logger:     slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = screening.Close() })
@@ -232,4 +242,54 @@ func (s *WebhookSuite) TestEveryRequestCarriesTheTimestampItWasSignedWith() {
 	seconds, err := strconv.ParseInt(s.server.stamped, 10, 64)
 	s.Require().NoError(err)
 	s.WithinDuration(time.Now(), time.Unix(seconds, 0), time.Minute)
+}
+
+func (s *WebhookSuite) TestAWebhookOnLoopbackIsNeverReached() {
+	// The url is the customer's, and the router's own network is not theirs to ask. The
+	// error is what tells the address check apart: any other client fails too, on the stub's
+	// certificate, without reaching it.
+	_, port, err := net.SplitHostPort(s.server.http.Listener.Addr().String())
+	s.Require().NoError(err)
+	for _, host := range []string{"127.0.0.1", "localhost", "[::1]"} {
+		_, err := s.webhookAt("https://"+host+":"+port+"/check", nil).Check(s.ctx, "turn-1", "anything")
+
+		s.ErrorContains(err, "non-public address", host)
+	}
+	s.Zero(s.server.calls)
+}
+
+func (s *WebhookSuite) TestAWebhookOnAPrivateOrLinkLocalAddressIsRefusedBeforeItDials() {
+	for _, url := range []string{
+		"https://10.1.2.3/check",            // Private-Use, RFC 1918
+		"https://192.168.1.10/check",        // Private-Use, RFC 1918
+		"https://100.101.102.103/check",     // Shared Address Space, RFC 6598
+		"https://169.254.169.254/check",     // Link Local, RFC 3927: the cloud metadata server
+		"https://[fd7a:115c:a1e0::1]/check", // Unique-Local, RFC 4193
+		"https://[fe80::1]/check",           // Link-Local Unicast, RFC 4291
+	} {
+		_, err := s.webhookAt(url, nil).Check(s.ctx, "turn-1", "anything")
+
+		s.ErrorContains(err, "non-public address", url)
+	}
+}
+
+func (s *WebhookSuite) TestAWebhookThatRedirectsToAnotherHostIsNotFollowed() {
+	// The stub answers as a public endpoint would, through egress's redirect policy, and
+	// sends the post on to a host it names. The webhook keeps that policy, so the post
+	// stays with the host the customer configured.
+	elsewhere := newServer()
+	s.T().Cleanup(elsewhere.http.Close)
+	_, port, err := net.SplitHostPort(elsewhere.http.Listener.Addr().String())
+	s.Require().NoError(err)
+	redirecting := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://localhost:"+port+"/check", http.StatusTemporaryRedirect)
+	}))
+	s.T().Cleanup(redirecting.Close)
+	client := redirecting.Client()
+	client.CheckRedirect = egress.NewClient(0, nil).CheckRedirect
+
+	_, err = s.webhookAt(redirecting.URL+"/check", client).Check(s.ctx, "turn-1", "anything")
+
+	s.ErrorContains(err, "redirect to another host refused")
+	s.Zero(elsewhere.calls)
 }
