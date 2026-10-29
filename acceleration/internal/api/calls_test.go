@@ -156,6 +156,10 @@ func (s *CallsSuite) TestAChatTokenIsRefusedForAnotherCustomersAgentChannel() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal(errChannelOfAnother.Message, failure)
 	s.Equal(before, s.chat.Members(agent), "nobody is added to it")
+	for _, user := range []string{"reader-" + s.customerID(), agent} {
+		_, exists := s.chat.User(user)
+		s.False(exists, "nor is %s made a user", user)
+	}
 }
 
 func (s *CallsSuite) TestATokenInASharedAppIsNotMintedForAGuestOnlySeenInTheCustomersOwnToken() {
