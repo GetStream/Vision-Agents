@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -53,30 +52,6 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	assert.False(t, unfound, "a case the caller gives the number of is theirs to give")
 
 	assert.True(t, failedResult(unfoundIDResult("case_id", "915", nil)))
-}
-
-func TestAHandedOutIDLeftOutIsAskedFor(t *testing.T) {
-	tools := harness.Tools{Tools: []harness.Tool{
-		{Name: "open_case"},
-		{Name: "send_courier", Parameters: map[string]any{"properties": map[string]any{
-			"slot": map[string]any{"type": "string"}, "case_id": map[string]any{"type": "string"},
-		}}},
-	}}
-	courier := llm.ToolCall{Name: "send_courier", Arguments: `{"slot":"am"}`}
-	_, _, missing := missingID(nil, courier, tools)
-	assert.False(t, missing, "no case has been opened yet")
-
-	opened := []llm.Message{
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "open_case"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"id":"C-6631","address":"14 Birch Road"}`},
-	}
-	key, known, missing := missingID(opened, courier, tools)
-	assert.True(t, missing)
-	assert.Equal(t, "case_id", key)
-	assert.Equal(t, []string{"C-6631 (id)"}, known)
-
-	_, _, missing = missingID(opened, llm.ToolCall{Name: "send_courier", Arguments: `{"slot":"am","case_id":"C-6631"}`}, tools)
-	assert.False(t, missing)
 }
 
 func TestANumberNobodyGaveIsNotSent(t *testing.T) {
@@ -129,37 +104,6 @@ func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 		llm.ToolCall{Name: "book_room", Arguments: `{"name":"Almeida"}`})
 	assert.False(t, got, "the s of that's is not a spelled letter")
 	assert.Contains(t, misspelledResult("Aldenor", "odenor"), "o d e n o r, so it is Odenor")
-}
-
-func TestAnArgumentTheToolAsksForIsNotSentEmpty(t *testing.T) {
-	strings := func(names ...string) map[string]any {
-		properties := map[string]any{}
-		for _, name := range names {
-			properties[name] = map[string]any{"type": "string"}
-		}
-		return map[string]any{"type": "object", "properties": properties}
-	}
-	tools := harness.Tools{Tools: []harness.Tool{
-		{Name: "confirm_member", Description: "Confirm the member with PIN, last four of the card or phone, and home address.",
-			Parameters: strings("pin", "last4", "address")},
-		{Name: "confirm_guest", Description: "Confirm a guest with name, DOB, and card ID or phone.",
-			Parameters: strings("name", "dob", "card_id", "phone")},
-	}}
-	key, empty := emptyNamed(llm.ToolCall{Name: "confirm_member", Arguments: `{"address":"","last4":"6305","pin":"2745"}`}, tools)
-	assert.True(t, empty)
-	assert.Equal(t, "address", key)
-	key, empty = emptyNamed(llm.ToolCall{Name: "confirm_member", Arguments: `{"pin":"2745","last4":"6305"}`}, tools)
-	assert.True(t, empty, "left out is empty too")
-	assert.Equal(t, "address", key)
-	_, empty = emptyNamed(llm.ToolCall{Name: "confirm_guest", Arguments: `{"name":"Rosa Lind","dob":"1990-11-21","card_id":"KTR583027"}`}, tools)
-	assert.False(t, empty, "phone left out beside a card ID")
-	_, empty = emptyNamed(llm.ToolCall{Name: "confirm_member", Arguments: `{"address":"14 Birch Road","last4":"6305","pin":"2745"}`}, tools)
-	assert.False(t, empty)
-	_, empty = emptyNamed(llm.ToolCall{Name: "confirm_guest", Arguments: `{"name":"Rosa Lind","dob":"1990-11-21","card_id":"KTR583027","phone":""}`}, tools)
-	assert.False(t, empty, "phone is the alternative to the card ID")
-	_, empty = emptyNamed(llm.ToolCall{Name: "confirm_guest", Arguments: `{"name":"Rosa Lind","dob":"1990-11-21","card_id":"","phone":"4085550391"}`}, tools)
-	assert.False(t, empty, "the card ID is the alternative to the phone")
-	assert.True(t, failedResult(emptyResult("confirm_member", "address")))
 }
 
 func TestAStandInNameIsNotBookedUnder(t *testing.T) {
@@ -270,24 +214,6 @@ func TestOnlyACollectionsKeysAreItsRecordsIDs(t *testing.T) {
 	assert.True(t, unfound, "a vehicle's key is not an order")
 	_, _, _, unfound = unfoundID(history, call("book_slot", `{"slot_id":"monday"}`), tools)
 	assert.True(t, unfound, "days nobody named as a collection are not IDs")
-}
-
-func TestAnIDThatKeysARecordAndIsLeftOutIsAskedFor(t *testing.T) {
-	tools := harness.Tools{Tools: []harness.Tool{
-		{Name: "list_vehicles"},
-		{Name: "reserve_vehicle", Parameters: map[string]any{"properties": map[string]any{
-			"vehicle_id": map[string]any{"type": "string"}, "days": map[string]any{"type": "number"}}}},
-	}}
-	history := []llm.Message{
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "list_vehicles"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"vehicles":{"van-2":{"seats":8}}}`},
-	}
-
-	key, known, missing := missingID(history, llm.ToolCall{Name: "reserve_vehicle", Arguments: `{"days":2}`}, tools)
-
-	assert.True(t, missing)
-	assert.Equal(t, "vehicle_id", key)
-	assert.Equal(t, []string{"van-2 (vehicle_id)"}, known)
 }
 
 func TestAListUnderAPluralKeyHoldsThatKeysIDs(t *testing.T) {

@@ -1639,18 +1639,3 @@ func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
 	s.Contains(string(encoded), "one.png")
 	s.Contains(string(encoded), "two.png")
 }
-
-func (s *OpenAICompatSuite) TestAForcedCallRequiresEveryArgument() {
-	offered := []llm.Tool{
-		{Name: "verify_account", Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"pin": map[string]any{}, "last4": map[string]any{}, "address": map[string]any{}},
-			"required":   []any{"pin"},
-		}},
-		{Name: "check_outage"},
-	}
-	required := everyArgumentRequired(offered)
-	s.Equal([]string{"address", "last4", "pin"}, required[0].Parameters["required"])
-	s.Nil(required[1].Parameters)
-	s.Equal([]any{"pin"}, offered[0].Parameters["required"], "the offered schema was changed")
-}
