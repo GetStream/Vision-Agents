@@ -284,6 +284,9 @@ func New(options Options) (*Harness, error) {
 // is the shortcut taken when it is provably safe: the same model, the same instructions,
 // and an input that only appends to what it last saw.
 type stored struct {
+	// turn is the reply that was asked for with sent. Only that reply's response can be
+	// continued from with sent as what it read.
+	turn string
 	// responseID is what the provider called the last reply it kept.
 	responseID string
 	// identity is the provider and model that kept it. A failover changes it, and the
@@ -310,6 +313,10 @@ func (h *Harness) Remember(response llm.Response) {
 		h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.turn == response.ID })
 		h.written = writtenReply{turn: response.ID, notes: carried}
 	}
+	// A reply asked for before the latest one did not read what the latest one was sent.
+	if response.ID != h.stored.turn {
+		return
+	}
 	// A truncated response can retain an unfinished tool call at the provider even
 	// though its invalid arguments were discarded locally. Continuing that response
 	// demands a result for a call we could never run. Replay our history instead.
@@ -335,7 +342,7 @@ func (h *Harness) Forget() {
 //
 // It returns the whole input and no previous response whenever the shortcut cannot be
 // proven safe, which costs bandwidth and nothing else.
-func (h *Harness) resume(instructions string, input []llm.Message) ([]llm.Message, string) {
+func (h *Harness) resume(turn, instructions string, input []llm.Message) ([]llm.Message, string) {
 	model := h.options.Model.Capabilities()
 	if !model.Store {
 		return input, ""
@@ -344,7 +351,7 @@ func (h *Harness) resume(instructions string, input []llm.Message) ([]llm.Messag
 	previous := h.stored
 	// The new input belongs to the response being requested. If it is interrupted
 	// before Remember, the old response cannot stand in for having read that input.
-	h.stored = stored{instructions: instructions, sent: input}
+	h.stored = stored{turn: turn, instructions: instructions, sent: input}
 
 	if previous.responseID == "" ||
 		previous.identity != h.options.Model.Provider()+"/"+h.options.Model.Model() ||
@@ -392,7 +399,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	if h.asking || turn.Answers || turn.NoTools {
 		tools = nil
 	}
-	input, previous := h.resume(instructions, answerable(withImages(turn.History, turn.Images)))
+	input, previous := h.resume(turn.ID, instructions, answerable(withImages(turn.History, turn.Images)))
 	model := session.Capabilities()
 	h.mu.Unlock()
 

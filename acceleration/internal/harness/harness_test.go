@@ -676,6 +676,26 @@ func (s *HarnessSuite) TestAFinishedToolReplyCanStillBeContinued() {
 	s.Equal(added, sent.Input)
 }
 
+func (s *HarnessSuite) TestAReplyThatFinishesAfterANewerOneWasAskedForIsNotContinued() {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	history = append(history,
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
+	// The first reply finishes after the second was asked for, and the second is cut off.
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	s.harness.Release("tool-reply")
+	history = append(history, llm.Message{Role: llm.User, Content: "actually use tomorrow"})
+	s.answer(Turn{ID: "correction", Instructions: "be brief", History: history})
+	sent := s.fast.requests()[2]
+	s.Empty(sent.PreviousResponseID, "the first reply never read the call or its result")
+	s.Equal(history, sent.Input)
+}
+
 func (s *HarnessSuite) TestWithoutASubagentNothingIsOffered() {
 	// Skills mean nothing without someone to run them, so offering them would only invite
 	// the model to write requests nobody answers.
