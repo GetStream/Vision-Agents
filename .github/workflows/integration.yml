@@ -126,7 +126,6 @@ jobs:
             acceleration/go.sum
             sdks/go/go.sum
             tui/go.sum
-            benchmark/go.sum
 
       - name: Test ${{ matrix.package }}
         run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}

@@ -3,7 +3,6 @@ go 1.27.0
 use (
 	./acceleration
 	./acceleration/cmd/phonecheck
-	./benchmark
 	./examples/routers/stt_realtime_example
 	./examples/voice_agents/swift_assistant/backend
 	./examples/voice_agents/swift_assistant/configure

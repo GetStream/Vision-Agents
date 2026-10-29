@@ -11,7 +11,7 @@
 // A run needs STREAM_API_KEY and STREAM_API_SECRET, a router built with
 // ROUTER_MOCK_PROVIDERS=true, and the webrtc build tag:
 //
-//	CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench run ...
+//	go run -tags webrtc ./cmd/perfbench run ...
 package main
 
 import (

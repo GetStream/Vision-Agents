@@ -12,6 +12,10 @@ A message in a `thread-` channel with an image attachment (`type: image`, `image
 
 A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
+### A Python agent tells the date and the hour in its callers' timezone
+
+`Agent(timezone=...)` sets the IANA zone, such as `Europe/Lisbon`, an agent's calls are in, and `join`, `answer`, `outbound_call` and `chat` each take a `timezone` for the person on that call, over the agent's. It is sent as the session's `timezone`, so the agent tells the date and the hour in it and a time the caller gives is theirs. With neither, the backend decides from the user's stored zone. A pipeline that runs locally refuses one, since nothing there would tell the model. `SessionOptions.timezone` in `plugins/stream` does the same for a session opened directly, as Go, Swift and Kotlin already do.
+
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.

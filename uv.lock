@@ -2785,54 +2785,6 @@ wheels = [
 ]
 
 [[package]]
-name = "livekit"
-version = "1.1.13"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiofiles" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/92/dcd4f295913533ddd0d48153cc28f1358d550bea651460bd895256981c4d/livekit-1.1.13.tar.gz", hash = "sha256:aa2bd89cf0c2ebcaa71a240275964c23900a0422a2a3d43d274e88a211a0ecfc", size = 370211, upload-time = "2026-06-30T11:54:00.321Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/bd/15100217109595aedbb9bcfdfc1c77513c0f44940d72644d16b611476941/livekit-1.1.13-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:2a19b023de9a573fe5da629e3ee514f2962c87e1afec95a6b19bbbdb6ea8f703", size = 10147642, upload-time = "2026-06-30T11:53:48.781Z" },
-    { url = "https://files.pythonhosted.org/packages/97/dd/4f001a9c5ccde361a53437a09bc04dc9cad8003c6711c2bcc0734e18e626/livekit-1.1.13-py3-none-macosx_11_0_arm64.whl", hash = "sha256:90b6796e0c4515bc1e8a1e109a40b88d82c36b12452b7ae01fe35be7ee8357ba", size = 8968740, upload-time = "2026-06-30T11:53:51.223Z" },
-    { url = "https://files.pythonhosted.org/packages/26/1a/7e97a45a4b6e10ce3a4e9938e3d3fa0a6512a6557f5990685eab4f6e88d1/livekit-1.1.13-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:43779c0f3bb27589cd517d60c442c674c2f967a97db158829a533974a29a3997", size = 9980507, upload-time = "2026-06-30T11:53:53.349Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/9d/389bbdf39ccd2c464a4749ba7be1584dea608518c32a5ddbc511db6b0cf7/livekit-1.1.13-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:f4e83f0e272f4b2e9cc39dbefd7bb23b75bd8c105478d867c2869254ca4e149a", size = 11367692, upload-time = "2026-06-30T11:53:55.409Z" },
-    { url = "https://files.pythonhosted.org/packages/da/ce/a3d3e0566dbd2586c325240d44afec6d44421eb794bcf8dbaca15463a7b7/livekit-1.1.13-py3-none-win_amd64.whl", hash = "sha256:22dff7a39cb3d590a4757e20d3ce5d326ab882350386f5070f45cbd6d9ccf839", size = 10717013, upload-time = "2026-06-30T11:53:57.701Z" },
-]
-
-[[package]]
-name = "livekit-api"
-version = "1.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "livekit-protocol" },
-    { name = "protobuf" },
-    { name = "pyjwt" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/03/00e0ec173f247e1f7ea63cb5591d5680a64c7a74ea4d5d558e5aed6cc399/livekit_api-1.1.1.tar.gz", hash = "sha256:70c7b80eecbc297b40756ebd76e4f52d00b0348fb7d212a21c1f69cc57fd9c83", size = 15196, upload-time = "2026-06-24T01:36:19.686Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/c0/d5f3ff74ab5db2d06f173801ec934885d11a754b9fb9ad768c8ede0a6c89/livekit_api-1.1.1-py3-none-any.whl", hash = "sha256:ce8c327676c366e66cf68782934368dd0ba92b9d48f578275227e255c890fe88", size = 19471, upload-time = "2026-06-24T01:36:18.42Z" },
-]
-
-[[package]]
-name = "livekit-protocol"
-version = "1.1.18"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "protobuf" },
-    { name = "types-protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e7/88/64f2be01a630e249f1dbd0d51876f109b53b7899ae41246d2ca5b647086d/livekit_protocol-1.1.18.tar.gz", hash = "sha256:187af32ebf75333a62117b0db9e551c99060bd4e1f57cfc0fce73bcd7a671da8", size = 115802, upload-time = "2026-06-27T15:31:04.102Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/80/9cc33e4d0280132538850aaf9559d6b8aa9e670c5917f75dab996400ab84/livekit_protocol-1.1.18-py3-none-any.whl", hash = "sha256:30c539410fd3cfc2e551ca3a193aaaaacaaec6dd57dabe2c9be7c7c7d15f0e01", size = 143134, upload-time = "2026-06-27T15:31:02.686Z" },
-]
-
-[[package]]
 name = "llvmlite"
 version = "0.47.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6201,15 +6153,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/df/42/f5b9b90162d2196f016b87228d6bf43f2c2c0c6501bfd5415001b3eb68bb/types_aiofiles-25.1.0.20260518.tar.gz", hash = "sha256:c0c95eb78755d4fa7b397d4f0332c632714dd7cd0d17f49b96e31d4d7a8d8c76", size = 14891, upload-time = "2026-05-18T06:05:27.804Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/3d/7a9ed9faafeae3aa3b5bc22fa5b979ff9cf3c83ecbe919b58eae07795b8c/types_aiofiles-25.1.0.20260518-py3-none-any.whl", hash = "sha256:f776bdfb4bec17f743d9ef042e61edf03bdcc7821fc08556fba9b63d873fdea9", size = 14377, upload-time = "2026-05-18T06:05:26.871Z" },
-]
-
-[[package]]
-name = "types-protobuf"
-version = "7.34.1.20260518"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/29/59/e2b13b499d15e6720150c4b1a8d91e31fcacf716b432397475b3151ff7e4/types_protobuf-7.34.1.20260518.tar.gz", hash = "sha256:28cfaded25889cb83ebfb63cfb0a43628f0b6f3785767bec17287dc6468795f2", size = 68936, upload-time = "2026-05-18T06:01:47.332Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/1f/ec5caf72c2e3b688ca3927e0979a04ddad19e1afc4bf1c199bd743e0f419/types_protobuf-7.34.1.20260518-py3-none-any.whl", hash = "sha256:a0a5337413347166439c0e07cbc26c6164d091401c6f01b1dfd8cdb966c4dd8f", size = 85992, upload-time = "2026-05-18T06:01:45.696Z" },
 ]
 
 [[package]]

@@ -1323,6 +1323,67 @@ class TestAgent:
         assert llm.joined.memory_filter == {"user_id": "222"}
         assert llm.left
 
+    async def test_the_agents_zone_reaches_the_remote_pipeline(self, call: Call):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            timezone="Europe/Lisbon",
+        )
+
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.timezone == "Europe/Lisbon"
+
+    async def test_a_calls_own_zone_wins_over_the_agents(self, call: Call):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            timezone="Europe/Lisbon",
+        )
+
+        async with agent.join(call, wait_for_end=False, timezone="Asia/Kolkata"):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.timezone == "Asia/Kolkata"
+
+    async def test_with_no_zone_anywhere_it_is_left_to_the_backend(self, call: Call):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.timezone == ""
+
+    async def test_a_zone_for_a_pipeline_that_runs_here_is_refused(self, call: Call):
+        # Nothing here tells a model the date in a zone, so one passed would go unseen.
+        with pytest.raises(ValueError, match="runs remotely"):
+            Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=DummyEdge(),
+                agent_user=User(name="test"),
+                timezone="Asia/Kolkata",
+            )
+
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        with pytest.raises(ValueError, match="runs remotely"):
+            async with agent.join(call, wait_for_end=False, timezone="Asia/Kolkata"):
+                pass
+
     async def test_a_remote_pipeline_reports_speech_as_the_agents_own_events(
         self, call: Call
     ):
@@ -1410,6 +1471,21 @@ class TestAgent:
         assert llm.joined.agent_id == "channel-1"
         assert llm.joined.instructions == "be brief"
         assert llm.left
+
+    async def test_a_written_conversation_carries_the_writers_zone(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            timezone="Europe/Lisbon",
+        )
+
+        async with agent.chat(timezone="America/Chicago"):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.timezone == "America/Chicago"
 
     async def test_a_written_conversation_needs_a_pipeline_running_elsewhere(self):
         # Nothing here holds one: the backend is what hears a question and writes back.
