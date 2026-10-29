@@ -103,8 +103,8 @@ func (s *SlackChannelSuite) TestAMessageWhoseTurnWasClaimedBeforeIsNotAnsweredAg
 // so it never dials the provider the next test's SetupTest puts in place.
 func (s *SlackChannelSuite) TestATestEndsOnlyOnceTheReplyItsTurnStillWritesHasLeft() {
 	handOver := s.holdHandOffs()
-	s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
-	writing, write := s.chat.Hold("/message")
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	writing, write := s.chat.Hold("/agent/" + channel + "/message")
 	handOver()
 	select {
 	case <-writing:
