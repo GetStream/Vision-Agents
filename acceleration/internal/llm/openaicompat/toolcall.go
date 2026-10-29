@@ -9,13 +9,13 @@ import (
 
 // Gemma 4 writes a tool call as `<|tool_call>call:NAME{key:value,...}<tool_call|>`, with strings
 // between `<|"|>` marks. vLLM's tool parser turns that into a real call, but not when the
-// opening marker goes missing: it has gone with an empty thought channel, and the rest,
-// `call:check_availability{party_size:4,...}<tool_call|>`, came back as text and was read to
-// the caller. A call written as text is still a call, so it is made, not spoken.
+// opening marker goes missing, as it can with an empty thought channel: the rest,
+// `call:find_room{nights:3,...}<tool_call|>`, arrives as answer text. A call written as text
+// is still a call, so it is made, not spoken.
 //
-// Without the marker it does not always keep its own syntax either. Callers have heard
-// `call_tool: check_outage{}`, `call tool: create_ticket{address: "9 Fern Row"}` and
-// `call:check_availability(party_size=4, time="7:30")` read out, so those are calls too.
+// Without the marker the model does not always keep its own syntax either, and writes
+// `call_tool: get_weather{}`, `call tool: open_case{address: "9 Fern Row"}` or
+// `call:find_room(nights=3, arrival="18:45")`, so those are calls too.
 const (
 	toolCallOpen  = "<|tool_call>"
 	toolCallClose = "<tool_call|>"

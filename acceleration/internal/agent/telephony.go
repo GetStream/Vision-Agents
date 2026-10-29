@@ -386,8 +386,8 @@ const leftBlank = "%s was not run: %s left empty. Take them from what the caller
 	"call it again, or ask the caller for them."
 
 // blankRequired returns the arguments a tool's schema requires that a call left out or empty.
-// Made to call, Qwen fills the schema with whatever it has, and verify_account went out
-// with the PIN alone although the caller had just given the last four and the address.
+// A model made to call fills the schema with whatever it has, and can leave out a value the
+// caller has already given.
 func blankRequired(tool harness.Tool, arguments string) []string {
 	required, _ := tool.Parameters["required"].([]any)
 	if len(required) == 0 {

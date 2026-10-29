@@ -397,8 +397,8 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	h.mu.Unlock()
 
 	// A reply to a tool result is given a little thinking. The caller was told to wait
-	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
-	// answers a free table with "may I book it?" instead of booking it.
+	// while the tool ran, so it costs them nothing they notice, and without it a model can
+	// ask the caller to confirm a step the result already lets it take.
 	var reasoning llm.ReasoningParams
 	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
 		reasoning.Effort = toolReplyEffort
