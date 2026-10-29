@@ -63,7 +63,6 @@ func judgeState(turn FlowTurn) map[string]any {
 		"agent_speaking":       turn.Speaking,
 		"speaker_has_finished": !turn.Unfinished,
 		"different_voice":      turn.AnotherVoice,
-		"went_on_unanswered":   turn.InParts,
 	}
 	if turn.Reply != "" {
 		state["agent_has_said"] = turn.Reply
@@ -93,14 +92,11 @@ func judgeQuestions() map[string]decisionmodel.Question {
 			"Whatever number it contains is complete, or it contains none."),
 		"listing": decisionmodel.Noul(
 			"Has the speaker said, earlier in `conversation` or in `heard` itself, that they will "+
-				"give several details in one go, or gone on talking before hearing any of the "+
-				"agent's reply (`went_on_unanswered`), and is `heard` that promise or one more of "+
-				"those details, rather than a question for the agent, a correction, or a plain sign "+
-				"they have finished?",
-			"They are giving one thought in parts and are still going: the promise itself, a "+
-				"name, a date, a booking, a preference.",
-			"No such promise was made and they did not go on unanswered, or `heard` asks the "+
-				"agent something, corrects something, or says they are done."),
+				"give several details in one go, and is `heard` that promise or one more of those "+
+				"details, rather than a question for the agent or a plain sign they have finished?",
+			"They promised several details and are still going: the promise itself, a name, "+
+				"a date, a booking, a preference.",
+			"No such promise was made, or `heard` asks the agent something, or says they are done."),
 		"greeting_only": decisionmodel.Noul(
 			"Is `heard` only a greeting, such as \"hi\" or \"hello there\", with nothing asked "+
 				"or said yet?",
