@@ -102,7 +102,7 @@ func (s *HookBodySuite) TestAHookRequestNamingACustomerIsIgnored() {
 	// let a request to a hook name a tenant, or record one under an organization.
 	s.post(phone.CallHookPath, []byte(`{"type":"call.session_ended"}`), "")
 	s.post(chat.MessageHookPath, []byte(`{"type":"message.read"}`), "")
-	s.post(chatDeliveryPath, []byte(`{"type":"message.read"}`), "")
+	s.post(chatInboundPath, []byte(`{"type":"message.read"}`), "")
 
 	s.Zero(s.asked.Load())
 }

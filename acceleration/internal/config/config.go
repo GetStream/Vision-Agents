@@ -104,6 +104,7 @@ type Config struct {
 	RateLimit  RateLimit  `koanf:"rate_limit"`
 	DataMove   DataMove   `koanf:"data_move"`
 	Stream     Stream     `koanf:"stream"`
+	Chat       Chat       `koanf:"chat"`
 	Agent      Agent      `koanf:"agent"`
 	Connectors Connectors `koanf:"connectors"`
 	Runs       Runs       `koanf:"runs"`
@@ -301,11 +302,6 @@ type Stream struct {
 	// server token cannot, and MintToken the bearer it expects.
 	MintURL   string `koanf:"mint_url"`
 	MintToken string `koanf:"mint_token"`
-	// DeliveryKeys are the ed25519 public keys Stream Chat signs its own delivery of messages
-	// with, each the standard base64 of 32 bytes: one, or two while Stream rotates. Only
-	// Stream holds the private key, and no app's secret is one. None leaves the delivery
-	// endpoint off.
-	DeliveryKeys []string `koanf:"delivery_keys"`
 }
 
 // What Stream.Tenancy holds.
@@ -327,6 +323,15 @@ func (s Stream) EffectiveFallback() string {
 		return FallbackRefuse
 	}
 	return s.Fallback
+}
+
+// Chat is the settings of the router's side of Stream Chat's own delivery of messages.
+type Chat struct {
+	// InboundKeys are the ed25519 public keys Stream Chat signs its own delivery of messages
+	// with, each the standard base64 of 32 bytes: one, or two while Stream rotates. Only
+	// Stream holds the private key, and no app's secret is one. None leaves the inbound
+	// endpoint off.
+	InboundKeys []string `koanf:"inbound_keys"`
 }
 
 // Agent is how an agent holds a conversation, where that is the deployment's choice.
@@ -511,7 +516,7 @@ var variables = map[string]string{
 	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
 	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
 
-	"stream.delivery_keys": "ROUTER_STREAM_DELIVERY_KEYS",
+	"chat.inbound_keys": "ROUTER_CHAT_INBOUND_KEYS",
 
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
@@ -561,7 +566,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"trusted_proxies": true, "stream.delivery_keys": true}
+var lists = map[string]bool{"trusted_proxies": true, "chat.inbound_keys": true}
 
 // pairs are the settings written as a comma-separated variable of name=value and as a
 // mapping in YAML.
@@ -974,7 +979,7 @@ func (c Config) export() error {
 		"stream.app_id":                 appID(c.Stream.AppID),
 		"stream.mint_url":               c.Stream.MintURL,
 		"stream.mint_token":             c.Stream.MintToken,
-		"stream.delivery_keys":          strings.Join(c.Stream.DeliveryKeys, ","),
+		"chat.inbound_keys":             strings.Join(c.Chat.InboundKeys, ","),
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),

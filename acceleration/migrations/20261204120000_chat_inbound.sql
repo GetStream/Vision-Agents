@@ -1,6 +1,6 @@
 -- +goose Up
 
--- chat_deliveries is the queue of Stream Chat messages the router answers: a message.new of
+-- chat_inbound is the queue of Stream Chat messages the router answers: a message.new of
 -- an agent channel that Stream Chat delivered to the router, recorded before the router told
 -- Stream it took it, so an accepted message survives a router restart. A worker on any router
 -- answers it later, with nothing of the delivery's request left, so a row holds what
@@ -18,10 +18,10 @@
 --     next_attempt_at is when a queued row is due; a worker that takes one moves it to the
 --     end of its lease, so another router takes it only once that lease ran out.
 --   - received_at is when the row was queued, and finished_at when it left queued. Done rows
---     are kept a day, failed ones 30 days (store.PruneChatDeliveries).
+--     are kept a day, failed ones 30 days (store.PruneChatInbound).
 --
 -- A data move does not carry these rows (store.dataTables): they are in flight for minutes.
-CREATE TABLE chat_deliveries (
+CREATE TABLE chat_inbound (
     seq BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     stream_app BIGINT NOT NULL,
     message_id TEXT NOT NULL,
@@ -37,11 +37,11 @@ CREATE TABLE chat_deliveries (
     UNIQUE (stream_app, message_id)
 );
 
--- The queued rows by when they are due (store.ClaimChatDeliveries, store.NextChatDeliveryAt).
-CREATE INDEX chat_deliveries_queued ON chat_deliveries (next_attempt_at, seq) WHERE state = 'queued';
+-- The queued rows by when they are due (store.ClaimChatInbound, store.NextChatInboundAt).
+CREATE INDEX chat_inbound_queued ON chat_inbound (next_attempt_at, seq) WHERE state = 'queued';
 
--- The rows past their keep (store.PruneChatDeliveries).
-CREATE INDEX chat_deliveries_finished ON chat_deliveries (finished_at) WHERE state <> 'queued';
+-- The rows past their keep (store.PruneChatInbound).
+CREATE INDEX chat_inbound_finished ON chat_inbound (finished_at) WHERE state <> 'queued';
 
 -- +goose Down
-DROP TABLE chat_deliveries;
+DROP TABLE chat_inbound;

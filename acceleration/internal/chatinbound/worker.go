@@ -1,4 +1,4 @@
-package chatdelivery
+package chatinbound
 
 import (
 	"context"
@@ -37,7 +37,7 @@ const inFlight = 64
 var defaultRetries = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}
 
 // pruneEvery is how often a worker deletes the rows past their keep: a day for an answered
-// message, 30 days for a given-up one (store.PruneChatDeliveries), so an hour late is nothing.
+// message, 30 days for a given-up one (store.PruneChatInbound), so an hour late is nothing.
 // A choice, the channel bridge's.
 const pruneEvery = time.Hour
 
@@ -46,7 +46,7 @@ const recordTimeout = 10 * time.Second
 
 // Answer answers one queued message, returning when its answer has ended. An error is an
 // attempt a later one may get through.
-type Answer func(ctx context.Context, delivery store.ChatDelivery) error
+type Answer func(ctx context.Context, delivery store.ChatInbound) error
 
 // Options configures a Worker. Store and Answer are required.
 type Options struct {
@@ -61,7 +61,7 @@ type Options struct {
 	Logger *slog.Logger
 }
 
-// Worker answers the Stream Chat messages queued in chat_deliveries, on every router: whichever
+// Worker answers the Stream Chat messages queued in chat_inbound, on every router: whichever
 // claims one answers it.
 type Worker struct {
 	store   *store.Store
@@ -85,7 +85,7 @@ type Worker struct {
 // NewWorker validates the options and returns a Worker. It claims nothing until Start.
 func NewWorker(options Options) (*Worker, error) {
 	if options.Store == nil || options.Answer == nil {
-		return nil, stack.Wrap(errors.New("chatdelivery: a store and an answer are required"))
+		return nil, stack.Wrap(errors.New("chatinbound: a store and an answer are required"))
 	}
 	worker := &Worker{
 		store:   options.Store,
@@ -155,10 +155,10 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 		return 0, false
 	}
 	now := time.Now()
-	claimed, err := w.store.ClaimChatDeliveries(w.ctx, now, free, now.Add(w.lease))
+	claimed, err := w.store.ClaimChatInbound(w.ctx, now, free, now.Add(w.lease))
 	if err != nil {
 		if w.ctx.Err() == nil {
-			w.logger.Error("could not take the chat deliveries due", "error", err)
+			w.logger.Error("could not take the chat inbound messages due", "error", err)
 		}
 		return w.poll, true
 	}
@@ -177,11 +177,11 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 			w.attempt(delivery)
 		}()
 	}
-	next, queued, err := w.store.NextChatDeliveryAt(w.ctx)
+	next, queued, err := w.store.NextChatInboundAt(w.ctx)
 	switch {
 	case err != nil:
 		if w.ctx.Err() == nil {
-			w.logger.Error("could not find when the next chat delivery is due", "error", err)
+			w.logger.Error("could not find when the next chat inbound message is due", "error", err)
 		}
 		return w.poll, true
 	case !queued:
@@ -197,21 +197,21 @@ func (w *Worker) prune() {
 		return
 	}
 	w.pruned = time.Now()
-	if _, err := w.store.PruneChatDeliveries(w.ctx, w.pruned); err != nil && w.ctx.Err() == nil {
-		w.logger.Error("could not delete the chat deliveries past their keep", "error", err)
+	if _, err := w.store.PruneChatInbound(w.ctx, w.pruned); err != nil && w.ctx.Err() == nil {
+		w.logger.Error("could not delete the chat inbound messages past their keep", "error", err)
 	}
 }
 
 // attempt answers a claimed message once and records what came of it: answered, due again
 // after the next wait, or given up when the waits ran out.
-func (w *Worker) attempt(delivery store.ChatDelivery) {
+func (w *Worker) attempt(delivery store.ChatInbound) {
 	log := w.logger.With("seq", delivery.Seq, "stream_app", delivery.StreamApp, "message", delivery.MessageID)
-	log.Info("answering a queued chat delivery", "attempts", delivery.Attempts)
+	log.Info("answering a queued chat inbound message", "attempts", delivery.Attempts)
 	err := w.answer(w.ctx, delivery)
 	if err != nil && w.ctx.Err() != nil {
 		// Close cut it short: the lease runs out and a router tries it again, which answers
 		// nothing if its answer had started.
-		log.Info("left a queued chat delivery for another router", "error", err)
+		log.Info("left a queued chat inbound message for another router", "error", err)
 		return
 	}
 	// Recorded even while Close waits: an answered message left leased is tried again.
@@ -221,20 +221,20 @@ func (w *Worker) attempt(delivery store.ChatDelivery) {
 	var changed bool
 	switch {
 	case err == nil:
-		changed, err = w.store.FinishChatDelivery(writing, delivery, time.Now())
-		log.Info("answered a queued chat delivery", "attempts", attempts)
+		changed, err = w.store.FinishChatInbound(writing, delivery, time.Now())
+		log.Info("answered a queued chat inbound message", "attempts", attempts)
 	case attempts <= len(w.retries):
 		next := time.Now().Add(w.retries[attempts-1])
-		log.Info("a queued chat delivery failed and is answered again", "attempts", attempts, "next", next, "error", err)
-		changed, err = w.store.RetryChatDelivery(writing, delivery, next)
+		log.Info("a queued chat inbound message failed and is answered again", "attempts", attempts, "next", next, "error", err)
+		changed, err = w.store.RetryChatInbound(writing, delivery, next)
 	default:
-		log.Warn("gave up a queued chat delivery", "attempts", attempts, "error", err)
-		changed, err = w.store.FailChatDelivery(writing, delivery, time.Now())
+		log.Warn("gave up a queued chat inbound message", "attempts", attempts, "error", err)
+		changed, err = w.store.FailChatInbound(writing, delivery, time.Now())
 	}
 	switch {
 	case err != nil:
-		log.Error("could not record a queued chat delivery's attempt", "error", err)
+		log.Error("could not record a queued chat inbound message's attempt", "error", err)
 	case !changed:
-		log.Warn("a queued chat delivery's lease ran out before its attempt was recorded, or its answer started on another try")
+		log.Warn("a queued chat inbound message's lease ran out before its attempt was recorded, or its answer started on another try")
 	}
 }

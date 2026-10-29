@@ -12,48 +12,48 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatdelivery"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
-// chatDeliveryPath is where Stream Chat delivers the messages written in agent channels
+// chatInboundPath is where Stream Chat delivers the messages written in agent channels
 // itself, rather than through the app's webhook, which the customer can overwrite.
-const chatDeliveryPath = "/v1/chat/internal/messages"
+const chatInboundPath = "/v1/chat/internal/messages"
 
-// chatDeliveryPeerPath is where a router's queue worker hands a queued delivery to the router
+// chatInboundPeerPath is where a router's queue worker hands a queued delivery to the router
 // answering in its channel. It is served by hand and named in no spec: only a peer calls it,
 // through the peer forwarder, which is what node.Forwarded(ctx) attests.
-const chatDeliveryPeerPath = "/internal/chat-deliveries/answer"
+const chatInboundPeerPath = "/internal/chat-inbound/answer"
 
-// errChatDeliveryUnsettled is a queued delivery nothing took this time: the reason is logged
+// errChatInboundUnsettled is a queued delivery nothing took this time: the reason is logged
 // where it happened, and the worker tries again.
-var errChatDeliveryUnsettled = errors.New("api: nothing took the queued chat delivery")
+var errChatInboundUnsettled = errors.New("api: nothing took the queued chat inbound message")
 
-// chatDeliveryReleaseTimeout bounds queueing a delivery again that nothing took: one update by
-// key. The chat delivery worker's recordTimeout, which bounds its own row writes.
-const chatDeliveryReleaseTimeout = 10 * time.Second
+// chatInboundReleaseTimeout bounds queueing a delivery again that nothing took: one update by
+// key. The chat inbound worker's recordTimeout, which bounds its own row writes.
+const chatInboundReleaseTimeout = 10 * time.Second
 
-// chatDelivery is what Stream Chat delivers: the message.new event the webhook carries, and
+// chatInbound is what Stream Chat delivers: the message.new event the webhook carries, and
 // the app it was written in. The app is read from the signed body and never from a header,
 // so nobody can name another app on a delivery Stream signed.
-type chatDelivery struct {
+type chatInbound struct {
 	AppID int64  `json:"app_id"`
 	Type  string `json:"type"`
 	messageEvent
 }
 
-// receiveChatDelivery takes a message Stream Chat delivers and answers it as the message
+// receiveChatInbound takes a message Stream Chat delivers and answers it as the message
 // webhook does (receiveMessageEvent).
 //
 // Only Stream can sign one: it holds the private key, and the router only the public ones.
 // Nothing an app's customer holds, its API secret, a token or its key, is enough. Every
 // outcome short of something Stream did not sign, or an app this router does not serve, is a
 // 200, for the reason the webhook gives.
-func (s *Server) receiveChatDelivery(w http.ResponseWriter, r *http.Request) {
-	if len(s.chatDeliveryKeys) == 0 {
+func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
+	if len(s.chatInboundKeys) == 0 {
 		// Without a key there is no telling Stream from anyone who found the URL.
 		writeError(w, notFound("Stream Chat deliveries are not configured"))
 		return
@@ -70,18 +70,18 @@ func (s *Server) receiveChatDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Checked before anything reads the body, so what a forger sends is never parsed.
-	if err := chatdelivery.Verify(s.chatDeliveryKeys, r.Header, body, time.Now()); err != nil {
+	if err := chatinbound.Verify(s.chatInboundKeys, r.Header, body, time.Now()); err != nil {
 		s.logger.Warn("rejected a Stream Chat delivery", "bytes", len(body), "error", err)
 		writeError(w, unauthenticated("that is not a delivery from Stream Chat"))
 		return
 	}
 
-	var delivery chatDelivery
+	var delivery chatInbound
 	if err := json.Unmarshal(body, &delivery); err != nil || delivery.AppID <= 0 {
 		writeError(w, invalidRequest("could not read that delivery: it is a message.new event with the app_id it was written in"))
 		return
 	}
-	origin, ok := s.chatDeliveryOrigin(w, delivery.AppID)
+	origin, ok := s.chatInboundOrigin(w, delivery.AppID)
 	if !ok {
 		return
 	}
@@ -97,11 +97,11 @@ func (s *Server) receiveChatDelivery(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// chatDeliveryOrigin is the app a delivery is from, as the webhook's would be for the same
+// chatInboundOrigin is the app a delivery is from, as the webhook's would be for the same
 // app (verifyHook): in deployment mode the deployment's own app only, and in app mode the
 // deployment's app or a customer's own. It answers the request itself when the app is not
 // one to act on.
-func (s *Server) chatDeliveryOrigin(w http.ResponseWriter, app int64) (hookOrigin, bool) {
+func (s *Server) chatInboundOrigin(w http.ResponseWriter, app int64) (hookOrigin, bool) {
 	var own int64
 	if s.stream != nil {
 		own = s.stream.DeploymentApp()
@@ -123,9 +123,9 @@ func (s *Server) chatDeliveryOrigin(w http.ResponseWriter, app int64) (hookOrigi
 	return hookOrigin{customer: streamapp.CustomerOf(app), app: app}, true
 }
 
-// queuedChatDelivery is a queued delivery as one router hands it to another: the origin the
+// queuedChatInbound is a queued delivery as one router hands it to another: the origin the
 // endpoint verified, and the event.
-type queuedChatDelivery struct {
+type queuedChatInbound struct {
 	Seq        int64  `json:"seq"`
 	StreamApp  int64  `json:"stream_app"`
 	MessageID  string `json:"message_id"`
@@ -136,66 +136,66 @@ type queuedChatDelivery struct {
 }
 
 // origin is where the delivery came from, as the endpoint verified it.
-func (q queuedChatDelivery) origin() hookOrigin {
+func (q queuedChatInbound) origin() hookOrigin {
 	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey,
 		queuedMessage: q.MessageID}
 }
 
-// AnswerChatDelivery answers a delivery the endpoint queued, as it would have answered it on
+// AnswerChatInbound answers a delivery the endpoint queued, as it would have answered it on
 // the request, and returns once the answer has ended: the worker's lease holds the delivery
-// until then (chatdelivery.Lease). An answer from a session or a dispatch worker, here or on a
+// until then (chatinbound.Lease). An answer from a session or a dispatch worker, here or on a
 // peer, settles the row as it starts (answerOnce), so a try after that answers nothing. The
 // endpoint already checked it is an addressed new message, first delivered and fresh, so none
 // of that is checked again: a retry ten minutes on would read as stale.
-func (s *Server) AnswerChatDelivery(ctx context.Context, delivery store.ChatDelivery) error {
-	queued := queuedChatDelivery{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
+func (s *Server) AnswerChatInbound(ctx context.Context, delivery store.ChatInbound) error {
+	queued := queuedChatInbound{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
 		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
-	var event chatDelivery
+	var event chatInbound
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
-		return stack.Wrap(fmt.Errorf("api: read queued chat delivery: %w", err))
+		return stack.Wrap(fmt.Errorf("api: read queued chat inbound message: %w", err))
 	}
 	origin := queued.origin()
 	origin.queued = true
 	origin.handOver = func(ctx context.Context, address string) (*node.ForwardResponse, error) {
-		return s.handChatDeliveryToPeer(ctx, address, queued)
+		return s.handChatInboundToPeer(ctx, address, queued)
 	}
 	if !s.routeArrivingMessage(ctx, origin, event.messageEvent) {
-		return errChatDeliveryUnsettled
+		return errChatInboundUnsettled
 	}
 	return nil
 }
 
-// handChatDeliveryToPeer gives a queued delivery to the node at address. The signed request is
+// handChatInboundToPeer gives a queued delivery to the node at address. The signed request is
 // gone by now, so the peer takes this router's word for its origin, which only a node holding
-// the deployment's credential can give (answerChatDeliveryForPeer).
-func (s *Server) handChatDeliveryToPeer(ctx context.Context, address string, queued queuedChatDelivery) (*node.ForwardResponse, error) {
+// the deployment's credential can give (answerChatInboundForPeer).
+func (s *Server) handChatInboundToPeer(ctx context.Context, address string, queued queuedChatInbound) (*node.ForwardResponse, error) {
 	body, err := json.Marshal(queued)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, chatDeliveryPeerPath, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, chatInboundPeerPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	s.logger.Info("handing a queued chat delivery to another node", "seq", queued.Seq, "node", address)
+	s.logger.Info("handing a queued chat inbound message to another node", "seq", queued.Seq, "node", address)
 	return s.forwarder.Ask(ctx, address, request, body)
 }
 
-// answerChatDeliveryForPeer is the peer hand-off's other end: the message is answered here, off
+// answerChatInboundForPeer is the peer hand-off's other end: the message is answered here, off
 // the request, as the webhook's is. Anything not handed over by a peer is answered as no such
 // route, because the payload names its app and customer outright, which is only a peer's to say.
-func (s *Server) answerChatDeliveryForPeer(w http.ResponseWriter, r *http.Request) {
+func (s *Server) answerChatInboundForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
 		return
 	}
-	var queued queuedChatDelivery
-	var event chatDelivery
+	var queued queuedChatInbound
+	var event chatInbound
 	if json.NewDecoder(r.Body).Decode(&queued) != nil || json.Unmarshal(queued.Body, &event) != nil {
 		writeError(w, invalidRequest("the queued delivery could not be read"))
 		return
 	}
-	s.logger.Info("answering a queued chat delivery another node handed over", "seq", queued.Seq, "stream_app", queued.StreamApp)
+	s.logger.Info("answering a queued chat inbound message another node handed over", "seq", queued.Seq, "stream_app", queued.StreamApp)
 	if !s.routeArrivingMessage(r.Context(), queued.origin(), event.messageEvent) {
 		writeError(w, unavailable("nothing took the queued delivery"))
 		return
@@ -204,23 +204,23 @@ func (s *Server) answerChatDeliveryForPeer(w http.ResponseWriter, r *http.Reques
 }
 
 // answerOnce settles a queued delivery's row as its answer starts, so a try of it after that, on
-// this router or another, answers nothing (store.StartChatDeliveryAnswer). answer is false when
+// this router or another, answers nothing (store.StartChatInboundAnswer). answer is false when
 // the message is not to be answered now, and settled then says whether that holds: its answer
 // already started, or the row could not be written and a later try may. A hook is never tried
 // again, so it settles nothing. A router that stops mid-answer leaves the message answered at
-// most once (internal/chatdelivery/AGENTS.md «Rules»).
+// most once (internal/chatinbound/AGENTS.md «Rules»).
 func (s *Server) answerOnce(ctx context.Context, origin hookOrigin, event messageEvent) (answer, settled bool) {
 	if origin.queuedMessage == "" {
 		return true, true
 	}
-	started, err := s.store.StartChatDeliveryAnswer(ctx, origin.app, origin.queuedMessage, time.Now())
+	started, err := s.store.StartChatInboundAnswer(ctx, origin.app, origin.queuedMessage, time.Now())
 	if err != nil {
-		s.logger.Error("could not settle a queued chat delivery before answering it",
+		s.logger.Error("could not settle a queued chat inbound message before answering it",
 			"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app, "error", err)
 		return false, false
 	}
 	if !started {
-		s.logger.Info("not answering a queued chat delivery whose answer already started",
+		s.logger.Info("not answering a queued chat inbound message whose answer already started",
 			"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
 	}
 	return started, true
@@ -233,10 +233,10 @@ func (s *Server) unanswered(ctx context.Context, origin hookOrigin) {
 	if origin.queuedMessage == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), chatDeliveryReleaseTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), chatInboundReleaseTimeout)
 	defer cancel()
-	if err := s.store.ReleaseChatDeliveryAnswer(ctx, origin.app, origin.queuedMessage); err != nil {
-		s.logger.Error("a queued chat delivery nothing took could not be queued again, and is left unanswered",
+	if err := s.store.ReleaseChatInboundAnswer(ctx, origin.app, origin.queuedMessage); err != nil {
+		s.logger.Error("a queued chat inbound message nothing took could not be queued again, and is left unanswered",
 			"message", origin.queuedMessage, "stream_app", origin.app, "error", err)
 	}
 }

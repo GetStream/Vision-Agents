@@ -18,9 +18,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 )
 
-// ChatDeliveryStartupSuite starts the router with ROUTER_STREAM_DELIVERY_KEYS set, as its serve
+// ChatInboundStartupSuite starts the router with ROUTER_CHAT_INBOUND_KEYS set, as its serve
 // command does, with no database, Redis or Stream app.
-type ChatDeliveryStartupSuite struct {
+type ChatInboundStartupSuite struct {
 	suite.Suite
 	settings config.Config
 	// stopped is closed when run returns, with what it returned in err.
@@ -28,11 +28,11 @@ type ChatDeliveryStartupSuite struct {
 	err     error
 }
 
-func TestChatDeliveryStartupSuite(t *testing.T) {
-	suite.Run(t, new(ChatDeliveryStartupSuite))
+func TestChatInboundStartupSuite(t *testing.T) {
+	suite.Run(t, new(ChatInboundStartupSuite))
 }
 
-func (s *ChatDeliveryStartupSuite) SetupTest() {
+func (s *ChatInboundStartupSuite) SetupTest() {
 	s.settings = config.Defaults()
 	s.settings.Auth.Mode = string(auth.NoAuth)
 	s.settings.Limits.Mode = config.LimitsOff
@@ -40,9 +40,9 @@ func (s *ChatDeliveryStartupSuite) SetupTest() {
 
 // A key that does not read stops the router at start, rather than leaving it to refuse
 // every delivery Stream sends.
-func (s *ChatDeliveryStartupSuite) TestAKeyThatDoesNotReadStopsTheRouter() {
+func (s *ChatInboundStartupSuite) TestAKeyThatDoesNotReadStopsTheRouter() {
 	s.settings.Addr = "127.0.0.1:0"
-	s.settings.Stream.DeliveryKeys = []string{"not-a-key"}
+	s.settings.Chat.InboundKeys = []string{"not-a-key"}
 
 	s.start()
 
@@ -56,10 +56,10 @@ func (s *ChatDeliveryStartupSuite) TestAKeyThatDoesNotReadStopsTheRouter() {
 
 // With a key the route is served: an unsigned delivery is refused 401, where a router with
 // no key answers 404.
-func (s *ChatDeliveryStartupSuite) TestWithAKeyAnUnsignedDeliveryIsRefused() {
+func (s *ChatInboundStartupSuite) TestWithAKeyAnUnsignedDeliveryIsRefused() {
 	public, _, err := ed25519.GenerateKey(nil)
 	s.Require().NoError(err)
-	s.settings.Stream.DeliveryKeys = []string{base64.StdEncoding.EncodeToString(public)}
+	s.settings.Chat.InboundKeys = []string{base64.StdEncoding.EncodeToString(public)}
 	opened, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	s.settings.Addr = opened.Addr().String()
@@ -88,7 +88,7 @@ func (s *ChatDeliveryStartupSuite) TestWithAKeyAnUnsignedDeliveryIsRefused() {
 
 // start runs the router as its serve command does. A router still running when the test ends
 // is stopped with SIGTERM, which run handles only while it runs.
-func (s *ChatDeliveryStartupSuite) start() {
+func (s *ChatInboundStartupSuite) start() {
 	s.stopped = make(chan struct{})
 	go func() {
 		s.err = run(s.settings, slog.New(slog.DiscardHandler))

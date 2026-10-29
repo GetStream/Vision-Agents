@@ -18,30 +18,30 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// ChatDeliverySuite is Stream Chat delivering the messages written in agent channels to a
+// ChatInboundSuite is Stream Chat delivering the messages written in agent channels to a
 // router in deployment mode, which answers them as it answers the message webhook. What the
-// endpoint refuses is ChatDeliveryRefusalSuite's.
-type ChatDeliverySuite struct {
+// endpoint refuses is ChatInboundRefusalSuite's.
+type ChatInboundSuite struct {
 	RouterSuite
-	chatDeliveries
+	chatInbounds
 }
 
-func TestChatDeliverySuite(t *testing.T) {
-	runSuite(t, new(ChatDeliverySuite))
+func TestChatInboundSuite(t *testing.T) {
+	runSuite(t, new(ChatInboundSuite))
 }
 
-func (s *ChatDeliverySuite) SetupSuite() {
-	s.chatDeliveries.keys(&s.RouterSuite)
+func (s *ChatInboundSuite) SetupSuite() {
+	s.chatInbounds.keys(&s.RouterSuite)
 	s.deploymentKnown = true
 	s.RouterSuite.SetupSuite()
 }
 
-func (s *ChatDeliverySuite) SetupTest() {
+func (s *ChatInboundSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.channelID = "chat-" + s.utils.uuid()
 }
 
-func (s *ChatDeliverySuite) TestADeliveryIsAnsweredOnce() {
+func (s *ChatInboundSuite) TestADeliveryIsAnsweredOnce() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 	configID := s.config(s.customerID())
@@ -60,7 +60,7 @@ func (s *ChatDeliverySuite) TestADeliveryIsAnsweredOnce() {
 	s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
 }
 
-func (s *ChatDeliverySuite) TestADeliverySignedWithTheOldKeyIsAnswered() {
+func (s *ChatInboundSuite) TestADeliverySignedWithTheOldKeyIsAnswered() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
@@ -69,7 +69,7 @@ func (s *ChatDeliverySuite) TestADeliverySignedWithTheOldKeyIsAnswered() {
 	s.True(s.reachesWorker(worker.Messages()))
 }
 
-func (s *ChatDeliverySuite) TestARefusedDeliveryReachesNoWorker() {
+func (s *ChatInboundSuite) TestARefusedDeliveryReachesNoWorker() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 	stranger := ed25519.NewKeyFromSeed([]byte("somebody-else-s-key-seed-32bytes"))
@@ -81,7 +81,7 @@ func (s *ChatDeliverySuite) TestARefusedDeliveryReachesNoWorker() {
 
 // Everything the agent stores carries a source, and answering it is the agent talking to
 // itself, as the webhook knows (addressed).
-func (s *ChatDeliverySuite) TestAMessageTheRouterWroteItselfReachesNoWorker() {
+func (s *ChatInboundSuite) TestAMessageTheRouterWroteItselfReachesNoWorker() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
@@ -91,7 +91,7 @@ func (s *ChatDeliverySuite) TestAMessageTheRouterWroteItselfReachesNoWorker() {
 }
 
 // Only a new message is answered: an edit of one carries the same message, already answered.
-func (s *ChatDeliverySuite) TestAnEventThatIsNotANewMessageReachesNoWorker() {
+func (s *ChatInboundSuite) TestAnEventThatIsNotANewMessageReachesNoWorker() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 	body := strings.Replace(s.message(suiteStreamApp, s.config(s.customerID()), ""), `"message.new"`, `"message.updated"`, 1)
@@ -103,7 +103,7 @@ func (s *ChatDeliverySuite) TestAnEventThatIsNotANewMessageReachesNoWorker() {
 
 // The node a delivery lands on hands it over whole, headers and all, and the node with the
 // worker checks Stream's signature for itself.
-func (s *ChatDeliverySuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredThere() {
+func (s *ChatInboundSuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredThere() {
 	other := s.otherNodeDispatching(dispatch.NewPool())
 	worker := s.serverClient.on(other).opens("/v1/dispatch")
 	s.await(worker, "ready")
@@ -115,7 +115,7 @@ func (s *ChatDeliverySuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredTh
 
 // The forwarded header is only a peer's to set: one that came with a delivery from outside
 // keeps it on this node rather than hand it to the node running the conversation.
-func (s *ChatDeliverySuite) TestADeliveryCarryingThePeersHeaderFromOutsideIsNotHandedOn() {
+func (s *ChatInboundSuite) TestADeliveryCarryingThePeersHeaderFromOutsideIsNotHandedOn() {
 	other := s.otherNode()
 	s.serverClient.on(other).createSession(CreateSessionRequest{
 		AgentId: &s.channelID, Llm: pointerTo("vision/vision-model"), Incognito: pointerTo(true),
@@ -123,7 +123,7 @@ func (s *ChatDeliverySuite) TestADeliveryCarryingThePeersHeaderFromOutsideIsNotH
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 	body := s.message(suiteStreamApp, s.config(s.customerID()), "")
-	request, err := http.NewRequest(http.MethodPost, s.server.URL+chatDeliveryPath, strings.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+chatInboundPath, strings.NewReader(body))
 	s.Require().NoError(err)
 	request.Header = signDelivery(s.current, "msg_"+s.utils.uuid(), time.Now(), body)
 	request.Header.Set(node.ForwardedHeader, "1")
@@ -136,26 +136,26 @@ func (s *ChatDeliverySuite) TestADeliveryCarryingThePeersHeaderFromOutsideIsNotH
 	s.Empty(s.vision.requests(), "the node running the conversation was handed it")
 }
 
-// ChatDeliveryAppSuite is Stream Chat delivering to a router in app mode, where a delivery
+// ChatInboundAppSuite is Stream Chat delivering to a router in app mode, where a delivery
 // names a customer's own app and no gateway vouches for it: Stream's signature over the app
 // id is what says whose it is.
-type ChatDeliveryAppSuite struct {
+type ChatInboundAppSuite struct {
 	RouterSuite
-	chatDeliveries
+	chatInbounds
 	apiKey string
 }
 
-func TestChatDeliveryAppSuite(t *testing.T) {
-	runSuite(t, new(ChatDeliveryAppSuite))
+func TestChatInboundAppSuite(t *testing.T) {
+	runSuite(t, new(ChatInboundAppSuite))
 }
 
-func (s *ChatDeliveryAppSuite) SetupSuite() {
-	s.chatDeliveries.keys(&s.RouterSuite)
+func (s *ChatInboundAppSuite) SetupSuite() {
+	s.chatInbounds.keys(&s.RouterSuite)
 	s.appMode = true
 	s.RouterSuite.SetupSuite()
 }
 
-func (s *ChatDeliveryAppSuite) SetupTest() {
+func (s *ChatInboundAppSuite) SetupTest() {
 	s.useApp(s.numberedApp(streamAppID()))
 	s.apiKey = "own-key-" + s.utils.uuid()
 	s.answerAs(s.apiKey, s.appID())
@@ -163,7 +163,7 @@ func (s *ChatDeliveryAppSuite) SetupTest() {
 	s.channelID = "chat-" + s.utils.uuid()
 }
 
-func (s *ChatDeliveryAppSuite) TestADeliveryInACustomersOwnAppIsAnsweredThere() {
+func (s *ChatInboundAppSuite) TestADeliveryInACustomersOwnAppIsAnsweredThere() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 
@@ -174,7 +174,7 @@ func (s *ChatDeliveryAppSuite) TestADeliveryInACustomersOwnAppIsAnsweredThere() 
 
 // A channel in this app naming another customer's config starts nobody's agent: the app the
 // delivery names is the only one acted in.
-func (s *ChatDeliveryAppSuite) TestADeliveryIsActedOnOnlyInItsOwnApp() {
+func (s *ChatInboundAppSuite) TestADeliveryIsActedOnOnlyInItsOwnApp() {
 	other := "someone-" + s.utils.uuid()
 	somebodyElse, release := s.dispatch.Register(other, dispatch.Registration{Capacity: 1})
 	defer release()
@@ -187,7 +187,7 @@ func (s *ChatDeliveryAppSuite) TestADeliveryIsActedOnOnlyInItsOwnApp() {
 // A call row from before rows named an app, another customer's, on a channel of the same
 // name is not this app's: the delivery is answered by the config its channel names, as the
 // app's own webhook is, and not by whoever left that row.
-func (s *ChatDeliveryAppSuite) TestAnUnpinnedCallOnTheSameChannelIsNotTheDeliverysOwner() {
+func (s *ChatInboundAppSuite) TestAnUnpinnedCallOnTheSameChannelIsNotTheDeliverysOwner() {
 	own, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	defer release()
 	other := "someone-" + s.utils.uuid()
@@ -206,7 +206,7 @@ func (s *ChatDeliveryAppSuite) TestAnUnpinnedCallOnTheSameChannelIsNotTheDeliver
 
 // While both are switched on, the webhook and the delivery carry the same message, and the
 // app's record of what it has acted on answers it once.
-func (s *ChatDeliveryAppSuite) TestTheWebhookAndADeliveryOfOneMessageAreAnsweredOnce() {
+func (s *ChatInboundAppSuite) TestTheWebhookAndADeliveryOfOneMessageAreAnsweredOnce() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 	body := s.message(s.appID(), s.config(s.customerID()), "")
@@ -223,9 +223,9 @@ func (s *ChatDeliveryAppSuite) TestTheWebhookAndADeliveryOfOneMessageAreAnswered
 	s.False(s.reachesWorker(worker.Messages()), "the delivery is the message the webhook brought")
 }
 
-// chatDeliveries is what the delivery suites share: Stream's keys, the channel written in, and
+// chatInbounds is what the delivery suites share: Stream's keys, the channel written in, and
 // the messages Stream signs.
-type chatDeliveries struct {
+type chatInbounds struct {
 	current, previous ed25519.PrivateKey
 	// channelID is the channel written in, unique, and not named support-<uuid>, the
 	// namespace durable session commands own.
@@ -233,15 +233,15 @@ type chatDeliveries struct {
 }
 
 // keys has the suite's router take deliveries signed with either of Stream's two keys.
-func (d *chatDeliveries) keys(router *RouterSuite) {
+func (d *chatInbounds) keys(router *RouterSuite) {
 	d.current = ed25519.NewKeyFromSeed([]byte("the-current-delivery-key-seed-32"))
 	d.previous = ed25519.NewKeyFromSeed([]byte("the-previous-delivery-key-seed32"))
-	router.chatDeliveryKeys = []ed25519.PublicKey{public(d.current), public(d.previous)}
+	router.chatInboundKeys = []ed25519.PublicKey{public(d.current), public(d.previous)}
 }
 
 // delivers posts a body as Stream Chat delivers it, signed with key, and answers the status.
-func (d *chatDeliveries) delivers(router *RouterSuite, body string, key ed25519.PrivateKey) int {
-	request, err := http.NewRequest(http.MethodPost, router.server.URL+chatDeliveryPath, strings.NewReader(body))
+func (d *chatInbounds) delivers(router *RouterSuite, body string, key ed25519.PrivateKey) int {
+	request, err := http.NewRequest(http.MethodPost, router.server.URL+chatInboundPath, strings.NewReader(body))
 	router.Require().NoError(err)
 	request.Header = signDelivery(key, "msg_"+router.utils.uuid(), time.Now(), body)
 	request.Header.Set("Content-Type", "application/json")
@@ -253,7 +253,7 @@ func (d *chatDeliveries) delivers(router *RouterSuite, body string, key ed25519.
 
 // message is a message.new written in the channel in app, which names configID. A source is
 // what the agent marks everything it stores with, empty for a person's message.
-func (d *chatDeliveries) message(app int64, configID, source string) string {
+func (d *chatInbounds) message(app int64, configID, source string) string {
 	marked := ""
 	if source != "" {
 		marked = fmt.Sprintf(`, %q: %s`, chatlog.SourceField, source)
@@ -270,10 +270,10 @@ func (d *chatDeliveries) message(app int64, configID, source string) string {
 		"message-"+strconv.FormatInt(time.Now().UnixNano(), 36), marked)
 }
 
-func (s *ChatDeliverySuite) config(customer string) string {
+func (s *ChatInboundSuite) config(customer string) string {
 	return deliveredConfig(&s.RouterSuite, customer)
 }
-func (s *ChatDeliveryAppSuite) config(customer string) string {
+func (s *ChatInboundAppSuite) config(customer string) string {
 	return deliveredConfig(&s.RouterSuite, customer)
 }
 
@@ -284,7 +284,7 @@ func deliveredConfig(router *RouterSuite, customer string) string {
 }
 
 // reachesWorker reports whether a message reached a worker before a delivery would have.
-func (d *chatDeliveries) reachesWorker(messages <-chan dispatch.Message) bool {
+func (d *chatInbounds) reachesWorker(messages <-chan dispatch.Message) bool {
 	select {
 	case <-messages:
 		return true
