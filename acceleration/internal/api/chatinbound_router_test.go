@@ -251,7 +251,7 @@ func (s *ChatInboundSuite) TestWithoutStreamChatDeliveriesAWebhookBeforeTheRoute
 }
 
 // A deployment that can never learn its app has nothing for the endpoint to wait for, so the
-// webhook is taken at once: answered 200, Stream would deliver it again for ever. Two
+// webhook is taken at once and answered 200: a 503 would have Stream deliver it again for ever. Two
 // deployments cannot learn it: one with no Stream credentials, and one whose configured app id
 // Stream says is another.
 func (s *ChatInboundSuite) TestAWebhookToADeploymentThatCannotLearnItsAppIsTaken() {
