@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A response refused by the prompt injection screen acts on nothing
+
+With `prompt_injection` on, a response the screen refuses runs none of the tool calls it asked for, written as calls or as tags, and the input it refused is no longer read by the model: in the agent's history it stands as `[withheld: this read as a prompt injection]`, and no reply is recorded after it. The next turn is screened and answered on its own. A response that fails for any other reason also settles with no tool calls (`tool_calls` empty on the `/stream` socket's `complete` frame); the caller's turn is kept as before (AI-1855, AI-1856).
+
 ### A dispatch worker's capacity is at most 1024
 
 `GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).
