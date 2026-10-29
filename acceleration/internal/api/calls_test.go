@@ -158,6 +158,22 @@ func (s *CallsSuite) TestAChatTokenIsRefusedForAnotherCustomersAgentChannel() {
 	s.Equal(before, s.chat.Members(agent), "nobody is added to it")
 }
 
+func (s *CallsSuite) TestATokenInASharedAppIsNotMintedForAGuestOnlySeenInTheCustomersOwnToken() {
+	// The customer signs its guest tokens itself, for any id it likes, so a guest seen in
+	// one is no sign the id is not another customer's user.
+	call := s.started(store.Call{})
+	seen := s.guestSeenInAToken()
+
+	for path, body := range map[string]map[string]any{
+		"/v1/agents/calls/" + call.ID + "/token": {"user_id": seen},
+		"/v1/agents/chat-token":                  {"agent_id": "agent-" + s.utils.uuid(), "user_id": seen},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, path, body)
+		s.Equal(http.StatusBadRequest, status, path)
+		s.Equal(errUserInSharedApp.Message, failure, path)
+	}
+}
+
 func (s *CallsSuite) TestAChatTokenReadsTheCustomersOwnAndUnstampedChannels() {
 	stamped, unstamped := "agent-"+s.utils.uuid(), "agent-"+s.utils.uuid()
 	s.inChannel(stamped, s.customerID(), s.base, "said to this customer")
