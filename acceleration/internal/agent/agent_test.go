@@ -1994,6 +1994,27 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 	s.Equal(3, event.After)
 }
 
+func (s *AgentSuite) TestAnIDInTheInstructionsIsPassedOn() {
+	s.runner = &stubToolRunner{result: `{"balance":"12.40"}`}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "get_account",
+		Description: "look up an account",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{"account_id": map[string]any{"type": "string"}}},
+	}}}
+	s.joinText()
+	s.agent.mu.Lock()
+	s.agent.prompt = "You are the help line. The caller's account_id is ACC-7781."
+	s.agent.mu.Unlock()
+	s.model.reply = []string{"Let me look."}
+	s.model.then = []string{"Your balance is 12.40."}
+	s.asksFor("get_account", `{"account_id":"ACC-7781"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "What's my balance?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the account the operator gave was refused")
+}
+
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	// A lookup returns a member ID and a compaction then summarises the result away. A later
 	// call with that ID still names an ID a tool returned, because the call's record keeps it.
@@ -2016,9 +2037,9 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked to renew a loan."})
 	renewal := llm.ToolCall{Name: "renew_loan", Arguments: `{"member_id":"MB7310","branch_id":"BR4","weeks":2}`}
 
-	_, _, _, unfound := unfoundID(agent.History(), renewal, tools)
+	_, _, _, unfound := unfoundID(agent.History(), renewal, tools, "")
 	s.True(unfound, "the model's history no longer holds the result")
-	_, _, _, unfound = unfoundID(agent.record(), renewal, tools)
+	_, _, _, unfound = unfoundID(agent.record(), renewal, tools, "")
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]
@@ -4083,25 +4104,44 @@ func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
 	s.False(repeated, "a booking that failed may be tried again")
 }
 
-func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
-	verify := llm.ToolCall{ID: "c1", Name: "confirm_member", Arguments: `{"pin":"1044"}`}
+func (s *AgentSuite) TestACallRefusedIsNotSentTheSameValuesAgainUntilTheCallerSpeaks() {
+	redeem := llm.ToolCall{ID: "c1", Name: "redeem_voucher", Arguments: `{"code":"KX-77"}`}
 	history := []llm.Message{
-		{Role: llm.User, Content: "PIN three eight two five"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{verify}},
+		{Role: llm.User, Content: "Can you use my voucher, KX-77?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{redeem}},
 		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false}`},
-		{Role: llm.User, Content: "I said three eight two five"},
 	}
-	refused, again := refusedBefore(history, llm.ToolCall{ID: "c2", Name: "confirm_member", Arguments: `{"pin": "1044"}`})
-	s.True(again)
+	again := llm.ToolCall{ID: "c2", Name: "redeem_voucher", Arguments: `{"code": "KX-77"}`}
+
+	refused, repeated := refusedBefore(history, again)
+	s.True(repeated)
 	s.Equal(`{"ok":false}`, refused)
 	s.True(failedResult(alreadyRefused + refused + tryOtherValues))
+	s.NotContains(tryOtherValues, "digit", "what to ask the caller is the operator's to decide")
 
-	_, again = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "confirm_member", Arguments: `{"pin":"3825"}`})
-	s.False(again, "new values are worth trying")
+	_, repeated = refusedBefore(history, llm.ToolCall{ID: "c3", Name: "redeem_voucher", Arguments: `{"code":"KX-78"}`})
+	s.False(repeated, "new values are worth trying")
 
-	history[2].Content = didNotWork + "timeout"
-	_, again = refusedBefore(history, llm.ToolCall{ID: "c4", Name: "confirm_member", Arguments: `{"pin":"1044"}`})
-	s.False(again, "a call that could not be made may be tried again")
+	spoke := append(slices.Clone(history), llm.Message{Role: llm.User, Content: "I've just activated it in the app, try again."})
+	_, repeated = refusedBefore(spoke, again)
+	s.False(repeated, "the caller has spoken since, and may have changed what the tool refused")
+
+	for _, failure := range []string{
+		didNotWork + "timeout",
+		`{"error":"upstream request timed out"}`,
+		`{"error":"Rate limit exceeded"}`,
+		`{"status":503,"error":"try later"}`,
+		`{"error":{"code":429,"message":"slow down"}}`,
+	} {
+		history[2].Content = failure
+		_, repeated = refusedBefore(history, again)
+		s.False(repeated, "a call that failed for a reason of the moment may be tried again: %s", failure)
+	}
+	for _, refusal := range []string{`{"error":"voucher expired"}`, `{"status":404,"error":"no such voucher"}`, `{"error":"slot unavailable"}`} {
+		history[2].Content = refusal
+		_, repeated = refusedBefore(history, again)
+		s.True(repeated, refusal)
+	}
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {

@@ -47,6 +47,17 @@ type toolCallSplitter struct {
 	parens bool
 	// closing is set after a call, while its closing marker may still follow.
 	closing bool
+	// loose is set while reading a call that started with no marker and no `call:` prefix:
+	// written bare, `check_outage{}`, or after `call `. Such a call is only made when it ends
+	// the answer (held).
+	loose bool
+	// raw is the text a loose call started with ahead of its name, `call ` or nothing.
+	raw string
+	// held are loose calls read that the answer has not yet gone on past, and heldText the
+	// text they were written as. Nothing but space, closing markers or more calls after them
+	// makes them calls; anything else makes them words, a tool named in a sentence.
+	held     []string
+	heldText string
 }
 
 func newToolCallSplitter(tools []string) *toolCallSplitter {
@@ -78,9 +89,32 @@ func (c *toolCallSplitter) Write(delta string) (text string, calls []string) {
 			if !c.readCall() {
 				return answer.String(), calls
 			}
-			calls = append(calls, c.body.String())
+			if c.loose {
+				c.held = append(c.held, c.body.String())
+				c.heldText += c.raw + c.body.String()
+			} else {
+				calls = append(calls, c.body.String())
+			}
 			c.body.Reset()
 			c.inCall, c.opened, c.closing = false, false, true
+		case len(c.held) > 0:
+			rest := strings.TrimLeftFunc(c.pending, unicode.IsSpace)
+			space := c.pending[:len(c.pending)-len(rest)]
+			start, _, partial := c.nextCall()
+			switch {
+			case strings.HasPrefix(rest, toolCallClose):
+				c.heldText += space + toolCallClose
+				c.pending = rest[len(toolCallClose):]
+			case start == len(space) && rest != "":
+				// Another call follows: the ones held are calls, not words.
+				calls = append(calls, c.held...)
+				c.held, c.heldText = nil, ""
+			case rest == "" || strings.HasPrefix(toolCallClose, rest) || start < 0 && partial >= len(rest):
+				return answer.String(), calls
+			default:
+				answer.WriteString(c.heldText)
+				c.held, c.heldText = nil, ""
+			}
 		default:
 			start, skip, partial := c.nextCall()
 			if start < 0 {
@@ -90,31 +124,46 @@ func (c *toolCallSplitter) Write(delta string) (text string, calls []string) {
 				return answer.String(), calls
 			}
 			answer.WriteString(c.pending[:start])
+			prefix := c.pending[start : start+skip]
 			c.pending = c.pending[start+skip:]
 			if skip == len(toolCallOpen) {
 				c.opened = true
 				continue
 			}
+			c.loose = !c.opened && (skip == 0 || strings.TrimRight(prefix, " ") == "call")
+			c.raw = prefix
 			c.inCall, c.depth, c.quote, c.parens = true, 0, "", false
 		}
 	}
 }
 
 // Flush returns what was held back once the reply has ended: an opening that never became a
-// call is text, and a call that never closed is returned unfinished, for the caller to drop.
-func (c *toolCallSplitter) Flush() (text, unfinished string) {
+// call is text, calls held until the answer ended are calls, and a call that never closed is
+// returned unfinished, for the caller to drop.
+func (c *toolCallSplitter) Flush() (text string, calls []string, unfinished string) {
 	rest := c.pending
 	c.pending = ""
+	if len(c.held) > 0 {
+		// What is left could only have grown into another call or a closing marker. As
+		// words, it is the answer going on past the calls held.
+		if after := strings.TrimLeftFunc(rest, unicode.IsSpace); after != "" && !strings.HasPrefix(toolCallClose, after) {
+			text := c.heldText + rest
+			c.held, c.heldText = nil, ""
+			return text, nil, ""
+		}
+		calls = c.held
+		c.held, c.heldText = nil, ""
+	}
 	if c.inCall {
 		unfinished = c.body.String() + rest
 		c.body.Reset()
 		c.inCall = false
-		return "", unfinished
+		return "", calls, unfinished
 	}
 	if c.closing && strings.HasPrefix(toolCallClose, rest) {
-		return "", ""
+		return "", calls, ""
 	}
-	return rest, ""
+	return rest, calls, ""
 }
 
 // nextCall finds where the next call starts in pending: the index, how much to skip there (the
@@ -132,9 +181,11 @@ func (c *toolCallSplitter) nextCall() (start, skip, partial int) {
 }
 
 // nextBareCall finds an offered tool's name written straight into the answer with its
-// arguments, `get_weather{}` or `confirm_member(pin=3825)`, with no marker or prefix ahead of
-// it. Spoken, such a call is read out and none of it is done. The name has to start a word
-// and be followed at once by its brace or parenthesis.
+// arguments, `get_weather{}` or `send_note(to="ana")`, with no marker or prefix ahead of it.
+// A model that writes its calls as text sometimes drops the marker, and the call would
+// otherwise be read out instead of made. The name has to start a word and be followed at
+// once by its brace or parenthesis. Such a call is only made when nothing but space follows
+// it (held): a tool named in a sentence, "you can use send_note(to=...) for that", is words.
 func (c *toolCallSplitter) nextBareCall() int {
 	at := -1
 	for tool := range c.tools {

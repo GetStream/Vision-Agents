@@ -21,18 +21,18 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 	}
 	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "some_tool", Arguments: arguments} }
 
-	key, value, known, unfound := unfoundID(history, call(`{"booking_id":"g1","date":"Tuesday"}`), tools)
+	key, value, known, unfound := unfoundID(history, call(`{"booking_id":"g1","date":"Tuesday"}`), tools, "")
 	assert.True(t, unfound, "a guest's ID is not a booking's")
 	assert.Equal(t, "booking_id", key)
 	assert.Equal(t, "g1", value)
 	assert.Contains(t, known, "a1 (id)")
 	assert.Contains(t, unfoundIDResult(key, value, known), "a1 (id)")
 
-	_, _, _, unfound = unfoundID(history, call(`{"booking_id":"Friday 3pm in the garden room"}`), tools)
+	_, _, _, unfound = unfoundID(history, call(`{"booking_id":"Friday 3pm in the garden room"}`), tools, "")
 	assert.True(t, unfound)
-	_, _, _, unfound = unfoundID(history[:5], call(`{"case_id":"720"}`), tools)
+	_, _, _, unfound = unfoundID(history[:5], call(`{"case_id":"720"}`), tools, "")
 	assert.True(t, unfound, "a case the caller's error code stands in for was never opened")
-	key, value, known, unfound = unfoundID(history[:5], call(`{"case_id":"","slot":"am"}`), tools)
+	key, value, known, unfound = unfoundID(history[:5], call(`{"case_id":"","slot":"am"}`), tools, "")
 	assert.True(t, unfound, "no case at all is not a case")
 	assert.Contains(t, unfoundIDResult(key, value, known), "case_id is empty")
 
@@ -43,15 +43,45 @@ func TestAnIDNothingGaveTheModelIsNotPassedOn(t *testing.T) {
 		`{"order_id":"12"}`,
 		`{"name":"Rosa Lind"}`,
 	} {
-		_, _, _, unfound = unfoundID(history, call(arguments), tools)
+		_, _, _, unfound = unfoundID(history, call(arguments), tools, "")
 		assert.False(t, unfound, arguments)
 	}
 
 	told := []llm.Message{{Role: llm.User, Content: "my case number is sixty six thirty one"}}
-	_, _, _, unfound = unfoundID(told, call(`{"case_id":"6631"}`), tools)
+	_, _, _, unfound = unfoundID(told, call(`{"case_id":"6631"}`), tools, "")
 	assert.False(t, unfound, "a case the caller gives the number of is theirs to give")
 
 	assert.True(t, failedResult(unfoundIDResult("case_id", "915", nil)))
+}
+
+func TestAnIDTheCallerWasAskedForOrTheOperatorGaveIsPassedOn(t *testing.T) {
+	tools := []string{"open_ticket", "get_ticket", "get_account"}
+	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "get_ticket", Arguments: arguments} }
+	asked := []llm.Message{
+		{Role: llm.Assistant, Content: "Sure. What's your ticket number?"},
+		{Role: llm.User, Content: "It's forty four ten."},
+	}
+	_, _, _, unfound := unfoundID(asked, call(`{"ticket_id":"4410"}`), tools, "")
+	assert.False(t, unfound, "the caller said it in answer to being asked for the ticket")
+
+	_, _, _, unfound = unfoundID(asked[1:], call(`{"ticket_id":"4410"}`), tools, "")
+	assert.True(t, unfound, "said with nothing to say what it is, it is not a ticket")
+	later := []llm.Message{
+		asked[0],
+		{Role: llm.User, Content: "Hold on."},
+		{Role: llm.Assistant, Content: "Take your time."},
+		{Role: llm.User, Content: "Forty four ten."},
+	}
+	_, _, _, unfound = unfoundID(later, call(`{"ticket_id":"4410"}`), tools, "")
+	assert.True(t, unfound, "only the answer to the question that asked for it")
+
+	account := llm.ToolCall{Name: "get_account", Arguments: `{"account_id":"ACC-7781"}`}
+	_, _, _, unfound = unfoundID(nil, account, tools, "You are the help line. The caller's account_id is ACC-7781.")
+	assert.False(t, unfound, "the operator gave it")
+	_, _, _, unfound = unfoundID(nil, account, tools, "")
+	assert.True(t, unfound)
+	_, _, _, unfound = unfoundID(nil, account, tools, "Accounts look like ACC-77810.")
+	assert.True(t, unfound, "only an ID the instructions give whole")
 }
 
 func TestANumberNobodyGaveIsNotSent(t *testing.T) {
@@ -71,25 +101,50 @@ func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 		`{"dob":"1990-11-21"}`:                                    false,
 		`{"slot":"am","amount":"50"}`:                             false,
 	} {
-		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: arguments})
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: arguments}, "")
 		assert.Equal(t, unheard, got, arguments)
 	}
 	refused := append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "confirm_member"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: didNotWork + `"56305" is not four digits.`})
-	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`})
+	_, _, _, got := unheardNumber(refused, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, "")
 	assert.True(t, got, "a refusal quoting 56305 does not make 5630 heard")
 
-	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`})
+	_, _, heard, _ := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, "")
 	assert.Contains(t, unheardResult("last4", "5630", heard), "The numbers the caller said are: ")
 	assert.True(t, failedResult(unheardResult("last4", "5630", heard)))
+}
+
+func TestOnlyANearMissOfANumberTheCallerSaidIsRefused(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.User, Content: "Same trip as this year, two thousand twenty six, but for next year. My member number is four one seven three."},
+	}
+	for arguments, unheard := range map[string]bool{
+		`{"year":"2027"}`:          false,
+		`{"member_number":"4173"}`: false,
+		`{"member_number":"1473"}`: true,
+		`{"member_number":"413"}`:  false,
+		`{"store":"8812"}`:         false,
+	} {
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "book_trip", Arguments: arguments}, "")
+		assert.Equal(t, unheard, got, arguments)
+	}
+	tooShort := []llm.Message{{Role: llm.User, Content: "Code four one seven three two."}}
+	_, _, _, got := unheardNumber(tooShort, llm.ToolCall{Name: "redeem", Arguments: `{"code":"4729"}`}, "")
+	assert.False(t, got, "a number nothing like any the caller said")
+	_, _, _, got = unheardNumber(tooShort, llm.ToolCall{Name: "redeem", Arguments: `{"code":"4132"}`}, "")
+	assert.True(t, got, "one digit dropped")
+
+	_, _, _, got = unheardNumber([]llm.Message{{Role: llm.User, Content: "Store eight one two eight, please."}},
+		llm.ToolCall{Name: "check_stock", Arguments: `{"store":"8812"}`}, "Our main store is 8812.")
+	assert.False(t, got, "the operator gave it")
 }
 
 func TestANameIsBookedAsTheCallerSpelledIt(t *testing.T) {
 	heard := []llm.Message{{Role: llm.User, Content: "Sorry about that. The name is Aldenor, o d e n o r. Hold on, the dog is barking."}}
 	for arguments, misspelled := range map[string]bool{
 		`{"name":"Aldenor","guests":3}`: true,
-		`{"name":"Aldinor","guests":3}`: true,
+		`{"name":"Aldinor","guests":3}`: false,
 		`{"name":"Odenor","guests":3}`:  false,
 		`{"name":"odenor","guests":3}`:  false,
 		`{"name":"Moreau","guests":3}`:  false,
@@ -113,7 +168,14 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Odenor"}`:            false,
 		`{"name":"Maria de la Cruz"}`:  false,
 		`{"guests":3}`:                 false,
-		`{"name":"Carry on with the caller from what is in your instructions."}`: true,
+		`{"name":"Carry on with the caller from what is in your instructions."}`:           true,
+		`{"name":"what a tool or your colleague"}`:                                         true,
+		`{"name":"one short sentence"}`:                                                    true,
+		`{"event_name":"Northside Pottery Club Spring Open Day"}`:                          false,
+		`{"file_name":"minutes of the annual general meeting 2026"}`:                       false,
+		`{"name":"Carry Lind"}`:                                                            false,
+		`{"event_name":"On With The Show"}`:                                                false,
+		`{"name":"Booked by: Carry on with the caller from what is in your instructions"}`: true,
 	} {
 		_, got := placeholderName(nil, llm.ToolCall{Name: "book_room", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)
@@ -133,9 +195,9 @@ func TestAnIDATextResultGaveIsPassedOn(t *testing.T) {
 		return llm.ToolCall{Name: "get_user_profile", Arguments: arguments}
 	}
 
-	_, _, _, unfound := unfoundID(history, call(`{"user_id":"lena_ruiz_4162"}`), tools)
+	_, _, _, unfound := unfoundID(history, call(`{"user_id":"lena_ruiz_4162"}`), tools, "")
 	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call(`{"user_id":"lena_ruiz_4163"}`), tools)
+	_, _, _, unfound = unfoundID(history, call(`{"user_id":"lena_ruiz_4163"}`), tools, "")
 	assert.True(t, unfound, "a different ID is still one nothing gave")
 
 	quoted := []llm.Message{
@@ -143,7 +205,7 @@ func TestAnIDATextResultGaveIsPassedOn(t *testing.T) {
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_user_profile"}}},
 		{Role: llm.ToolResult, ToolCallID: "c1", Content: unfoundIDResult("user_id", "lena_ruiz_4162", nil)},
 	}
-	_, _, _, unfound = unfoundID(quoted, call(`{"user_id":"lena_ruiz_4162"}`), tools)
+	_, _, _, unfound = unfoundID(quoted, call(`{"user_id":"lena_ruiz_4162"}`), tools, "")
 	assert.True(t, unfound, "a refusal quoting the ID does not make it returned")
 }
 
@@ -162,13 +224,13 @@ func TestAnIDListedUnderAPluralKeyIsPassedOn(t *testing.T) {
 		return llm.ToolCall{Name: name, Arguments: arguments}
 	}
 
-	_, _, _, unfound := unfoundID(history, call("get_order", `{"order_id":"A-1001"}`), tools)
+	_, _, _, unfound := unfoundID(history, call("get_order", `{"order_id":"A-1001"}`), tools, "")
 	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call("get_reservation", `{"reservation_id":"R-55"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("get_reservation", `{"reservation_id":"R-55"}`), tools, "")
 	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call("get_order", `{"order_id":"A-9999"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("get_order", `{"order_id":"A-9999"}`), tools, "")
 	assert.True(t, unfound, "an order the list does not hold is still one nothing gave")
-	_, _, _, unfound = unfoundID(history, call("get_order", `{"order_id":"R-55"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("get_order", `{"order_id":"R-55"}`), tools, "")
 	assert.True(t, unfound, "a reservation is not an order")
 }
 
@@ -186,13 +248,13 @@ func TestAnIDThatKeysARecordIsPassedOn(t *testing.T) {
 		return llm.ToolCall{Name: name, Arguments: arguments}
 	}
 
-	_, _, _, unfound := unfoundID(history, call("reserve_vehicle", `{"vehicle_id":"van-2"}`), tools)
+	_, _, _, unfound := unfoundID(history, call("reserve_vehicle", `{"vehicle_id":"van-2"}`), tools, "")
 	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call("book_room", `{"room_id":"R-12"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("book_room", `{"room_id":"R-12"}`), tools, "")
 	assert.False(t, unfound)
-	_, _, _, unfound = unfoundID(history, call("reserve_vehicle", `{"vehicle_id":"truck-9"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("reserve_vehicle", `{"vehicle_id":"truck-9"}`), tools, "")
 	assert.True(t, unfound, "a vehicle the collection does not hold is still one nothing gave")
-	_, _, _, unfound = unfoundID(history, call("book_room", `{"room_id":"name"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("book_room", `{"room_id":"name"}`), tools, "")
 	assert.True(t, unfound, "the fields of one record are not IDs")
 }
 
@@ -210,9 +272,9 @@ func TestOnlyACollectionsKeysAreItsRecordsIDs(t *testing.T) {
 		return llm.ToolCall{Name: name, Arguments: arguments}
 	}
 
-	_, _, _, unfound := unfoundID(history, call("get_order", `{"order_id":"van-2"}`), tools)
+	_, _, _, unfound := unfoundID(history, call("get_order", `{"order_id":"van-2"}`), tools, "")
 	assert.True(t, unfound, "a vehicle's key is not an order")
-	_, _, _, unfound = unfoundID(history, call("book_slot", `{"slot_id":"monday"}`), tools)
+	_, _, _, unfound = unfoundID(history, call("book_slot", `{"slot_id":"monday"}`), tools, "")
 	assert.True(t, unfound, "days nobody named as a collection are not IDs")
 }
 
@@ -236,11 +298,11 @@ func TestAnIDTheCallerReadOutIsPassedOn(t *testing.T) {
 		"Customer I n e s underscore m o r e t t i underscore five two seven four. That's my user ID.": "ines_moretti_5274",
 	} {
 		history := []llm.Message{{Role: llm.User, Content: said}}
-		_, _, _, unfound := unfoundID(history, call(`{"user_id":"`+id+`"}`), tools)
+		_, _, _, unfound := unfoundID(history, call(`{"user_id":"`+id+`"}`), tools, "")
 		assert.False(t, unfound, said)
 	}
 	history := []llm.Message{{Role: llm.User, Content: "User ID is kara underscore lind underscore two nine four three."}}
-	_, _, _, unfound := unfoundID(history, call(`{"user_id":"kara_lind_2944"}`), tools)
+	_, _, _, unfound := unfoundID(history, call(`{"user_id":"kara_lind_2944"}`), tools, "")
 	assert.True(t, unfound, "a digit the caller did not say is still not theirs")
 }
 
@@ -250,10 +312,10 @@ func TestANumberReadOutInDashedGroupsIsOneNumber(t *testing.T) {
 	for arguments, unheard := range map[string]bool{
 		`{"phone_number":"5552468013"}`:   false,
 		`{"phone_number":"555-246-8013"}`: false,
-		`{"phone_number":"5552468014"}`:   true,
 		`{"phone_number":"2468013555"}`:   true,
+		`{"phone_number":"555246813"}`:    true,
 	} {
-		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "find_customer_by_phone", Arguments: arguments})
+		_, _, _, got := unheardNumber(history, llm.ToolCall{Name: "find_customer_by_phone", Arguments: arguments}, "")
 		assert.Equal(t, unheard, got, arguments)
 	}
 }
@@ -295,6 +357,25 @@ func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T)
 	} {
 		_, _, got := misspelledName([]llm.Message{{Role: llm.User, Content: said}},
 			llm.ToolCall{Name: "lookup", Arguments: arguments})
-		assert.True(t, got, "%s: a name no spelling holds exactly is still refused", said)
+		assert.False(t, got, "%s: no word the transcriber wrote beside the spelling", said)
 	}
+}
+
+func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
+	said := []llm.Message{{Role: llm.User, Content: "Surname Jonas, j o n e s. And my son Joseph is coming too."}}
+	for arguments, misspelled := range map[string]bool{
+		`{"guest_name":"Jonas"}`:                     true,
+		`{"guest_name":"Ann Jonas"}`:                 true,
+		`{"guest_name":"Jones"}`:                     false,
+		`{"guest_name":"Joseph Jones"}`:              false,
+		`{"name":"Jones","companion_name":"Joseph"}`: false,
+		`{"name":"Jones","shop_name":"Joles"}`:       false,
+	} {
+		_, _, got := misspelledName(said, llm.ToolCall{Name: "add_guest", Arguments: arguments})
+		assert.Equal(t, misspelled, got, arguments)
+	}
+	after := []llm.Message{{Role: llm.User, Content: "It's j o n e s, Jonas."}}
+	_, spelled, got := misspelledName(after, llm.ToolCall{Name: "add_guest", Arguments: `{"guest_name":"Jonas"}`})
+	assert.True(t, got, "the word right after the spelling")
+	assert.Equal(t, "jones", spelled)
 }

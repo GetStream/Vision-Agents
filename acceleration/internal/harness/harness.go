@@ -495,6 +495,13 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 const resumption = "Carry on with the caller from what is in your instructions. Say only " +
 	"what a tool or your colleague actually returned."
 
+// Notes are the fixed sentences the harness writes into a turn of its own accord, rather than
+// passing on from the caller, a tool or the operator: resumption and cutOffNote. A value taken
+// from one of them was not given by anyone.
+func Notes() []string {
+	return []string{resumption, cutOffNote}
+}
+
 // answerable returns a history with something at the end of it to reply to.
 //
 // A completion answers whatever came last, so a history ending in the assistant's own turn

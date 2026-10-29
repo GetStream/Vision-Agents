@@ -20,8 +20,10 @@ import (
 // Only an ID one of the tools hands out is checked: "case_id" when there is an open_case,
 // "booking_id" when there is a find_booking. Any other ID, such as a card_id, is the
 // caller's to give, and so is one the caller said along with what it is ("my case is
-// 6631"). The error code "seven twenty", said where no case was mentioned, is not a case.
-func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, value string, known []string, found bool) {
+// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
+// The error code "seven twenty", said where no case was mentioned, is not a case. An ID
+// written in told, the instructions the operator gave the agent, is the operator's to give.
+func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", "", nil, false
@@ -31,10 +33,24 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 	// texts are results that are not JSON objects or lists: a lookup may answer with the
 	// bare ID, such as jane_doe_17, under no key to look it up by.
 	var texts []string
+	// answers are what the caller said straight after the agent asked them something, with
+	// the question.
+	type answer struct{ question, said string }
+	var answers []answer
+	var question string
 	for _, message := range history {
 		switch message.Role {
+		case llm.Assistant:
+			if strings.TrimSpace(message.Content) != "" {
+				question = message.Content
+			}
 		case llm.User:
-			said.WriteString(" " + message.Content + " " + withSpokenSeparators(digitsFor(message.Content)))
+			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
+			said.WriteString(" " + heard)
+			if question != "" {
+				answers = append(answers, answer{strings.ToLower(question), alphanumeric(heard)})
+			}
+			question = ""
 		case llm.ToolResult:
 			if failedResult(message.Content) {
 				// A refusal quotes the value it refused, which does not make it returned.
@@ -68,6 +84,11 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
 			continue
 		}
+		if slices.ContainsFunc(answers, func(given answer) bool {
+			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
+		}) || holdsValue(told, wanted) {
+			continue
+		}
 		returned := false
 		var ids []string
 		for _, result := range results {
@@ -88,8 +109,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string) (key, v
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
-// gave, such as "Caller" or "John Doe". More than four words is suspicious unless a caller
-// or tool supplied them: a sentence of the agent's own instructions is not anyone's name.
+// gave, such as "Caller" or "John Doe", or with words of a note the router wrote into the
+// conversation itself (fromNote), which is nobody's name.
 func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -100,12 +121,45 @@ func placeholderName(history []llm.Message, call llm.ToolCall) (string, bool) {
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
-		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || len(strings.Fields(text)) > 4) &&
+		if (slices.Contains(placeholders, strings.ToLower(strings.TrimSpace(text))) || fromNote(text)) &&
 			!nameWasGiven(history, text) {
 			return text, true
 		}
 	}
 	return "", false
+}
+
+// formatVerb is a fmt verb, where a note written as a format string has words of its own.
+var formatVerb = regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
+
+// noteSentence ends a sentence of a note.
+var noteSentence = regexp.MustCompile(`[.?!;:]`)
+
+// fromNote reports whether text was taken from a note the router writes into the
+// conversation itself, the harness's (harness.Notes) and the agent's own (composeNote,
+// approvalSilence): it is three or more words lying wholly inside one of them, or it holds one
+// of their sentences whole. A name that only shares a few words with a note, "On With The
+// Show" with "Carry on with the caller", is not taken from it.
+func fromNote(text string) bool {
+	words := func(text string) string {
+		return " " + strings.Join(strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}), " ") + " "
+	}
+	said := words(text)
+	for _, note := range append(harness.Notes(), composeNote, approvalSilence) {
+		for _, part := range formatVerb.Split(note, -1) {
+			if len(strings.Fields(said)) >= 3 && strings.Contains(words(part), said) {
+				return true
+			}
+			for _, sentence := range noteSentence.Split(part, -1) {
+				if sentence := words(sentence); len(strings.Fields(sentence)) >= 3 && strings.Contains(said, sentence) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // A name field can identify a place or business, not just a person. The lexical
@@ -158,15 +212,19 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	return false
 }
 
-// unheardNumber reports an argument of four or more digits that neither the caller nor a
-// tool ever gave: digits reordered from what the caller said ("six three zero five" sent as
-// 5630), or a phone number with a digit dropped.
-func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string, heard []string, unheard bool) {
+// unheardNumber reports an argument of four or more digits that neither the caller, a tool
+// nor the operator's instructions (told) ever gave, and that is a near miss of a number the
+// caller said (nearMiss): digits reordered from what the caller said ("six three zero five"
+// sent as 5630), or a phone number with a digit dropped. A number that is no near miss is the
+// model's to work out, such as a year from "next year", and is let through.
+func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, value string, heard []string, unheard bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", "", nil, false
 	}
-	var sources []string
+	sources := []string{told}
+	// spoken are the numbers the caller said, each as its digits alone.
+	var spoken []string
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
@@ -176,6 +234,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 					heard = append(heard, number)
 				}
 			}
+			spoken = append(spoken, digitGroups(message.Content, withSpokenSeparators(digitsFor(message.Content)))...)
 		case llm.ToolResult:
 			// A refusal quotes the value refused: "56305" refused let 5630 through.
 			if !failedResult(message.Content) {
@@ -183,17 +242,8 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 			}
 		}
 	}
-	var digits []string
-	for _, source := range sources {
-		for _, group := range numberGroup.FindAllString(source, -1) {
-			digits = append(digits, strings.Map(func(r rune) rune {
-				if unicode.IsDigit(r) {
-					return r
-				}
-				return -1
-			}, group))
-		}
-	}
+	spoken = append(spoken, heard...)
+	digits := digitGroups(sources...)
 	keys := make([]string, 0, len(arguments))
 	for name := range arguments {
 		keys = append(keys, name)
@@ -204,11 +254,66 @@ func unheardNumber(history []llm.Message, call llm.ToolCall) (key, value string,
 		if !ok || len(text) < 4 || !allDigits(text) {
 			continue
 		}
-		if !slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+		if slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+			continue
+		}
+		if slices.ContainsFunc(spoken, func(said string) bool { return nearMiss(text, said) }) {
 			return name, text, heard, true
 		}
 	}
 	return "", "", nil, false
+}
+
+// digitGroups returns every number written in texts (numberGroup) as its digits alone.
+func digitGroups(texts ...string) []string {
+	var digits []string
+	for _, text := range texts {
+		for _, group := range numberGroup.FindAllString(text, -1) {
+			digits = append(digits, strings.Map(func(r rune) rune {
+				if unicode.IsDigit(r) {
+					return r
+				}
+				return -1
+			}, group))
+		}
+	}
+	return digits
+}
+
+// nearMiss reports whether value is a number the caller said, written wrongly in the way a
+// number is misheard or miscopied: the same digits in another order, or one digit dropped. A
+// single digit changed is not counted: it is also what a number worked out from one said
+// looks like, such as next year's from this year's.
+//
+// Numbers said one after another can run together in the transcript ("six three zero five,
+// fourteen" is written 630514), so the number may also be the start or the end of what the
+// caller said.
+func nearMiss(value, said string) bool {
+	for _, length := range []int{len(value), len(value) + 1} {
+		if length > len(said) {
+			continue
+		}
+		for _, part := range []string{said[:length], said[len(said)-length:]} {
+			if part == value {
+				continue
+			}
+			if length == len(value) {
+				a, b := []byte(value), []byte(part)
+				slices.Sort(a)
+				slices.Sort(b)
+				if string(a) == string(b) {
+					return true
+				}
+				continue
+			}
+			for at := range part {
+				if part[:at]+part[at+1:] == value {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 var digitRun = regexp.MustCompile(`\d+`)
@@ -231,47 +336,92 @@ func unheardResult(key, value string, heard []string) string {
 	return result + "Call again with the one they gave, digit for digit, or read back what you heard and ask."
 }
 
-// misspelledName reports a name argument that is not the name the caller spelled out
-// letter by letter. The caller said "The name is Odenor, o d e n o r" and every model booked
-// the transcriber's "Aldenor" or "Aldinor".
+// misspelledName reports a name argument holding the word the transcriber wrote beside a
+// spelling the caller gave, where that word is not what they spelled. Suppose a caller says
+// "The name is Odenor, o d e n o r" and the transcriber writes "The name is Aldenor, o d e n
+// o r": the letters are what the caller said, and Aldenor is the transcriber's guess at the
+// name.
 //
-// A name the caller spelled exactly at some point in the call is let through even where
-// another spelling is close to it: the transcriber hears the same letters differently from
-// one spelling to the next ("n o a h", then "n o a a"), and holding the name to whichever
-// close spelling came first refused names exactly as the callers had spelled them.
+// Only that word is refused, and only when it is close to the spelling (closeTo): another
+// name the caller gives, however like the spelled one, is theirs. A name the caller spelled
+// exactly at some point in the call is let through even where it is also the word beside
+// another spelling: the transcriber hears the same letters differently from one spelling to
+// the next ("n o a h", then "n o a a").
 func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled string, misspelled bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
 		return "", "", false
 	}
 	var spellings []string
+	// misheard maps the word written beside a spelling to the spelling.
+	misheard := map[string]string{}
 	for _, message := range history {
 		if message.Role != llm.User {
 			continue
 		}
 		spellings = append(spellings, spelledNames(message.Content)...)
+		for word, spelling := range writtenBeside(message.Content) {
+			misheard[word] = spelling
+		}
 	}
-	if len(spellings) == 0 {
+	if len(misheard) == 0 {
 		return "", "", false
 	}
-	for key, value := range arguments {
-		text, ok := value.(string)
+	keys := make([]string, 0, len(arguments))
+	for key := range arguments {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		text, ok := arguments[key].(string)
 		if !ok || (key != "name" && !strings.HasSuffix(key, "_name")) {
 			continue
 		}
 		for _, word := range strings.Fields(text) {
 			word = alphanumeric(word)
-			if len(word) < 3 || slices.Contains(spellings, word) {
-				continue
-			}
-			for _, spelling := range spellings {
-				if closeTo(word, spelling) {
-					return text, spelling, true
-				}
+			if spelling, beside := misheard[word]; beside && !slices.Contains(spellings, word) {
+				return text, spelling, true
 			}
 		}
 	}
 	return "", "", false
+}
+
+// writtenBeside maps the word written right before or right after each spelling in a message
+// to the spelling, where that word is close to it (closeTo) and not the same.
+func writtenBeside(text string) map[string]string {
+	runes := []rune(strings.ToLower(text))
+	isLetter := func(at int) bool { return at >= 0 && at < len(runes) && unicode.IsLetter(runes[at]) }
+	// before is the word that ends at or before at, and after the word that starts at or after it.
+	before := func(at int) string {
+		for at >= 0 && !isLetter(at) {
+			at--
+		}
+		end := at + 1
+		for isLetter(at) {
+			at--
+		}
+		return string(runes[at+1 : end])
+	}
+	after := func(at int) string {
+		for at < len(runes) && !isLetter(at) {
+			at++
+		}
+		start := at
+		for isLetter(at) {
+			at++
+		}
+		return string(runes[start:at])
+	}
+	beside := map[string]string{}
+	for _, run := range spelledRuns(runes) {
+		for _, word := range []string{before(run.start - 1), after(run.end)} {
+			if len(word) >= 3 && word != run.letters && closeTo(word, run.letters) {
+				beside[word] = run.letters
+			}
+		}
+	}
+	return beside
 }
 
 // spelledNames are the names a caller spelled out in one message, lowercase: three or more
@@ -289,38 +439,9 @@ func misspelledName(history []llm.Message, call llm.ToolCall) (name, spelled str
 // names, so Kai and Jensen are each spelled as well as kaijensen.
 func spelledNames(text string) []string {
 	runes := []rune(strings.ToLower(text))
-	alone := func(at int) bool {
-		return at < len(runes) && unicode.IsLetter(runes[at]) &&
-			(at == 0 || !unicode.IsLetter(runes[at-1]) && runes[at-1] != '\'' && runes[at-1] != '’') &&
-			(at+1 == len(runes) || !unicode.IsLetter(runes[at+1]))
-	}
 	var runs []string
-	for at := 0; at < len(runes); at++ {
-		if !alone(at) {
-			continue
-		}
-		letters := []rune{runes[at]}
-		kind := rune(0)
-		for {
-			next := at + 1
-			for next < len(runes) && strings.ContainsRune(" \t\n,.-", runes[next]) {
-				next++
-			}
-			if next == at+1 || !alone(next) {
-				break
-			}
-			separator := separatorKind(runes[at+1 : next])
-			if kind == 0 {
-				kind = separator
-			} else if separator != kind {
-				break
-			}
-			letters = append(letters, runes[next])
-			at = next
-		}
-		if len(letters) >= 3 {
-			runs = append(runs, string(letters))
-		}
+	for _, run := range spelledRuns(runes) {
+		runs = append(runs, run.letters)
 	}
 	if len(runs) == 0 {
 		return nil
@@ -341,6 +462,52 @@ func spelledNames(text string) []string {
 		}
 	}
 	return spellings
+}
+
+// spelledRun is one spelling in a message: its letters, and where in the message's runes it
+// starts and ends.
+type spelledRun struct {
+	letters    string
+	start, end int
+}
+
+// spelledRuns finds the spellings in a lowercased message, as spelledNames describes them.
+func spelledRuns(runes []rune) []spelledRun {
+	alone := func(at int) bool {
+		return at < len(runes) && unicode.IsLetter(runes[at]) &&
+			(at == 0 || !unicode.IsLetter(runes[at-1]) && runes[at-1] != '\'' && runes[at-1] != '’') &&
+			(at+1 == len(runes) || !unicode.IsLetter(runes[at+1]))
+	}
+	var runs []spelledRun
+	for at := 0; at < len(runes); at++ {
+		if !alone(at) {
+			continue
+		}
+		start := at
+		letters := []rune{runes[at]}
+		kind := rune(0)
+		for {
+			next := at + 1
+			for next < len(runes) && strings.ContainsRune(" \t\n,.-", runes[next]) {
+				next++
+			}
+			if next == at+1 || !alone(next) {
+				break
+			}
+			separator := separatorKind(runes[at+1 : next])
+			if kind == 0 {
+				kind = separator
+			} else if separator != kind {
+				break
+			}
+			letters = append(letters, runes[next])
+			at = next
+		}
+		if len(letters) >= 3 {
+			runs = append(runs, spelledRun{string(letters), start, at + 1})
+		}
+	}
+	return runs
 }
 
 // separatorKind names what joins two spelled letters: a comma, a period or a hyphen when
