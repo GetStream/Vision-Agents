@@ -303,7 +303,7 @@ func (s *TelnyxChannelSuite) TestAKeywordIsAnsweredOnceWhenItsRowIsTakenAgain() 
 	// it saw runs out.
 	next, err := channelbridge.New(s.channelBridgeOptions(slog.New(slog.DiscardHandler)))
 	s.Require().NoError(err)
-	next.Start(s.router.AnswerQueued)
+	next.Start(context.Background(), s.router.AnswerQueued)
 	s.T().Cleanup(next.Close)
 
 	s.settled()

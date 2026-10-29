@@ -194,6 +194,7 @@ func (s *InboundSuite) TestACardStreamChatAlreadyHoldsCountsAsWritten() {
 	s.Equal(0, s.row(thread, "1793125611.816139").Attempts, "written on its first attempt")
 	omni, card := s.card(thread)
 	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
+	s.NotContains(s.logs.String(), "could not write the episode card", "a card already there is no failure")
 }
 
 // A later message of a thread finds its episode open with its card written, and writes nothing
@@ -610,6 +611,43 @@ func (s *InboundSuite) TestCloseWaitsForAWriteInFlightAndStopsTheWorker() {
 	s.Equal([]string{"hello"}, s.chat.Messages(thread.ChannelID))
 }
 
+// The router's stop signal ends the worker's claims: the write it took before finishes and is
+// handed to the agent, and a message queued after the signal stays queued, with no attempt,
+// until another router writes it.
+func (s *InboundSuite) TestAfterTheStopSignalAWorkerFinishesItsWriteAndTakesNoOther() {
+	s.emptyQueue() // a message an earlier test left due would be handed over first
+	thread := s.thread("fake_line")
+	waiting, release := s.chat.Hold("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "hello", nil)
+	stopping, stop := context.WithCancel(s.ctx)
+	draining := s.newBridge(nil)
+	handed := make(chan Written, 4)
+	draining.Start(stopping, func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+		handed <- message
+		return func() {}, nil
+	})
+	<-waiting
+
+	stop()
+	other := s.thread("fake_line")
+	s.queue(other, "m-2", "after", nil)
+	draining.wake()
+	release()
+
+	s.Equal(thread.ChannelID+"-m-1", s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool {
+		row := s.row(other, "m-2")
+		return row.State != store.ChannelInboundQueued || row.Attempts != 0 || row.NextAttemptAt.After(time.Now())
+	}, 300*time.Millisecond, 20*time.Millisecond, "a stopped worker took a message")
+	s.Empty(s.chat.Stored(other.ChannelID))
+
+	s.bridge(nil)
+
+	s.Require().Eventually(func() bool { return s.row(other, "m-2").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal([]string{"after"}, s.chat.Messages(other.ChannelID))
+}
+
 func (s *InboundSuite) TestAWorkerWithNothingQueuedCallsNoStreamChat() {
 	bridge := s.bridge(nil)
 	for range 5 {
@@ -624,7 +662,7 @@ func (s *InboundSuite) TestAWorkerWithNothingQueuedCallsNoStreamChat() {
 func (s *InboundSuite) TestAWorkerWithNothingQueuedLooksAgainALeaseLater() {
 	s.emptyQueue()
 
-	wait, again := s.newBridge(nil).writeDue()
+	wait, again := s.newBridge(nil).writeDue(s.ctx)
 
 	s.True(again)
 	s.Equal(inboundLease, wait)
@@ -634,7 +672,7 @@ func (s *InboundSuite) TestAWorkerWithNothingQueuedLooksAgainALeaseLater() {
 func (s *InboundSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 	s.emptyQueue()
 	bridge := s.newBridge(nil)
-	bridge.writeDue()
+	bridge.writeDue(s.ctx)
 	thread := s.thread("fake_line")
 	s.queue(thread, "m-1", "hello", nil)
 	_, err := s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).
@@ -642,7 +680,7 @@ func (s *InboundSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 		Where("channel_id = ? AND provider_message_id = 'm-1'", thread.ChannelID).Exec(s.ctx)
 	s.Require().NoError(err)
 
-	bridge.writeDue()
+	bridge.writeDue(s.ctx)
 
 	s.Equal(1, s.rows(thread), "the next prune is an hour after the first")
 }
@@ -722,6 +760,53 @@ func (s *InboundSuite) TestAMessageStreamChatAlreadyHoldsIsHandedToTheAgentFromI
 	s.Equal(0, s.row(thread, "m-1").Attempts)
 }
 
+// A card Stream Chat refuses costs the card, not the answer: the message is written and handed
+// to the agent once, on its first attempt, and the refusal is logged.
+func (s *InboundSuite) TestAMessageWhoseCardStreamChatRefusesIsStillHandedToTheAgentOnce() {
+	s.emptyQueue() // a message an earlier test left due would be handed over first
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	s.answerCardsWith(http.StatusBadRequest, `{"code":4,"message":"SendMessage failed with error: \"custom data is too large\"","StatusCode":400}`)
+
+	s.handedOnce(thread, "1793125611.816139")
+}
+
+// A card Stream Chat fails with a 5xx is not tried again either: retrying the message would
+// hold it and the thread's later ones back for minutes.
+func (s *InboundSuite) TestAMessageWhoseCardStreamChatFailsWith5xxIsStillHandedToTheAgentOnce() {
+	s.emptyQueue() // a message an earlier test left due would be handed over first
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	s.answerCardsWith(http.StatusInternalServerError, `{"code":-1,"message":"internal error","StatusCode":500}`)
+
+	s.handedOnce(thread, "1793125611.816139")
+}
+
+// An episode the store cannot open costs the card, not the answer, as a card that fails.
+func (s *InboundSuite) TestAMessageWhoseEpisodeCannotBeOpenedIsStillHandedToTheAgentOnce() {
+	s.emptyQueue() // a message an earlier test left due would be handed over first
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	closed, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "bridge"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	cards, err := omnichannel.New(omnichannel.Options{Store: closed, Stream: s.stream})
+	s.Require().NoError(err)
+	handed := make(chan Written, 4)
+	bridge := s.newBridge(nil)
+	bridge.cards = cards
+	bridge.Start(s.ctx, func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+		handed <- message
+		return func() {}, nil
+	})
+
+	s.Equal(thread.ChannelID+"-1793125611.816139", s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Zero(s.row(thread, "1793125611.816139").Attempts)
+	s.Never(func() bool { return len(handed) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "handed to the agent twice")
+	s.Contains(s.logs.String(), `level=ERROR msg="could not open the episode of an inbound message" connector=slack_bot customer=`+s.customer+" channel="+thread.ChannelID)
+}
+
 // Stream Chat bounces a message it does not keep, as a moderation block does: its answer has
 // type error, and Stream Chat sends no message.new for it, so the agent is not handed it
 // either. The message is done.
@@ -747,7 +832,7 @@ func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain()
 	s.queue(thread, "m-1", "hello", nil)
 	var calls atomic.Int32
 	handed := make(chan Written, 4)
-	s.newBridge(&Options{InboundRetries: []time.Duration{10 * time.Millisecond, time.Hour}}).Start(
+	s.newBridge(&Options{InboundRetries: []time.Duration{10 * time.Millisecond, time.Hour}}).Start(s.ctx,
 		func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
 			handed <- message
 			if calls.Add(1) == 1 {
@@ -771,7 +856,7 @@ func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain()
 func (s *InboundSuite) TestAMessageWhoseTurnWasClaimedBeforeIsDone() {
 	thread := s.thread("fake_line")
 	s.queue(thread, "m-1", "hello", nil)
-	s.newBridge(nil).Start(func(context.Context, store.ChannelThread, Written) (func(), error) { return nil, nil })
+	s.newBridge(nil).Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) { return nil, nil })
 
 	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
 }
@@ -785,7 +870,7 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() 
 	release := make(chan struct{})
 	var running atomic.Int32
 	bridge := s.newBridge(nil)
-	bridge.Start(func(context.Context, store.ChannelThread, Written) (func(), error) {
+	bridge.Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) {
 		return func() {
 			running.Add(1)
 			<-release
@@ -808,15 +893,56 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() 
 	s.Require().Eventually(func() bool { return running.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
+// Running counts a write in flight, then the turn it handed over until the turn ends: a
+// draining router waits for both, and never sees zero between the write and its turn.
+func (s *InboundSuite) TestRunningCountsTheWriteInFlightAndTheTurnItHandedOver() {
+	s.emptyQueue() // a message an earlier test left due would be written too
+	thread := s.thread("fake_line")
+	waiting, releaseWrite := s.chat.Hold("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "hello", nil)
+	releaseTurn := make(chan struct{})
+	bridge := s.newBridge(nil)
+	bridge.Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) {
+		return func() { <-releaseTurn }, nil
+	})
+	<-waiting
+
+	s.Equal(1, bridge.Running(), "the write in flight")
+	releaseWrite()
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return bridge.Running() == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return bridge.Running() != 1 }, 200*time.Millisecond, 10*time.Millisecond, "the turn handed over")
+
+	close(releaseTurn)
+
+	s.Require().Eventually(func() bool { return bridge.Running() == 0 }, 5*time.Second, 10*time.Millisecond)
+}
+
 // handedTo starts a bridge whose worker hands each message to a turn that does nothing, and
 // returns what it hands over. options are as bridge takes them.
 func (s *InboundSuite) handedTo(options *Options) <-chan Written {
 	handed := make(chan Written, 4)
-	s.newBridge(options).Start(func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+	s.newBridge(options).Start(s.ctx, func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
 		handed <- message
 		return func() {}, nil
 	})
 	return handed
+}
+
+// handedOnce starts a bridge whose worker hands each message to a turn that does nothing, and
+// checks that a queued message whose card was not written is handed over once, done on its
+// first attempt, with the card's failure logged.
+func (s *InboundSuite) handedOnce(thread store.ChannelThread, providerMessageID string) {
+	handed := s.handedTo(nil)
+
+	s.Equal(inboundMessageID(thread.ChannelID, providerMessageID), s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, providerMessageID).State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Zero(s.row(thread, providerMessageID).Attempts)
+	s.Never(func() bool { return len(handed) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "handed to the agent twice")
+	s.Equal([]string{"hello"}, s.chat.Messages(thread.ChannelID))
+	omni, _ := s.card(thread)
+	s.Empty(s.chat.Stored(omni), "the card was not written")
+	s.Contains(s.logs.String(), `level=ERROR msg="could not write the episode card of a thread" connector=slack_bot customer=`+s.customer+" channel="+thread.ChannelID)
 }
 
 // handed waits for the next message a worker hands over.
@@ -834,7 +960,7 @@ func (s *InboundSuite) handed(handed <-chan Written) Written {
 // options, when not nil, set the inbound retries and the forward of what it gives up.
 func (s *InboundSuite) bridge(options *Options) *Bridge {
 	bridge := s.newBridge(options)
-	bridge.Start(nil)
+	bridge.Start(s.ctx, nil)
 	return bridge
 }
 
@@ -856,11 +982,25 @@ func (s *InboundSuite) newBridge(options *Options) *Bridge {
 // answerWith answers every request to the suite's Stream Chat whose path ends in suffix with
 // status and body, for the bridges made after it; chattest answers the rest.
 func (s *InboundSuite) answerWith(suffix string, status int, body string) {
+	s.answerWhere(func(path string) bool { return strings.HasSuffix(path, suffix) }, status, body)
+}
+
+// answerCardsWith answers every episode card write, a message sent into an omni-channel, with
+// status and body, for the bridges made after it; chattest answers the rest.
+func (s *InboundSuite) answerCardsWith(status int, body string) {
+	s.answerWhere(func(path string) bool {
+		return strings.Contains(path, "/omni-") && strings.HasSuffix(path, "/message")
+	}, status, body)
+}
+
+// answerWhere answers every request to the suite's Stream Chat whose path matches with status
+// and body, for the bridges made after it; chattest answers the rest.
+func (s *InboundSuite) answerWhere(matches func(path string) bool, status int, body string) {
 	target, err := url.Parse(s.chat.URL)
 	s.Require().NoError(err)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, suffix) {
+		if !matches(r.URL.Path) {
 			proxy.ServeHTTP(w, r)
 			return
 		}

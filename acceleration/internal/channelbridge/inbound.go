@@ -56,32 +56,49 @@ const maxMessageID = 255
 // already there (staging app 1257545, 2026-10-28 05:20:35 UTC).
 var readableID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// Start runs the worker that writes the queued inbound messages until Close, and hands each one
-// it writes to answer, the one way a channel message reaches the agent; nil answers none. It
-// looks at start, for the ones a router queued before it stopped, then when a write finishes or
-// wake says a message was queued, at the first one due, and at least once a lease: with nothing
-// queued it sends Postgres 2 queries a minute.
-func (b *Bridge) Start(answer Answer) {
+// Start runs the worker that writes the queued inbound messages until ctx ends or Close, and
+// hands each one it writes to answer, the one way a channel message reaches the agent; nil
+// answers none. It looks at start, for the ones a router queued before it stopped, then when a
+// write finishes or wake says a message was queued, at the first one due, and at least once a
+// lease: with nothing queued it sends Postgres 2 queries a minute.
+//
+// ctx is the router's stop signal: a draining router takes no more messages, and the ones
+// still queued wait for another router. The writes already taken finish and hand their
+// messages over; the drain waits for them and for the turns they start (Running), and Close
+// for the writes.
+func (b *Bridge) Start(ctx context.Context, answer Answer) {
 	b.answer = answer
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(b.ctx, cancel)
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
+		defer stop()
+		defer cancel()
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		for {
-			wait, again := b.writeDue()
+			wait, again := b.writeDue(ctx)
 			timer.Stop()
 			if again {
 				timer.Reset(wait)
 			}
 			select {
-			case <-b.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-timer.C:
 			case <-b.kick:
 			}
 		}
 	}()
+}
+
+// Running is how many queued messages the worker is writing now and how many turns it handed
+// the agent have not ended, for a draining router to wait for, as scheduling.Scheduler.Running.
+// A turn counts from before its write's slot frees, so the two never both read zero between
+// the write and the turn.
+func (b *Bridge) Running() int {
+	return len(b.slots) + int(b.turning.Load())
 }
 
 // wake tells the worker there may be a message to write, without waiting.
@@ -98,10 +115,10 @@ func (b *Bridge) wake() {
 // busy. While messages are queued it waits until the first is due, its retry or another
 // router's lease running out, and at least the poll; a lease at most, also when none is
 // queued: a router that queued or leased one and then stopped wakes nobody else.
-func (b *Bridge) writeDue() (wait time.Duration, again bool) {
-	b.prune()
+func (b *Bridge) writeDue(ctx context.Context) (wait time.Duration, again bool) {
+	b.prune(ctx)
 	for {
-		if b.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return 0, false
 		}
 		free := cap(b.slots) - len(b.slots)
@@ -109,9 +126,9 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 			return 0, false
 		}
 		now := time.Now()
-		claimed, err := b.store.ClaimChannelInbound(b.ctx, now, free, now.Add(inboundLease))
+		claimed, err := b.store.ClaimChannelInbound(ctx, now, free, now.Add(inboundLease))
 		if err != nil {
-			if b.ctx.Err() == nil {
+			if ctx.Err() == nil {
 				b.logger.Error("could not take the inbound messages due", "error", err)
 			}
 			return b.inboundPoll, true
@@ -132,10 +149,10 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 			break
 		}
 	}
-	next, queued, err := b.store.NextChannelInboundAt(b.ctx)
+	next, queued, err := b.store.NextChannelInboundAt(ctx)
 	switch {
 	case err != nil:
-		if b.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			b.logger.Error("could not find when the next inbound message is due", "error", err)
 		}
 		return b.inboundPoll, true
@@ -147,12 +164,12 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 
 // prune deletes the rows past their keep, once every pruneEvery. Only the worker's goroutine
 // calls it.
-func (b *Bridge) prune() {
+func (b *Bridge) prune(ctx context.Context) {
 	if time.Since(b.pruned) < pruneEvery {
 		return
 	}
 	b.pruned = time.Now()
-	if _, err := b.store.PruneChannelInbound(b.ctx, b.pruned); err != nil && b.ctx.Err() == nil {
+	if _, err := b.store.PruneChannelInbound(ctx, b.pruned); err != nil && ctx.Err() == nil {
 		b.logger.Error("could not delete the inbound messages past their keep", "error", err)
 	}
 }
@@ -205,10 +222,11 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 // writeQueued admits a queued message (admit), then writes it into its thread channel under its
 // own Stream id, and the card of the episode it opens, and hands it to the agent (answer).
 // Either write already done by an attempt whose answer was lost counts as written; the
-// message is then rebuilt from its row. A message admit holds back, such as a keyword or one
-// the gate refuses, is done with nothing written. The message is done only once its turn is
-// claimed, so a router that stops between the write and the claim leaves it queued, and the
-// next attempt finds it written and claims it.
+// message is then rebuilt from its row. An episode that cannot be opened or a card that
+// cannot be written costs the card, not the answer: it is logged and the message goes on. A
+// message admit holds back, such as a keyword or one the gate refuses, is done with nothing
+// written. The message is done only once its turn is claimed, so a router that stops between
+// the write and the claim leaves it queued, and the next attempt finds it written and claims it.
 func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) error {
 	thread, err := b.store.ChannelThread(ctx, message.ChannelID)
 	if err != nil {
@@ -220,9 +238,11 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	config := store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}
 	inbound := message.Message()
+	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
+		"seq", message.Seq)
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
 	if err != nil {
-		return err
+		log.Error("could not open the episode of an inbound message", "error", err)
 	}
 	// An earlier attempt may have opened the episode and stopped before its card was written:
 	// it failed, its router stopped or its lease ran out. This Open then finds it open. The
@@ -241,11 +261,9 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	case err != nil:
 		return err
 	}
-	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
-		"seq", message.Seq)
 	log.Info("an inbound message is written into its thread channel", "message", id)
 	if err := b.cards.Write(ctx, opened); err != nil && !alreadyWritten(err) {
-		return err
+		log.Error("could not write the episode card of a thread", "error", err)
 	}
 	if b.answer == nil {
 		return nil
@@ -260,10 +278,14 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	log.Info("an inbound message is handed to the agent", "message", id)
 	// Off the worker's slot: a turn waits for the thread's earlier one and for the reply, up to
-	// minutes, and the thread's next message waits for this row only. Close does not wait for
-	// it, so a router stops no later than before: a turn the process cuts is lost as one the
+	// minutes, and the thread's next message waits for this row only. A draining router waits
+	// for it (Running); Close does not, so a turn the drain's end cuts is lost as one the
 	// message hook started was.
-	go turn()
+	b.turning.Add(1)
+	go func() {
+		defer b.turning.Add(-1)
+		turn()
+	}()
 	return nil
 }
 

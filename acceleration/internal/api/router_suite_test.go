@@ -764,7 +764,7 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.server.Close)
 	// After the server, which answers what the worker writes, as cmd/router starts it.
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
-		bridge.Start(s.answerQueued)
+		bridge.Start(context.Background(), s.answerQueued)
 	}
 }
 

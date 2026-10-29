@@ -37,6 +37,7 @@ done rows deleted after 24h; failed rows kept 30 days
 - **The thread path is claimed by its turn.** `answerThread` claims the message's turn (`store.ClaimChannelThreadMessage`, `store.ClaimTurn`). The row stays `queued` for the worker to finish. A second try finds the turn taken and answers nothing.
 - **A row goes back to the queue only on a failure that proves nothing took it.** `unanswered` moves it from `done` to `queued` (`store.ReleaseChatInboundAnswer`). Example: no dispatch worker is connected. A failure that leaves it open keeps the row settled. Example: the node with the worker did not reply in time (`node.ErrNoReply`); it may have placed the message (`TestAQueuedDeliveryAnotherNodePlacedIsNotPlacedAgainWhenItsReplyWasLate`).
 - **A hook settles nothing.** A webhook delivery is never tried again, so it has no row.
+- **The stop signal stops the claims.** `Start` takes the router's stop signal (cmd/router: the signal context, as `scheduling.Scheduler.Start`), so a draining router claims no more rows; the rows still queued wait for another router. The answers already running go on (`TestAfterTheStopSignalAWorkerFinishesItsAnswerAndClaimsNoOther`), and cmd/router's drain waits for them (`Running`, counted in `running` as the scheduled deliveries are) until the drain runs out (`TestRunningCountsTheAnswersInFlight`, `TestDrainSuite`).
 - **Close waits for the answers in flight.** It records what came of each, so no row waits for its lease to run out.
 
 ## Tests
