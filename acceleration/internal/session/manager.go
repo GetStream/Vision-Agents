@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -161,6 +162,10 @@ type ManagerOptions struct {
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
 	SandboxSecretPrefix string
+	// GuardrailHTTP posts a webhook guardrail's checks. Nil is the guardrail's own default,
+	// egress's client, which dials public addresses alone; tests pass one that reaches their
+	// local receiver.
+	GuardrailHTTP *http.Client
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -1768,6 +1773,7 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 		LLM:        m.options.LLM,
 		Secret:     stream.Secret.Reveal(),
 		APIKey:     ownKey(spec.CustomerID, stream),
+		HTTPClient: m.options.GuardrailHTTP,
 		Logger:     m.logger,
 	})
 }
