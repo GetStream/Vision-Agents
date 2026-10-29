@@ -250,6 +250,25 @@ func (s *ChatInboundSuite) TestWithoutStreamChatDeliveriesAWebhookBeforeTheRoute
 	s.Equal(http.StatusOK, s.hookedAt(router, s.message(suiteStreamApp, s.config(s.customerID()), "")))
 }
 
+// A deployment that can never learn its app has nothing for the endpoint to wait for, so the
+// webhook is taken at once: answered 503, Stream would deliver it again for ever. Two
+// deployments cannot learn it: one with no Stream credentials, and one whose configured app id
+// Stream says is another.
+func (s *ChatInboundSuite) TestAWebhookToADeploymentThatCannotLearnItsAppIsTaken() {
+	unconfigured := streamapp.NewDeployment(streamapp.DeploymentOptions{BaseURL: s.chat.URL})
+	wrong := streamapp.NewDeployment(streamapp.DeploymentOptions{APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: s.chat.URL, App: 111})
+	wrong.SetApp(222)
+	s.Require().Zero(wrong.App(), "Stream told the deployment an app other than the configured one")
+
+	for name, deployment := range map[string]*streamapp.Deployment{"no credentials": unconfigured, "wrong app id": wrong} {
+		s.Run(name, func() {
+			router := s.routerIn(deployment, s.chatInboundKeys)
+
+			s.Equal(http.StatusOK, s.hookedAt(router, s.message(suiteStreamApp, s.config(s.customerID()), "")))
+		})
+	}
+}
+
 // A peer recorded the webhook it hands over, so a node that has not learned its app yet takes
 // it rather than have Stream deliver it again.
 func (s *ChatInboundSuite) TestAWebhookHandedToANodeThatDoesNotKnowItsAppIsAnsweredThere() {
@@ -490,6 +509,16 @@ func (s *ChatInboundSuite) routerOnAClosedStore() string {
 // to tell it.
 func (s *ChatInboundSuite) routerLearningItsApp(keys []ed25519.PublicKey) (string, *streamapp.Deployment) {
 	stream, deployment := learningItsApp(s.chat.URL)
+	return s.routerOver(stream, keys), deployment
+}
+
+// routerIn is a router in deployment, taking Stream Chat's deliveries signed with keys, and
+// returns its URL.
+func (s *ChatInboundSuite) routerIn(deployment *streamapp.Deployment, keys []ed25519.PublicKey) string {
+	return s.routerOver(streamapp.NewClients(deployment, streamapp.ClientsOptions{}), keys)
+}
+
+func (s *ChatInboundSuite) routerOver(stream *streamapp.Clients, keys []ed25519.PublicKey) string {
 	server, err := NewServer(Options{
 		Routers:  map[routing.Modality]routing.Inspector{routing.LLM: idleInspector{}},
 		AuthMode: auth.Custom,
@@ -505,7 +534,7 @@ func (s *ChatInboundSuite) routerLearningItsApp(keys []ed25519.PublicKey) (strin
 	s.Require().NoError(err)
 	router := httptest.NewServer(server.Handler())
 	s.T().Cleanup(router.Close)
-	return router.URL, deployment
+	return router.URL
 }
 
 // learningItsApp is the suite's deployment, configured with no app id and not told it yet.
