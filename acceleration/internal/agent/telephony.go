@@ -255,8 +255,19 @@ func undoneResult(content string) bool {
 // confirmed the values or put right what the tool needed, so the call is theirs to make again.
 // A call that could not be made, or that failed for a reason of the moment (transientResult),
 // was not refused at all.
+//
+// That holds only while nothing the answer depends on has changed. A tool often refuses
+// because a step is missing (the item is not in the basket, the account is locked), and
+// once another tool has done that step the same values are the right call: held back, the
+// step is done and the call it was for never is. So a refusal holds only until a call that
+// may have changed something (changedState) has run since. That call is judged by its name,
+// so a misjudged one costs at most one more try, which the tool refuses again and which is
+// then held until something changes again.
 func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
+		if changedState(history, i) {
+			return "", false
+		}
 		result := history[i]
 		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) ||
 			!failedResult(result.Content) || transientResult(result.Content) {
@@ -274,10 +285,13 @@ func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 }
 
 // changedState reports whether history[i] is the result of a call that may have changed
-// something: it succeeded, and its tool is not one whose name says it only reads.
+// something: the tool ran and succeeded, and its name does not say it only reads. An answer
+// the router gave in the tool's place (alreadyCalled, notRun, undoneResult, or one opening
+// with didNotWork) did not run it.
 func changedState(history []llm.Message, i int) bool {
 	result := history[i]
-	if result.Role != llm.ToolResult || failedResult(result.Content) || undoneResult(result.Content) {
+	if result.Role != llm.ToolResult || failedResult(result.Content) || undoneResult(result.Content) ||
+		strings.HasPrefix(result.Content, alreadyCalled) || strings.Contains(result.Content, notRun) {
 		return false
 	}
 	for j := i - 1; j >= 0; j-- {
