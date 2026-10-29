@@ -43,7 +43,8 @@ type Response struct {
 	ReasoningText string
 	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
 	// response may carry both these and text: a model told to keep the caller company
-	// while it acts will say something and call a tool in the same breath.
+	// while it acts will say something and call a tool in the same breath. A failed
+	// response has none.
 	ToolCalls []ToolCall
 	Usage     Usage
 	// UsageReported is true when the provider said what the response used, zero included.

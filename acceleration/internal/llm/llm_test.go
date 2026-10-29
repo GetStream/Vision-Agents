@@ -163,6 +163,51 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 	s.ErrorIs(stream.Err(), refusal)
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.IsType(ResponseFailed{}, events[len(events)-2])
+	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(func(w *ResponseWriter) {
+		w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
+	}).Screen(verdict)
+
+	s.drain(stream)
+
+	s.Equal([]ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}, stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAFailedResponseSettlesWithNoCalls() {
+	call := func(w *ResponseWriter) { w.FunctionCall(0, "call-1", "transfer_funds", `{"to":"savings"}`, "") }
+	cases := map[string]*Stream{
+		"the provider's stream broke": NewStream(StreamOptions{ResponseID: "r1"},
+			&scripted{chunks: []chunk{call}, err: errUnauthorized}),
+		"the provider reported a failure": s.stream(call, func(w *ResponseWriter) {
+			w.Fail(errUnauthorized, "stream", false)
+		}),
+	}
+	for name, stream := range cases {
+		s.drain(stream)
+
+		s.Equal(StatusFailed, stream.Response().Status, name)
+		s.Empty(stream.Response().ToolCalls, name)
+	}
+}
+
+func (s *LLMSuite) TestAResponseCutShortKeepsTheCallsItCompleted() {
+	call := func(w *ResponseWriter) { w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "") }
+	cases := map[string]chunk{
+		"incomplete": func(w *ResponseWriter) { w.Incomplete("max_output_tokens") },
+		"cancelled":  func(w *ResponseWriter) { w.Cancelled() },
+	}
+	for name, ending := range cases {
+		stream := s.stream(call, ending)
+
+		s.drain(stream)
+
+		s.Len(stream.Response().ToolCalls, 1, name)
+	}
 }
 
 func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
