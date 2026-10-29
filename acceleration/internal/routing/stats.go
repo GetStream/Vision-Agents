@@ -45,6 +45,11 @@ type Owner struct {
 	AgentID string
 	// CallID is the call the work happened in. Empty outside a conversation.
 	CallID string
+	// Region is where the work is done: an agent's work is in its config's region, a direct
+	// call's in the one its own data policy asks for. It is carried with the work and never
+	// looked up. Empty names none, which is pricing.DefaultRegion for routing and for a
+	// knowledge base the work creates, and reaches a knowledge base kept anywhere.
+	Region string
 	// Tags are the customer's own cost labels, carried onto every row so spend can be
 	// broken down by whatever the customer cares about.
 	Tags Tags
@@ -223,6 +228,11 @@ const ErrorCancelled = store.ErrorCancelled
 // generated until then is billed.
 const ErrorTimeout = "timeout"
 
+// ErrorKeyRefused is the ErrorCode of work on a customer's own key (BYOK) that the vendor refused
+// the key for: revoked, mistyped, or without access to the model. It is the customer's to fix,
+// and like every failure on their key it is kept out of the vendor's health.
+const ErrorKeyRefused = "key_refused"
+
 // Recorder prices stats and hands them to a Writer, which writes them to Postgres and Redis
 // off the request path. A conversation must never wait on a database, so recording only
 // queues.
@@ -296,7 +306,9 @@ func (r *Recorder) QuoteStat(config ProviderConfig, entry Stat) pricing.Quote {
 }
 
 // Record queues a stat, pricing what its row holds. It never waits: a stat the writer has
-// no room for is lost, loudly.
+// no room for is lost, loudly. Work on a customer's own key (config.BYOK) is counted for the
+// customer and kept out of the provider's health, which every customer is routed by: one
+// customer's revoked key is not the model being down.
 func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	if !r.writer.records() {
 		return
@@ -309,11 +321,11 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
-	countTraffic(request)
+	countTraffic(request, config.BYOK)
 	entry.Spent.add(request.CostMicros, entry.Attributes[AttributeUsageEstimated] == "true")
 	// Before the row is queued, so an ack that comes back fast finds the hold it settles.
 	request.LimitGrants = r.spent(entry.Owner, request)
-	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured})
+	r.writer.enqueue(queued{request: request, gate: r.gate, fatal: entry.Fatal, unmeasured: entry.Unmeasured, private: config.BYOK})
 }
 
 // spent tells the gate what billable work cost the moment it is recorded, so the customer's

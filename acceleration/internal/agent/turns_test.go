@@ -245,7 +245,7 @@ func (s *TurnRecorderSuite) TestAnInterruptionClosesATurnWaitingOnTheTrack() {
 	tracker.spoke("turn-1", 160, 300)
 	tracker.completed("turn-1", 280, 1)
 
-	tracker.interrupt("turn-1")
+	tracker.interrupt("turn-1", interruption{})
 	marks.FirstAudiblePulled(base.Add(920 * time.Millisecond))
 	time.Sleep(10 * time.Millisecond)
 
@@ -263,7 +263,7 @@ func (s *TurnRecorderSuite) TestAReportThatOutlivesItsTurnIsDropped() {
 	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, done.add)
 	tracker.begin("turn-1", stt.Participant{}, base.Add(350*time.Millisecond), base, 120)
 	stale := tracker.marksFor("turn-1")
-	tracker.interrupt("turn-1")
+	tracker.interrupt("turn-1", interruption{})
 	tracker.begin("turn-2", stt.Participant{}, base.Add(5350*time.Millisecond), base.Add(5*time.Second), 120)
 
 	stale.FirstFrameQueued(base.Add(5900 * time.Millisecond))

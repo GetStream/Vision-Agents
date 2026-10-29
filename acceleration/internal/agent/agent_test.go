@@ -501,6 +501,10 @@ type stubTTS struct {
 	silent bool
 	// refuses, if set, is what every synthesis fails with.
 	refuses error
+	// synthesizing, if set, is closed when a synthesis is taken, which then waits for
+	// synthesisRelease.
+	synthesizing     chan struct{}
+	synthesisRelease <-chan struct{}
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -539,7 +543,13 @@ func (s *stubTTS) Synthesize(request tts.Request) error {
 	if request.Final {
 		delete(s.active, request.ID)
 	}
+	synthesizing, release := s.synthesizing, s.synthesisRelease
+	s.synthesizing = nil
 	s.mu.Unlock()
+	if synthesizing != nil {
+		close(synthesizing)
+		<-release
+	}
 
 	if refuses != nil {
 		return refuses
@@ -843,6 +853,13 @@ type AgentSuite struct {
 	logs *logLines
 	// callID is the call the agent serves, empty unless a test names one.
 	callID string
+	// timezone is the user's zone a text agent joins with, empty unless a test names one.
+	timezone string
+	// region is where the agent's work is done, and twinned a region every router also
+	// declares its stub in, beside the default one: both empty unless a test is about
+	// regions. builtIn is the region each modality's stub was built in, every time it was.
+	region, twinned string
+	builtIn         *builds
 
 	agent  *Agent
 	events *collector
@@ -858,6 +875,7 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.callID = ""
+	s.timezone = ""
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -882,6 +900,8 @@ func (s *AgentSuite) SetupTest() {
 	s.voiceName = ""
 	s.logs = nil
 	s.backup = nil
+	s.region, s.twinned = "", ""
+	s.builtIn = &builds{}
 	s.over = make(chan struct{})
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -908,12 +928,13 @@ func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
 	}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
+	reasoning.Register("stub", func(spec routing.Spec) (llmrouter.Provider, error) {
+		s.builtIn.add(routing.LLM, spec.Region)
 		provider := models[min(opened, len(models)-1)]
 		opened++
 		return provider, nil
-	})
-	config := stubConfig()
+	}, routing.OverrideRegion)
+	config := s.regional(stubConfig())
 	if s.billing != nil {
 		for i := range config.Providers {
 			config.Providers[i].Price = routing.Price{PerMillionInputTokens: 1, PerMillionOutputTokens: 2}
@@ -965,6 +986,7 @@ func (s *AgentSuite) joinText() {
 		Sandbox:            box,
 		Publish:            publish,
 		Instructions:       "be brief",
+		Timezone:           s.timezone,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		SubagentTarget:     subagentTarget,
@@ -1013,14 +1035,15 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 
 	transcription := sttrouter.NewRegistry()
-	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+	transcription.Register("stub", func(spec routing.Spec) (stt.STT, error) {
+		s.builtIn.add(routing.STT, spec.Region)
 		s.opened.Add(1)
 		if s.holdOpen != nil {
 			<-s.holdOpen
 		}
 		return s.ears, nil
-	})
-	transcribing := stubConfig()
+	}, routing.OverrideRegion)
+	transcribing := s.regional(stubConfig())
 	if s.backup != nil {
 		transcribing.Providers = append(transcribing.Providers, routing.ProviderConfig{
 			Provider: "backup", Model: "backup-model", Languages: []string{"en"}, Realtime: true,
@@ -1043,6 +1066,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	speech := ttsrouter.NewRegistry()
 	opened := false
 	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
+		s.builtIn.add(routing.TTS, spec.Region)
 		s.voiceAsked = spec
 		if opened && s.replacement != nil {
 			return s.replacement, nil
@@ -1052,9 +1076,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 			return wrapVoice(s.voice), nil
 		}
 		return s.voice, nil
-	})
+	}, routing.OverrideRegion)
 	speaker, err := ttsrouter.New(ttsrouter.Options{
-		Config: stubConfig(), Registry: speech, Logger: logger,
+		Config: s.regional(stubConfig()), Registry: speech, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
@@ -1073,7 +1097,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
-		reading = metered.NewKnowledge(s.knows, s.metering, nil)
+		reading = s.knowledgeBase()
 	}
 
 	var finding *searchrouter.Router
@@ -1096,6 +1120,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		AppID:              "router",
 		SessionID:          "session-1",
 		CallID:             s.callID,
+		Region:             s.region,
 		Incognito:          s.incognito,
 		Store:              s.records,
 		Live:               s.live,
@@ -1569,7 +1594,7 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	request := s.model.requests()[0]
-	s.Equal("be brief", request.Instructions)
+	s.Equal("be brief", withoutClock(request.Instructions))
 	s.Require().Len(request.Input, 1)
 	s.Equal("hello", request.Input[0].Content)
 	s.Equal(llm.User, request.Input[0].Role)
@@ -2083,7 +2108,7 @@ func (s *AgentSuite) TestWithoutAMemoryStoreTheAgentOnlyKnowsItsInstructions() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWhatIsRememberedIsToldToTheModel() {
@@ -2122,7 +2147,7 @@ func (s *AgentSuite) TestAVoiceThatCannotActDirectionsAsksForNone() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions,
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions),
 		"a voice that would read a direction out must not be offered one")
 }
 
@@ -2269,7 +2294,7 @@ func (s *AgentSuite) TestAnAgentThatCannotRecallStillTakesTheCall() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"a memory store that is down is not a broken conversation")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
@@ -3076,7 +3101,7 @@ func (s *AgentSuite) TestWithoutASubagentTheModelAnswersEverythingItself() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions, "nothing is offered that nobody can do")
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions), "nothing is offered that nobody can do")
 }
 
 func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
@@ -3408,7 +3433,7 @@ func (s *AgentSuite) TestATurnItHeardClearlyIsJustAnswered() {
 	s.mumbles(participant, "book a table for four", 0.95)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
@@ -3422,7 +3447,7 @@ func (s *AgentSuite) TestATranscriberThatReportsNoConfidenceIsTrusted() {
 	s.mumbles(participant, "book a table for four", 0)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("be brief", s.model.requests()[0].Instructions)
+	s.Equal("be brief", withoutClock(s.model.requests()[0].Instructions))
 }
 
 func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {

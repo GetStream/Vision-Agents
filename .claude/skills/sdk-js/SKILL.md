@@ -122,8 +122,10 @@ dispatch, and the four modality streams.
 - `close()` is idempotent. `finish()` removes the listeners and resolves every waiting reader
   as done, so a `for await` ends rather than hanging.
 - Credentials go in the query string, because a browser WebSocket carries no headers.
-  **`Stream-Auth-Type` has no query counterpart on purpose** — that is what stops a socket
-  opened from a browser claiming to be a backend. Do not add one.
+  **A socket never says it is a backend.** The router reads a `stream-auth-type` query
+  parameter only as `jwt` or `anonymous`, only in `proxy` mode without declared kinds, and
+  never over the header; the hosted proxy reads it only as `jwt`. That is what stops a
+  socket opened from a browser claiming to be a backend. Never send `server` there.
 - **No automatic reconnection.** `respond` and `tool_result` are not idempotent and the
   protocol has no sequence number to resume from. Replaying would duplicate turns and tool
   results. Adding reconnection means adding resume semantics to the router first.
@@ -295,7 +297,8 @@ Reject it if it:
 - copies a schema default into a request, or sends a field the caller did not set;
 - handles a tool call anywhere a caller must be iterating for it to run;
 - treats an unknown frame as fatal, or drops its payload;
-- adds reconnection, a `stream-auth-type` query parameter, or a `typeof window` branch;
+- adds reconnection, a `stream-auth-type` query parameter naming anything but `jwt` or
+  `anonymous`, or a `typeof window` branch;
 - opens two readers on one socket;
 - asserts that a method was called, or replaces the test server with a stubbed `fetch`;
 - hand-edits `src/generated/api.ts`.

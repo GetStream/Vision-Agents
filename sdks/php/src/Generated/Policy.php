@@ -24,7 +24,7 @@ final readonly class Policy
         // Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400...
         /** @var array<string, mixed>|null */
         public ?array $budget = null,
-        public ?DataPolicy $dataPolicy = null,
+        public ?PolicyDataPolicy $dataPolicy = null,
         // Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any to...
         public ?bool $promptInjection = null,
         public ?Quota $quota = null,
@@ -49,7 +49,7 @@ final readonly class Policy
             allowedModels: array_key_exists('allowed_models', $data) && $data['allowed_models'] !== null ? Json::strings($data, 'allowed_models') : null,
             balanceWarningMicros: array_key_exists('balance_warning_micros', $data) && $data['balance_warning_micros'] !== null ? Json::int($data, 'balance_warning_micros') : null,
             budget: array_key_exists('budget', $data) && $data['budget'] !== null ? Json::object($data, 'budget') : null,
-            dataPolicy: array_key_exists('data_policy', $data) && $data['data_policy'] !== null ? DataPolicy::fromArray(Json::object($data, 'data_policy')) : null,
+            dataPolicy: array_key_exists('data_policy', $data) && $data['data_policy'] !== null ? PolicyDataPolicy::fromArray(Json::object($data, 'data_policy')) : null,
             promptInjection: array_key_exists('prompt_injection', $data) && $data['prompt_injection'] !== null ? Json::bool($data, 'prompt_injection') : null,
             quota: array_key_exists('quota', $data) && $data['quota'] !== null ? Quota::fromArray(Json::object($data, 'quota')) : null,
             requireOwnStreamApp: array_key_exists('require_own_stream_app', $data) && $data['require_own_stream_app'] !== null ? Json::bool($data, 'require_own_stream_app') : null,

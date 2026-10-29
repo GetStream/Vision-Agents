@@ -53,6 +53,9 @@ const pythonVersion = "3.13"
 
 type Options struct {
 	APIKey, APIURL string
+	// Target is the Daytona region the sandbox is made in, such as eu. Empty is DAYTONA_TARGET,
+	// then the organization's default.
+	Target string
 	// Deprecated: the official SDK obtains the toolbox address from Daytona.
 	ProxyURL            string
 	Timeout, RunTimeout time.Duration
@@ -196,7 +199,7 @@ func New(o Options) (*Sandbox, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, HTTPClient: o.HTTPClient})
+	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: o.HTTPClient})
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}

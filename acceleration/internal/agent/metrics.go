@@ -85,6 +85,12 @@ var (
 		// 100 ms to 12.8 s: barge-in is ruled on within a second or two of a reply starting.
 		Buckets: prometheus.ExponentialBuckets(0.1, 2, 8),
 	}, []string{"kind"})
+	// cause, ruler and echo are fixed sets (interruption.go, harness.Ruler).
+	interruptions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_interruptions_total",
+		Help:      "Replies abandoned, by why, by whose ruling took the floor, and by how much of the words that took it the reply had said itself",
+	}, []string{"cause", "ruler", "echo"})
 	flowDecisions = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "agent_flow_decisions_total",

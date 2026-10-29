@@ -16,6 +16,18 @@ Flutter member would make the pure-Dart core unresolvable without the Flutter SD
 depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
 
+Until they are on pub.dev, an app depends on them by git, and names the core in its own
+`dependency_overrides`, since pub ignores a dependency's `pubspec_overrides.yaml`:
+
+```yaml
+dependencies:
+  vision_agents_chat:
+    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/chat}
+dependency_overrides:
+  vision_agents_core:
+    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/core}
+```
+
 ## Using them
 
 ```dart
@@ -96,6 +108,21 @@ final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]))
 `ToolExecutor.client` shows the call as waiting on this person's device. Leave either out and
 the router decides.
 
+A tool can show the model pictures as well as words, such as a photo the person picked.
+`AgentTool.withPictures` returns a `ToolOutput`; each picture is a data URI or an https URL,
+and one socket message holds at most 5 MB, so shrink a photo before returning it.
+
+```dart
+final photograph = AgentTool.withPictures(
+  name: 'photograph_room',
+  description: 'Take a photo of the room.',
+  run: (_) async => ToolOutput(text: 'the room', images: [AgentImage(await camera.jpegDataUri())]),
+);
+```
+
+A call the router cancels, because its timeout passed or the caller interrupted it, is not
+answered: the tool's future runs to its end and what it returns is dropped.
+
 ### A connector's sign-in
 
 A connector call that needs the person to sign in waits on its step, `awaiting_authorization`.
@@ -107,6 +134,23 @@ person did not connect.
 ```dart
 final chat = await agents.chat(SessionOptions(returnUrl: 'com.example.app:/connected'));
 chat.declineLogin(toolCallId);
+```
+
+### Remembering the user
+
+`memory` has the agent recall what it learned about the user in earlier sessions and keep what
+it learns in this one. It is always the `userId` the client was built with: a device recalls
+nobody else's, and a client with no `userId` remembers nothing. `filter` narrows what is
+recalled. `timezone` is the IANA zone the agent reads dates in; Dart's `DateTime.timeZoneName`
+is an abbreviation, so read the zone with a plugin such as `flutter_timezone`.
+
+```dart
+final chat = await agents.agent('support').chat(
+  const SessionOptions(
+    memory: SessionMemory(filter: {'topic': 'billing'}),
+    timezone: 'Europe/Amsterdam',
+  ),
+);
 ```
 
 ### Going back, and branching off
@@ -122,9 +166,9 @@ final branch = await chat.fork(ForkOptions(responseId: turns.first.id));
 await branch.start();
 ```
 
-A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-cannot be rewound, since its transcript would bring the turns back; fork it at the response
-instead.
+A text or voice session is kept in Stream Chat unless it is `incognito`, and a conversation
+kept there cannot be rewound, since its transcript would bring the turns back; fork it at the
+response instead.
 
 ### Renaming a conversation
 
@@ -160,6 +204,13 @@ final live = await asGuest.agent('support').sessions.query(
 final more = await asGuest.agent('support').sessions.query(
   SessionQuery(state: SessionState.live, limit: 20, cursor: live.nextCursor),
 );
+final thisWeek = await agents.sessions.query(
+  SessionQuery(
+    createdSince: DateTime.now().subtract(const Duration(days: 7)),
+    custom: {'topic': 'billing'},
+    sort: SessionSort.updatedAt,
+  ),
+);
 
 // The router comes from the client; what it routes to lives in the "healthcare" config.
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
@@ -185,10 +236,12 @@ ever fails.
 | Writing a config, syncing a folder, dispatching agents | The agent name, which is all the app needs |
 | Minting the user's token | The token the router, Stream Chat and Stream Video all connect with |
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
-| Renaming a session or changing its models | `updateSession`, which is server-side only |
+| Changing a session's models | `updateSession` with them, which only a backend may send |
 
-Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
-device, even against a local router with no proxy in front.
+Every request sends `Stream-Auth-Type: jwt`, and every socket sends it as the
+`stream-auth-type=jwt` query parameter, since a browser socket cannot set a header. It declares
+this caller a device, even against a local router with no proxy in front. A socket opened with a
+key also sends its token as `authorization`, which is how Stream's proxy reads it.
 
 ## Regenerating the client
 

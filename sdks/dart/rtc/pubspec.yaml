@@ -3,7 +3,7 @@ description: >-
   Talk to a Stream Vision Agent out loud: joins the call the agent is on with Stream Video,
   and renders the agent's video beside the device camera.
 version: 0.1.0
-repository: https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart/rtc
+repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/rtc
 topics: [ai, agents, voice, video, stream]
 
 # Stream Video 1.6's floor.

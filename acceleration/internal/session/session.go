@@ -1182,16 +1182,19 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 	if voice && s.transcribe != nil {
 		transcript = s.transcribe(ctx, next)
 	}
+	run := s.track(fresh)
+	shouldGreet := voice && next.Greeting != "" && len(old.History()) == 0
+	if shouldGreet && run != nil {
+		run.holdGreeting(s.sayGreeting(ctx, fresh, next))
+	}
 	s.running.Add(1)
-	go s.consume(fresh, transcript, s.track(fresh))
+	go s.consume(fresh, transcript, run)
 	if err := fresh.Join(context.WithoutCancel(ctx)); err != nil {
 		_ = fresh.Close()
 		return stack.Wrap(err)
 	}
-	if voice && next.Greeting != "" && len(old.History()) == 0 {
-		if err := fresh.Greet(ctx, next.Greeting, next.VaryGreeting); err != nil {
-			s.logger.Warn("could not greet the call", "session", s.id, "error", err)
-		}
+	if shouldGreet && run == nil {
+		s.sayGreeting(ctx, fresh, next)()
 	}
 
 	s.held.Store(fresh)

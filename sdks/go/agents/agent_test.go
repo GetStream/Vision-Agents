@@ -831,6 +831,40 @@ func TestAgentYAMLNamesTheRoleTheConfigIsStoredWith(t *testing.T) {
 	}
 }
 
+func TestAgentYAMLNamesTheRegionTheAgentsWorkIsDoneIn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nregion: eu\n")
+
+	router := newBackend(t)
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if region := router.syncs[0].Region; region == nil || *region != "eu" {
+		t.Errorf("the region was sent as %v", region)
+	}
+}
+
+// A declaration that says nothing about the region sends none, which leaves the stored one, and
+// a new agent is in us.
+func TestAgentYAMLWithoutARegionSendsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+
+	router := newBackend(t)
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if region := router.syncs[0].Region; region != nil {
+		t.Errorf("a declaration without a region sent %v", *region)
+	}
+}
+
 // A declaration that says nothing about the role sends none, which leaves the stored one.
 func TestAgentYAMLWithoutARoleSendsNone(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")

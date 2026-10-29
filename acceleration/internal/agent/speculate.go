@@ -87,12 +87,13 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 	}
 	stale := a.takeSpeculationsLocked()
 	said := a.userTurnLocked(ready.Participant, unifiedText(ready.Said(), unified))
-	instructions := a.instructions()
-	if said.Speaker != "" && len(a.speakers) == 1 {
+	people := len(a.speakers)
+	if said.Speaker != "" && people == 1 {
 		// The second person's first turn: the reply is written as the turn will be answered,
 		// told about them, without counting them before the ruling says it is answered.
-		instructions = joinNotes(instructions, severalSpeakers)
+		people = 2
 	}
+	instructions := a.instructionsFor(people)
 	ctx, cancel := context.WithCancel(a.ctx)
 	if a.speculating == "" {
 		a.speculating = uuid.NewString()
