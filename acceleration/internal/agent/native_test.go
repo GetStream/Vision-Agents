@@ -453,7 +453,7 @@ func (s *AgentSuite) TestLosingTheLiveSocketRecoversTheConversationAndAudio() {
 	fixture := s.newLiveRetryFixture(liveRetryMode{}, harness.Tools{}, nil)
 	oldPeer := s.nextNativePeer(fixture.peers)
 	oldSession := s.agent.speech()
-	_, err := s.agent.RespondTo(s.ctx, "The delivery is for 12 Oak Street", nil, options.LLM{})
+	_, err := s.agent.RespondTo(s.ctx, "The delivery is for 12 Harbor Road", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
 	s.nativeSend(oldPeer, `{"type":"session.output_transcript.delta","delta":"Your order is on its way."}`)
@@ -482,7 +482,7 @@ func (s *AgentSuite) TestLosingTheLiveSocketRecoversTheConversationAndAudio() {
 		Instructions string `json:"instructions"`
 	}
 	s.Require().NoError(json.Unmarshal(newPeer.setup, &setup))
-	s.Contains(setup.Instructions, "Caller: The delivery is for 12 Oak Street")
+	s.Contains(setup.Instructions, "Caller: The delivery is for 12 Harbor Road")
 	s.Contains(setup.Instructions, "You: Your order is on its way.")
 	s.Contains(setup.Instructions, "Caller: unfinished caller words")
 	s.Empty(s.edge.heard(), "recovery drops queued audio from the old reply")

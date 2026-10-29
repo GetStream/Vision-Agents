@@ -432,7 +432,7 @@ func (s *SpecSuite) TestIncognitoRecordsNothing() {
 
 func (s *SpecSuite) TestHistoryOfUserAndAssistantMessagesIsAccepted() {
 	spec := Spec{CustomerID: "acme", Text: true, History: []persistent.HistoryLine{
-		{Role: "user", Text: "Where is order 4471?", Name: "Ann"},
+		{Role: "user", Text: "Where is order 3825?", Name: "Ann"},
 		{Role: "assistant", Text: "It ships on Friday."},
 	}}
 

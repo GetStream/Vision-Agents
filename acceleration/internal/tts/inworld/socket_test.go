@@ -440,8 +440,8 @@ func (s *InworldSocketSuite) TestAnIdleEOFReconnectsAndTheNextUtteranceIsAudible
 	provider, conn := s.connect(fake, Options{})
 	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
 
-	// This is the failure seen on calls: the previous reply has closed, and the
-	// server drops TCP without a WebSocket close frame while the caller speaks.
+	// The previous reply has closed, and the server drops TCP without a WebSocket close
+	// frame while nothing is being synthesized.
 	s.Require().NoError(provider.Synthesize(tts.Request{ID: "previous", Text: "hello", Final: true}))
 	s.frames(conn, 3)
 	s.Require().NoError(closed(conn, "previous"))

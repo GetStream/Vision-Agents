@@ -2016,17 +2016,17 @@ func (s *AgentSuite) TestAnIDInTheInstructionsIsPassedOn() {
 }
 
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
-	// A lookup returned an account ID, a compaction summarised the result away, and a later
-	// call with that ID was refused as an ID no tool had given.
-	tools := []string{"find_account_by_phone", "get_account", "add_data"}
+	// A lookup returns a member ID and a compaction then summarises the result away. A later
+	// call with that ID still names an ID a tool returned, because the call's record keeps it.
+	tools := []string{"find_member_by_phone", "get_member", "renew_loan"}
 	looked := []llm.Message{
 		{Role: llm.User, Content: "It's five five five dash zero one nine dash four four one six."},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_account_by_phone"}}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"account_id": "AC7310", "full_name": "Robin Hale"}`},
-		{Role: llm.Assistant, Content: "I found your account, Robin."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "find_member_by_phone"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"member_id": "MB7310", "full_name": "Robin Hale"}`},
+		{Role: llm.Assistant, Content: "I found your library card, Robin."},
 	}
 	recent := []llm.Message{
-		{Role: llm.User, Content: "Can you add two gigabytes to my line?"},
+		{Role: llm.User, Content: "Can you renew my loan for two more weeks?"},
 	}
 	emitter := NewEmitter(eventBuffer)
 	defer emitter.Close()
@@ -2034,12 +2034,12 @@ func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 		emitter: emitter,
 		history: append(append([]llm.Message(nil), looked...), recent...),
 	}
-	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked for more data."})
-	refuel := llm.ToolCall{Name: "add_data", Arguments: `{"account_id":"AC7310","line_id":"LN4","gb_amount":2}`}
+	agent.applyCompaction(harness.Compacted{Prefix: looked, Summary: "Robin Hale asked to renew a loan."})
+	renewal := llm.ToolCall{Name: "renew_loan", Arguments: `{"member_id":"MB7310","branch_id":"BR4","weeks":2}`}
 
-	_, _, _, unfound := unfoundID(agent.History(), refuel, tools, "")
+	_, _, _, unfound := unfoundID(agent.History(), renewal, tools, "")
 	s.True(unfound, "the model's history no longer holds the result")
-	_, _, _, unfound = unfoundID(agent.record(), refuel, tools, "")
+	_, _, _, unfound = unfoundID(agent.record(), renewal, tools, "")
 	s.False(unfound, "the call's record still does")
 
 	summary := agent.History()[0]
@@ -2211,20 +2211,20 @@ func (s *AgentSuite) TestADirectionWithNothingToSayIsNeverSentToTheVoice() {
 }
 
 func (s *AgentSuite) TestANameBothSidesHaveSaidIsExpectedFromThenOn() {
-	// Flux heard "Chen" once, the agent said it back, and the caller's next "Yes, Chen" came
-	// back as "Yes. Ten". Once both have said it, the transcriber is told to expect it.
+	// Once the caller and the agent have both said a name, the transcriber is told to expect
+	// it, so a later mention is not heard as a similar-sounding word.
 	s.join(true)
-	s.model.reply = []string{"Two at 7:30 for Chen. ", "I'm checking with Mia now."}
+	s.model.reply = []string{"Three at 6:15 for Moreau. ", "I'm checking with Mia now."}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
 
-	s.says(participant, "a table for two at seven thirty, name Chen")
+	s.says(participant, "a table for three at six fifteen, name Moreau")
 
 	s.eventually(func() bool { return len(s.ears.keyterms()) > 0 }, "the transcriber was never retuned")
 	terms := s.ears.keyterms()
-	s.Contains(terms, "Chen")
+	s.Contains(terms, "Moreau")
 	s.NotContains(terms, "Mia", "a name only the agent said is not reinforced")
-	s.NotContains(terms, "Two", "a word that only opens a sentence is not a name")
+	s.NotContains(terms, "Three", "a word that only opens a sentence is not a name")
 	s.NotContains(terms, "I", "nor is a contraction")
 }
 
@@ -3584,7 +3584,7 @@ func (s *AgentSuite) TestTalkingOverTheAgentStopsItBeforeTheWordsSettle() {
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
 		"the interruption was never reported")
 
-	s.says(participant, "actually wait, make it six")
+	s.says(participant, "actually wait, make it seven")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the settled words were never answered")
 	s.Equal(1, countOf[Interrupted](s.reported()),
@@ -5079,12 +5079,12 @@ func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
 }
 
 func (s *AgentSuite) TestACallThatLeavesARequiredArgumentEmptyIsNotRun() {
-	tool := harness.Tool{Name: "verify_account", Parameters: map[string]any{
+	tool := harness.Tool{Name: "confirm_member", Parameters: map[string]any{
 		"required": []any{"pin", "last4", "address"},
 	}}
-	s.Equal([]string{"last4", "address"}, blankRequired(tool, `{"pin": "4471", "last4": "", "address": " "}`))
-	s.Empty(blankRequired(tool, `{"pin": "4471", "last4": "9821", "address": "14 Cedar Lane"}`))
-	s.Empty(blankRequired(harness.Tool{Name: "check_outage"}, `{}`), "a tool that requires nothing")
+	s.Equal([]string{"last4", "address"}, blankRequired(tool, `{"pin": "3825", "last4": "", "address": " "}`))
+	s.Empty(blankRequired(tool, `{"pin": "3825", "last4": "6357", "address": "14 Fenwick Road"}`))
+	s.Empty(blankRequired(harness.Tool{Name: "check_status"}, `{}`), "a tool that requires nothing")
 }
 
 func (s *AgentSuite) TestAnOptionalIDLeftOutRunsAfterAToolReturnedOne() {
@@ -5150,11 +5150,11 @@ func (s *AgentSuite) TestAnArgumentTheDescriptionNamesButTheSchemaLeavesOptional
 
 func (s *AgentSuite) TestACallThatFailedIsTriedAgainAfterTheCallerSpeaks() {
 	failed := []llm.Message{
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "lookup_appointment", Arguments: `{}`}}},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "find_booking", Arguments: `{}`}}},
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
-		{Role: llm.User, Content: "My member ID is ABC123456."},
+		{Role: llm.User, Content: "My member ID is KTR583027."},
 	}
-	_, repeated := answeredSinceCaller(failed, llm.ToolCall{Name: "lookup_appointment", Arguments: `{}`}, nil)
+	_, repeated := answeredSinceCaller(failed, llm.ToolCall{Name: "find_booking", Arguments: `{}`}, nil)
 	s.False(repeated, "a call that failed may be tried again")
 }
 
