@@ -631,7 +631,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Delete an agent config
-         * @description Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+         * @description Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["deleteAgentConfig"];
@@ -3216,6 +3216,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/numbers/{e164}/agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Have an agent answer a number's calls
+         * @description Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+         */
+        readonly put: operations["setPhoneNumberAgent"];
+        readonly post?: never;
+        /**
+         * Send a number's calls back to dispatch
+         * @description The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+         */
+        readonly delete: operations["removePhoneNumberAgent"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/numbers/{e164}/attach": {
         readonly parameters: {
             readonly query?: never;
@@ -4722,6 +4746,8 @@ export type components = {
             readonly stream: components["schemas"]["StreamSettings"];
         };
         readonly AttachedNumber: {
+            /** @description The agent config that answers the number's calls. Present, no call is dispatched to a worker. */
+            readonly agent_config_id?: string;
             readonly route_id: string;
             /** @description Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com. */
             readonly sip_uri: string;
@@ -7397,6 +7423,8 @@ export type components = {
          */
         readonly PhoneCapability: "voice" | "sms" | "mms" | "fax" | "emergency" | "hd_voice" | "international_sms" | "local_calling";
         readonly PhoneNumber: {
+            /** @description The agent config that answers the number's calls. Absent, its calls are dispatched to a worker. */
+            readonly agent_config_id?: string;
             readonly capabilities: readonly components["schemas"]["PhoneCapability"][];
             readonly country: string;
             readonly e164: string;
@@ -8848,6 +8876,12 @@ export type components = {
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
+        };
+        readonly SetNumberAgentRequest: {
+            /** @description The name of the agent config that answers the number. Give this or config_id. */
+            readonly agent?: string;
+            /** @description The id of the agent config that answers the number. Give this or agent. */
+            readonly config_id?: string;
         };
         /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
         readonly SetPluginClientRequest: {
@@ -11834,6 +11868,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
@@ -17841,6 +17884,85 @@ export interface operations {
         readonly requestBody?: never;
         readonly responses: {
             /** @description The number was released */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly setPhoneNumberAgent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The number in +15551234567 form. */
+                readonly e164: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetNumberAgentRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The agent now answers the number */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneNumber"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly removePhoneNumberAgent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The number in +15551234567 form. */
+                readonly e164: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No agent answers the number */
             readonly 204: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];

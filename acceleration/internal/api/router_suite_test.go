@@ -1185,12 +1185,12 @@ func (s *RouterSuite) sessionManager(
 		telephony = s.telephony(logger)
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Phone:         telephony,
 		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
 		TTS:           streams.TTS,
 		Memory:        metering,
-		Phone:         telephony,
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,

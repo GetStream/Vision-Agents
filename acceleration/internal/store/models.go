@@ -339,6 +339,10 @@ type PhoneNumber struct {
 	// can be on a trunk without it, to place calls only.
 	AttachedAt *time.Time `bun:"attached_at"`
 	ReleasedAt *time.Time `bun:"released_at"`
+
+	// ConfigID is the agent config that answers the number's calls. Empty sends them to
+	// dispatch. Only an attached number has one: detaching or releasing it clears it.
+	ConfigID string `bun:"config_id,nullzero"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.

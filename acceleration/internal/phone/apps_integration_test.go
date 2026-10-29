@@ -309,6 +309,20 @@ func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	s.Equal([]string{second.TrunkID}, s.own.Trunks())
 }
 
+func (s *AppsSuite) TestReattachingInAnotherAppKeepsTheNumbersAgent() {
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SetNumberAgent(s.ctx, s.customer, s.e164, "config-1"))
+	s.ownApp()
+
+	_, err = s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+
+	held := s.number()
+	s.Equal(int64(4242), held.StreamAppPK)
+	s.Equal("config-1", held.ConfigID, "moving the number to another app took its agent away")
+}
+
 func (s *AppsSuite) TestDetachingKeepsTheNumberOnItsTrunk() {
 	s.ownApp()
 	s.sealed()

@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="AttachedNumber")
 
 
@@ -18,11 +20,14 @@ class AttachedNumber:
         sip_uri (str): Where the vendor sends calls: the Stream trunk with the number as its user part, e.g.
             sip:+15125551234@sip.stream-io-api.com.
         trunk_id (str):
+        agent_config_id (str | Unset): The agent config that answers the number's calls. Present, no call is dispatched
+            to a worker.
     """
 
     route_id: str
     sip_uri: str
     trunk_id: str
+    agent_config_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +36,8 @@ class AttachedNumber:
         sip_uri = self.sip_uri
 
         trunk_id = self.trunk_id
+
+        agent_config_id = self.agent_config_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,6 +48,8 @@ class AttachedNumber:
                 "trunk_id": trunk_id,
             }
         )
+        if agent_config_id is not UNSET:
+            field_dict["agent_config_id"] = agent_config_id
 
         return field_dict
 
@@ -53,10 +62,13 @@ class AttachedNumber:
 
         trunk_id = d.pop("trunk_id")
 
+        agent_config_id = d.pop("agent_config_id", UNSET)
+
         attached_number = cls(
             route_id=route_id,
             sip_uri=sip_uri,
             trunk_id=trunk_id,
+            agent_config_id=agent_config_id,
         )
 
         attached_number.additional_properties = d

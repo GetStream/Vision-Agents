@@ -1376,6 +1376,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "removePhoneNumberAgent" => {
+          method: :delete, path: "/v1/phone/numbers/{e164}/agent",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "resetLimitUsage" => {
           method: :post, path: "/v1/spend/limits/usage/reset",
           path_params: [].freeze, query: [].freeze,
@@ -1488,6 +1494,12 @@ module GetStream
           method: :put, path: "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
           path_params: %w[customer_id id].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "setPhoneNumberAgent" => {
+          method: :put, path: "/v1/phone/numbers/{e164}/agent",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: "SetNumberAgentRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "setPluginClient" => {
@@ -1802,7 +1814,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AttachedNumber" => {
-          properties: %w[route_id sip_uri trunk_id].freeze,
+          properties: %w[agent_config_id route_id sip_uri trunk_id].freeze,
           required: %w[route_id sip_uri trunk_id].freeze, open: false
         }.freeze,
         "AuditChange" => {
@@ -2434,7 +2446,7 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
-          properties: %w[capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
+          properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
           required: %w[capabilities country e164 monthly_cost_micros purchased_at vendor].freeze, open: false
         }.freeze,
         "PhoneSandbox" => {
@@ -2771,6 +2783,10 @@ module GetStream
         }.freeze,
         "SessionVideo" => {
           properties: %w[max_frames source].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "SetNumberAgentRequest" => {
+          properties: %w[agent config_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SetPluginClientRequest" => {
