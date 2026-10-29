@@ -2,6 +2,9 @@ package socketedge
 
 import (
 	"context"
+	"math"
+	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,7 +31,7 @@ func TestSocketEdgeSuite(t *testing.T) {
 
 func (s *SocketEdgeSuite) SetupTest() {
 	s.sent, s.cleared = nil, 0
-	s.edge = New(Options{
+	edge, err := New(Options{
 		SampleRate: 24_000,
 		Caller:     stt.Participant{ID: "caller"},
 		Send: func(pcm []byte) error {
@@ -43,6 +46,8 @@ func (s *SocketEdgeSuite) SetupTest() {
 			s.mu.Unlock()
 		},
 	})
+	s.Require().NoError(err)
+	s.edge = edge
 	s.Require().NoError(s.edge.Join(context.Background()))
 	s.T().Cleanup(func() { _ = s.edge.Leave() })
 }
@@ -141,9 +146,16 @@ func (s *SocketEdgeSuite) TestJoiningTwiceIsOneCall() {
 	s.True(s.edge.Left())
 }
 
+// unjoined is a 16 kHz edge that sends nowhere and has not been joined.
+func (s *SocketEdgeSuite) unjoined() *Edge {
+	edge, err := New(Options{Send: func([]byte) error { return nil }})
+	s.Require().NoError(err)
+	return edge
+}
+
 // An edge left before it was joined has no playout to wait for: leaving returns.
 func (s *SocketEdgeSuite) TestLeavingAnEdgeNeverJoinedReturns() {
-	edge := New(Options{Send: func([]byte) error { return nil }})
+	edge := s.unjoined()
 	left := make(chan error, 1)
 
 	go func() { left <- edge.Leave() }()
@@ -161,7 +173,7 @@ func (s *SocketEdgeSuite) TestLeavingAnEdgeNeverJoinedReturns() {
 // whichever wins, the call is held at most once and hung up once.
 func (s *SocketEdgeSuite) TestJoinRacingLeaveHangsUpOnce() {
 	for range 200 {
-		edge := New(Options{Send: func([]byte) error { return nil }})
+		edge := s.unjoined()
 		left := make(chan error, 1)
 		var wg sync.WaitGroup
 		wg.Add(3)
@@ -186,7 +198,7 @@ func (s *SocketEdgeSuite) TestJoinRacingLeaveHangsUpOnce() {
 // frame heard as the call ends is refused, never sent on the closed audio channel.
 func (s *SocketEdgeSuite) TestHearRacingLeaveNeverSendsOnAClosedChannel() {
 	for i := range 3000 {
-		edge := New(Options{Send: func([]byte) error { return nil }})
+		edge := s.unjoined()
 		if i%2 == 0 {
 			s.Require().NoError(edge.Join(context.Background()))
 		}
@@ -215,7 +227,7 @@ func (s *SocketEdgeSuite) TestHearRacingLeaveNeverSendsOnAClosedChannel() {
 // so Leave returns whether or not the edge was joined.
 func (s *SocketEdgeSuite) TestLeavingReleasesAHearWaitingToSend() {
 	for _, join := range []bool{true, false} {
-		edge := New(Options{Send: func([]byte) error { return nil }})
+		edge := s.unjoined()
 		if join {
 			s.Require().NoError(edge.Join(context.Background()))
 		}
@@ -240,4 +252,67 @@ func (s *SocketEdgeSuite) TestLeavingReleasesAHearWaitingToSend() {
 		}
 		s.Require().ErrorIs(<-heard, ErrLeft)
 	}
+}
+
+// carriedRates are the rates a caller's audio comes in at, from a phone line's 8 kHz to
+// WebRTC's 48 kHz.
+var carriedRates = []int{8_000, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000}
+
+// edgeAt is an edge joined at the rate given, and what it has sent so far.
+func (s *SocketEdgeSuite) edgeAt(rate int) (*Edge, func() [][]byte) {
+	var mu sync.Mutex
+	var sent [][]byte
+	edge, err := New(Options{
+		SampleRate: rate,
+		Caller:     stt.Participant{ID: "caller"},
+		Send: func(pcm []byte) error {
+			mu.Lock()
+			sent = append(sent, pcm)
+			mu.Unlock()
+			return nil
+		},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(edge.Join(context.Background()))
+	s.T().Cleanup(func() { _ = edge.Leave() })
+	return edge, func() [][]byte {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(sent)
+	}
+}
+
+// The control: 20 ms of the caller at any rate the socket carries reaches the agent as 20 ms
+// at 16 kHz, and the agent's speech goes out in 20 ms frames at the socket's rate.
+func (s *SocketEdgeSuite) TestEveryCarriedRateIsHeardAndSpokenIn20msFrames() {
+	for _, rate := range carriedRates {
+		s.Run(strconv.Itoa(rate), func() {
+			edge, sent := s.edgeAt(rate)
+			frame := audio.PcmData{Samples: make([]int16, rate*20/1000), SampleRate: rate, Channels: 1}
+
+			s.Require().NoError(edge.Hear(frame.Bytes()))
+			heard := <-edge.Audio()
+			s.Require().NoError(edge.PublishAudio(speech(20 * time.Millisecond)))
+
+			s.Len(heard.Audio.Samples, stt.SampleRate*20/1000)
+			s.Require().Eventually(func() bool { return len(sent()) > 0 }, 2*time.Second, 5*time.Millisecond)
+			s.Len(sent()[0], rate*20/1000*2, "a frame is 20 ms of 16-bit samples at the socket's rate")
+		})
+	}
+}
+
+// A rate the socket does not carry is refused before any frame is resampled at it, and zero
+// still means 16 kHz.
+func (s *SocketEdgeSuite) TestNewRefusesARateTheSocketDoesNotCarry() {
+	for _, rate := range []int{1, 7_999, 11_025, 48_001, 96_000, math.MaxInt32, math.MaxInt, -1, -16_000, math.MinInt} {
+		s.Run(strconv.Itoa(rate), func() {
+			edge, err := New(Options{SampleRate: rate, Send: func([]byte) error { return nil }})
+
+			s.Error(err)
+			s.Nil(edge)
+		})
+	}
+	edge := s.unjoined()
+	s.Require().NoError(edge.Hear(make([]byte, stt.SampleRate*20/1000*2)))
+	s.Len((<-edge.Audio()).Audio.Samples, stt.SampleRate*20/1000, "20 ms at 16 kHz is heard as 20 ms")
 }
