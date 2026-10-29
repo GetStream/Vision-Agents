@@ -98,6 +98,41 @@ func (s *SlackChannelSuite) TestAMessageWhoseTurnWasClaimedBeforeIsNotAnsweredAg
 	s.Equal(1, s.turns(channel))
 }
 
+// A turn ends before its reply is written to Stream, which hands it to Slack only once written
+// (conversation.Service.OnFinishedReply): a test ends (turnsEnded) only once that reply left,
+// so it never dials the provider the next test's SetupTest puts in place.
+func (s *SlackChannelSuite) TestATestEndsOnlyOnceTheReplyItsTurnStillWritesHasLeft() {
+	handOver := s.holdHandOffs()
+	s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	writing, write := s.chat.Hold("/message")
+	handOver()
+	select {
+	case <-writing:
+	case <-time.After(settleFor):
+		s.FailNow("the reply was never written")
+	}
+
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		s.turnsEnded()
+	}()
+
+	s.Never(func() bool {
+		select {
+		case <-ended:
+			return true
+		default:
+			return false
+		}
+	}, dropped, 10*time.Millisecond, "the test ended while its reply was still being written")
+	write()
+	<-ended
+	posts := s.slack.Posts()
+	s.Require().Len(posts, 1, "the reply left before the test ended")
+	s.Equal("Noted.", posts[0].Text)
+}
+
 // A router with no LLM router has no sessions (cmd/router buildSessions): the message the
 // worker wrote is handed to nothing, and its turn is left unclaimed, as the message hook
 // answers no thread channel there (linkedThread).
