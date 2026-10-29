@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 type MessageHooksSuite struct {
@@ -159,14 +160,45 @@ func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError()
 	cancel()
 	before := len(s.logged.String())
 
-	_, _, found := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+	_, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
 		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
 	})
 
 	s.False(found)
+	s.Error(err)
 	logged := s.logged.String()[before:]
 	s.Contains(logged, `level=ERROR msg="could not read the config an arriving message's channel names"`, logged)
 	s.NotContains(logged, `level=INFO msg="an arriving message's channel names a config nobody in its app holds"`)
+}
+
+// A hook is not tried again, so a deployment's app not known yet ends it as a customer no
+// longer writing there does: INFO, as before the queue. Only a queued delivery, which the
+// worker retries, logs it as an ERROR and is left unsettled.
+func (s *MessageHooksSuite) TestAnAppNotKnownYetEndsAHookAtInfoAndAQueuedDeliveryAtError() {
+	customer := streamapp.CustomerOf(suiteStreamApp)
+	s.setApps(customer, func(apps *suiteApps) { apps.perApp = true; apps.waiting[customer] = true })
+	s.T().Cleanup(func() {
+		s.setApps(customer, func(apps *suiteApps) { apps.perApp = false; delete(apps.waiting, customer) })
+	})
+	event := messageEvent{ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: deliveredConfig(&s.RouterSuite, customer)}}
+	event.Message.Text = "is my order on its way?"
+	const line = `msg="not starting work for a customer whose app could not be read"`
+	const hookLine = `level=INFO msg="not starting work in the deployment's app for a customer no longer writing there"`
+	before := len(s.logged.String())
+
+	settled := s.router.routeArrivingMessage(context.Background(), hookOrigin{app: suiteStreamApp, deployment: true}, event)
+
+	s.True(settled)
+	logged := s.logged.String()[before:]
+	s.Contains(logged, hookLine, logged)
+	s.NotContains(logged, line)
+
+	before = len(s.logged.String())
+	settled = s.router.routeArrivingMessage(context.Background(), hookOrigin{app: suiteStreamApp, deployment: true, queued: true}, event)
+
+	s.False(settled)
+	logged = s.logged.String()[before:]
+	s.Contains(logged, "level=ERROR "+line, logged)
 }
 
 func (s *MessageHooksSuite) TestAChannelWithNoHistoryAndNoConfigIsAcceptedAndDropped() {

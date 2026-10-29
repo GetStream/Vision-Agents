@@ -229,7 +229,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
 		return
 	}
-	if s.forwardedToWorkers(r, payload, number.CustomerID) {
+	if elsewhere, _ := s.forwardedToWorkers(r.Context(), s.replayed(r, payload), number.CustomerID); elsewhere {
 		return
 	}
 

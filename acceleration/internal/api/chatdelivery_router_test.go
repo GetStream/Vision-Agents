@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -110,6 +111,29 @@ func (s *ChatDeliverySuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredTh
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(suiteStreamApp, s.config(s.customerID()), ""), s.current))
 
 	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+}
+
+// The forwarded header is only a peer's to set: one that came with a delivery from outside
+// keeps it on this node rather than hand it to the node running the conversation.
+func (s *ChatDeliverySuite) TestADeliveryCarryingThePeersHeaderFromOutsideIsNotHandedOn() {
+	other := s.otherNode()
+	s.serverClient.on(other).createSession(CreateSessionRequest{
+		AgentId: &s.channelID, Llm: pointerTo("vision/vision-model"), Incognito: pointerTo(true),
+	})
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	body := s.message(suiteStreamApp, s.config(s.customerID()), "")
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+chatDeliveryPath, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header = signDelivery(s.current, "msg_"+s.utils.uuid(), time.Now(), body)
+	request.Header.Set(node.ForwardedHeader, "1")
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.True(s.reachesWorker(worker.Messages()))
+	s.Empty(s.vision.requests(), "the node running the conversation was handed it")
 }
 
 // ChatDeliveryAppSuite is Stream Chat delivering to a router in app mode, where a delivery
