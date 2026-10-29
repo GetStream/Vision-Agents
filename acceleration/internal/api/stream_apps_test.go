@@ -179,6 +179,22 @@ func (s *StreamAppsSuite) TestAGuestIsCreatedInTheCallingApp() {
 	s.False(inDeployment)
 }
 
+func (s *StreamAppsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsMintedAgainInItsOwnApp() {
+	// In its own Stream app every id is the customer's, so a guest it signed a token for
+	// itself is one it may have minted again.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
+	seen := s.guestSeenInAToken()
+
+	var guest GuestUser
+	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(seen)}, &guest))
+	s.Equal(seen, guest.Id)
+	_, inOwn := s.own.User(seen)
+	s.True(inOwn)
+}
+
 func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {
 	// The rows a session leaves behind say which app it was in, so what is finished or read
 	// back later is done there, wherever the customer acts by then.
