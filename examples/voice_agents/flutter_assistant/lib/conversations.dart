@@ -22,13 +22,14 @@ class Conversations extends ChangeNotifier {
   /// Why the list could not be read, or null.
   String? failure;
 
-  /// Counts the reads, so only the latest one's answer is shown: a slow search for what was
-  /// typed earlier must not replace the one for what is typed now.
+  /// How many reads there have been, so only the latest one's answer is shown: a slow search
+  /// for what was typed earlier must not replace the one for what is typed now.
   var _reads = 0;
 
   /// Reads the list again, narrowed to [searchText] when there is one.
   Future<void> reload() async {
-    final read = ++_reads;
+    _reads += 1;
+    final read = _reads;
     try {
       const query = SessionQuery(limit: 50);
       final page = searchText.isEmpty
@@ -65,8 +66,10 @@ class Conversations extends ChangeNotifier {
   }
 
   /// The conversations under Today, Yesterday, This week and then their month, in the
-  /// router's order. A day can appear twice: the list is in order of activity, and the days
-  /// are when each conversation started, which is all a [Session] here says.
+  /// router's order.
+  ///
+  /// A day can appear twice: the list is in order of activity, and the days are when each
+  /// conversation started, which is all a [Session] here says.
   static List<({String title, List<Session> items})> sections(
     List<Session> sessions, {
     required DateTime now,
@@ -84,14 +87,18 @@ class Conversations extends ChangeNotifier {
   }
 
   /// What a conversation started at [date] is listed under, seen at [now].
+  ///
+  /// Counted in the phone's calendar days, so a conversation is under This week for the five
+  /// days before yesterday, whatever the time it started.
   static String dayTitle(DateTime date, {required DateTime now}) {
     final local = date.toLocal();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(local.year, local.month, local.day);
+    // The days as UTC dates, so a night when the clocks change is a day like any other.
+    final today = DateTime.utc(now.year, now.month, now.day);
+    final day = DateTime.utc(local.year, local.month, local.day);
     final daysAgo = today.difference(day).inDays;
     if (daysAgo <= 0) return 'Today';
     if (daysAgo == 1) return 'Yesterday';
-    if (now.difference(local).inDays < 7) return 'This week';
+    if (daysAgo < 7) return 'This week';
     return DateFormat('MMMM y').format(local);
   }
 }
@@ -125,9 +132,7 @@ class ConversationList extends StatefulWidget {
 }
 
 class _ConversationListState extends State<ConversationList> {
-  late final _search = TextEditingController(
-    text: widget.conversations.searchText,
-  );
+  late final _search = TextEditingController(text: widget.conversations.searchText);
   Timer? _searching;
 
   @override
@@ -155,10 +160,7 @@ class _ConversationListState extends State<ConversationList> {
       child: ListenableBuilder(
         listenable: conversations,
         builder: (context, _) {
-          final sections = Conversations.sections(
-            conversations.items,
-            now: DateTime.now(),
-          );
+          final sections = Conversations.sections(conversations.items, now: DateTime.now());
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -172,9 +174,7 @@ class _ConversationListState extends State<ConversationList> {
                       const Icon(Icons.edit_square),
                       Text(
                         'New chat',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),
@@ -269,9 +269,7 @@ class _ConversationRow extends StatelessWidget {
           session.displayTitle,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-          ),
+          style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal),
         ),
         onTap: onOpen,
       ),

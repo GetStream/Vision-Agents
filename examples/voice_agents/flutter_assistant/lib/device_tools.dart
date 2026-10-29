@@ -21,24 +21,17 @@ import 'permissions.dart';
 /// reply's step in a chat or on a card over a call. A permission the phone needs is asked for
 /// the first time a tool needs it.
 abstract final class DeviceTools {
-  static final all = [
-    _localContext,
-    _location,
-    _events,
-    _reminder,
-    _sendEmail,
-  ];
+  static final all = [_localContext, _location, _events, _reminder, _sendEmail];
 
   /// The calendar and the reminders, which this app's own iOS and Android code read and
   /// write: EventKit on iOS, the calendar provider on Android.
-  static const _calendar = MethodChannel(
-    'io.getstream.visionagents.flutterassistant/calendar',
-  );
+  static const _calendar = MethodChannel('io.getstream.visionagents.flutterassistant/calendar');
 
   /// The date, time and timezone, which a model in a data centre has no way to know.
   ///
   /// It takes no arguments, and still declares an empty object of them: a tool sent with no
   /// parameters at all is refused by xAI, which fails the whole reply.
+  // TODO: declare no parameters once the router fills in an empty object for xAI.
   static final _localContext = AgentTool(
     name: 'get_local_context',
     description:
@@ -48,15 +41,13 @@ abstract final class DeviceTools {
     run: (_) async {
       final now = DateTime.now();
       final zone = (await FlutterTimezone.getLocalTimezone()).identifier;
-      return localContext(
-        now,
-        zone: zone,
-        language: Platform.localeName,
-      );
+      return localContext(now, zone: zone, language: Platform.localeName);
     },
   );
 
-  /// Where the person is, to the street. It asks first, since it is where they are.
+  /// Where the person is, to the street.
+  ///
+  /// It asks first, since it is where they are.
   static final _location = AgentTool(
     name: 'get_location',
     description:
@@ -78,10 +69,7 @@ abstract final class DeviceTools {
       final here = await _currentPosition();
       final List<Placemark> places;
       try {
-        places = await Geocoding().placemarkFromCoordinates(
-          here.latitude,
-          here.longitude,
-        );
+        places = await Geocoding().placemarkFromCoordinates(here.latitude, here.longitude);
       } on Exception {
         return _noAddress(here);
       }
@@ -111,10 +99,10 @@ abstract final class DeviceTools {
       if (parseDay(day) == null) {
         throw const ToolFailure('The day has to be a date like 2026-10-16.');
       }
+      // Reading needs full access: Android has no read-only calendar permission to ask for,
+      // and asks for reading and writing in one question.
       if (!await Permissions.allOf([Permission.calendarFullAccess])) {
-        throw const ToolFailure(
-          'They have not let Juno see their calendar. It is in Settings.',
-        );
+        throw const ToolFailure('They have not let Juno see their calendar. It is in Settings.');
       }
       final lines = await _ask<List<Object?>>('listEvents', {'day': day});
       if (lines.isEmpty) return 'Nothing is on their calendar that day.';
@@ -126,7 +114,7 @@ abstract final class DeviceTools {
   ///
   /// On iOS it goes in their Reminders. Android has no Reminders of its own for an app to add
   /// to, so there it is an event in their calendar at the time it is due, with an alert then,
-  /// and it needs a due time, as the Android app's does.
+  /// and it needs a due time, since an event has to be at some time.
   static final _reminder = AgentTool(
     name: 'add_reminder',
     description: Platform.isIOS
@@ -135,10 +123,7 @@ abstract final class DeviceTools {
     parameters: {
       'type': 'object',
       'properties': {
-        'title': {
-          'type': 'string',
-          'description': 'what to remind them of, such as Call mum',
-        },
+        'title': {'type': 'string', 'description': 'what to remind them of, such as Call mum'},
         'due': {
           'type': 'string',
           'description': Platform.isIOS
@@ -154,11 +139,7 @@ abstract final class DeviceTools {
               'today at 6pm',
         },
       },
-      'required': [
-        'title',
-        if (!Platform.isIOS) 'due',
-        'summary',
-      ],
+      'required': ['title', if (!Platform.isIOS) 'due', 'summary'],
     },
     displayTitle: 'Adding a reminder',
     approval: ToolApproval(
@@ -175,19 +156,12 @@ abstract final class DeviceTools {
       if (title.isEmpty) throw const ToolFailure('A reminder needs a title.');
       final due = parseDue('${arguments['due'] ?? ''}');
       if (due == null && !Platform.isIOS) {
-        throw const ToolFailure(
-          'A reminder needs a due time, such as 2026-10-16T18:00:00+02:00.',
-        );
+        throw const ToolFailure('A reminder needs a due time, such as 2026-10-16T18:00:00+02:00.');
       }
       if (!await Permissions.allOf([Permission.calendarFullAccess])) {
-        throw const ToolFailure(
-          'They have not let Juno add reminders. It is in Settings.',
-        );
+        throw const ToolFailure('They have not let Juno add reminders. It is in Settings.');
       }
-      await _ask<void>('addReminder', {
-        'title': title,
-        'due': due?.millisecondsSinceEpoch,
-      });
+      await _ask<void>('addReminder', {'title': title, 'due': due?.millisecondsSinceEpoch});
       return 'Added the reminder "$title".';
     },
   );
@@ -232,11 +206,7 @@ abstract final class DeviceTools {
   );
 
   /// What get_local_context answers at [now], in [zone], for someone speaking [language].
-  static String localContext(
-    DateTime now, {
-    required String zone,
-    required String language,
-  }) {
+  static String localContext(DateTime now, {required String zone, required String language}) {
     final day = DateFormat('EEEE d MMMM y').format(now);
     final time = DateFormat.jm().format(now);
     return 'It is $day, $time in $zone (${now.timeZoneName}). '
@@ -245,15 +215,19 @@ abstract final class DeviceTools {
   }
 
   /// When a reminder is due, from an ISO 8601 date and time with its UTC offset, or null when
-  /// [text] is not one. A date alone, or a time with no offset, is not taken as midnight or as
-  /// the phone's own time: iOS then adds the reminder with no due time, and Android asks for one,
-  /// as the iOS and Android apps do.
-  static DateTime? parseDue(String text) =>
-      RegExp(
-        r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$',
-      ).hasMatch(text)
-      ? DateTime.tryParse(text)
-      : null;
+  /// [text] is not one.
+  ///
+  /// A date alone, or a time with no offset, is not taken as midnight or as the phone's own
+  /// time, which could be hours off where the person is: iOS then adds the reminder with no
+  /// due time, and Android asks for one.
+  static DateTime? parseDue(String text) {
+    final match = RegExp(
+      r'^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$',
+    ).firstMatch(text);
+    // DateTime.tryParse rolls a date that does not exist over, 30 February into March.
+    if (match == null || parseDay(match[1]!) == null) return null;
+    return DateTime.tryParse(text);
+  }
 
   /// A day as YYYY-MM-DD, or null when [text] is not one.
   static DateTime? parseDay(String text) {
@@ -268,32 +242,23 @@ abstract final class DeviceTools {
   static Future<Position> _currentPosition() async {
     // On Android, asked in turn with the calendar, since only one question shows at a time.
     if (!await Permissions.allOf([Permission.locationWhenInUse])) {
-      throw const ToolFailure(
-        'They have not let Juno see where they are. It is in Settings.',
-      );
+      throw const ToolFailure('They have not let Juno see where they are. It is in Settings.');
     }
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      throw const ToolFailure(
-        'They have not let Juno see where they are. It is in Settings.',
-      );
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      throw const ToolFailure('They have not let Juno see where they are. It is in Settings.');
     }
     try {
       return await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          timeLimit: Duration(seconds: 15),
-        ),
+        locationSettings: const LocationSettings(timeLimit: Duration(seconds: 15)),
       );
     } on TimeoutException {
       throw const ToolFailure('The phone could not tell where it is just now.');
     } on LocationServiceDisabledException {
-      throw const ToolFailure(
-        'Location is turned off on the phone. It is in Settings.',
-      );
+      throw const ToolFailure('Location is turned off on the phone. It is in Settings.');
     }
   }
 
@@ -301,7 +266,9 @@ abstract final class DeviceTools {
       'They are at latitude ${here.latitude}, longitude ${here.longitude}, '
       'which has no address.';
 
-  /// Calls the app's calendar code. What it could not do comes back as words for the model.
+  /// Calls the app's calendar code with [method] and [arguments].
+  ///
+  /// What it could not do comes back as words for the model.
   static Future<T> _ask<T>(String method, Map<String, Object?> arguments) async {
     try {
       return (await _calendar.invokeMethod<T>(method, arguments)) as T;

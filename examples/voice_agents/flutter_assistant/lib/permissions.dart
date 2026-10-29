@@ -3,7 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:permission_handler/permission_handler.dart';
 
-/// Asks Android for a permission the first time something needs it, one question at a time.
+/// The permission questions Android asks the first time something needs them, one at a time.
 ///
 /// A tool runs while the model waits, so it asks from inside its handler and carries on with
 /// the answer. Two tools can be called at once, and Android shows one request at a time, so
@@ -17,9 +17,7 @@ abstract final class Permissions {
   static Future<bool> allOf(List<Permission> permissions) {
     if (!Platform.isAndroid) return Future.value(true);
     final answer = _asking.then(
-      (_) async => (await permissions.request()).values.every(
-        (status) => status.isGranted,
-      ),
+      (_) async => (await permissions.request()).values.every((status) => status.isGranted),
     );
     _asking = answer.then<void>((_) {}, onError: (_) {});
     return answer;

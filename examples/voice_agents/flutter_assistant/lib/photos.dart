@@ -14,7 +14,9 @@ abstract final class Photos {
   /// The longest side a photo is sent at, in pixels.
   static const _longestSide = 1280;
 
-  /// Each file that reads as an image, ready to ask with. One that does not is left out.
+  /// Each of [files] that reads as an image, ready to ask with.
+  ///
+  /// One that does not is left out.
   static Future<List<AgentImage>> sources(List<XFile> files) async {
     final images = <AgentImage>[];
     for (final file in files) {
@@ -43,9 +45,7 @@ abstract final class Photos {
     // The compressor scales until both sides reach the minimum, so asking for the short
     // side's share of the longest side brings the long one to it, whichever way the photo
     // is turned.
-    final side = longest <= _longestSide
-        ? shortest
-        : (shortest * _longestSide / longest).round();
+    final side = longest <= _longestSide ? shortest : (shortest * _longestSide / longest).round();
     return FlutterImageCompress.compressWithFile(
       file.path,
       minWidth: side,

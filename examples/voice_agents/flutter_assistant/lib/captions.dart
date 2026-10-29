@@ -43,7 +43,10 @@ class Captions {
   Caption? get caption => _caption;
   bool get isVisible => _isVisible;
 
-  /// Moves the captions on to [now], [elapsed] after the last update.
+  /// Moves the captions on to [now], [elapsed] after the last update, for the latest [turn].
+  ///
+  /// The agent's words are paced by the time [agentIsAudible], and shown in full once the
+  /// agent has stopped and is no longer [agentIsAnswering].
   void update({
     required Turn? turn,
     required bool agentIsAudible,
@@ -68,12 +71,8 @@ class Captions {
           _spoken > Duration.zero &&
           !agentIsAnswering &&
           (lastAudible == null || now - lastAudible > _finished);
-      final paced =
-          (_spoken.inMicroseconds / Duration.microsecondsPerSecond * _pace)
-              .floor();
-      final count = isOver
-          ? turn.text.length
-          : paced.clamp(0, turn.text.length);
+      final paced = (_spoken.inMicroseconds / Duration.microsecondsPerSecond * _pace).floor();
+      final count = isOver ? turn.text.length : paced.clamp(0, turn.text.length);
       final said = sentence(turn.text, count);
       next = said.isEmpty ? null : Caption(said, isPerson: false);
     } else if (turn != null) {
@@ -86,8 +85,7 @@ class Captions {
     }
     final lastChange = _lastChange;
     _isVisible =
-        _caption != null &&
-        (agentIsAudible || (lastChange != null && now - lastChange < _linger));
+        _caption != null && (agentIsAudible || (lastChange != null && now - lastChange < _linger));
   }
 
   /// The sentence being said once the first [count] characters of [text] have been: whole
@@ -108,31 +106,29 @@ class Captions {
   }
 }
 
-/// A caption, white on a dark band at the bottom of the screen like a film's. What the person
-/// said is in italics.
+/// A caption, white on a dark band at the bottom of the screen like a film's.
+///
+/// What the person said is in italics.
 class CaptionView extends StatelessWidget {
-  const CaptionView({
-    super.key,
-    required this.caption,
-    required this.isVisible,
-  });
+  const CaptionView({super.key, required this.caption, required this.isVisible});
 
   final Caption? caption;
   final bool isVisible;
 
-  /// The end of [text] that fits in two lines of [maxWidth], led by an ellipsis when its start
-  /// is left out: what is being said now, rather than how the sentence began.
+  /// The end of [text] that fits in two lines of [maxWidth] in [style], led by an ellipsis
+  /// when its start is left out: what is being said now, rather than how the sentence began.
   static String tail(
     String text, {
     required TextStyle? style,
     required double maxWidth,
     TextScaler textScaler = TextScaler.noScaling,
+    TextDirection textDirection = TextDirection.ltr,
   }) {
     bool fits(String candidate) {
       final painter = TextPainter(
         text: TextSpan(text: candidate, style: style),
         maxLines: 2,
-        textDirection: TextDirection.ltr,
+        textDirection: textDirection,
         textScaler: textScaler,
       )..layout(maxWidth: maxWidth);
       final fits = !painter.didExceedMaxLines;
@@ -174,9 +170,7 @@ class CaptionView extends StatelessWidget {
                 final textStyle = style?.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w500,
-                  fontStyle: caption?.isPerson ?? false
-                      ? FontStyle.italic
-                      : FontStyle.normal,
+                  fontStyle: caption?.isPerson ?? false ? FontStyle.italic : FontStyle.normal,
                 );
                 return Text(
                   tail(
@@ -184,6 +178,7 @@ class CaptionView extends StatelessWidget {
                     style: textStyle,
                     maxWidth: constraints.maxWidth,
                     textScaler: MediaQuery.textScalerOf(context),
+                    textDirection: Directionality.of(context),
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.clip,

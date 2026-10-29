@@ -35,12 +35,15 @@ class AgentChat extends ChangeNotifier {
   final AgentSession session;
   final stream.Channel _channel;
 
-  /// Each reply's thinking in full, from its live updates. A stored step only keeps its
-  /// opening.
+  /// Each reply's thinking in full, from its live updates.
+  ///
+  /// A stored step only keeps its opening.
   final reasoning = LiveReasoning();
 
-  /// How the person rated replies on this phone, by message. Kept for the session only: the
-  /// router takes no ratings yet.
+  /// How the person rated replies on this phone, by message.
+  ///
+  /// Kept for the session only: the router takes no ratings yet.
+  // TODO: send the ratings once the router takes them.
   final ratings = <String, AIMessageRating>{};
 
   final _subscriptions = <StreamSubscription<Object?>>[];
@@ -54,8 +57,8 @@ class AgentChat extends ChangeNotifier {
   /// Whether the channel holds messages older than those loaded.
   bool hasOlderMessages = true;
 
-  // The newest message when something was last asked here, until it fails or is stopped:
-  // what arrives after it is the question and then its reply.
+  /// The newest message when something was last asked here, until it fails or is stopped:
+  /// what arrives after it is the question and then its reply.
   String? _askedAfter;
 
   void _listen() {
@@ -86,17 +89,19 @@ class AgentChat extends ChangeNotifier {
   /// From the session's socket, which says what the agent is doing before anything of the
   /// reply reaches the channel.
   String? get workingOn => switch (session.state) {
-    Working(:final skills) when skills.isNotEmpty =>
-      'Working on ${skills.map((s) => s.replaceAll('_', ' ')).join(' and ')}',
+    Working(:final skills) when skills.isNotEmpty => workingOnSkills(skills),
     _ => null,
   };
+
+  /// What the agent is doing while it works on [skills], such as "Working on web search".
+  static String workingOnSkills(List<String> skills) =>
+      'Working on ${skills.map((skill) => skill.replaceAll('_', ' ')).join(' and ')}';
 
   /// Whether the agent is thinking about the latest question and its reply shows nothing.
   bool get isThinking {
     if (workingOn != null) return false;
     final last = messages.lastOrNull;
-    final replyHasBegun =
-        last != null && last.isAgentReply && !last.isEmptyReply;
+    final replyHasBegun = last != null && last.isAgentReply && !last.isEmptyReply;
     if (session.state is Responding && !replyHasBegun) return true;
     // The session can pass through idle between the question and the first of its reply.
     final askedAfter = _askedAfter;
@@ -107,19 +112,16 @@ class AgentChat extends ChangeNotifier {
   }
 
   /// Whether a reply is on its way, from the first thought to the last word.
-  bool get isAnswering =>
-      session.state is Responding ||
-      session.state is Working ||
-      (messages.lastWhereOrNull((m) => m.isAgentReply)?.isGenerating ?? false);
+  bool get isAnswering {
+    if (session.state is Responding || session.state is Working) return true;
+    return messages.lastWhereOrNull((m) => m.isAgentReply)?.isGenerating ?? false;
+  }
 
   Future<void> loadOlderMessages() async {
     final first = messages.firstOrNull;
     if (first == null) return;
     final state = await _channel.query(
-      messagesPagination: stream.PaginationParams(
-        lessThan: first.id,
-        limit: _pageSize,
-      ),
+      messagesPagination: stream.PaginationParams(lessThan: first.id, limit: _pageSize),
     );
     hasOlderMessages = (state.messages?.length ?? 0) >= _pageSize;
     notifyListeners();
@@ -139,11 +141,7 @@ class AgentChat extends ChangeNotifier {
   int get personMessageCount => messages.where((m) => !m.isAgentReply).length;
 
   /// Asks, with [photos] from the composer and, when [thinkHarder], more time to reason.
-  Future<void> ask(
-    String text, {
-    List<XFile> photos = const [],
-    bool thinkHarder = false,
-  }) async {
+  Future<void> ask(String text, {List<XFile> photos = const [], bool thinkHarder = false}) async {
     failure = null;
     _askedAfter = messages.lastOrNull?.id ?? '';
     notifyListeners();
@@ -171,6 +169,9 @@ class AgentChat extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Stops following the channel and closes the session, which ends it on the router.
+  ///
+  /// Call [dispose] once it completes.
   Future<void> close() async {
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
@@ -189,15 +190,14 @@ extension on List<stream.Message> {
 }
 
 extension AgentReply on stream.Message {
-  /// A reply the agent wrote, which Stream's AI components render.
+  /// Whether the agent wrote this message, which Stream's AI components render as a reply.
   bool get isAgentReply => extraData['ai_generated'] == true;
 
   /// Whether the agent is still writing it.
   bool get isGenerating => extraData['generating'] == true;
 
   /// Whether it is a reply with nothing to show yet: no text and no steps.
-  bool get isEmptyReply =>
-      isAgentReply && (text ?? '').isEmpty && steps.isEmpty;
+  bool get isEmptyReply => isAgentReply && (text ?? '').isEmpty && steps.isEmpty;
 
   /// The reply's steps, in the order they happened.
   List<AIMessagePart> get steps => AIMessagePart.parseAll([
@@ -221,8 +221,7 @@ class AgentMessage with AIMessage {
   String get id => message.id;
 
   @override
-  AIMessageRole get role =>
-      message.isAgentReply ? AIMessageRole.assistant : AIMessageRole.user;
+  AIMessageRole get role => message.isAgentReply ? AIMessageRole.assistant : AIMessageRole.user;
 
   @override
   String get text => message.text ?? '';
@@ -234,10 +233,7 @@ class AgentMessage with AIMessage {
   List<AIMessageAttachment> get attachments => [
     for (final attachment in message.attachments)
       if (attachment.type == 'image' && attachment.imageUrl != null)
-        AIMessageAttachment.image(
-          Uri.parse(attachment.imageUrl!),
-          name: attachment.title,
-        )
+        AIMessageAttachment.image(Uri.parse(attachment.imageUrl!), name: attachment.title)
       else if (attachment.type == 'file' && attachment.assetUrl != null)
         AIMessageAttachment.file(
           Uri.parse(attachment.assetUrl!),
@@ -247,9 +243,9 @@ class AgentMessage with AIMessage {
         ),
   ];
 
-  /// A step keeps only the opening of its thinking; the whole of it came with the live
-  /// updates, while the reply was being written.
+  /// The whole of [step]'s thinking, from the live updates while the reply was written.
+  ///
+  /// A stored step keeps only its opening.
   @override
-  String? reasoningText(AIReasoningPart step) =>
-      _reasoning[(message: message.id, step: step.id)];
+  String? reasoningText(AIReasoningPart step) => _reasoning[(message: message.id, step: step.id)];
 }

@@ -14,6 +14,9 @@ import 'device_tools.dart';
 abstract final class Gmail {
   /// Sends a plain-text email from the person's Gmail, through the backend, and answers with
   /// the sent message's id.
+  ///
+  /// Throws a [ToolFailure] with the backend's reason when it could not send, such as when
+  /// Gmail is not connected yet.
   static Future<String> send({
     required String to,
     required String subject,
@@ -22,18 +25,11 @@ abstract final class Gmail {
     final response = await http.post(
       Assistant.backendUrl.resolve('/gmail/send'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'user_id': Assistant.userId,
-        'to': to,
-        'subject': subject,
-        'body': body,
-      }),
+      body: jsonEncode({'user_id': Assistant.userId, 'to': to, 'subject': subject, 'body': body}),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final said = response.body.trim();
-      throw ToolFailure(
-        said.isEmpty ? 'The backend could not reach Gmail.' : said,
-      );
+      throw ToolFailure(said.isEmpty ? 'The backend could not reach Gmail.' : said);
     }
     return (jsonDecode(response.body) as Map<String, Object?>)['id']! as String;
   }

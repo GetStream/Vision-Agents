@@ -3,38 +3,48 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 void main() {
-  group('Conversations', () {
-    final now = DateTime(2026, 10, 27, 15);
+  test('Conversations.dayTitle lists one started earlier today under Today', () {
+    final title = Conversations.dayTitle(DateTime(2026, 10, 27, 9), now: _now);
 
-    test('lists a conversation under the day it started', () {
-      expect(
-        Conversations.dayTitle(DateTime(2026, 10, 27, 9), now: now),
-        'Today',
-      );
-      expect(
-        Conversations.dayTitle(DateTime(2026, 10, 26, 23), now: now),
-        'Yesterday',
-      );
-      expect(
-        Conversations.dayTitle(DateTime(2026, 10, 22, 16), now: now),
-        'This week',
-      );
-      expect(
-        Conversations.dayTitle(DateTime(2026, 9, 3), now: now),
-        'September 2026',
-      );
-    });
+    expect(title, 'Today');
+  });
 
-    test('keeps the router order, starting a section when the day changes', () {
-      Session session(String id, DateTime createdAt) =>
-          Session(id: id, createdAt: createdAt);
+  test('Conversations.dayTitle lists one started late yesterday under Yesterday', () {
+    final title = Conversations.dayTitle(DateTime(2026, 10, 26, 23), now: _now);
+
+    expect(title, 'Yesterday');
+  });
+
+  test('Conversations.dayTitle lists one started six days ago under This week', () {
+    final title = Conversations.dayTitle(DateTime(2026, 10, 21, 9), now: _now);
+
+    expect(title, 'This week');
+  });
+
+  test('Conversations.dayTitle lists one started seven days ago under its month, '
+      'though less than a week has passed since', () {
+    // Later in the day than now: 6 days and 22 hours ago, but a week ago by the calendar.
+    final title = Conversations.dayTitle(DateTime(2026, 10, 20, 17), now: _now);
+
+    expect(title, 'October 2026');
+  });
+
+  test('Conversations.dayTitle lists one from an earlier month under that month', () {
+    final title = Conversations.dayTitle(DateTime(2026, 9, 3), now: _now);
+
+    expect(title, 'September 2026');
+  });
+
+  test(
+    'Conversations.sections keeps the router order, starting a section when the day changes',
+    () {
       final sections = Conversations.sections([
-        session('a', DateTime(2026, 10, 27, 9)),
-        session('b', DateTime(2026, 10, 27, 8)),
-        session('c', DateTime(2026, 10, 26, 8)),
+        _session('a', DateTime(2026, 10, 27, 9)),
+        _session('b', DateTime(2026, 10, 27, 8)),
+        _session('c', DateTime(2026, 10, 26, 8)),
         // Active again, though it started today: the list is in order of activity.
-        session('d', DateTime(2026, 10, 27, 7)),
-      ], now: now);
+        _session('d', DateTime(2026, 10, 27, 7)),
+      ], now: _now);
 
       expect(
         [
@@ -43,17 +53,21 @@ void main() {
         ],
         ['Today: a, b', 'Yesterday: c', 'Today: d'],
       );
-    });
+    },
+  );
 
-    test('names a conversation the router has not titled yet', () {
-      expect(
-        Session(id: 'a', createdAt: now).displayTitle,
-        'New conversation',
-      );
-      expect(
-        Session(id: 'a', createdAt: now, title: 'Lisbon weekend').displayTitle,
-        'Lisbon weekend',
-      );
-    });
+  test('Session.displayTitle names a conversation the router has not titled yet', () {
+    expect(_session('a', _now).displayTitle, 'New conversation');
+  });
+
+  test("Session.displayTitle is the router's title once it has one", () {
+    final session = Session(id: 'a', createdAt: _now, title: 'Lisbon weekend');
+
+    expect(session.displayTitle, 'Lisbon weekend');
   });
 }
+
+/// The moment the list is seen at in these tests: 27 October 2026, 3pm.
+final _now = DateTime(2026, 10, 27, 15);
+
+Session _session(String id, DateTime createdAt) => Session(id: id, createdAt: createdAt);

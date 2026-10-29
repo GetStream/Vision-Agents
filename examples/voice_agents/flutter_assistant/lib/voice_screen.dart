@@ -40,8 +40,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   video.CallParticipantState? _agent;
   video.CallParticipantState? _person;
 
-  /// The turns the conversation held when the call started. The call carries on the chat's
-  /// conversation, so what was written before it is already there; only what is said on the
+  /// The turns the conversation held when the call started.
+  ///
+  /// The call carries on the chat's conversation, so what was written before it is already there; only what is said on the
   /// call moves the glow and the captions.
   Set<String> _before = const {};
 
@@ -52,8 +53,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
   /// How long the person has to keep talking to count, so room noise does not.
   static const _onset = Duration(milliseconds: 120);
 
-  /// Who is talking and how loud, or null while nobody is. This comes from the audio rather
-  /// than the session: a reply is written before it is spoken and is done before the agent
+  /// Who is talking and how loud, or null while nobody is.
+  ///
+  /// This comes from the audio rather than the session: a reply is written before it is spoken and is done before the agent
   /// stops talking, and the person is transcribed only after they have started.
   ({bool isPerson, double level})? _heard;
   final _captions = Captions();
@@ -100,16 +102,15 @@ class _VoiceScreenState extends State<VoiceScreen> {
     try {
       await chat.session.startVoice();
       if (!mounted) return;
-      final voice = _voice = await VoiceSession.attach(
-        Assistant.agents,
-        chat.session.id,
-      );
+      final voice = _voice = await VoiceSession.attach(Assistant.agents, chat.session.id);
       if (!mounted) return;
       _subscriptions
         ..add(voice.session.conversation.stream.listen(_conversationChanged))
         ..add(voice.session.events().listen(_eventReceived))
+        // The card over the call shows the chat session's first question.
         ..add(chat.session.approvals.stream.listen((_) => setState(() {})))
         ..add(voice.state.stream.listen(_voiceChanged));
+      // The call's session is attached: the controls and the status read it.
       setState(() {});
       await voice.join();
     } on Object catch (error) {
@@ -117,9 +118,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  /// Leaves the call and takes the agent off it, which carries the conversation on in
-  /// writing. Leaving an attached call keeps the session, and so does not closing the call's
-  /// own session: closing one ends the session, the chat's included.
+  /// Leaves [voice]'s call and takes the agent off [chat]'s session, which carries the
+  /// conversation on in writing.
+  ///
+  /// Leaving an attached call keeps the session, and so does not closing the call's own
+  /// session: closing one ends the session, the chat's included.
   static Future<void> _hangUp(VoiceSession? voice, AgentSession chat) async {
     await voice?.leave();
     try {
@@ -134,16 +137,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
     if (call != null && _participants == null) {
       _before = {for (final turn in _voice!.session.turns) turn.id};
       _participants = call.state.valueStream.listen((callState) {
-        _person = callState.callParticipants
-            .where((p) => p.isLocal)
-            .firstOrNull;
-        _agent = callState.callParticipants
-            .where((p) => !p.isLocal)
-            .firstOrNull;
+        _person = callState.callParticipants.where((p) => p.isLocal).firstOrNull;
+        _agent = callState.callParticipants.where((p) => !p.isLocal).firstOrNull;
       });
       _lastTick = _clock.elapsed;
       _meter = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
     }
+    // The call, its camera and its failure are read from the voice state in build.
     setState(() {});
   }
 
@@ -200,18 +200,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
       _close();
       return;
     }
+    // The status says what the agent is doing, from the conversation's state.
     setState(() {});
   }
 
-  /// Shows what failed on the agent's side by the part of it that failed, as the Android app
-  /// does, and clears it once the agent hears, answers or speaks again.
+  /// Shows what failed on the agent's side by the part of it that failed, so the person knows
+  /// whether they were not heard or not answered, and clears it once the agent hears, answers
+  /// or speaks again.
   void _eventReceived(AgentEvent event) {
     switch (event.kind) {
       case AgentEventKind.error:
         setState(() => _trouble = _troubleText('${event['context'] ?? ''}'));
-      case AgentEventKind.heard ||
-          AgentEventKind.responding ||
-          AgentEventKind.spoke:
+      case AgentEventKind.heard || AgentEventKind.responding || AgentEventKind.spoke:
         if (_trouble != null) setState(() => _trouble = null);
       default:
         break;
@@ -270,8 +270,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       Responding() => (state: AIVoiceAgentState.thinking, status: 'Thinking'),
       Working(:final skills) => (
         state: AIVoiceAgentState.thinking,
-        status:
-            'Working on ${skills.map((s) => s.replaceAll('_', ' ')).join(' and ')}',
+        status: AgentChat.workingOnSkills(skills),
       ),
       _ => (state: AIVoiceAgentState.idle, status: 'Ready'),
     };
@@ -306,16 +305,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   tooltip: 'Back to chat',
                   onPressed: _close,
                   style: IconButton.styleFrom(
-                    backgroundColor: theme.colorScheme.onSurfaceVariant
-                        .withValues(alpha: 0.15),
+                    backgroundColor: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
                     padding: const EdgeInsets.all(12),
                   ),
                   icon: const Icon(Icons.close),
                 ),
               ),
             ),
-            if (call != null && voiceState!.isCameraEnabled)
-              _CameraPreview(call: call),
+            if (call != null && voiceState!.isCameraEnabled) _CameraPreview(call: call),
             Expanded(
               child: Column(
                 spacing: 16,
@@ -328,17 +325,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       children: [
                         Flexible(
                           child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: 320,
-                              maxHeight: 320,
-                            ),
+                            constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
                             child: AspectRatio(
                               aspectRatio: 1,
                               child: AIVoiceGlowView(
                                 state: presence.state,
-                                colors: _heard?.isPerson ?? false
-                                    ? _personColors
-                                    : _agentColors,
+                                colors: _heard?.isPerson ?? false ? _personColors : _agentColors,
                                 audioLevel: _heard?.level,
                               ),
                             ),
@@ -357,10 +349,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                       ],
                     ),
                   ),
-                  CaptionView(
-                    caption: _captions.caption,
-                    isVisible: _captions.isVisible,
-                  ),
+                  CaptionView(caption: _captions.caption, isVisible: _captions.isVisible),
                 ],
               ),
             ),
@@ -380,9 +369,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 child: Text(
                   failure,
                   textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
                 ),
               ),
             if (voice != null)
@@ -416,9 +403,7 @@ class _CameraPreview extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(20),
           child: ColoredBox(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
+            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
             child: SizedBox(
               height: 260,
               width: double.infinity,
@@ -445,11 +430,7 @@ class _CameraPreview extends StatelessWidget {
 
 /// The camera, mute, and back to the chat.
 class _CallControls extends StatelessWidget {
-  const _CallControls({
-    required this.voice,
-    required this.onCamera,
-    required this.onHangUp,
-  });
+  const _CallControls({required this.voice, required this.onCamera, required this.onHangUp});
 
   final VoiceSession voice;
   final VoidCallback onCamera;
@@ -499,11 +480,7 @@ class _CallControls extends StatelessWidget {
 /// A tool's question, asked over the call with Stream's approval card. The tool runs only
 /// once it is allowed, and the agent is told when it is not.
 class _ApprovalCard extends StatefulWidget {
-  const _ApprovalCard({
-    super.key,
-    required this.request,
-    required this.session,
-  });
+  const _ApprovalCard({super.key, required this.request, required this.session});
 
   final ToolApprovalRequest request;
   final AgentSession session;
@@ -519,10 +496,7 @@ class _ApprovalCardState extends State<_ApprovalCard> {
   void _answer(AIToolApprovalDecision decision) {
     setState(() => _state = AIToolApprovalSending(decision));
     try {
-      widget.session.decide(
-        widget.request.id,
-        allowed: decision == AIToolApprovalDecision.allowed,
-      );
+      widget.session.decide(widget.request.id, allowed: decision == AIToolApprovalDecision.allowed);
     } on StateError catch (error) {
       setState(() => _state = AIToolApprovalFailed(decision, error));
     } on SocketClosedException catch (error) {

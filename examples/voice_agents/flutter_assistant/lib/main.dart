@@ -47,8 +47,10 @@ class _RootScreenState extends State<RootScreen> {
   /// The conversation open, or null for a new one.
   String? _selected;
 
-  /// Which conversation the screen was opened for. It changes only when the person picks one,
-  /// so a new conversation getting its session keeps the screen it was started on.
+  /// Which conversation the screen was opened for.
+  ///
+  /// It changes only when the person picks one, so a new conversation getting its session
+  /// keeps the screen it was started on.
   var _screen = 0;
 
   @override
@@ -60,7 +62,7 @@ class _RootScreenState extends State<RootScreen> {
   void _show(String? sessionId) {
     setState(() {
       _selected = sessionId;
-      _screen++;
+      _screen += 1;
     });
     _scaffold.currentState?.closeDrawer();
   }
@@ -72,9 +74,7 @@ class _RootScreenState extends State<RootScreen> {
       key: _scaffold,
       appBar: AppBar(
         centerTitle: true,
-        titleTextStyle: theme.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+        titleTextStyle: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         leading: IconButton(
           tooltip: 'Conversations',
           onPressed: () => _scaffold.currentState?.openDrawer(),
@@ -102,7 +102,7 @@ class _RootScreenState extends State<RootScreen> {
             if (session.id == _selected) {
               setState(() {
                 _selected = null;
-                _screen++;
+                _screen += 1;
               });
             }
           },
@@ -128,10 +128,11 @@ class _RootScreenState extends State<RootScreen> {
   }
 }
 
-/// Asks for the local network before anything reaches the Mac at its address on the Wi-Fi,
-/// which Android 17 would otherwise let time out rather than fail. Through adb reverse the
-/// router and the backend are on the phone's own localhost, which needs no asking, and neither
-/// does iOS, which asks by itself.
+/// A gate that asks for the local network before anything reaches the Mac at its address on
+/// the Wi-Fi, which Android 17 would otherwise let time out rather than fail.
+///
+/// Through adb reverse the router and the backend are on the phone's own localhost, which
+/// needs no asking, and neither does iOS, which asks by itself.
 class _LocalNetwork extends StatefulWidget {
   const _LocalNetwork({required this.child});
 
@@ -142,12 +143,12 @@ class _LocalNetwork extends StatefulWidget {
 }
 
 class _LocalNetworkState extends State<_LocalNetwork> {
-  static const _channel = MethodChannel(
-    'io.getstream.visionagents.flutterassistant/localNetwork',
-  );
+  static const _channel = MethodChannel('io.getstream.visionagents.flutterassistant/localNetwork');
 
-  static bool get _onLoopback => [Assistant.routerUrl, Assistant.backendUrl]
-      .every((url) => const {'localhost', '127.0.0.1'}.contains(url.host));
+  static bool get _onLoopback => [
+    Assistant.routerUrl,
+    Assistant.backendUrl,
+  ].every((url) => const {'localhost', '127.0.0.1'}.contains(url.host));
 
   late final Future<bool> _allowed = !Platform.isAndroid || _onLoopback
       ? Future.value(true)
@@ -184,8 +185,7 @@ class _NoKey extends StatelessWidget {
       child: Notice(
         icon: Icons.key_outlined,
         title: 'No Stream key yet',
-        message:
-            "Run with --dart-define=STREAM_API_KEY=<the router's STREAM_API_KEY>.",
+        message: "Run with --dart-define=STREAM_API_KEY=<the router's STREAM_API_KEY>.",
       ),
     ),
   );
