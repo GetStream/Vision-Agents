@@ -337,16 +337,35 @@ func (s *LinqChannelSuite) TestAStopInIMessageIsConfirmedAndKeepsTheAgentAwayUnt
 // started it (the contact map row of its episode).
 func (s *LinqChannelSuite) TestAReplyFinishedAfterAStopInTheChatIsNotSent() {
 	chat, person := s.utils.uuid(), "+12025550199"
+	handOver := s.holdHandOffs()
 	s.deliver(s.received(chat, s.line, person, "Hi"), time.Now())
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
+	write := s.replyHeld(channel, handOver)
 	s.deliver(s.received(chat, s.line, person, "STOP"), time.Now())
 	s.took(1)
+	write()
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
+	s.answeredAfter(channel, 0)
 	s.Never(func() bool { return len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(telnyxStopped, s.linq.sent()[0].text)
+}
+
+// replyHeld hands the message the inbound worker wrote into channel to the agent, whose turn
+// starts at once, and returns once the agent's reply waits to be written there, which it is
+// handed to the chat only after: the reply finishes when write is called. Only a write into
+// channel is held: the worker writes episode cards elsewhere.
+func (s *LinqChannelSuite) replyHeld(channel string, handOver func()) (write func()) {
+	writing, write := s.chat.Hold("/agent/" + channel + "/message")
+	handOver()
+	select {
+	case <-writing:
+	case <-time.After(settleFor):
+		s.FailNow("the agent's reply was never written")
+	}
+	return write
 }
 
 // liveIMessageOptOuts counts the person's iMessage opt-outs not revoked.
@@ -712,9 +731,11 @@ func (s *LinqChannelSuite) TestAnEmailHandleIsAnsweredWithoutACard() {
 // answer to anyone's later message, not a scheduled delivery. Their START lifts it.
 func (s *LinqChannelSuite) TestAStopFromAnyoneInAGroupIsConfirmedAndSilencesTheGroupUntilTheirStart() {
 	chat, starter, member := s.utils.uuid(), "+12025550199", "+12025550198"
+	handOver := s.holdHandOffs()
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Hi all"), time.Now()))
 	channel := s.threadChannel(chat)
 	s.written(channel, 1)
+	write := s.replyHeld(channel, handOver)
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, member, "STOP"), time.Now()))
 
@@ -722,6 +743,7 @@ func (s *LinqChannelSuite) TestAStopFromAnyoneInAGroupIsConfirmedAndSilencesTheG
 	s.Equal(chat, stopped.chat, "confirmed in the group, where it reaches them")
 	s.Equal(telnyxStopped, stopped.text)
 	s.Equal(1, s.liveIMessageOptOuts(member))
+	write()
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.answeredAfter(channel, 0)
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(chat, starter, "Anyone there?"), time.Now()))
