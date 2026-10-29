@@ -393,3 +393,61 @@ func (s *SocketSessionSuite) TestVoiceStartedWhileItIsStoppedIsRefusedOrUnchange
 		}
 	}
 }
+
+// answersStart sends a start frame whose sample_rate is the raw JSON given, or none when it
+// is empty, and returns the socket's first answer.
+func (s *SocketSessionSuite) answersStart(sampleRate string) map[string]any {
+	connection := s.serverClient.opens("/v1/agents/socket")
+	defer func() { _ = connection.Close() }()
+	start := `{"type": "start", "session": {"greeting": {"text": "hi"}}}`
+	if sampleRate != "" {
+		start = `{"type": "start", "sample_rate": ` + sampleRate + `, "session": {"greeting": {"text": "hi"}}}`
+	}
+	s.Require().NoError(connection.WriteMessage(websocket.TextMessage, []byte(start)))
+	return s.readFrame(connection)
+}
+
+// The control: every rate a caller's audio comes in at, from a phone line's 8 kHz to
+// a browser's 192 kHz, is carried at that rate, and leaving it out still means 16 kHz.
+func (s *SocketSessionSuite) TestTheSocketCarriesTheSampleRatesAudioComesIn() {
+	for sampleRate, carried := range map[string]float64{
+		"8000": 8_000, "12000": 12_000, "16000": 16_000, "22050": 22_050, "24000": 24_000,
+		"32000": 32_000, "44100": 44_100, "48000": 48_000,
+		"11025": 11_025, "88200": 88_200, "96000": 96_000, "192000": 192_000,
+		"": 16_000, "0": 16_000, "null": 16_000,
+	} {
+		s.Run("sample_rate="+sampleRate, func() {
+			answered := s.answersStart(sampleRate)
+
+			s.Require().Equal("session", answered["type"], "the socket answered %v", answered)
+			s.InDelta(carried, answered["sample_rate"], 0)
+		})
+	}
+}
+
+// A rate the socket does not carry is refused before a session is made, with the code and
+// type POST /v1/agents/sessions answers a bad field with.
+func (s *SocketSessionSuite) TestASampleRateTheSocketDoesNotCarryIsRefused() {
+	for _, sampleRate := range []string{"1", "7999", "192001", "2147483647", "9223372036854775807", "-1", "-16000"} {
+		s.Run("sample_rate="+sampleRate, func() {
+			refused := s.answersStart(sampleRate)
+
+			s.Equal("error", refused["type"], "the socket answered %v", refused)
+			s.Equal(errSocketSampleRate.Message, refused["error"])
+			s.Equal("invalid_request", refused["code"])
+			s.Equal("invalid_request", refused["error_type"])
+		})
+	}
+}
+
+// A sample_rate that is not a whole number is not a start frame at all, as before.
+func (s *SocketSessionSuite) TestASampleRateThatIsNotAWholeNumberIsNotAStartFrame() {
+	for _, sampleRate := range []string{"16000.5", `"16000"`, "1e30", "true", "{}", "[16000]"} {
+		s.Run("sample_rate="+sampleRate, func() {
+			refused := s.answersStart(sampleRate)
+
+			s.Equal("error", refused["type"], "the socket answered %v", refused)
+			s.Contains(refused["error"], "start frame")
+		})
+	}
+}
