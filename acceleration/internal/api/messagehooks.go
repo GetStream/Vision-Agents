@@ -149,6 +149,11 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		// Every message in the app arrives here; only one written to an agent is worth
 		// recording as delivered.
+		if addressed(event) && s.awaitingOwnApp(r.Context(), origin, eventType) {
+			// Stream retries, and by then the deployment will know which app is its own.
+			writeStreamWaiting(w)
+			return
+		}
 		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
 			origin.handOver = s.replayed(r, payload)
 			s.routeArrivingMessage(r.Context(), origin, event)

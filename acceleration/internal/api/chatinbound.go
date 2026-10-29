@@ -42,16 +42,28 @@ const chatInboundReleaseTimeout = 10 * time.Second
 type chatInbound struct {
 	AppID int64  `json:"app_id"`
 	Type  string `json:"type"`
+	// CreatedAt is when Stream made the event, read as the webhook reads it (hookStamp).
+	CreatedAt json.RawMessage `json:"created_at"`
 	messageEvent
 }
 
-// receiveChatInbound takes a message Stream Chat delivers and answers it as the message
-// webhook does (receiveMessageEvent).
+// stamp is what the webhook would tell the delivery apart and date it by (hookStamp).
+func (d chatInbound) stamp() hookStamp {
+	stamp := hookStamp{CreatedAt: d.CreatedAt}
+	stamp.Message.ID = d.Message.ID
+	return stamp
+}
+
+// receiveChatInbound takes a message Stream Chat delivers and queues it in chat_inbound, for
+// the queue's worker to answer as the message webhook does (receiveMessageEvent). The 200 comes
+// once the row is committed, so a router that stops after it still has the message answered,
+// by whichever router claims it next; a delivery that could not be queued is a 503, which Stream
+// Chat delivers again.
 //
 // Only Stream can sign one: it holds the private key, and the router only the public ones.
 // Nothing an app's customer holds, its API secret, a token or its key, is enough. Every
-// outcome short of something Stream did not sign, or an app this router does not serve, is a
-// 200, for the reason the webhook gives.
+// outcome short of something Stream did not sign, an app this router does not serve, or a
+// message it could not queue, is a 200, for the reason the webhook gives.
 func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 	if len(s.chatInboundKeys) == 0 {
 		// Without a key there is no telling Stream from anyone who found the URL.
@@ -90,11 +102,46 @@ func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if addressed(delivery.messageEvent) && s.acting(r.Context(), origin, delivery.Type, body) {
-		origin.handOver = s.replayed(r, body)
-		s.routeArrivingMessage(r.Context(), origin, delivery.messageEvent)
+	if delivery.Message.ID == "" {
+		writeError(w, invalidRequest("could not read that delivery: its message has no id"))
+		return
+	}
+	if !addressed(delivery.messageEvent) || s.stale(delivery.Type, delivery.stamp()) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := s.queueChatInbound(r.Context(), origin, delivery, body); err != nil {
+		s.logger.Error("could not queue a Stream Chat delivery", "message", delivery.Message.ID,
+			"stream_app", origin.app, "error", err)
+		writeError(w, unavailable("could not queue that delivery"))
+		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// queueChatInbound queues a delivery, unless it is not the first of its message: a delivery
+// Stream Chat made again, or one the message webhook brought first (deliveryKey), which answers
+// it. The record and the row are one transaction, so the worker answering the row never finds
+// its own record in the way.
+func (s *Server) queueChatInbound(ctx context.Context, origin hookOrigin, delivery chatInbound, body []byte) error {
+	if s.store == nil {
+		return stack.Wrap(errors.New("api: no database to queue Stream Chat deliveries in"))
+	}
+	queued, err := s.store.QueueFirstChatInbound(ctx, deliveryKey(origin, delivery.Type, delivery.stamp()), store.ChatInbound{
+		StreamApp: origin.app, MessageID: delivery.Message.ID, CustomerID: origin.customer,
+		Deployment: origin.deployment, APIKey: origin.apiKey, Body: body, NextAttemptAt: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if !queued {
+		s.logger.Debug("ignoring a Stream Chat delivery of a message already delivered", "message", delivery.Message.ID, "stream_app", origin.app)
+		return nil
+	}
+	if s.kickChatInbound != nil {
+		s.kickChatInbound()
+	}
+	return nil
 }
 
 // chatInboundOrigin is the app a delivery is from, as the webhook's would be for the same

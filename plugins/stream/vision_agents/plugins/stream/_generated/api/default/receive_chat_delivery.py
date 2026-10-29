@@ -74,12 +74,14 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Receive a message Stream Chat delivers
 
-     Where Stream Chat delivers each message written in an agent channel, which is answered as the
-    message webhook answers it. The body is the message.new event with the app_id it was written in.
-    Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs
-    with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519
-    over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is
-    enough. A deployment with no delivery key answers 404.
+     Where Stream Chat delivers each message written in an agent channel. The router queues the message
+    and answers 200 once the queue holds it; a worker answers it after that, as the message webhook
+    would, and a message the webhook or an earlier delivery already brought is not queued again. The
+    body is the message.new event with the app_id it was written in. Unauthenticated because Stream is
+    not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id,
+    webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a
+    key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery
+    key answers 404.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,12 +106,14 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Receive a message Stream Chat delivers
 
-     Where Stream Chat delivers each message written in an agent channel, which is answered as the
-    message webhook answers it. The body is the message.new event with the app_id it was written in.
-    Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs
-    with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519
-    over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is
-    enough. A deployment with no delivery key answers 404.
+     Where Stream Chat delivers each message written in an agent channel. The router queues the message
+    and answers 200 once the queue holds it; a worker answers it after that, as the message webhook
+    would, and a message the webhook or an earlier delivery already brought is not queued again. The
+    body is the message.new event with the app_id it was written in. Unauthenticated because Stream is
+    not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id,
+    webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a
+    key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery
+    key answers 404.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,12 +134,14 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Receive a message Stream Chat delivers
 
-     Where Stream Chat delivers each message written in an agent channel, which is answered as the
-    message webhook answers it. The body is the message.new event with the app_id it was written in.
-    Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs
-    with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519
-    over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is
-    enough. A deployment with no delivery key answers 404.
+     Where Stream Chat delivers each message written in an agent channel. The router queues the message
+    and answers 200 once the queue holds it; a worker answers it after that, as the message webhook
+    would, and a message the webhook or an earlier delivery already brought is not queued again. The
+    body is the message.new event with the app_id it was written in. Unauthenticated because Stream is
+    not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id,
+    webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a
+    key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery
+    key answers 404.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,12 +164,14 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Receive a message Stream Chat delivers
 
-     Where Stream Chat delivers each message written in an agent channel, which is answered as the
-    message webhook answers it. The body is the message.new event with the app_id it was written in.
-    Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs
-    with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519
-    over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is
-    enough. A deployment with no delivery key answers 404.
+     Where Stream Chat delivers each message written in an agent channel. The router queues the message
+    and answers 200 once the queue holds it; a worker answers it after that, as the message webhook
+    would, and a message the webhook or an earlier delivery already brought is not queued again. The
+    body is the message.new event with the app_id it was written in. Unauthenticated because Stream is
+    not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id,
+    webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a
+    key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery
+    key answers 404.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

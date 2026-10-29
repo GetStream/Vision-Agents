@@ -383,7 +383,10 @@ type Server struct {
 	// a task due now is claimed now rather than at the worker's next look.
 	// Set by the process wiring (SetSchedulerKick); nil where no worker runs.
 	kickScheduler func()
-	mcpEvents     *mcpevents.Service
+	// kickChatInbound wakes the Stream Chat delivery worker after the endpoint queues one.
+	// Set by the process wiring (SetChatInboundKick); nil where no worker runs.
+	kickChatInbound func()
+	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
@@ -630,6 +633,12 @@ func (s *Server) SetSchedulerKick(kick func()) {
 	if s.sessions != nil {
 		s.sessions.SetSchedulerKick(kick)
 	}
+}
+
+// SetChatInboundKick hands the server the Stream Chat delivery worker's wake-up, so a delivery
+// the endpoint queues is answered now rather than at the worker's next look.
+func (s *Server) SetChatInboundKick(kick func()) {
+	s.kickChatInbound = kick
 }
 
 // kickScheduled wakes the scheduled-task worker, when this process runs one.

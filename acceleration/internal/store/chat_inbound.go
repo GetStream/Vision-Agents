@@ -92,6 +92,28 @@ ON CONFLICT (stream_app, message_id) DO NOTHING`,
 	return affected == 1, nil
 }
 
+// QueueFirstChatInbound records a delivery under key, as FirstDelivery does, and queues it, in
+// one transaction: the delivery is queued exactly when it is the first under key. queued is
+// false when key was recorded before, by the message webhook or an earlier delivery of the same
+// message: that one answers it. An error records nothing, so a delivery made again is queued.
+func (s *Store) QueueFirstChatInbound(ctx context.Context, key string, delivery ChatInbound) (queued bool, err error) {
+	if err := s.forgetDeliveries(ctx); err != nil {
+		return false, stack.Wrap(err)
+	}
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		first, err := recordDelivery(ctx, tx, key)
+		if err != nil || !first {
+			return err
+		}
+		queued, err = queueChatInbound(ctx, tx, delivery)
+		return err
+	})
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	return queued, nil
+}
+
 // ClaimChatInbound takes at most limit messages due at now, oldest due first, and moves
 // each one's next attempt to leaseUntil, so no other worker takes it while this one answers
 // it. Rows another worker is claiming at the same moment are skipped, not waited for.

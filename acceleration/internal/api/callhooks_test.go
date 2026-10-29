@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -47,6 +48,8 @@ func TestCallHooksSuite(t *testing.T) {
 func (s *CallHooksSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	// Stream Chat delivers messages too, which call events have nothing to do with.
+	s.chatInboundKeys = []ed25519.PublicKey{public(ed25519.NewKeyFromSeed([]byte("the-current-delivery-key-seed-32")))}
 	s.RouterSuite.SetupSuite()
 }
 
@@ -76,6 +79,25 @@ func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumb
 		s.False(call.At.IsZero())
 	case <-time.After(settleFor):
 		s.Fail("the call never reached the worker")
+	}
+}
+
+// Deployment mode acts on every delivery of a call event, as it always has: only a new message
+// is recorded, for Stream Chat's delivery of it.
+func (s *CallHooksSuite) TestACallDeliveredTwiceIsActedOnTwice() {
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	for range 2 {
+		select {
+		case <-worker.Calls():
+		case <-time.After(settleFor):
+			s.Fail("a delivery of the call was not acted on")
+		}
 	}
 }
 

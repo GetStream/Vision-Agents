@@ -62,6 +62,26 @@ func (s *MessageHooksSuite) TestAMessageOnAChannelAConversationAlreadyRanOnReach
 	}
 }
 
+// Deployment mode acts on every delivery of a message, as it always has, while Stream Chat
+// delivers none itself: only then does the webhook share a record of the message with it.
+func (s *MessageHooksSuite) TestAMessageDeliveredTwiceIsActedOnTwiceWithoutStreamChatDeliveries() {
+	configID := s.holds()
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
+	defer release()
+	written := s.writing(fmt.Sprintf(`{"%s": "%s"}`, ConfigField, configID))
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", written))
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", written))
+
+	for range 2 {
+		select {
+		case <-worker.Messages():
+		case <-time.After(settleFor):
+			s.Fail("a delivery of the message was not acted on")
+		}
+	}
+}
+
 // A plain chat channel, which no line binds, keeps the config of the conversation it last held
 // over the one it names.
 func (s *MessageHooksSuite) TestAChannelThatHeldAConversationIsAnsweredByItsConfigOverTheOneItNames() {

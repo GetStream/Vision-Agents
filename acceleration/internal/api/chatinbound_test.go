@@ -26,8 +26,9 @@ const deliveryApp = 1257545
 
 // ChatInboundRefusalSuite is what the Stream Chat delivery endpoint answers before a message
 // reaches anything that answers it: who it refuses, what body it reads, and which app it
-// serves. A router with no store is enough, since none of it reads one; that messages are
-// answered is ChatInboundSuite's.
+// serves. A router with no store is enough, since none of it reads one: the message it signs
+// is the agent's own, which is taken and never queued. That messages are queued and answered
+// is ChatInboundSuite's.
 type ChatInboundRefusalSuite struct {
 	suite.Suite
 	current, previous ed25519.PrivateKey
@@ -72,7 +73,7 @@ func (s *ChatInboundRefusalSuite) TestADeliveryFromTheFutureIsRefused() {
 func (s *ChatInboundRefusalSuite) TestABodyChangedAfterSigningIsRefused() {
 	body := s.message(deliveryApp)
 	signed := s.signed(body, s.current)
-	request := s.post(strings.Replace(body, "sam", "mallory", 1))
+	request := s.post(strings.Replace(body, "this morning", "yesterday", 1))
 	request.Header = signed.Header
 
 	s.Equal(http.StatusUnauthorized, s.send(request))
@@ -187,6 +188,21 @@ func (s *ChatInboundRefusalSuite) TestAnotherContentTypeIsTaken() {
 	s.Equal(http.StatusOK, s.send(request))
 }
 
+// A message.new names the message the queue holds it under, so one without an id is not a
+// message Stream Chat delivers.
+func (s *ChatInboundRefusalSuite) TestANewMessageWithoutAnIDIsABadRequest() {
+	body := strings.Replace(s.message(deliveryApp), `"id": "message-1", `, "", 1)
+
+	s.Equal(http.StatusBadRequest, s.send(s.signed(body, s.current)))
+}
+
+// A delivery the router cannot queue is one Stream Chat must make again, not one it took.
+func (s *ChatInboundRefusalSuite) TestAMessageWithNoDatabaseToQueueItInAsksForARetry() {
+	body := strings.Replace(s.message(deliveryApp), `, "source": "agent"`, "", 1)
+
+	s.Equal(http.StatusServiceUnavailable, s.send(s.signed(body, s.current)))
+}
+
 // A router in deployment mode acts in its own app alone.
 func (s *ChatInboundRefusalSuite) TestAMessageInAnotherAppIsNotServedHere() {
 	s.Equal(http.StatusNotFound, s.send(s.signed(s.message(deliveryApp+1), s.current)))
@@ -265,14 +281,16 @@ func (s *ChatInboundRefusalSuite) authenticator() auth.Authenticator {
 	})
 }
 
-// message is a message.new in an agent channel, as Stream Chat delivers it for app.
+// message is a message.new in an agent channel, as Stream Chat delivers it for app: the
+// agent's own reply, which carries a source (addressed), so the endpoint takes it without
+// queueing it.
 func (s *ChatInboundRefusalSuite) message(app int64) string {
 	return `{
   "type": "message.new",
   "app_id": ` + strconv.FormatInt(app, 10) + `,
   "channel_type": "agent",
   "channel_id": "chat-1",
-  "message": {"id": "message-1", "text": "is my order on its way?", "user": {"id": "sam", "name": "Sam"}}
+  "message": {"id": "message-1", "text": "it left this morning", "user": {"id": "agent", "name": "Agent"}, "source": "agent"}
 }`
 }
 

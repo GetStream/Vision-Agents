@@ -218,19 +218,11 @@ func eventTime(createdAt json.RawMessage) time.Time {
 // firstDelivery reports whether a hook is the first delivery of its event, which is the one
 // acted on: Stream delivers again when it does not hear back in time.
 func (s *Server) firstDelivery(ctx context.Context, origin hookOrigin, eventType string, stamp hookStamp) bool {
-	if s.store == nil {
+	key := deliveryKey(origin, eventType, stamp)
+	if s.store == nil || key == "" {
 		return true
 	}
-	var key string
-	switch {
-	case eventType == getstream.EventTypeMessageNew && stamp.Message.ID != "":
-		key = "message:" + stamp.Message.ID
-	case stamp.CallCid != "":
-		key = "call:" + stamp.CallCid + ":" + stamp.SessionID + ":" + eventType
-	default:
-		return true
-	}
-	first, err := s.store.FirstDelivery(ctx, strconv.FormatInt(origin.app, 10)+":"+key)
+	first, err := s.store.FirstDelivery(ctx, key)
 	if err != nil {
 		// Answering twice is the lesser harm than answering never.
 		s.logger.Warn("could not record a hook delivery", "error", err)
@@ -239,18 +231,63 @@ func (s *Server) firstDelivery(ctx context.Context, origin hookOrigin, eventType
 	return first
 }
 
+// deliveryKey is what a delivery is recorded under (store.FirstDelivery): one key for every
+// delivery of the same event in the same app, whether the webhook or Stream Chat's endpoint
+// (receiveChatInbound) brought it. Empty for an event no key tells apart.
+func deliveryKey(origin hookOrigin, eventType string, stamp hookStamp) string {
+	var key string
+	switch {
+	case eventType == getstream.EventTypeMessageNew && stamp.Message.ID != "":
+		key = "message:" + stamp.Message.ID
+	case stamp.CallCid != "":
+		key = "call:" + stamp.CallCid + ":" + stamp.SessionID + ":" + eventType
+	default:
+		return ""
+	}
+	return strconv.FormatInt(origin.app, 10) + ":" + key
+}
+
+// stale reports whether a verified hook was made too long ago to act on. Deployment mode acts
+// on every delivery, however old, as it always has.
+func (s *Server) stale(eventType string, stamp hookStamp) bool {
+	if s.stream == nil || !s.stream.PerApp() || stamp.fresh(time.Now()) {
+		return false
+	}
+	s.logger.Info("ignoring a stale hook", "type", eventType)
+	return true
+}
+
+// recorded reports whether a delivery of eventType is recorded, so that a second one is not
+// acted on: in app mode every one. Deployment mode acts on every delivery, as it always has,
+// except a new message while Stream Chat delivers messages too (receiveChatInbound): the
+// webhook and the endpoint record it under one key, so only the first of the two answers it.
+func (s *Server) recorded(eventType string) bool {
+	if s.stream != nil && s.stream.PerApp() {
+		return true
+	}
+	return eventType == getstream.EventTypeMessageNew && len(s.chatInboundKeys) > 0
+}
+
+// awaitingOwnApp reports whether a delivery would be recorded before the deployment knows its
+// own app. The endpoint waits for the app (chatInboundOrigin) and records the message under it,
+// so a webhook recorded under no app would not be the same delivery, and both would answer it.
+// A hook a peer handed here was recorded there.
+func (s *Server) awaitingOwnApp(ctx context.Context, origin hookOrigin, eventType string) bool {
+	return origin.deployment && origin.app == 0 && s.recorded(eventType) && !node.Forwarded(ctx) &&
+		s.stream != nil && s.stream.DeploymentAppKnowable()
+}
+
 // acting reports whether a verified hook is one to act on: made recently, and not a
-// delivery already acted on. Deployment mode acts on every delivery, as it always has.
+// delivery already acted on.
 func (s *Server) acting(ctx context.Context, origin hookOrigin, eventType string, payload []byte) bool {
-	if s.stream == nil || !s.stream.PerApp() {
+	if !s.recorded(eventType) {
 		return true
 	}
 	var stamp hookStamp
 	if err := json.Unmarshal(payload, &stamp); err != nil {
 		return true
 	}
-	if !stamp.fresh(time.Now()) {
-		s.logger.Info("ignoring a stale hook", "type", eventType)
+	if s.stale(eventType, stamp) {
 		return false
 	}
 	// The node that handed it over recorded the delivery, so this one is not the second.

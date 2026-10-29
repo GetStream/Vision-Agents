@@ -71,7 +71,7 @@ type Worker struct {
 	lease   time.Duration
 	logger  *slog.Logger
 
-	// kick wakes the loop: a slot freed.
+	// kick wakes the loop: a slot freed, or a message was queued (Kick).
 	kick chan struct{}
 	// slots holds one token for each answer running.
 	slots chan struct{}
@@ -137,6 +137,15 @@ func (w *Worker) Start() {
 	}()
 }
 
+// Kick wakes the loop to look for due messages now: the endpoint queued one, which an idle
+// loop would otherwise find only at its next look, up to a minute on.
+func (w *Worker) Kick() {
+	select {
+	case w.kick <- struct{}{}:
+	default:
+	}
+}
+
 // Close stops claiming and waits for the answers in flight, so what came of each is recorded
 // rather than left for its lease to run out and another router to try it again.
 func (w *Worker) Close() {
@@ -169,10 +178,7 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 			defer w.working.Done()
 			defer func() {
 				<-w.slots
-				select {
-				case w.kick <- struct{}{}:
-				default:
-				}
+				w.Kick()
 			}()
 			w.attempt(delivery)
 		}()
