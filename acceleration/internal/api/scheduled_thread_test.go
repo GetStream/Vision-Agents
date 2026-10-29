@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -224,6 +225,7 @@ func (s *TelnyxChannelSuite) TestSomeoneElseWritingInAPersonsThreadIsNotOfferedT
 	s.planTool("list_scheduled_tasks", `{}`)
 	sent, replies := len(s.telnyx().sent()), s.repliesIn(channel)
 	message := maps.Clone(s.chat.Delivered(channel)[0])
+	delete(message, channelbridge.BridgedField)
 	message["id"] = store.NewID()
 	message["text"] = "what tasks have I got"
 	message["user"] = map[string]any{"id": "alice"}

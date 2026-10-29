@@ -120,7 +120,7 @@ func (s *EventForwardingSuite) TestAMessageAnAgentAnswersGoesOnlyToADestinationO
 	s.Equal(http.StatusOK, status)
 	s.Equal(body, s.forwardedTo(every, 1)[0].body)
 	s.Never(func() bool { return len(unhandled.requests()) > 0 }, dropped, 20*time.Millisecond)
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond,
+	s.Require().Eventually(func() bool { return len(s.bridged(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond,
 		"the agent's thread channel still gets the message")
 }
 
@@ -156,7 +156,7 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedIsForwardedWhenItArrivesAndAn
 	s.Equal(reply, s.forwardedTo(target, 1)[0].body, "unhandled when it arrives")
 	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100"), 1)
 
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 2 }, settleFor, 10*time.Millisecond,
+	s.Require().Eventually(func() bool { return len(s.bridged(s.threadChannel())) == 2 }, settleFor, 10*time.Millisecond,
 		"the agent's thread channel gets the mention and the reply")
 	s.Never(func() bool { return len(target.requests()) > 1 }, dropped, 20*time.Millisecond,
 		"the mention an agent answers is not unhandled")
@@ -209,7 +209,7 @@ func (s *EventForwardingSuite) TestABatchsMessagesThatAreNotWrittenAreForwardedO
 	first, second, third := s.inbound("1759740000.000100"), s.inbound("1759740000.000300"), s.inbound("1759740000.000500")
 	_, err := s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{first}, nil)
 	s.Require().NoError(err)
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.bridged(s.threadChannel())) == 1 }, settleFor, 10*time.Millisecond)
 	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
 	delivery := eventforward.Event{CustomerID: s.customerID(), ConnectorID: "slack_bot", ID: "Ev" + s.utils.uuid(),
 		Headers: map[string]string{"Content-Type": "application/json", "X-Slack-Signature": "v0=synthetic"}}
@@ -261,10 +261,10 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedIsWrittenWhenItsMentionFailsT
 
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
-		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.bridged(channel)))
 	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"},
-		[]any{s.chat.Stored(channel)[0]["id"], s.chat.Stored(channel)[1]["id"]})
+		messageIDsOf(s.bridged(channel)))
 }
 
 // A reply that waited and itself fails to queue waits again too, for the mention's retry.
@@ -281,8 +281,8 @@ func (s *EventForwardingSuite) TestAReplyThatWaitedAndFailsToQueueIsWrittenWhenI
 
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
-		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.bridged(channel)))
 }
 
 // A provider that hangs up while its message is queued cancels the request's context
@@ -298,7 +298,7 @@ func (s *EventForwardingSuite) TestAMessageWhoseRequestEndsWhileItIsQueuedIsWrit
 	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
 // A message the store fails to queue after its provider hung up is not claimed either, so the
@@ -316,7 +316,7 @@ func (s *EventForwardingSuite) TestAMessageWhoseQueueFailsAfterItsRequestEndedIs
 	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
 // A reply that waited waits again when its mention fails to queue after the provider hung up:
@@ -353,7 +353,7 @@ func (s *EventForwardingSuite) TestAMessageWhoseQueueHangsIsAnsweredInTimeAndNot
 	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 1 }, settleFor, 10*time.Millisecond)
 }
 
 // A message whose waiting replies cannot be taken is neither claimed nor queued, so Slack's
@@ -372,8 +372,8 @@ func (s *EventForwardingSuite) TestAMessageWhoseWaitingRepliesCannotBeTakenIsTak
 	_, err = s.bridge.Deliver(context.Background(), s.app, []core.InboundMessage{s.inbound("1759740000.000100")}, nil)
 	s.Require().NoError(err)
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 2 }, settleFor, 10*time.Millisecond,
-		"the mention and the reply that waited are written, not %d messages", len(s.chat.Stored(channel)))
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 2 }, settleFor, 10*time.Millisecond,
+		"the mention and the reply that waited are written, not %d messages", len(s.bridged(channel)))
 }
 
 // Slack retrying a mention while its first delivery is still being taken claims and queues it
@@ -394,7 +394,7 @@ func (s *EventForwardingSuite) TestTwoDeliveriesOfAMentionAtOnceQueueItAndTheRep
 
 	s.settled()
 	channel := s.threadChannel()
-	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"}, messageIDsOf(s.chat.Stored(channel)))
+	s.Equal([]any{channel + "-1759740000.000100", channel + "-1759740000.000200"}, messageIDsOf(s.bridged(channel)))
 }
 
 // messageIDsOf are the ids of messages Stream Chat stored, in order.
@@ -485,10 +485,10 @@ func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsWritten
 	s.Require().NoError(err)
 	s.True(answered)
 	next := s.anotherRouter()
-	next.Start()
+	next.Start(s.router.AnswerQueued)
 	defer next.Close()
 	channel := s.threadChannel()
-	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 1 }, settleFor, 10*time.Millisecond)
 	s.Equal(channel+"-1759740000.000100", s.chat.Stored(channel)[0]["id"])
 }
 
@@ -510,7 +510,7 @@ func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsForward
 
 	s.Require().NoError(err)
 	next := s.anotherRouter()
-	next.Start()
+	next.Start(s.router.AnswerQueued)
 	defer next.Close()
 	got := s.forwardedTo(target, 1)[0]
 	s.Equal(message.Raw, got.body)

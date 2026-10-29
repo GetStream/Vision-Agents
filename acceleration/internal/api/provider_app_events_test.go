@@ -110,7 +110,8 @@ func (s *SlackChannelSuite) TestAMessageIsWrittenIntoANewThreadChannelAsThePerso
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	stored := s.written(channel, 1)
 	s.Equal("Can you check the build?", stored[0]["text"], "without the bot's mention (AI-990 F29)")
-	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
+	s.Equal(map[string]any{channelbridge.BridgedField: true}, stored[0]["custom"],
+		"without source, so the conversation takes it as the person's; bridged, so the hook leaves it to the worker")
 	author, _ := stored[0]["user_id"].(string)
 	user, found := s.chat.User(author)
 	s.Require().True(found, "the Slack author is a Stream Chat user")
@@ -151,7 +152,7 @@ func (s *SlackChannelSuite) TestThreePeopleInOneThreadAreOneThreadChannel() {
 	s.deliver(s.message("U0000CAROL", "mine failed", "1759740000.000300", "1759740000.000100"), 0)
 
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
-	stored := s.written(channel, 3)
+	stored := s.bridgedWritten(channel, 3)
 	authors := map[any]bool{}
 	for _, message := range stored {
 		authors[message["user_id"]] = true
@@ -178,7 +179,7 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 	s.Equal(http.StatusOK, status, "a retry is taken, so Slack stops retrying")
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	s.written(channel, 1)
-	s.Never(func() bool { return len(s.chat.Messages(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.bridged(channel)) > 1 }, dropped, 20*time.Millisecond)
 	s.writtenByTheInboundWorker(channel)
 }
 
@@ -400,8 +401,8 @@ func (s *SlackChannelSuite) TestAReplyInAThreadTheBotWasMentionedInIsWrittenWith
 
 	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.001300", "1759740000.001200"), 0)
 
-	stored := s.written(channel, 2)
-	s.Equal("and the deploy?", stored[1]["text"])
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 2 }, settleFor, 10*time.Millisecond)
+	s.Equal("and the deploy?", s.bridged(channel)[1]["text"])
 }
 
 // AI-989: a mention in a thread of people starts the bot there; the replies before it are
@@ -413,7 +414,7 @@ func (s *SlackChannelSuite) TestAMentionInAThreadOfPeopleStartsTheBotThere() {
 	s.deliver(s.message("U0000BOB", botMention+"do you know?", "1759740000.001600", "1759740000.001400"), 0)
 	s.deliver(s.message("U0000ALICE", "thanks", "1759740000.001700", "1759740000.001400"), 0)
 
-	stored := s.written(s.threadChannel("C0000CHAN:1759740000.001400"), 2)
+	stored := s.bridgedWritten(s.threadChannel("C0000CHAN:1759740000.001400"), 2)
 	s.Equal([]any{"do you know?", "thanks"}, []any{stored[0]["text"], stored[1]["text"]})
 }
 
@@ -623,7 +624,9 @@ func (s *SlackChannelSuite) TestAMentionRetriedAfterItLinkedItsThreadTakesTheRep
 	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
 	s.Require().Equal(http.StatusOK, status)
-	stored := s.written(channel, 2)
+	// The person's messages alone: the agent's answer to the mention may land between them.
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) >= 2 }, settleFor, 10*time.Millisecond)
+	stored := s.bridged(channel)
 	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
 	s.Zero(s.waiting(), "the reply no longer waits")
 }
@@ -651,7 +654,7 @@ func (s *SlackChannelSuite) TestAMentionDeliveredTwiceWritesEachReplyThatWaitedO
 
 	stored := s.written(channel, 1)
 	s.Equal("and the deploy?", stored[0]["text"], "the mention was claimed, so only the reply is written")
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.bridged(channel)) > 1 }, dropped, 20*time.Millisecond)
 	s.Zero(s.waiting())
 }
 
@@ -666,7 +669,7 @@ func (s *SlackChannelSuite) TestAReplyThatArrivesBeforeTheRetriedMentionIsWritte
 	status, _ = s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
 	s.Require().Equal(http.StatusOK, status)
-	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	stored := s.bridgedWritten(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
 	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]},
 		"the mention first, then the reply that waited for it")
 	s.Zero(s.waiting(), "the reply no longer waits")
@@ -693,7 +696,7 @@ func (s *SlackChannelSuite) TestRepliesArrivingWithTheirMentionsAreAllWritten() 
 	delivered.Wait()
 
 	for i := range threads {
-		s.written(s.threadChannel(fmt.Sprintf("C0000CHAN:1759740000.%06d", 1000+10*i)), 2)
+		s.bridgedWritten(s.threadChannel(fmt.Sprintf("C0000CHAN:1759740000.%06d", 1000+10*i)), 2)
 	}
 }
 
@@ -716,7 +719,7 @@ func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithoutTheBotsMention()
 
 	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
-	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	stored := s.bridgedWritten(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
 	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
 }
 
@@ -749,7 +752,7 @@ func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithItsFiles() {
 
 	s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
-	stored := s.written(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
+	stored := s.bridgedWritten(s.threadChannel("C0000CHAN:1759740000.000100"), 2)
 	s.Equal("and this?", stored[1]["text"])
 	s.Equal([]string{"https://files.slack.test/build.png"}, photoURLs(stored[1]), "the reply is written with its file")
 }
@@ -794,17 +797,18 @@ func (s *SlackChannelSuite) TestAReplyThatWaitedAndIsDeliveredAgainIsWrittenOnce
 
 	s.deliver(reply, 1)
 
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 2 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.bridged(channel)) > 2 }, dropped, 20*time.Millisecond)
 }
 
 // Another router holds the thread's turn: this one waits, and answers once it is let go.
 func (s *SlackChannelSuite) TestAThreadAnotherRouterIsAnsweringWaitsForItsTurn() {
+	handOver := s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	taken, err := s.store.TakeChannelThreadTurn(context.Background(), channel, "another-router", time.Now().Add(time.Minute))
 	s.Require().NoError(err)
 	s.Require().True(taken)
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	handOver()
 
 	s.Never(func() bool { return len(s.slack.Posts()) > 0 }, 500*time.Millisecond, 20*time.Millisecond,
 		"two routers never answer one thread at once")
@@ -814,8 +818,9 @@ func (s *SlackChannelSuite) TestAThreadAnotherRouterIsAnsweringWaitsForItsTurn()
 
 // A worker that opens a session for a thread channel through POST /v1/agents/sessions names
 // it by agent_id, as the Go SDK's Dispatch.Conversation does; the session keeps its
-// conversation in the thread channel, where the hook's turns and the bridge find it.
+// conversation in the thread channel, where the agent's turns and the bridge find it.
 func (s *SlackChannelSuite) TestASessionOpenedThroughTheAPIForAThreadChannelHoldsItsConversationThere() {
+	s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 
 	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
@@ -1052,6 +1057,15 @@ func (s *SlackChannelSuite) written(channel string, count int) []map[string]any 
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) >= count }, settleFor, 10*time.Millisecond,
 		"%s holds %d messages, not %d", channel, len(s.chat.Stored(channel)), count)
 	return s.chat.Stored(channel)
+}
+
+// bridgedWritten waits until the channel bridge wrote at least count people's messages into a
+// thread channel, and returns them (bridged): the agent's answer to the first, which the worker
+// hands over as soon as it is written, can land between them.
+func (s *SlackChannelSuite) bridgedWritten(channel string, count int) []map[string]any {
+	s.Require().Eventually(func() bool { return len(s.bridged(channel)) >= count }, settleFor, 10*time.Millisecond,
+		"%s holds %d messages the bridge wrote, not %d", channel, len(s.bridged(channel)), count)
+	return s.bridged(channel)
 }
 
 // streamDelivers delivers the message.new Stream Chat sends for the index-th message of a

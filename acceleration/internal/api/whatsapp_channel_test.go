@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
@@ -79,7 +80,8 @@ func (s *WhatsAppChannelSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.meta = newFakeMeta(s.T())
 	s.app, s.unit = s.digits(), s.digits()
-	s.secret, s.token = "synthetic-app-secret-"+s.utils.uuid(), "synthetic-meta-token-"+s.utils.uuid()
+	s.secret, s.token = "synthetic-app-secret-"+s.utils.uuid(), metaTokenPrefix+s.utils.uuid()
+	s.meta.authorization = "Bearer " + s.token
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("whatsapp"),
 		ConnectorOAuthClientRequest{ProviderAppID: s.app, SigningSecret: s.secret}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
@@ -152,18 +154,17 @@ func (s *WhatsAppChannelSuite) TestAHandshakeWhereNoneIsDeclaredAnswersAsOnBase(
 }
 
 // The production path end to end: the person's WhatsApp message lands in their thread
-// channel; Stream Chat's message.new reaches the message hook; the Router's session answers
-// there; the bridge sends the reply from the business number with its access token (send).
+// channel; the inbound worker hands it to the agent; the Router's session answers there; the
+// bridge sends the reply from the business number with its access token (send).
 func (s *WhatsAppChannelSuite) TestAWhatsAppMessageIsAnsweredFromTheBusinessNumber() {
 	person := "16505551234"
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.unit, person, "Does it come in another color?")))
 	channel := s.threadChannel(person)
 	stored := s.written(channel, 1)
 	s.Equal("Does it come in another color?", stored[0]["text"])
-	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
+	s.Equal(map[string]any{channelbridge.BridgedField: true}, stored[0]["custom"],
+		"without source, so the conversation takes it as the person's; bridged, so the hook leaves it to the worker")
 	s.writtenByTheInboundWorker(channel)
-
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	sent := s.took(1)[0]
 	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, sent.withoutAuthorization())
@@ -214,15 +215,22 @@ func (s *WhatsAppChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 // A reply the agent was writing when the person sent STOP is not sent: nothing follows the
 // confirmation (channelbridge.Bridge.reply).
 func (s *WhatsAppChannelSuite) TestAReplyFinishedAfterStopIsNotSent() {
+	s.config.LLM = "holding/holding-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.holding.holds()
+	s.T().Cleanup(s.holding.answers)
+	asked := len(s.holding.replies())
 	person := "16505551234"
 	s.deliver(s.received(s.unit, person, "Hi"))
 	channel := s.threadChannel(person)
-	s.written(channel, 1)
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) > asked }, settleFor, 10*time.Millisecond,
+		"the agent never started its reply")
 	s.deliver(s.received(s.unit, person, "STOP"))
 	s.took(1)
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.holding.answers()
 
+	s.answeredAfter(channel, 0)
 	s.Never(func() bool { return len(s.meta.sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(telnyxStopped, s.meta.sent()[0].text)
 }
@@ -417,6 +425,11 @@ func (s *WhatsAppChannelSuite) took(count int) []metaMessage {
 // answers 200 with the message's id.
 type fakeMeta struct {
 	server *httptest.Server
+	// authorization is the header the test's own number sends with. A send with another
+	// test's is a reply an earlier test's turn finished late (the inbound worker answers every
+	// message it writes), which the harness waits for (turnsEnded): it fails the test.
+	authorization string
+	t             *testing.T
 
 	mu       sync.Mutex
 	messages []metaMessage
@@ -435,8 +448,12 @@ func (m metaMessage) withoutAuthorization() metaMessage {
 	return m
 }
 
+// metaTokenPrefix starts the access token of every test's number: the bearer header of a send
+// tells whose test it came from.
+const metaTokenPrefix = "synthetic-meta-token-"
+
 func newFakeMeta(t *testing.T) *fakeMeta {
-	meta := &fakeMeta{}
+	meta := &fakeMeta{t: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v25.0/{unit}/messages", meta.send)
 	meta.server = httptest.NewTLSServer(mux)
@@ -460,8 +477,12 @@ func (f *fakeMeta) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, "Bearer "+metaTokenPrefix) && header != f.authorization {
+		f.t.Errorf("Meta took a send with another test's token: a reply outlived its test")
+	}
 	f.messages = append(f.messages, metaMessage{unit: r.PathValue("unit"), to: sent.To, kind: sent.Type, text: sent.Text.Body,
-		authorization: r.Header.Get("Authorization")})
+		authorization: header})
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
