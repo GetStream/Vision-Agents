@@ -13,10 +13,24 @@ import { Session, type SessionOptions } from "./session.js";
 export interface SessionSpec
   extends Omit<
     Schemas["CreateSessionRequest"],
-    "agent" | "config_id" | "model_overwrites" | "tools"
+    "agent" | "config_id" | "model_overwrites" | "tools" | "timezone"
   > {
   /** What to change about the models for this conversation alone. */
   modelOverwrites?: Schemas["ModelOverwrites"];
+  /**
+   * The person's IANA zone, such as `Europe/Lisbon`. The agent tells the date and the hour in
+   * it, and for a user the caller may name it is remembered as theirs for the scheduled tasks
+   * and sessions that follow. A zone the router does not know is refused with a 400
+   * `invalid_timezone`, and the session is not opened.
+   *
+   * Left out in a page, it is the zone the browser reports for this device, sent only when it
+   * reads as a zone name: `UTC`, or one with a slash in it. Left out anywhere else, such as on
+   * a server, a React Native app or a web worker, none is sent, because the zone of the
+   * machine running the code is not known to be the caller's; an app there that knows the
+   * person's zone passes it. An empty string sends none anywhere, which leaves the user's
+   * stored zone, then the agent config's default, to decide.
+   */
+  timezone?: string;
 }
 
 /** Opening a session, plus how it is watched. */
@@ -63,13 +77,18 @@ export class Sessions {
    * It resolves once the backend is holding the conversation, so a session that has opened
    * is one that is already listening. Without `start_voice` it is held in writing, which is
    * what the resource surface is mostly for: a conversation somebody comes back to.
+   *
+   * Opened from a page, the session is in the device's own zone unless `timezone` says
+   * otherwise.
    */
   create(options: CreateSessionOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
+    const { tools, interim, decisions, watch, modelOverwrites, timezone, ...rest } = options;
+    const zone = timezone ?? deviceTimezone();
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
       ...rest,
       ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
+      ...(zone ? { timezone: zone } : {}),
     };
     return Session.open(this.client, request, watching({ tools, interim, decisions, watch }));
   }
@@ -152,6 +171,34 @@ export class Sessions {
       ...(query.cursor ? { cursor: query.cursor } : {}),
     };
   }
+}
+
+/**
+ * The zone this device is in, or the empty string when there is none to trust.
+ *
+ * Only a page has one: there the code runs on the person's own device, so the zone the browser
+ * reports is theirs. Anywhere else it is the zone of whatever machine the code runs on, often
+ * a server's UTC, and sending it for a verified user would store it as theirs.
+ *
+ * What the browser reports is sent only when it reads as a zone name, `UTC` or one with a
+ * slash in it, and never `Etc/Unknown`, which is what ICU says when it could not tell. A
+ * zone the router does not know fails the session, and a default the app never chose must
+ * not be what fails it.
+ */
+function deviceTimezone(): string {
+  if ((globalThis as { document?: unknown }).document === undefined) {
+    return "";
+  }
+  let zone: unknown;
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return "";
+  }
+  if (typeof zone !== "string" || zone === "Etc/Unknown") {
+    return "";
+  }
+  return zone === "UTC" || zone.includes("/") ? zone : "";
 }
 
 /** How a session is watched, with what was left out left out. */
