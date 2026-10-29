@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"log/slog"
+	"net"
 	"os"
 	"syscall"
 	"testing"
@@ -130,13 +131,20 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Chat.InboundKeys = []string{base64.StdEncoding.EncodeToString(public)}
 	settings.Shutdown.Drain = time.Minute
+	// The peer listener closes when the drain ends, so a dial to it says whether the drain
+	// still runs.
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	settings.Node.Listen = free.Addr().String()
+	s.Require().NoError(free.Close())
 
 	customer := "customer-" + uuid.NewString()
 	writing, later := s.thread(customer), s.thread(customer)
 	waiting, release := chat.Hold("/" + writing.ChannelID + "/message")
 	// Due after the router has started and been told to stop: the workers wait for it then.
-	// Under writeTimeout (30 s), so the write held is still in flight once it is due.
-	due := time.Now().Add(20 * time.Second)
+	// Well under writeTimeout (30 s), so the write held is still in flight once it is due and
+	// has the rest to finish in.
+	due := time.Now().Add(12 * time.Second)
 	s.queueInbound(writing, time.Now())
 	s.queueInbound(later, due)
 	message := "message-" + uuid.NewString()
@@ -174,11 +182,13 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	case <-time.After(15 * time.Second):
 		s.Require().Fail("the router never wrote the first message")
 	}
+	// The worker starts before the listeners do; the signal is for a router that serves.
+	s.Require().Eventually(func() bool { return serving(settings.Node.Listen) }, 15*time.Second, 10*time.Millisecond)
 	s.Require().True(time.Now().Before(due.Add(-2*time.Second)), "the router took too long to start")
 
 	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
 	s.Never(func() bool {
-		return isClosed(stopped) || s.inbound(later).NextAttemptAt.After(due.Add(time.Second)) ||
+		return isClosed(stopped) || !serving(settings.Node.Listen) || s.inbound(later).NextAttemptAt.After(due.Add(time.Second)) ||
 			s.chatInbound(message).NextAttemptAt.After(due.Add(time.Second))
 	}, time.Until(due.Add(2*time.Second)), 50*time.Millisecond,
 		"the drain ended with the write in flight, or a draining router took a message")
@@ -241,6 +251,16 @@ func (s *DrainSuite) chatInbound(messageID string) store.ChatInbound {
 func (s *DrainSuite) deleteChatInbound(messageID string) {
 	_, err := s.db.DB().NewDelete().Model((*store.ChatInbound)(nil)).Where("message_id = ?", messageID).Exec(context.Background())
 	s.NoError(err)
+}
+
+// serving is whether a listener takes connections at address.
+func serving(address string) bool {
+	conn, err := net.DialTimeout("tcp", address, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // isClosed is whether done is closed, without waiting.
