@@ -249,11 +249,12 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 	if may, err := s.mayStillWrite(ctx, origin, customerID); !may {
-		if err != nil {
+		if err != nil && origin.queued {
 			s.logger.Error("not starting work for a customer whose app could not be read",
 				"channel", event.ChannelID, "customer", customerID, "error", err)
 			return false
 		}
+		// A hook is not tried again, so it ends here as it always has.
 		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
 			"channel", event.ChannelID, "customer", customerID)
 		return true
