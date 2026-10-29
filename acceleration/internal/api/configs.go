@@ -1308,7 +1308,9 @@ func guardrailComplaint(ctx context.Context, policy *string) (string, bool) {
 		err = egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, User: endpoint.User, Host: endpoint.Host}).String())
 	}
 	if err != nil {
-		return "guardrail: url must be a public https URL: " + err.Error(), false
+		// One answer for every refusal, as for MCP servers and connectors: a name that does not
+		// resolve is not told apart from one that resolves to a private address.
+		return "guardrail: url must be a public https URL; the router cannot reach a webhook on a private network, loopback or link-local address", false
 	}
 	return "", true
 }

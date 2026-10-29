@@ -723,6 +723,18 @@ func (s *ConfigsSuite) TestAGuardrailWebhookOnAPrivateAddressIsRefused() {
 	}
 }
 
+func (s *ConfigsSuite) TestAGuardrailWebhookRefusalDoesNotTellAnUnresolvableNameFromAPrivateOne() {
+	refusals := map[string]bool{}
+	for _, url := range []string{"https://hooks.acme.invalid/check", "https://localhost/check", "https://10.1.2.3/check"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "support", "guardrail": webhookGuardrail(url)})
+		s.Equal(http.StatusBadRequest, status, url)
+		refusals[failure] = true
+	}
+
+	s.Len(refusals, 1, "every refusal reads the same")
+}
+
 func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateGuardrailWebhook() {
 	created := s.createConfig(map[string]any{"name": "support"})
 	policy := webhookGuardrail("https://169.254.169.254/check")
