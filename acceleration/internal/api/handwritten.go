@@ -376,7 +376,7 @@ func documentHandWritten(api huma.API) {
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +
 			"type's query parameter never names a backend, so it cannot make a browser's socket one.",
 		Parameters: []*huma.Param{
-			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Default: 4}},
+			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(maxCapacity), Default: defaultCapacity}},
 			{Name: "active", In: "query", Description: "How much work this worker is still running from before it reconnected, which the router " +
 				"counts against its capacity until each piece is reported `done`. Sending this at all, " +
 				"even as 0, is what says the worker reports `done`; one that leaves it out is held only " +

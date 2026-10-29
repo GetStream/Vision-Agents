@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A dispatch worker's capacity is at most 1024
+
+`GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).
+
 ### Call and chat tokens in a shared Stream app are bound to the customer
 
 In a Stream app the router shares between customers, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint a token only for their default listener or reader, or for one of the customer's own guests; any other `user_id` is refused with `400`. `chat-token` refuses an agent channel the router opened for another customer, and stamps a channel it opens with the calling customer. A customer acting in its own Stream app names any `user_id`, as before (AI-1851).
