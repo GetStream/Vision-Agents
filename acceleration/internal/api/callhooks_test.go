@@ -50,7 +50,7 @@ func TestCallHooksSuite(t *testing.T) {
 func (s *CallHooksSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
-	s.sessionsPhone = true
+	s.sessionTelephony = true
 	s.RouterSuite.SetupSuite()
 }
 
