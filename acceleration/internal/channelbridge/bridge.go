@@ -57,7 +57,9 @@ const agentField = "support_agent_id"
 // worker hands that message to the agent itself (Answer). Stream Chat keeps a message's custom
 // fields and its message.new carries them at the top level of the message, as it does the
 // source the agent writes on its own (chatlog.SourceField), which the hook reads the same way.
-const BridgedField = "bridged"
+// The field is in the customer's Stream app, where the customer's own clients write custom
+// fields too, so its name is this router's own: a customer's plain bridged: true marks nothing.
+const BridgedField = "stream_agents_bridged"
 
 // Written is a person's message as the worker wrote it into its thread channel: what the
 // agent is handed (Answer).

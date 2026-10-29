@@ -52,6 +52,19 @@ func (s *SlackChannelSuite) TestAMessageAnAppUserWritesInAThreadChannelIsAnswere
 	s.Never(func() bool { return len(s.slack.Posts()) > 2 }, dropped, 20*time.Millisecond)
 }
 
+// The mark is a field of the router's own name: a customer's client that writes a plain
+// bridged: true on a message in the thread channel is still answered by the hook.
+func (s *SlackChannelSuite) TestAMessageWithACustomersOwnBridgedFieldIsAnsweredByTheHook() {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.posted(1)
+	index := s.writtenStraightIntoStream(channel, map[string]any{"bridged": true})
+
+	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, index))
+
+	s.Len(s.posted(2), 2)
+	s.Never(func() bool { return len(s.slack.Posts()) > 2 }, dropped, 20*time.Millisecond)
+}
+
 // Slack retries a delivery it got no 2xx for in time; the person gets one reply.
 func (s *SlackChannelSuite) TestARetriedDeliveryIsAnsweredOnce() {
 	event := s.message("U0000ALICE", "is the build green?", "1759740000.000100", "")

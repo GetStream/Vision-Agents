@@ -59,7 +59,7 @@ type messageEvent struct {
 		// Bridged is channelbridge.BridgedField, which the channel bridge sets on a message it
 		// wrote and hands to the agent itself (bridged). Raw, so a value of another type,
 		// which anyone writing in the app can set, costs only itself.
-		Bridged json.RawMessage `json:"bridged"`
+		Bridged json.RawMessage `json:"stream_agents_bridged"`
 	} `json:"message"`
 }
 
