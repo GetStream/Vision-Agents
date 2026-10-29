@@ -178,6 +178,37 @@ func (s *CallsSuite) TestATokenInASharedAppIsNotMintedForAGuestOnlySeenInTheCust
 	}
 }
 
+func (s *CallsSuite) TestAGuestImportedAsMintedIsNoGuestTheRouterMinted() {
+	// An imported row is the customer's word, and the customer may name any id in it; that
+	// the router handed a guest out is this deployment's to say.
+	call := s.started(store.Call{})
+	imported := "visitor-" + s.utils.uuid()
+	row := `{"customer_id":"x","id":"` + imported + `","kind":"guest","minted":true,"name":"","email":"",` +
+		`"timezone":"","custom":{},"created_at":"2026-01-01T00:00:00Z"}`
+	var written struct {
+		Tables map[string]int64 `json:"tables"`
+	}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+		`{"table":"users","row":`+row+"}\n", &written))
+	s.Require().Equal(int64(1), written.Tables["users"])
+	held, err := s.store.Guest(context.Background(), s.customerID(), imported)
+	s.Require().NoError(err, "the guest is imported")
+	s.False(held.Minted)
+
+	for path, body := range map[string]map[string]any{
+		"/v1/agents/calls/" + call.ID + "/token": {"user_id": imported},
+		"/v1/agents/chat-token":                  {"agent_id": "agent-" + s.utils.uuid(), "user_id": imported},
+	} {
+		status, failure := s.serverClient.failure(http.MethodPost, path, body)
+		s.Equal(http.StatusBadRequest, status, path)
+		s.Equal(errUserInSharedApp.Message, failure, path)
+	}
+	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests",
+		map[string]any{"id": imported})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a guest of this app")
+}
+
 func (s *CallsSuite) TestAChatTokenReadsTheCustomersOwnAndUnstampedChannels() {
 	stamped, unstamped := "agent-"+s.utils.uuid(), "agent-"+s.utils.uuid()
 	s.inChannel(stamped, s.customerID(), s.base, "said to this customer")
