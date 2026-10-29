@@ -165,9 +165,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
-### The session socket takes only the sample rates audio comes in at
+### The session socket takes only a bounded sample rate
 
-`/v1/agents/socket` takes a start frame's `sample_rate` only when it is 8000, 12000, 16000, 22050, 24000, 32000, 44100 or 48000, and 16000 when it is left out or 0, as before. Any other rate, a negative one included, is refused before a session is made, with an `error` frame carrying `code` and `error_type` `invalid_request`, and the socket closes with 1008. Before, any positive rate was taken and every frame of the caller's audio was resampled from it (AI-1852).
+`/v1/agents/socket` takes a start frame's `sample_rate` only from 8000 to 192000, and 16000 when it is left out or 0, as before. A rate outside that range, a negative one included, is refused before a session is made, with an `error` frame carrying `code` and `error_type` `invalid_request`, and the socket closes with 1008. Before, any positive rate was taken and every frame of the caller's audio was resampled from it (AI-1852).
 
 ### A Flutter app's own tools run against a local proxy router
 

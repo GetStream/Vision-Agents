@@ -19,8 +19,8 @@ import (
 // socketStart is the first frame on a session socket.
 type socketStart struct {
 	Type string `json:"type"`
-	// SampleRate is the rate of the PCM16 mono audio carried both ways, one of
-	// socketedge.SampleRates. Zero means 16 kHz.
+	// SampleRate is the rate of the PCM16 mono audio carried both ways, from
+	// socketedge.MinSampleRate to socketedge.MaxSampleRate. Zero means 16 kHz.
 	SampleRate int `json:"sample_rate"`
 	// Session is what POST /v1/agents/sessions takes. call_id may be left out: there is no
 	// call to join, so one is made up for the records.
@@ -33,7 +33,7 @@ var errSocketCall = invalidRequest("a socket session carries its own audio and j
 
 // errSocketSampleRate refuses a start frame's sample_rate that the socket does not carry.
 var errSocketSampleRate = invalidRequest(fmt.Sprintf(
-	"sample_rate must be one of %v, or left out for 16000", socketedge.SampleRates))
+	"sample_rate must be from %d to %d, or left out for 16000", socketedge.MinSampleRate, socketedge.MaxSampleRate))
 
 // errSocketVoiceEnded refuses voice on a socket session whose voice was stopped: the socket
 // was its call, and stopping voice hung that call up.

@@ -255,8 +255,8 @@ func (s *SocketEdgeSuite) TestLeavingReleasesAHearWaitingToSend() {
 }
 
 // carriedRates are the rates a caller's audio comes in at, from a phone line's 8 kHz to
-// WebRTC's 48 kHz.
-var carriedRates = []int{8_000, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000}
+// a browser's 192 kHz.
+var carriedRates = []int{8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 192_000}
 
 // edgeAt is an edge joined at the rate given, and what it has sent so far.
 func (s *SocketEdgeSuite) edgeAt(rate int) (*Edge, func() [][]byte) {
@@ -294,7 +294,8 @@ func (s *SocketEdgeSuite) TestEveryCarriedRateIsHeardAndSpokenIn20msFrames() {
 			heard := <-edge.Audio()
 			s.Require().NoError(edge.PublishAudio(speech(20 * time.Millisecond)))
 
-			s.Len(heard.Audio.Samples, stt.SampleRate*20/1000)
+			// 20 ms at 11.025 kHz is 220.5 samples, so the whole-sample resample may be one short.
+			s.InDelta(stt.SampleRate*20/1000, len(heard.Audio.Samples), 1)
 			s.Require().Eventually(func() bool { return len(sent()) > 0 }, 2*time.Second, 5*time.Millisecond)
 			s.Len(sent()[0], rate*20/1000*2, "a frame is 20 ms of 16-bit samples at the socket's rate")
 		})
@@ -304,7 +305,7 @@ func (s *SocketEdgeSuite) TestEveryCarriedRateIsHeardAndSpokenIn20msFrames() {
 // A rate the socket does not carry is refused before any frame is resampled at it, and zero
 // still means 16 kHz.
 func (s *SocketEdgeSuite) TestNewRefusesARateTheSocketDoesNotCarry() {
-	for _, rate := range []int{1, 7_999, 11_025, 48_001, 96_000, math.MaxInt32, math.MaxInt, -1, -16_000, math.MinInt} {
+	for _, rate := range []int{1, 7_999, 192_001, math.MaxInt32, math.MaxInt, -1, -16_000, math.MinInt} {
 		s.Run(strconv.Itoa(rate), func() {
 			edge, err := New(Options{SampleRate: rate, Send: func([]byte) error { return nil }})
 

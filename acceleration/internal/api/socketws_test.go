@@ -408,11 +408,12 @@ func (s *SocketSessionSuite) answersStart(sampleRate string) map[string]any {
 }
 
 // The control: every rate a caller's audio comes in at, from a phone line's 8 kHz to
-// WebRTC's 48 kHz, is carried at that rate, and leaving it out still means 16 kHz.
+// a browser's 192 kHz, is carried at that rate, and leaving it out still means 16 kHz.
 func (s *SocketSessionSuite) TestTheSocketCarriesTheSampleRatesAudioComesIn() {
 	for sampleRate, carried := range map[string]float64{
 		"8000": 8_000, "12000": 12_000, "16000": 16_000, "22050": 22_050, "24000": 24_000,
 		"32000": 32_000, "44100": 44_100, "48000": 48_000,
+		"11025": 11_025, "88200": 88_200, "96000": 96_000, "192000": 192_000,
 		"": 16_000, "0": 16_000, "null": 16_000,
 	} {
 		s.Run("sample_rate="+sampleRate, func() {
@@ -427,7 +428,7 @@ func (s *SocketSessionSuite) TestTheSocketCarriesTheSampleRatesAudioComesIn() {
 // A rate the socket does not carry is refused before a session is made, with the code and
 // type POST /v1/agents/sessions answers a bad field with.
 func (s *SocketSessionSuite) TestASampleRateTheSocketDoesNotCarryIsRefused() {
-	for _, sampleRate := range []string{"1", "7999", "11025", "48001", "96000", "2147483647", "9223372036854775807", "-1", "-16000"} {
+	for _, sampleRate := range []string{"1", "7999", "192001", "2147483647", "9223372036854775807", "-1", "-16000"} {
 		s.Run("sample_rate="+sampleRate, func() {
 			refused := s.answersStart(sampleRate)
 
