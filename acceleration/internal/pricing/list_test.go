@@ -50,11 +50,11 @@ func atCost(entries ...Entry) []Entry {
 func perMillion(usd float64) Rate { return Rate{USD: usd, Per: 1_000_000} }
 
 func llmEntry(model string, rates map[Meter]Rate) Entry {
-	return Entry{Modality: "llm", Provider: "openai", Model: model, Rates: rates}
+	return Entry{Modality: "llm", Provider: "openai", Model: model, Region: RegionUS, Rates: rates}
 }
 
 func llmItem(model string, attributes map[string]string) Item {
-	return Item{Modality: "llm", Provider: "openai", Model: model, Attributes: attributes}
+	return Item{Modality: "llm", Provider: "openai", Model: model, Region: RegionUS, Attributes: attributes}
 }
 
 // terra is a text model with a rate for cache writes, at what OpenAI charges for it.
@@ -76,20 +76,20 @@ func (s *PricingSuite) TestARateIsChargedPerItsUnit() {
 }
 
 func (s *PricingSuite) TestAnIncrementRoundsTheQuantityUp() {
-	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "minutes", Rates: map[Meter]Rate{
+	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "minutes", Region: RegionUS, Rates: map[Meter]Rate{
 		CallSeconds: {USD: 0.007, Per: 60, Increment: 60},
 	}})
 
-	quote := list.Quote(Item{Modality: "phone", Provider: "telnyx", Model: "minutes"}, Quantities{CallSeconds: 61})
+	quote := list.Quote(Item{Modality: "phone", Provider: "telnyx", Model: "minutes", Region: RegionUS}, Quantities{CallSeconds: 61})
 
 	s.Equal(int64(14_000), quote.CostMicros, "61 seconds are two started minutes")
 }
 
 func (s *PricingSuite) TestAMinimumIsBilledOnceAnythingIsUsed() {
-	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "minutes", Rates: map[Meter]Rate{
+	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "minutes", Region: RegionUS, Rates: map[Meter]Rate{
 		CallSeconds: {USD: 0.06, Per: 60, Minimum: 60},
 	}})
-	item := Item{Modality: "phone", Provider: "telnyx", Model: "minutes"}
+	item := Item{Modality: "phone", Provider: "telnyx", Model: "minutes", Region: RegionUS}
 
 	s.Equal(int64(60_000), list.Quote(item, Quantities{CallSeconds: 1}).CostMicros)
 	s.Equal(int64(0), list.Quote(item, Quantities{CallSeconds: 0}).CostMicros)
@@ -97,12 +97,12 @@ func (s *PricingSuite) TestAMinimumIsBilledOnceAnythingIsUsed() {
 
 func (s *PricingSuite) TestTheEntryMatchingMostAttributesWins() {
 	sms := func(when map[string]string, usd float64) Entry {
-		return Entry{Modality: "sms", Provider: "telnyx", Model: "sms", When: when,
+		return Entry{Modality: "sms", Provider: "telnyx", Model: "sms", Region: RegionUS, When: when,
 			Rates: map[Meter]Rate{MessageSegments: {USD: usd, Per: 1}}}
 	}
 	list := s.list(sms(nil, 0.004), sms(map[string]string{"country": "CA"}, 0.0075))
 	in := func(country string) Item {
-		return Item{Modality: "sms", Provider: "telnyx", Model: "sms", Attributes: map[string]string{"country": country}}
+		return Item{Modality: "sms", Provider: "telnyx", Model: "sms", Region: RegionUS, Attributes: map[string]string{"country": country}}
 	}
 
 	s.Equal(int64(7_500), list.Quote(in("CA"), Quantities{MessageSegments: 1}).CostMicros)
@@ -146,11 +146,11 @@ func (s *PricingSuite) TestAZeroRateWrittenOutStopsTheFallback() {
 }
 
 func (s *PricingSuite) TestAQuoteSaysWhetherTheWorkUsedAnythingItIsPricedBy() {
-	list := s.list(Entry{Modality: "sts", Provider: "xai", Model: "voice", Rates: map[Meter]Rate{
+	list := s.list(Entry{Modality: "sts", Provider: "xai", Model: "voice", Region: RegionUS, Rates: map[Meter]Rate{
 		AudioMs:           {USD: 4.8, Per: 3_600_000},
 		OutputAudioTokens: {USD: 0, Per: 1_000_000},
 	}})
-	item := Item{Modality: "sts", Provider: "xai", Model: "voice"}
+	item := Item{Modality: "sts", Provider: "xai", Model: "voice", Region: RegionUS}
 
 	s.True(list.Quote(item, Quantities{AudioMs: 2_000}).Rated)
 	s.True(list.Quote(item, Quantities{OutputAudioTokens: 40}).Rated, "a zero rate written out is still what the work is priced by")
@@ -197,7 +197,7 @@ func (s *PricingSuite) TestATierIsMeasuredOnTheWholePrompt() {
 
 // realtime is a speech-to-speech model priced by modality, with its audio rates as the
 // generic ones.
-var realtime = Entry{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Rates: map[Meter]Rate{
+var realtime = Entry{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS, Rates: map[Meter]Rate{
 	InputTokens:       perMillion(32),
 	CachedInputTokens: perMillion(0.40),
 	OutputTokens:      perMillion(64),
@@ -212,7 +212,7 @@ var realtime = Entry{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2
 // and they are not billed a second time.
 func (s *PricingSuite) TestAModalitySplitReplacesTheTotals() {
 	list := s.list(realtime)
-	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1"}
+	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
 
 	quote := list.Quote(item, Quantities{
 		InputTokens: 760, OutputTokens: 172,
@@ -225,7 +225,7 @@ func (s *PricingSuite) TestAModalitySplitReplacesTheTotals() {
 
 func (s *PricingSuite) TestAModalityMeterWithNoRateFallsBackToTheGenericOne() {
 	list := s.list(realtime)
-	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1"}
+	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
 
 	quote := list.Quote(item, Quantities{InputAudioTokens: 1_000, CachedInputAudioTokens: 1_000})
 
@@ -249,7 +249,7 @@ func (s *PricingSuite) TestCostsRoundHalfUp() {
 
 func (s *PricingSuite) TestOutputCostCoversEveryOutputMeter() {
 	list := s.list(realtime)
-	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1"}
+	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
 
 	quote := list.Quote(item, Quantities{InputTextTokens: 1_000, OutputTextTokens: 1_000, OutputAudioTokens: 1_000})
 
@@ -285,7 +285,7 @@ func (s *PricingSuite) TestALocalModelWithAPriceIsBillable() {
 
 func (s *PricingSuite) TestAModelWithoutAPriceIsBillableAndLoggedOnce() {
 	list := s.list()
-	item := Item{Modality: "memory", Provider: "mem0", Model: "search"}
+	item := Item{Modality: "memory", Provider: "mem0", Model: "search", Region: RegionUS}
 
 	first := list.Quote(item, Quantities{})
 	list.Quote(item, Quantities{})
@@ -302,7 +302,7 @@ func (s *PricingSuite) TestAModelWithoutAPriceIsLoggedAgainOnceTheIntervalHasPas
 	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	list.unpriced.now = func() time.Time { return clock }
 	list.unpriced.every = time.Minute
-	item := Item{Modality: "memory", Provider: "mem0", Model: "search"}
+	item := Item{Modality: "memory", Provider: "mem0", Model: "search", Region: RegionUS}
 
 	list.Quote(item, Quantities{})
 	clock = clock.Add(time.Minute - time.Nanosecond)
@@ -589,19 +589,31 @@ func (s *PricingSuite) TestPricedIsTheCostTimesTheFactor() {
 }
 
 func (s *PricingSuite) TestAQuotedAmountIsResoldAtTheFactor() {
-	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "number", SKU: "phone-telnyx-number", Free: true})
+	number := Item{Modality: "phone", Provider: "telnyx", Model: "number", Region: RegionUS}
+	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "number", Region: RegionUS, SKU: "phone-telnyx-number-us", Free: true})
 
-	quote := list.Quote(Item{Modality: "phone", Provider: "telnyx", Model: "number"}, Quantities{})
+	quote := list.Quote(number, Quantities{})
 	s.False(quote.Billable)
-	resold := list.Quoted(Item{Modality: "phone", Provider: "telnyx", Model: "number"}, 1_000_003)
+	resold := list.Quoted(number, 1_000_003)
 
 	s.Equal(int64(1_200_004), resold.CostMicros, "1,000,003 × 1.2 = 1,200,003.6, rounded once")
 	s.Equal(int64(1_000_003), resold.BaseCostMicros)
-	s.Equal("phone-telnyx-number", resold.SKU)
+	s.Equal("phone-telnyx-number-us", resold.SKU)
 	s.Equal(QuotedVersion, resold.Version)
 	s.True(resold.Billable)
-	s.False(list.Quoted(Item{Modality: "phone", Provider: "telnyx", Model: "number"}, 0).Billable)
-	s.Empty(list.Quoted(Item{Modality: "phone", Provider: "telnyx", Model: "other"}, 10).SKU)
+	s.False(list.Quoted(number, 0).Billable)
+	s.Empty(list.Quoted(Item{Modality: "phone", Provider: "telnyx", Model: "other", Region: RegionUS}, 10).SKU)
+}
+
+// TestAQuotedAmountForABYOKItemIsChargedTheFeeAndCostsNothing: the vendor bills the customer
+// what it quoted, so the operator pays nothing and charges BYOKFeeBps of it.
+func (s *PricingSuite) TestAQuotedAmountForABYOKItemIsChargedTheFeeAndCostsNothing() {
+	list := s.list()
+
+	resold := list.Quoted(Item{Modality: "llm", Provider: "openai", Model: "m", Region: RegionUS, BYOK: true}, 1_000_000)
+
+	s.Equal(int64(200_000), resold.CostMicros)
+	s.Zero(resold.BaseCostMicros)
 }
 
 // TestEveryEntryOfAListHasASKU: an entry without one is given its BaseSKU, numbered past one
@@ -610,15 +622,28 @@ func (s *PricingSuite) TestEveryEntryOfAListHasASKU() {
 	flex := llmEntry("GPT-4.1", map[Meter]Rate{InputTokens: perMillion(1)})
 	flex.When = map[string]string{"service_tier": "flex"}
 	taken := llmEntry("taken", map[Meter]Rate{InputTokens: perMillion(1)})
-	taken.SKU = "llm-openai-gpt-4-1"
+	taken.SKU = "llm-openai-gpt-4-1-us"
 	list := s.list(llmEntry("GPT-4.1", map[Meter]Rate{InputTokens: perMillion(1)}), flex, taken)
 
 	plain, _ := list.Entry(llmItem("GPT-4.1", nil))
 	tiered, _ := list.Entry(llmItem("GPT-4.1", map[string]string{"service_tier": "flex"}))
-	s.Equal("llm-openai-gpt-4-1-2", plain.SKU, "the base is another entry's")
-	s.Equal("llm-openai-gpt-4-1-service-tier-flex", tiered.SKU)
-	s.Equal("llm-openai-gpt-4-1-service-tier-flex", BaseSKU("llm", "openai", "GPT-4.1", map[string]string{"service_tier": "flex"}))
-	s.Equal("sku", BaseSKU("--", "", "", nil))
+	s.Equal("llm-openai-gpt-4-1-us-2", plain.SKU, "the base is another entry's")
+	s.Equal("llm-openai-gpt-4-1-service-tier-flex-us", tiered.SKU)
+	s.Equal("sku", BaseSKU("--", "", "", "", false, nil))
+}
+
+// TestASKUEndsInItsRegionThenBYOK: the attributes of when come first, then the region, then
+// byok for a BYOK item.
+func (s *PricingSuite) TestASKUEndsInItsRegionThenBYOK() {
+	batch := map[string]string{"service_tier": "batch"}
+
+	s.Equal("llm-anthropic-claude-haiku-5-5-us", BaseSKU("llm", "anthropic", "claude-haiku-5.5", RegionUS, false, nil))
+	s.Equal("llm-anthropic-claude-haiku-5-5-us-byok", BaseSKU("llm", "anthropic", "claude-haiku-5.5", RegionUS, true, nil))
+	s.Equal("llm-anthropic-claude-haiku-5-5-eu", BaseSKU("llm", "anthropic", "claude-haiku-5.5", RegionEU, false, nil))
+	s.Equal("llm-openai-gpt-6-luna-service-tier-batch-us", BaseSKU("llm", "openai", "gpt-6-luna", RegionUS, false, batch))
+	s.Equal("llm-openai-gpt-6-luna-service-tier-batch-eu-byok", BaseSKU("llm", "openai", "gpt-6-luna", RegionEU, true, batch))
+	s.Equal("knowledge-turbopuffer-write-us-byok", BaseSKU("knowledge", "turbopuffer", "write", RegionUS, true, nil))
+	s.Equal("knowledge-turbopuffer-write-us-byok-2", NumberedSKU(BaseSKU("knowledge", "turbopuffer", "write", RegionUS, true, nil), 2))
 }
 
 func (s *PricingSuite) TestTwoEntriesWithOneSKUAreRefused() {

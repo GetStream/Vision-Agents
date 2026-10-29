@@ -1272,11 +1272,93 @@ func (s *SessionSuite) TestClosingASessionLeavesTheCallAndForgetsIt() {
 func (s *SessionSuite) TestAGreetingIsSpokenWithoutGoingThroughTheModel() {
 	s.manages()
 
-	s.joins(Spec{Greeting: "Hi, I'm listening."})
+	s.rings(Spec{Greeting: "Hi, I'm listening."}, visitor)
 
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nothing was said")
 	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
 	s.Empty(s.model.requests(), "a greeting the caller wrote does not need a model")
+}
+
+func (s *SessionSuite) TestTheGreetingWaitsForSomebodyToJoinTheCall() {
+	s.manages()
+	s.joins(Spec{Greeting: "Hi, I'm listening."})
+
+	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+		"the greeting was said to an empty call")
+
+	s.call().arrives(visitor)
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
+	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
+}
+
+func (s *SessionSuite) TestTheGreetingGivesWhoeverJoinedTimeToHearIt() {
+	wait := greetingDelay
+	greetingDelay = 4 * testTimeout
+	s.T().Cleanup(func() { greetingDelay = wait })
+	s.manages()
+	s.joins(Spec{Greeting: "Hi, I'm listening."})
+
+	s.call().arrives(visitor)
+
+	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
+		"the greeting started the moment somebody joined")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
+}
+
+func (s *SessionSuite) TestSomebodyAlreadyInTheCallIsGreetedOnJoining() {
+	s.manages()
+
+	s.rings(Spec{Greeting: "Hi, I'm listening."}, caller)
+
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the caller was not greeted")
+	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
+}
+
+func (s *SessionSuite) TestTheGreetingIsSaidOnceWhoeverJoinsAfter() {
+	s.manages()
+	created := s.joins(Spec{Greeting: "Hi, I'm listening."})
+	events := s.watches(created)
+
+	s.call().arrives(visitor)
+	s.call().arrives(caller)
+	s.saw(events, caller, true)
+
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
+	s.Never(func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
+		"the greeting was said again")
+}
+
+func (s *SessionSuite) TestTheAgentsOwnVideoUserIsNotGreeted() {
+	s.manages()
+	video := stt.Participant{ID: "video-1", UserID: defaultUserID + "-video"}
+
+	s.rings(Spec{Greeting: "Hi, I'm listening."}, video)
+
+	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+		"the agent greeted itself")
+}
+
+func (s *SessionSuite) TestACallThatDoesNotSayWhoComesIsGreetedOnJoining() {
+	s.unattended = true
+	s.manages()
+
+	s.joins(Spec{Greeting: "Hi, I'm listening."})
+
+	s.Require().NotEmpty(s.voice.spoken(), "the greeting was not said")
+	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
+}
+
+func (s *SessionSuite) TestStartingVoiceGreetsWhoeverJoinsTheCall() {
+	s.manages()
+	created := s.writes(Spec{Greeting: "Hi, I'm listening."})
+	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
+
+	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+		"the greeting was said to an empty call")
+
+	s.call().arrives(visitor)
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
+	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
 }
 
 func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {

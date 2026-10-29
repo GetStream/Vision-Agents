@@ -291,6 +291,10 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        region:
+          description: 'Where the agent''s work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent''s agent.yaml or config names another.'
+          example: us
+          type: string
         resume_history:
           $ref: '#/components/schemas/ResumeHistory'
         review:
@@ -345,6 +349,7 @@ components:
         - id
         - mode
         - name
+        - region
         - updated_at
       type: object
     AgentConfigPatch:
@@ -405,6 +410,12 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        region:
+          description: 'Where the agent''s work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.'
+          example: eu
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          patternDescription: a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu
+          type: string
         resume_history:
           $ref: '#/components/schemas/ResumeHistory'
         review:
@@ -510,6 +521,12 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        region:
+          description: 'Where the agent''s work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.'
+          example: eu
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          patternDescription: a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu
+          type: string
         resume_history:
           $ref: '#/components/schemas/ResumeHistory'
           description: 'How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app''s and the organization''s policy, and a session request''s wins over this; a field set nowhere is the router''s default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.'
@@ -1090,7 +1107,7 @@ components:
           type: integer
       type: object
     AuditResourceType:
-      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization''s spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization''s id.'
+      description: 'What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment''s own, changed through the management API, and is never listed for an app. end_user is one of the app''s end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization''s spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization''s id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key''s last four characters at most, never the key.'
       enum:
         - agent_config
         - skill
@@ -1102,6 +1119,7 @@ components:
         - price_list
         - end_user
         - limit
+        - provider_key
       type: string
     AuditSource:
       description: 'Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.'
@@ -1522,6 +1540,23 @@ components:
         - kind
         - reason
       type: object
+    CallOutcome:
+      description: |-
+        How a placed call ended.
+        completed: the person answered and the call ended.
+        busy: the line was busy or the person declined.
+        no_answer: it rang and nobody answered.
+        failed: the vendor could not place it, for a bad number or a carrier fault.
+        canceled: the vendor says the call was hung up before an answer.
+        unknown: the vendor reports nothing about how it ended, and the phone never joined.
+      enum:
+        - completed
+        - busy
+        - no_answer
+        - failed
+        - canceled
+        - unknown
+      type: string
     CallToken:
       properties:
         api_key:
@@ -3118,6 +3153,9 @@ components:
           type: string
         instructions:
           type: string
+        outcome:
+          $ref: '#/components/schemas/CallOutcome'
+          description: How the call to them ended, once it has. The state still says only whether they were rung.
         state:
           enum:
             - pending
@@ -3754,11 +3792,17 @@ components:
         - rows
       type: object
     DataPolicy:
-      description: 'What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.'
+      description: 'What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.'
       properties:
         allow_training:
           description: False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
           type: boolean
+        region:
+          description: 'Where this call''s work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent''s work is done in the agent''s own region (agent.yaml''s region), and a request naming another one for it is refused, naming both. A policy has no region.'
+          example: eu
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          patternDescription: a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu
+          type: string
         retention:
           description: The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
           example: none
@@ -3975,7 +4019,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4367,7 +4411,7 @@ components:
     IngestKnowledgeRequest:
       properties:
         chunk_size:
-          description: Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500.
+          description: Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
           type: integer
         documents:
           items:
@@ -5432,7 +5476,7 @@ components:
           format: double
           type: number
         error_code:
-          description: 'Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request''s first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider''s health.'
+          description: 'Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request''s first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router''s own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider''s health, unless it was on the app''s own key.'
           type: string
         input_tokens:
           format: int64
@@ -6062,7 +6106,7 @@ components:
           description: 'Removed: spend limits are /v1/spend/limits, at every level. A policy that sends budget is refused with 400 budget_moved, and none is read back.'
           type: object
         data_policy:
-          $ref: '#/components/schemas/DataPolicy'
+          $ref: '#/components/schemas/PolicyDataPolicy'
         prompt_injection:
           description: Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
           type: boolean
@@ -6086,6 +6130,18 @@ components:
           example: 30d
           pattern: ^(|none|[1-9][0-9]*[hd])$
           patternDescription: none, a number of hours such as 12h, or a number of days such as 30d
+          type: string
+      type: object
+    PolicyDataPolicy:
+      additionalProperties: false
+      description: 'What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent''s own region (agent.yaml''s region) or what a direct call''s own data_policy.region asks, so region is refused here, as is any other field it does not have.'
+      properties:
+        allow_training:
+          description: False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+          type: boolean
+        retention:
+          description: The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+          example: none
           type: string
       type: object
     PolicyScope:
@@ -6135,8 +6191,11 @@ components:
         - vendor
       type: object
     Price:
-      description: 'What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.'
+      description: 'What one item costs: a model of a provider in a modality, in a region, with the customer''s own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.'
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         change:
           description: 'The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.'
           type: string
@@ -6165,6 +6224,10 @@ components:
             $ref: '#/components/schemas/PriceRate'
           description: What a customer is charged, by meter.
           type: object
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         sku:
           description: The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
           type: string
@@ -6188,6 +6251,7 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceChange:
       properties:
@@ -6233,6 +6297,9 @@ components:
       type: object
     PriceChangeEntry:
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         free:
           type: boolean
         modality:
@@ -6258,6 +6325,10 @@ components:
             $ref: '#/components/schemas/PriceRate'
           description: The vendor's cost, by meter, for reference.
           type: object
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         sku:
           description: 'The item''s SKU: the one it is priced under, or the one a withdrawal stopped pricing.'
           type: string
@@ -6280,6 +6351,7 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceChangeInput:
       additionalProperties: false
@@ -6341,6 +6413,9 @@ components:
       type: object
     PriceEntry:
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         effective_at:
           description: When the entry took effect, or takes effect.
           format: date-time
@@ -6374,6 +6449,10 @@ components:
             $ref: '#/components/schemas/PriceRate'
           description: 'The vendor''s cost, by meter, for reference: nothing is charged from it.'
           type: object
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         sku:
           description: The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
           type: string
@@ -6395,10 +6474,14 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceEntryInput:
       additionalProperties: false
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         free:
           description: The vendor charges nothing for it. A free entry has no price.
           type: boolean
@@ -6419,7 +6502,7 @@ components:
         prices:
           additionalProperties:
             $ref: '#/components/schemas/PriceRate'
-          description: 'What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.'
+          description: 'What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry''s fee included. Bounded as a rate is.'
           type: object
         provider:
           type: string
@@ -6428,8 +6511,12 @@ components:
             $ref: '#/components/schemas/PriceRate'
           description: 'The vendor''s cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.'
           type: object
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         sku:
-          description: 'The item''s SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item''s SKU, as a model its vendor renamed keeps the old name''s, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.'
+          description: 'The item''s SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item''s SKU, as a model its vendor renamed keeps the old name''s, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.'
           maxLength: 255
           pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
           type: string
@@ -6454,15 +6541,23 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceItem:
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
         model:
           type: string
         provider:
+          type: string
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
           type: string
         when:
           additionalProperties:
@@ -6473,6 +6568,7 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceList:
       properties:
@@ -6532,6 +6628,9 @@ components:
         before:
           $ref: '#/components/schemas/PricedEntry'
           description: How it is priced before the change. Absent when nothing prices it.
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         modality:
           description: Such as llm, stt, tts, sms or phone.
           type: string
@@ -6547,6 +6646,10 @@ components:
           type: object
         provider:
           type: string
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         unpriced:
           description: It is priced before the change and billable with no price after.
           type: boolean
@@ -6559,6 +6662,7 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     PriceRate:
       additionalProperties: false
@@ -6639,7 +6743,7 @@ components:
           format: date-time
           type: string
         entries:
-          description: Every item priced now, by modality, provider and model.
+          description: Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
           items:
             $ref: '#/components/schemas/Price'
           type: array
@@ -6676,6 +6780,10 @@ components:
           type: string
         realtime:
           type: boolean
+        region:
+          description: 'Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model''s, shared by its instances.'
+          example: us
+          type: string
         supports:
           description: 'The options this model can be asked for, as the terms a request''s options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.'
           example:
@@ -6696,6 +6804,7 @@ components:
         - model
         - provider
         - realtime
+        - region
         - tier
       type: object
     ProviderBenchmark:
@@ -6762,6 +6871,71 @@ components:
         - errors
         - latency_ms_avg
         - requests
+      type: object
+    ProviderKey:
+      properties:
+        created_at:
+          description: When a key for the provider in the region was first put.
+          format: date-time
+          type: string
+        key_hint:
+          description: The key's last four characters, so one key can be told from another; empty for a key under 16 characters. The key itself is never returned.
+          example: x9Qa
+          type: string
+        provider:
+          example: anthropic
+          type: string
+        region:
+          example: us
+          type: string
+        updated_at:
+          description: When the key now kept was put.
+          format: date-time
+          type: string
+      required:
+        - provider
+        - region
+        - key_hint
+        - created_at
+        - updated_at
+      type: object
+    ProviderKeyPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/ProviderKey'
+          type: array
+        next_cursor:
+          description: Pass as `cursor` for the next page. Absent on the last one.
+          type: string
+      required:
+        - has_more
+        - items
+      type: object
+    ProviderKeyRequest:
+      properties:
+        api_key:
+          description: The key, as the vendor issued it. Stored sealed and never returned.
+          maxLength: 1024
+          minLength: 1
+          type: string
+          writeOnly: true
+        provider:
+          description: 'The vendor the key is for, as the router names it: a language model vendor whose models take a key of their own here (openai, anthropic, gemini, xai, deepseek where routed), turbopuffer or daytona.'
+          example: anthropic
+          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+          type: string
+        region:
+          description: 'The region whose work the key is used for: only the instances running there are tried on it. Omitted is us.'
+          example: eu
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          patternDescription: a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu
+          type: string
+      required:
+        - provider
+        - api_key
       type: object
     ProviderPrice:
       description: What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
@@ -7573,6 +7747,9 @@ components:
         call_id:
           description: 'The call the agent is on while voice is started: the session''s id unless a call was named. Empty while the conversation is held in writing.'
           type: string
+        call_outcome:
+          $ref: '#/components/schemas/SessionCallOutcome'
+          description: How the call the router placed for this session ended. Read by a backend only.
         call_type:
           type: string
         closed_at:
@@ -7686,6 +7863,21 @@ components:
         - type
         - id
       type: object
+    SessionCallOutcome:
+      description: How the call the router placed for a session ended.
+      properties:
+        answered_at:
+          description: 'When the person picked up: their phone joined the call.'
+          format: date-time
+          type: string
+        duration_seconds:
+          description: How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
+          format: int64
+          type: integer
+        outcome:
+          $ref: '#/components/schemas/CallOutcome'
+          description: How the call ended. Absent while it is ringing or under way.
+      type: object
     SessionConnectorBinding:
       additionalProperties: false
       description: 'The connection a session uses for one of its agent config''s connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.'
@@ -7750,7 +7942,7 @@ components:
           description: 'The caller''s own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.'
           type: object
         user_id:
-          description: Who the memories belong to. Empty means the customer.
+          description: Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
           type: string
       type: object
     SessionModality:
@@ -9020,6 +9212,12 @@ components:
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
+        region:
+          description: 'agent.yaml''s region: where the agent''s work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.'
+          example: eu
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          patternDescription: a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu
+          type: string
         resume_history:
           $ref: '#/components/schemas/ResumeHistory'
           description: How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
@@ -9782,6 +9980,9 @@ components:
       type: object
     UpcomingPriceEntry:
       properties:
+        byok:
+          description: 'Work done with the customer''s own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.'
+          type: boolean
         effective_at:
           description: When the entry took effect, or takes effect.
           format: date-time
@@ -9818,6 +10019,10 @@ components:
         reason:
           description: The change's reason.
           type: string
+        region:
+          description: 'Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region''s.'
+          pattern: ^[a-z][a-z0-9-]{0,31}$
+          type: string
         sku:
           description: The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
           type: string
@@ -9843,6 +10048,7 @@ components:
         - modality
         - provider
         - model
+        - region
       type: object
     UpdateScheduledTaskRequest:
       properties:
@@ -9965,7 +10171,7 @@ components:
           format: int64
           type: integer
         error_code:
-          description: Why it failed, when it did.
+          description: Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK).
           type: string
         meter:
           description: 'The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.'
@@ -10667,7 +10873,7 @@ components:
       scheme: bearer
       type: http
     AuthType:
-      description: 'Which kind of credential is presented: server for a process the customer runs, jwt for a request made on an end user''s behalf, which is what a caller that names neither is taken to be. It has no query parameter counterpart, so a browser socket cannot claim to be a backend. The header is the caller''s declaration and AppToken is the proof, so both have to say the same thing.'
+      description: 'Which kind of credential is presented: server for a process the customer runs, jwt for a request made on an end user''s behalf, which is what a caller that names neither is taken to be. A socket in proxy mode, with no proxy that declares kinds, may send jwt or anonymous as the stream-auth-type query parameter instead, but never server, so a browser socket cannot claim to be a backend. The header is the caller''s declaration and AppToken is the proof, so both have to say the same thing.'
       in: header
       name: Stream-Auth-Type
       type: apiKey
@@ -15838,6 +16044,146 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a plugin's MCP event
+  /v1/agents/provider-keys:
+    get:
+      description: |-
+        Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listProviderKeys
+      parameters:
+        - description: Up to 200. Omitted is 25.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 25.
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The `next_cursor` of the previous page. Omitted is the first page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The `next_cursor` of the previous page. Omitted is the first page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderKeyPage'
+          description: The customer's keys, by provider and then region
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: The keys the calling customer keeps for their own accounts at the vendors
+    put:
+      description: |-
+        Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: putProviderKey
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderKeyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderKey'
+          description: The key is kept
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Keep a key for the customer's own account at a vendor
+  /v1/agents/provider-keys/{provider}:
+    delete:
+      description: |-
+        Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteProviderKey
+      parameters:
+        - description: The provider the key is for, such as anthropic.
+          in: path
+          name: provider
+          required: true
+          schema:
+            description: The provider the key is for, such as anthropic.
+            type: string
+        - description: The region the key is kept for. Omitted is us.
+          explode: false
+          in: query
+          name: region
+          schema:
+            description: The region the key is kept for. Omitted is us.
+            type: string
+      responses:
+        "204":
+          description: The key is gone
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Forget a key the customer keeps for a vendor
   /v1/agents/runs:
     post:
       description: |-
@@ -16428,7 +16774,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: A session with that id already exists
+          description: A session with that id already exists, or the call placed for this phone session ended without an answer (call_unanswered)
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
@@ -19195,7 +19541,7 @@ paths:
         The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
         Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
         A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `request_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `request_id` and text.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type's query parameter never names a backend, so it cannot make a browser's socket one.
       operationId: dispatchCalls
       parameters:
         - description: How much work this worker takes at once, calls and messages together.
@@ -19373,7 +19719,7 @@ paths:
   /v1/manage/price-lists/active:
     get:
       description: |-
-        Every entry in force at `at` (default now): its SKU, which every row it prices records, the vendor's cost (`rates`, `tiers`) kept for reference, the price customers are charged (`prices`, `price_tiers`), and the change that wrote it, which is the `price_version` of every row it prices. `unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`.
+        Every entry in force at `at` (default now): its item, `region` and `byok`, its SKU, which every row it prices records, the vendor's cost (`rates`, `tiers`) kept for reference, the price customers are charged (`prices`, `price_tiers`), and the change that wrote it, which is the `price_version` of every row it prices. `unpriced` names the routed items whose work is billable and that no entry prices, and `upcoming` the entries of the changes scheduled after `at`.
 
         Stream staff only: it needs the manage key, and names its actor in `X-Stream-Actor-Id`. On a deployment with no database it answers 400 `not_configured`.
       operationId: getActivePriceList
@@ -19462,7 +19808,9 @@ paths:
       description: |-
         Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole: the vendor's cost in `rates` and `tiers`, for reference, and the price customers are charged in `prices` and `price_tiers`, both set outright: nothing is worked out from the cost, and no markup is added. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
 
-        Every item has one SKU, kept across its price changes, which each row it prices records. An entry without `sku` keeps the item's, or gives a new item one made from its modality, provider, model and `when`, lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past one another item has had. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, when that item is withdrawn by the same change or is no longer in force; else, or when a change scheduled later gives it to another item, the change is a 400 `sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.
+        Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with no entry of its own is unpriced, never priced by another region's or the other `byok` state's.
+
+        Every item has one SKU, kept across its price changes, which each row it prices records. An entry without `sku` keeps the item's, or gives a new item one made from its modality, provider, model, `when`, `region` and `byok` (`llm-openai-gpt-6-luna-service-tier-flex-us`, `llm-openai-gpt-6-luna-us-byok`), lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past one another item has had. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, when that item is withdrawn by the same change or is no longer in force; else, or when a change scheduled later gives it to another item, the change is a 400 `sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.
 
         An entry that is neither free nor withdrawn needs `rates` and `prices` with the same meters, else a 400 `price_meters_mismatch`, and a price tier for each tier, at its threshold and with its meters, else a 400 `price_tiers_mismatch`. An entry setting `local` or `version`, or entries that do not make a price list, are a 400 `invalid_price` naming the item. A change the preview says needs confirming is a 409 `confirmation_required` without `confirm: true`. Before the router's first start has loaded its price files the list is not seeded, and every change is a 503 `price_list_not_seeded`. A change that waits more than 5 seconds for another write to the price list is a 503 `price_list_busy`, to send again after `Retry-After`.
 
@@ -21461,6 +21809,29 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Set the sandbox recipients
+  /v1/phone/status/{token}:
+    post:
+      description: 'Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'
+      operationId: receiveCallStatus
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The status is recorded
+        "400":
+          description: The status could not be read
+        "404":
+          description: No placed call is waiting for its status at this token
+        "413":
+          description: The status is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a placed call's status
   /v1/phone/trunks:
     get:
       description: Trunks outbound calls from the customer's own numbers are dialled through. Passwords are never returned. Answers not_configured on a deployment with no key to seal them with.
@@ -22453,7 +22824,7 @@ paths:
       summary: Replace one end user's own quota
   /v1/prices:
     get:
-      description: 'Every item this router prices, at the rates a customer is charged, which are what every answer''s X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier''s rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.'
+      description: 'Every item this router prices, at the rates a customer is charged, which are what every answer''s X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier''s rates. Each item is priced in its `region`, and work done with the customer''s own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region''s price or the other `byok` state''s. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.'
       operationId: getPrices
       parameters:
         - description: Only this modality's items, such as llm, stt, tts, sms or phone.
@@ -22462,6 +22833,13 @@ paths:
           name: modality
           schema:
             description: Only this modality's items, such as llm, stt, tts, sms or phone.
+            type: string
+        - description: Only this region's items, such as us or eu.
+          explode: false
+          in: query
+          name: region
+          schema:
+            description: Only this region's items, such as us or eu.
             type: string
       responses:
         "200":

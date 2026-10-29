@@ -266,35 +266,35 @@ type CreateSessionRequest struct {
 	Id                *string                    `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7."`
 	// LegacyConversationId is the Stream Chat CID a session resumed before v0.6.35, which
 	// clients built against an older SDK (the getstream.io Ask panel among them) still send.
-	LegacyConversationId *string `json:"conversation_id,omitempty" hidden:"true"`
-	Incognito         *bool                      `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
-	Instructions      *string                    `json:"instructions,omitempty" doc:"What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent."`
-	Keyterms          *[]string                  `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
-	Languages         *[]string                  `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
-	Llm               *string                    `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
-	MaxTokens         *int                       `json:"max_tokens,omitempty"`
-	Memory            *SessionMemory             `json:"memory,omitempty"`
-	MinConfidence     *float64                   `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
-	ModelOverwrites   *ModelOverwrites           `json:"model_overwrites,omitempty"`
-	ResumeHistory     *ResumeHistory             `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
-	Navigating        *bool                      `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
-	Phone             *SessionPhone              `json:"phone,omitempty"`
-	ProjectId         *string                    `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
-	ReturnUrl         *string                    `json:"return_url,omitempty" doc:"The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands."`
-	Search            *string                    `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
-	StartVoice        *bool                      `json:"start_voice,omitempty" doc:"Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started." default:"false"`
-	Sts               *string                    `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
-	Stt               *string                    `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	Tags              *map[string]string         `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins."`
-	Timezone          *string                    `json:"timezone,omitempty" doc:"The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone."`
-	Title             *string                    `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
-	ToolTimeoutMs     *int                       `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
-	Tools             *[]SessionTool             `json:"tools,omitempty"`
-	Tts               *string                    `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	UserId            *string                    `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
-	UserName          *string                    `json:"user_name,omitempty" default:"Vision Agent"`
-	Video             *SessionVideo              `json:"video,omitempty"`
-	Voice             *string                    `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
+	LegacyConversationId *string            `json:"conversation_id,omitempty" hidden:"true"`
+	Incognito            *bool              `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
+	Instructions         *string            `json:"instructions,omitempty" doc:"What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent."`
+	Keyterms             *[]string          `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
+	Languages            *[]string          `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
+	Llm                  *string            `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
+	MaxTokens            *int               `json:"max_tokens,omitempty"`
+	Memory               *SessionMemory     `json:"memory,omitempty"`
+	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
+	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
+	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
+	Phone                *SessionPhone      `json:"phone,omitempty"`
+	ProjectId            *string            `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
+	ReturnUrl            *string            `json:"return_url,omitempty" doc:"The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands."`
+	Search               *string            `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
+	StartVoice           *bool              `json:"start_voice,omitempty" doc:"Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started." default:"false"`
+	Sts                  *string            `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
+	Stt                  *string            `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	Tags                 *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins."`
+	Timezone             *string            `json:"timezone,omitempty" doc:"The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone."`
+	Title                *string            `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
+	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
+	Tools                *[]SessionTool     `json:"tools,omitempty"`
+	Tts                  *string            `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	UserId               *string            `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
+	UserName             *string            `json:"user_name,omitempty" default:"Vision Agent"`
+	Video                *SessionVideo      `json:"video,omitempty"`
+	Voice                *string            `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
 }
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -347,10 +347,11 @@ func (e DataChangeOp) Valid() bool {
 type DataPolicy struct {
 	AllowTraining *bool   `json:"allow_training,omitempty" doc:"False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no."`
 	Retention     *string `json:"retention,omitempty" doc:"The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing." example:"none"`
+	Region        *string `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region."`
 }
 
 func (*DataPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not."
+	schema.Description = "What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not."
 	return schema
 }
 
@@ -709,6 +710,7 @@ type Provider struct {
 	Price       *ProviderPrice     `json:"price,omitempty"`
 	Provider    string             `json:"provider" example:"elevenlabs"`
 	Realtime    bool               `json:"realtime"`
+	Region      string             `json:"region" example:"us" doc:"Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances."`
 	Supports    []string           `json:"supports,omitempty" nullable:"false" example:"[\"keyterms\",\"diarize\"]" doc:"The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none."`
 	Tier        Tier               `json:"tier"`
 	UsageShare  *float64           `json:"usage_share,omitempty" doc:"This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics."`
@@ -791,6 +793,7 @@ type Session struct {
 	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
 	AgentId          string                  `json:"agent_id"`
 	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
+	CallOutcome      *SessionCallOutcome     `json:"call_outcome,omitempty" doc:"How the call the router placed for this session ended. Read by a backend only."`
 	CallType         string                  `json:"call_type"`
 	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
 	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
@@ -829,7 +832,7 @@ type Session struct {
 type SessionMemory struct {
 	AppId  *string            `json:"app_id,omitempty" doc:"Separates two deployments sharing one memory account."`
 	Filter *map[string]string `json:"filter,omitempty" doc:"The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it."`
-	UserId *string            `json:"user_id,omitempty" doc:"Who the memories belong to. Empty means the customer."`
+	UserId *string            `json:"user_id,omitempty" doc:"Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users."`
 }
 
 func (*SessionMemory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -914,6 +917,41 @@ type SessionPhone struct {
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
+}
+
+// SessionCallOutcome is how the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
+	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has."`
+}
+
+func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the call the router placed for a session ended."
+	return schema
+}
+
+// CallOutcome is how a placed call ended.
+type CallOutcome string
+
+const (
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
+		"completed: the person answered and the call ended.\n"+
+		"busy: the line was busy or the person declined.\n"+
+		"no_answer: it rang and nobody answered.\n"+
+		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
+		"canceled: the vendor says the call was hung up before an answer.\n"+
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
 }
 
 // SessionRespondCommand is the SessionRespondCommand schema.
@@ -1023,10 +1061,10 @@ func (SessionState) Schema(registry huma.Registry) *huma.Schema {
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
-	Approval     *SessionToolApproval    `json:"approval,omitempty"`
-	Description  string                  `json:"description" doc:"What the model is told the tool does, which is the whole of how it decides when to reach for one."`
-	DisplayTitle *string                 `json:"display_title,omitempty" doc:"What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment." maxLength:"80"`
-	Executor     *SessionToolExecutor    `json:"executor,omitempty" doc:"Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server." enum:"server,client"`
+	Approval     *SessionToolApproval `json:"approval,omitempty"`
+	Description  string               `json:"description" doc:"What the model is told the tool does, which is the whole of how it decides when to reach for one."`
+	DisplayTitle *string              `json:"display_title,omitempty" doc:"What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment." maxLength:"80"`
+	Executor     *SessionToolExecutor `json:"executor,omitempty" doc:"Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server." enum:"server,client"`
 	// Interruptible and TimeoutMs are the tool's own, beside the session's.
 	Interruptible *bool                   `json:"interruptible,omitempty" doc:"Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes."`
 	Name          string                  `json:"name"`

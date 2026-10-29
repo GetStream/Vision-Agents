@@ -69,10 +69,15 @@ func millionTokens(usd float64) PriceRate { return PriceRate{USD: usd, Per: 1_00
 // usd per million tokens.
 func entry(model string, usd float64) PriceEntryInput {
 	return PriceEntryInput{
-		PriceItem: PriceItem{Modality: "llm", Provider: "t1c", Model: model},
+		PriceItem: PriceItem{Modality: "llm", Provider: "t1c", Model: model, Region: pricing.RegionUS},
 		Rates:     map[string]PriceRate{"input_tokens": millionTokens(usd)},
 		Prices:    map[string]PriceRate{"input_tokens": millionTokens(usd)},
 	}
+}
+
+// t1cItem is the item of a t1c model in region, BYOK or not.
+func t1cItem(model, region string, byok bool) pricing.Item {
+	return pricing.Item{Modality: "llm", Provider: "t1c", Model: model, Region: region, BYOK: byok}
 }
 
 // pricedAt is the entry charged price per million input tokens, whatever its rate.
@@ -159,7 +164,7 @@ func countedAt(input, cached, output, factor float64) PriceEntryInput {
 			"cached_input_tokens": millionTokens(cached * factor), "output_tokens": millionTokens(output * factor)}
 	}
 	return PriceEntryInput{
-		PriceItem: PriceItem{Modality: "llm", Provider: "counted", Model: "counted-model"},
+		PriceItem: PriceItem{Modality: "llm", Provider: "counted", Model: "counted-model", Region: pricing.RegionUS},
 		Rates:     rates(1), Prices: rates(factor),
 	}
 }
@@ -177,7 +182,7 @@ func (s *PriceListsSuite) TestAChangePricesTheNextRequest() {
 		s.Equal(written.Name, row.PriceVersion)
 		s.Equal(written.Entries[0].SKU, row.SKU)
 	}
-	s.Equal("llm-counted-counted-model", written.Entries[0].SKU)
+	s.Equal("llm-counted-counted-model-us", written.Entries[0].SKU)
 }
 
 // TestAQuoteChargesThePriceTheChangeSet: the price is set outright, not worked out from the
@@ -186,11 +191,113 @@ func (s *PriceListsSuite) TestAQuoteChargesThePriceTheChangeSet() {
 	model := "m" + s.token()
 	s.created(s.change(pricedAt(entry(model, 1), 1.3)))
 
-	quote := s.prices.Quote(pricing.Item{Modality: "llm", Provider: "t1c", Model: model}, pricing.Quantities{pricing.InputTokens: 1_000_000})
+	quote := s.prices.Quote(t1cItem(model, pricing.RegionUS, false), pricing.Quantities{pricing.InputTokens: 1_000_000})
 
 	s.EqualValues(1_300_000, quote.CostMicros)
 	s.EqualValues(1_000_000, quote.BaseCostMicros)
-	s.Equal("llm-t1c-"+model, quote.SKU)
+	s.Equal("llm-t1c-"+model+"-us", quote.SKU)
+}
+
+// TestAChangeAddingAnEUEntryPricesEUWorkAlone: the eu entry prices eu work under a SKU of its
+// own, us work keeps the us price, and eu work was unpriced before it, never priced at the us
+// price.
+func (s *PriceListsSuite) TestAChangeAddingAnEUEntryPricesEUWorkAlone() {
+	model := "m" + s.token()
+	s.created(s.change(pricedAt(entry(model, 1), 1.2)))
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	s.True(s.prices.Quote(t1cItem(model, pricing.RegionEU, false), used).Unpriced, "no eu entry yet")
+	eu := pricedAt(entry(model, 1.1), 1.4)
+	eu.Region = pricing.RegionEU
+
+	written := s.created(s.change(eu))
+
+	s.Require().Len(written.Entries, 1)
+	s.Equal(pricing.RegionEU, written.Entries[0].Region)
+	s.Equal("llm-t1c-"+model+"-eu", written.Entries[0].SKU)
+	euQuote := s.prices.Quote(t1cItem(model, pricing.RegionEU, false), used)
+	s.EqualValues(1_400_000, euQuote.CostMicros)
+	s.Equal("llm-t1c-"+model+"-eu", euQuote.SKU)
+	s.EqualValues(1_200_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).CostMicros)
+	list := s.active()
+	var regions []string
+	for _, entry := range list.Entries {
+		if entry.Model == model {
+			regions = append(regions, entry.Region)
+		}
+	}
+	s.ElementsMatch([]string{pricing.RegionUS, pricing.RegionEU}, regions, "the active list shows each region's entry")
+}
+
+// TestAChangeAddingABYOKEntryWithItsOwnPrice: a BYOK entry's price is set outright, as any
+// other, and prices only work done with the customer's own key, which costs the operator
+// nothing.
+func (s *PriceListsSuite) TestAChangeAddingABYOKEntryWithItsOwnPrice() {
+	model := "m" + s.token()
+	s.created(s.change(pricedAt(entry(model, 1), 1.2)))
+	byok := pricedAt(entry(model, 1), 0.15)
+	byok.BYOK = true
+
+	written := s.created(s.change(byok))
+
+	s.Require().Len(written.Entries, 1)
+	s.True(written.Entries[0].BYOK)
+	s.Equal("llm-t1c-"+model+"-us-byok", written.Entries[0].SKU)
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	quote := s.prices.Quote(t1cItem(model, pricing.RegionUS, true), used)
+	s.EqualValues(150_000, quote.CostMicros)
+	s.Zero(quote.BaseCostMicros)
+	s.Equal("llm-t1c-"+model+"-us-byok", quote.SKU)
+	s.EqualValues(1_200_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).CostMicros,
+		"work on the operator's key keeps its price")
+}
+
+// TestAnEntryWithoutARegionFailsValidation: region is required, in the form a region takes, so
+// the change is refused before anything is read or written.
+func (s *PriceListsSuite) TestAnEntryWithoutARegionFailsValidation() {
+	before := s.changeCount()
+	for _, region := range []any{nil, "", "EU", "us east"} {
+		item := map[string]any{"modality": "llm", "provider": "t1c", "model": "m" + s.token(),
+			"rates": map[string]any{"input_tokens": map[string]any{"usd": 1, "per": 1_000_000}},
+			"prices": map[string]any{"input_tokens": map[string]any{"usd": 1, "per": 1_000_000}}}
+		if region != nil {
+			item["region"] = region
+		}
+		body := map[string]any{"name": "test_" + s.token(), "reason": "No region.", "source": "a test", "entries": []any{item}}
+
+		status, payload := s.staff.with(idempotencyHeader, s.utils.uuid()).call(http.MethodPost, "/v1/manage/price-lists/changes", body)
+
+		s.Equal(http.StatusBadRequest, status, "%v: %s", region, payload)
+		var answered ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &answered))
+		s.Equal(codeValidationFailed, answered.Error.Code, "%v", region)
+		s.Contains(answered.Error.Message, "region", "%v", region)
+	}
+	s.Equal(before, s.changeCount(), "nothing written")
+}
+
+// TestARowRecordedForABYOKInstanceCarriesTheBYOKSKUAndCostsNothing: an instance on the
+// customer's own key records its rows at its BYOK entry's price and SKU, with a base cost of 0.
+func (s *PriceListsSuite) TestARowRecordedForABYOKInstanceCarriesTheBYOKSKUAndCostsNothing() {
+	model := "m" + s.token()
+	byok := pricedAt(entry(model, 1), 0.2)
+	byok.BYOK = true
+	s.created(s.change(pricedAt(entry(model, 1), 1.2), byok))
+	customer := s.customerID()
+	recorder := routing.NewRecorder(routing.LLM, s.store, nil, s.prices, slog.New(slog.DiscardHandler))
+
+	recorder.Record(routing.ProviderConfig{Provider: "t1c", Model: model, BYOK: true}, routing.Stat{
+		Owner:     routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: s.app.key}},
+		StartedAt: time.Now(), Usage: routing.Usage{InputTokens: 1_000_000}, Success: true,
+	})
+	recorder.Close()
+
+	var row store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&row).
+		Where("customer_id = ? AND model = ?", customer, model).Scan(context.Background()))
+	s.Equal("llm-t1c-"+model+"-us-byok", row.SKU)
+	s.EqualValues(200_000, row.CostMicros)
+	s.Zero(row.BaseCostMicros)
+	s.True(row.Billable)
 }
 
 func (s *PriceListsSuite) TestAChangeForTomorrowDoesNotPriceToday() {
@@ -201,8 +308,7 @@ func (s *PriceListsSuite) TestAChangeForTomorrowDoesNotPriceToday() {
 	later.EffectiveAt = &tomorrow
 	scheduled := s.created(later)
 
-	item := pricing.Item{Modality: "llm", Provider: "t1c", Model: model}
-	vendor, ok := s.prices.Entry(item)
+	vendor, ok := s.prices.Entry(t1cItem(model, pricing.RegionUS, false))
 	s.Require().True(ok)
 	s.Equal(1.0, vendor.Rates[pricing.InputTokens].USD)
 	list := s.active()
@@ -212,7 +318,8 @@ func (s *PriceListsSuite) TestAChangeForTomorrowDoesNotPriceToday() {
 	s.Equal(later.Reason, list.Upcoming[at].Reason)
 	s.Equal(1.5, list.Upcoming[at].Rates["input_tokens"].USD)
 	s.Equal(1.5, list.Upcoming[at].Prices["input_tokens"].USD)
-	s.Equal("llm-t1c-"+model, list.Upcoming[at].SKU, "the item keeps its SKU")
+	s.Equal("llm-t1c-"+model+"-us", list.Upcoming[at].SKU, "the item keeps its SKU")
+	s.Equal(pricing.RegionUS, list.Upcoming[at].Region)
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/"+scheduled.Name+"/cancel",
 		CancelPriceChangeInput{Reason: "Only a test."}, nil))
 }
@@ -309,7 +416,7 @@ func (s *PriceListsSuite) TestAPriceNotInTheShapeOfItsCostIsRefused() {
 func (s *PriceListsSuite) TestARenamedModelKeepsItsSKUThroughTheAPI() {
 	old, renamed := entry("m"+s.token(), 1), entry("m"+s.token(), 1)
 	s.created(s.change(old))
-	sku := "llm-t1c-" + old.Model
+	sku := "llm-t1c-" + old.Model + "-us"
 	renamed.SKU = sku
 
 	status, code := s.refused(s.change(renamed))
@@ -334,7 +441,7 @@ func (s *PriceListsSuite) TestARenamedModelKeepsItsSKUThroughTheAPI() {
 	s.Require().Len(written.Entries, 2)
 	s.Equal(sku, written.Entries[0].SKU)
 	s.Equal(sku, written.Entries[1].SKU)
-	quote := s.prices.Quote(pricing.Item{Modality: "llm", Provider: "t1c", Model: renamed.Model}, pricing.Quantities{pricing.InputTokens: 1})
+	quote := s.prices.Quote(t1cItem(renamed.Model, pricing.RegionUS, false), pricing.Quantities{pricing.InputTokens: 1})
 	s.Equal(sku, quote.SKU)
 }
 
@@ -378,7 +485,7 @@ func (s *PriceListsSuite) TestALargeMoveNeedsConfirmation() {
 	var preview PricePreview
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", tenfold, &preview))
 	s.True(preview.ConfirmationRequired)
-	s.Equal([]PriceItem{{Modality: "llm", Provider: "t1c", Model: model}}, preview.NeedsConfirmation)
+	s.Equal([]PriceItem{{Modality: "llm", Provider: "t1c", Model: model, Region: pricing.RegionUS}}, preview.NeedsConfirmation)
 	s.Require().Len(preview.Items, 1)
 	s.InDelta(10, preview.Items[0].PriceFactors["input_tokens"], 1e-9)
 
@@ -430,7 +537,7 @@ func (s *PriceListsSuite) TestDroppingALongPromptTierNeedsConfirmation() {
 }
 
 func (s *PriceListsSuite) TestDoublingAnIncrementNeedsConfirmation() {
-	minutes := PriceEntryInput{PriceItem: PriceItem{Modality: "phone", Provider: "t1c", Model: "m" + s.token()},
+	minutes := PriceEntryInput{PriceItem: PriceItem{Modality: "phone", Provider: "t1c", Model: "m" + s.token(), Region: pricing.RegionUS},
 		Rates:  map[string]PriceRate{"call_seconds": {USD: 0.01, Per: 60, Increment: 60}},
 		Prices: map[string]PriceRate{"call_seconds": {USD: 0.012, Per: 60, Increment: 60}}}
 	s.created(s.change(minutes))
@@ -520,7 +627,7 @@ func (s *PriceListsSuite) TestASmallMoveNeedsNoConfirmation() {
 }
 
 func (s *PriceListsSuite) TestWithdrawingARoutedModelNeedsConfirmation() {
-	noted := PriceItem{Modality: "llm", Provider: "noted", Model: "noted-model"}
+	noted := PriceItem{Modality: "llm", Provider: "noted", Model: "noted-model", Region: pricing.RegionUS}
 	s.created(s.change(PriceEntryInput{PriceItem: noted, Rates: map[string]PriceRate{"input_tokens": millionTokens(1)},
 		Prices: map[string]PriceRate{"input_tokens": millionTokens(1)}}))
 	withdrawal := s.change(PriceEntryInput{PriceItem: noted, Withdrawn: true})
@@ -548,12 +655,14 @@ func (s *PriceListsSuite) TestWithdrawingTheDefaultLeavesTheOtherEntries() {
 	flex.When = map[string]string{"service_tier": "flex"}
 	s.created(s.change(entry(model, 1), flex))
 
-	s.created(s.change(PriceEntryInput{PriceItem: PriceItem{Modality: "llm", Provider: "t1c", Model: model}, Withdrawn: true}))
+	s.created(s.change(PriceEntryInput{PriceItem: PriceItem{Modality: "llm", Provider: "t1c", Model: model, Region: pricing.RegionUS},
+		Withdrawn: true}))
 
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
-	atFlex := s.prices.Quote(pricing.Item{Modality: "llm", Provider: "t1c", Model: model, Attributes: flex.When}, used)
-	s.EqualValues(500_000, atFlex.BaseCostMicros, "the flex entry still prices")
-	s.True(s.prices.Quote(pricing.Item{Modality: "llm", Provider: "t1c", Model: model}, used).Unpriced)
+	atFlex := t1cItem(model, pricing.RegionUS, false)
+	atFlex.Attributes = flex.When
+	s.EqualValues(500_000, s.prices.Quote(atFlex, used).BaseCostMicros, "the flex entry still prices")
+	s.True(s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).Unpriced)
 }
 
 func (s *PriceListsSuite) TestAPastEffectiveTimeIsRefused() {
@@ -652,7 +761,7 @@ func (s *PriceListsSuite) TestAnUnknownChangeIsNotFound() {
 func (s *PriceListsSuite) TestTheActiveListSaysWhatIsUnpriced() {
 	list := s.active()
 
-	s.Contains(list.Unpriced, PriceItem{Modality: "llm", Provider: "echo", Model: "echo-model"},
+	s.Contains(list.Unpriced, PriceItem{Modality: "llm", Provider: "echo", Model: "echo-model", Region: pricing.RegionUS},
 		"a routed model no change has priced")
 	s.NotEmpty(list.Entries, "the seed")
 }
@@ -665,7 +774,9 @@ func (s *PriceListsSuite) TestTheActiveListShowsTheSKUTheCostAndThePrice() {
 
 	at := slices.IndexFunc(list.Entries, func(entry PriceEntry) bool { return entry.Model == model })
 	s.Require().GreaterOrEqual(at, 0)
-	s.Equal("llm-t1c-"+model, list.Entries[at].SKU)
+	s.Equal("llm-t1c-"+model+"-us", list.Entries[at].SKU)
+	s.Equal(pricing.RegionUS, list.Entries[at].Region)
+	s.False(list.Entries[at].BYOK)
 	s.Equal(1.1, list.Entries[at].Rates["input_tokens"].USD)
 	s.Equal(1.375, list.Entries[at].Prices["input_tokens"].USD)
 	s.Equal(written.Name, list.Entries[at].Version)
@@ -683,7 +794,8 @@ func (s *PriceListsSuite) TestAPriceChangeCanBeReadBack() {
 	s.Equal(model, read.Entries[0].Model)
 	s.Equal(1.0, read.Entries[0].Rates["input_tokens"].USD)
 	s.Equal(1.0, read.Entries[0].Prices["input_tokens"].USD)
-	s.Equal("llm-t1c-"+model, read.Entries[0].SKU)
+	s.Equal("llm-t1c-"+model+"-us", read.Entries[0].SKU)
+	s.Equal(pricing.RegionUS, read.Entries[0].Region)
 
 	var page PriceChangePage
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodGet, "/v1/manage/price-lists/changes?kind=api&limit=5", nil, &page))
@@ -713,8 +825,28 @@ func (s *PriceListsSuite) TestThePreviewWritesNothing() {
 	s.Len(preview.Items, 1)
 	s.Nil(preview.Items[0].Before, "nothing priced it")
 	s.NotNil(preview.Items[0].After)
+	s.Equal(pricing.RegionUS, preview.Items[0].Region)
 	s.False(preview.ConfirmationRequired)
 	s.Equal(before, s.changeCount())
+}
+
+// TestAPreviewOfAnEUEntryLeavesTheUSOneAsItWas: the eu entry is an item of its own, so the
+// preview shows it alone, with nothing before it, rather than as the us item moving.
+func (s *PriceListsSuite) TestAPreviewOfAnEUEntryLeavesTheUSOneAsItWas() {
+	model := "m" + s.token()
+	s.created(s.change(entry(model, 1)))
+	eu := entry(model, 10)
+	eu.Region = pricing.RegionEU
+	input := s.change(eu)
+	input.Confirm = false
+
+	var preview PricePreview
+	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", input, &preview))
+
+	s.Require().Len(preview.Items, 1)
+	s.Equal(pricing.RegionEU, preview.Items[0].Region)
+	s.Nil(preview.Items[0].Before)
+	s.False(preview.ConfirmationRequired, "ten times the us price is no move of it")
 }
 
 func (s *PriceListsSuite) TestAnAppCredentialDoesNotReachThePriceList() {

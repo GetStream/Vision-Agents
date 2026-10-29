@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -290,6 +291,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		Texml:   string(texml),
 		Timeout: seconds,
 	}
+	if outbound.StatusURL != "" {
+		request.StatusCallback, request.StatusCallbackMethod = outbound.StatusURL, http.MethodPost
+	}
 
 	var placed texmlCallPlaced
 	path := "/v2/texml/calls/" + url.PathEscape(p.connectionID)
@@ -305,6 +309,32 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	// Queued is Telnyx's documented first status, and an empty one would break the README's
 	// promise that every placed call has one.
 	return phone.Dialed{VendorCallID: placed.CallSID, Status: cmp.Or(placed.Status, "queued")}, nil
+}
+
+// ReadStatus reads the form Telnyx posts to a TeXML call's StatusCallback, whose CallStatus
+// words are Twilio's. One that does not end the call is a report that is not final.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("telnyx: a call status is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("telnyx: read a call status: %w", err))
+	}
+	word := form.Get("CallStatus")
+	if word == "" {
+		return phone.CallStatus{}, stack.Wrap(errors.New("telnyx: a call status without a CallStatus"))
+	}
+	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+}
+
+// finalStatuses are the CallStatus words that end a call.
+var finalStatuses = map[string]phone.CallResult{
+	"completed": phone.CallCompleted,
+	"busy":      phone.CallBusy,
+	"no-answer": phone.CallNoAnswer,
+	"failed":    phone.CallFailed,
+	"canceled":  phone.CallCanceled,
 }
 
 // SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
@@ -559,6 +589,9 @@ type texmlCall struct {
 	// Telnyx does not document it for this call, but accepts it: checked on a live call
 	// 2026-10-13, which stopped ringing after the time sent.
 	Timeout int `json:"Timeout,omitempty"`
+	// StatusCallback is where Telnyx posts the call's status, as a form, once it ends.
+	StatusCallback       string `json:"StatusCallback,omitempty"`
+	StatusCallbackMethod string `json:"StatusCallbackMethod,omitempty"`
 }
 
 // texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope.

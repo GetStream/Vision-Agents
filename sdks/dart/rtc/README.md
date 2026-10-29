@@ -14,4 +14,4 @@ The host app declares the microphone, and the camera if it shows one: `RECORD_AU
 `MODIFY_AUDIO_SETTINGS`, `CAMERA`, `BLUETOOTH_CONNECT`, `INTERNET` and `ACCESS_NETWORK_STATE` on
 Android; `NSMicrophoneUsageDescription` and `NSCameraUsageDescription` on iOS.
 
-See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart) for the rest.
+See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.

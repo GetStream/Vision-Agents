@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,14 +28,20 @@ type RefusedAttemptsSuite struct {
 	suite.Suite
 
 	// server answers each key in statuses with its status: 429 with a Retry-After, 401 as a
-	// wrong key, 402 as a spent quota, any other as is. Every other key is answered, and a
-	// websocket handshake on it accepted.
+	// wrong key, 402 as a spent quota, any other as is, each with the key's body in bodies
+	// instead when it has one. Every other key is answered, and a websocket handshake on it
+	// accepted.
 	server *httptest.Server
 
 	mu       sync.Mutex
 	statuses map[string]int
+	bodies   map[string]string
 	seen     []string
 }
+
+// outOfCreditBody is how Gemini refused the staging router's key once its prepaid credits ran
+// out (router log 2026-10-27 21:27Z): a 402 that does not say quota_exceeded.
+const outOfCreditBody = `[{"error":{"code":402,"message":"Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing. Learn more at https://ai.google.dev/gemini-api/docs/billing#prepay. ","status":"RESOURCE_EXHAUSTED"}}]`
 
 func TestRefusedAttemptsSuite(t *testing.T) {
 	suite.Run(t, new(RefusedAttemptsSuite))
@@ -47,10 +54,14 @@ func (s *RefusedAttemptsSuite) SetupSuite() {
 		s.mu.Lock()
 		s.seen = append(s.seen, key)
 		status := s.statuses[key]
+		body, hasBody := s.bodies[key]
 		s.mu.Unlock()
 
-		switch status {
-		case 0:
+		switch {
+		case hasBody:
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+		case status == 0:
 			if websocket.IsWebSocketUpgrade(r) {
 				if conn, err := upgrader.Upgrade(w, r, nil); err == nil {
 					_ = conn.Close()
@@ -58,13 +69,13 @@ func (s *RefusedAttemptsSuite) SetupSuite() {
 				return
 			}
 			_, _ = io.WriteString(w, "answered")
-		case http.StatusTooManyRequests:
+		case status == http.StatusTooManyRequests:
 			w.Header().Set("Retry-After", "10")
 			w.WriteHeader(status)
-		case http.StatusUnauthorized:
+		case status == http.StatusUnauthorized:
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, invalidKeyBody)
-		case http.StatusPaymentRequired:
+		case status == http.StatusPaymentRequired:
 			w.WriteHeader(status)
 			_, _ = io.WriteString(w, `{"detail":{"code":"quota_exceeded"}}`)
 		default:
@@ -79,6 +90,7 @@ func (s *RefusedAttemptsSuite) SetupTest() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.statuses = map[string]int{}
+	s.bodies = map[string]string{}
 	s.seen = nil
 }
 
@@ -87,6 +99,15 @@ func (s *RefusedAttemptsSuite) answer(status int, keys ...string) {
 	defer s.mu.Unlock()
 	for _, key := range keys {
 		s.statuses[key] = status
+	}
+}
+
+func (s *RefusedAttemptsSuite) answerWith(status int, body string, keys ...string) {
+	s.answer(status, keys...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range keys {
+		s.bodies[key] = body
 	}
 }
 
@@ -115,13 +136,24 @@ func (s *RefusedAttemptsSuite) pool(name string) pooled {
 
 // post sends a request through pool and returns the status it ended with.
 func (s *RefusedAttemptsSuite) post(pool *Pool) int {
+	status, _ := s.postAs(pool, "Bearer placeholder")
+	return status
+}
+
+// postAs sends a request with the Authorization header authorization, none when it is "",
+// through pool and returns the status and the body it ended with.
+func (s *RefusedAttemptsSuite) postAs(pool *Pool, authorization string) (int, string) {
 	request, err := http.NewRequest(http.MethodPost, s.server.URL, strings.NewReader("body"))
 	s.Require().NoError(err)
-	request.Header.Set("Authorization", "Bearer placeholder")
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
 	response, err := pool.WrapClient(nil, Bearer).Do(request)
 	s.Require().NoError(err)
 	defer response.Body.Close()
-	return response.StatusCode
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(body)
 }
 
 func (s *RefusedAttemptsSuite) dial(pool *Pool) (*http.Response, string, error) {
@@ -216,18 +248,57 @@ func (s *RefusedAttemptsSuite) TestASpentQuotaIsCountedUnderItsStatus() {
 	s.Equal(http.StatusOK, s.post(p.Pool))
 
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(p.keys[1], p.Next())
+	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()}, "the spent key rests")
 	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
 }
 
-func (s *RefusedAttemptsSuite) TestAWrongKeyCountsNoRefusal() {
+// A wrong key is not rested or moved past, as on the base; it is now counted.
+func (s *RefusedAttemptsSuite) TestAWrongKeyIsCountedAndHandedBack() {
 	p := s.pool("wrong")
 	s.answer(http.StatusUnauthorized, p.keys[0])
 
-	s.Equal(http.StatusUnauthorized, s.post(p.Pool))
+	status, body := s.postAs(p.Pool, "Bearer placeholder")
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal(invalidKeyBody, body)
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the wrong key does not rest")
+	s.Equal(map[string]float64{"401": 1}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAnOutOfCreditKeyIsCountedAndItsRefusalHandedBackWhole() {
+	p := s.pool("credit")
+	s.answerWith(http.StatusPaymentRequired, outOfCreditBody, p.keys[0])
+
+	status, body := s.postAs(p.Pool, "Bearer placeholder")
+
+	s.Equal(http.StatusPaymentRequired, status)
+	s.Equal(outOfCreditBody, body)
+	s.Equal(p.keys[:1], s.keysSeen())
+	s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAForbiddenKeyCountsNoRefusal() {
+	p := s.pool("forbidden")
+	s.answer(http.StatusForbidden, p.keys[0])
+
+	s.Equal(http.StatusForbidden, s.post(p.Pool))
 
 	s.Equal(p.keys[:1], s.keysSeen())
-	s.Equal(p.keys[1], p.Next())
+	s.Empty(s.counted(p.keyVars[0]))
+}
+
+// A request that carries no key is sent as it is, never on a pooled key, so its 401 says
+// nothing of the pool's keys.
+func (s *RefusedAttemptsSuite) TestAWrongKeyOnARequestWithoutAPooledKeyCountsNothing() {
+	p := s.pool("keyless")
+	s.answer(http.StatusUnauthorized, "")
+
+	status, _ := s.postAs(p.Pool, "")
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal([]string{""}, s.keysSeen())
 	s.Empty(s.counted(p.keyVars[0]))
 }
 
@@ -257,6 +328,45 @@ func (s *RefusedAttemptsSuite) TestEveryRefusedHandshakeIsCountedWhenNoKeyIsLeft
 	s.Equal(p.keys, s.keysSeen())
 	s.Equal(p.keys[0], p.Next())
 	s.Equal(map[string]float64{"429": 2}, s.counted(p.keyVars[0]))
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeOnAWrongOrOutOfCreditKeyIsCountedAndNotDialledAgain() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"wrong key", http.StatusUnauthorized, invalidKeyBody},
+		{"out of credit", http.StatusPaymentRequired, outOfCreditBody},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("plaindial")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			response, key, err := s.dial(p.Pool)
+
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			s.Equal(p.keys[0], key)
+			s.Equal(p.keys[:1], s.keysSeen())
+			s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+			s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+		})
+	}
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeOnASpentKeyIsCountedOnceAndDialledOnTheNextKey() {
+	p := s.pool("spentdial")
+	s.answer(http.StatusPaymentRequired, p.keys[0])
+
+	response, key, err := s.dial(p.Pool)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusSwitchingProtocols, response.StatusCode)
+	s.Equal(p.keys[1], key)
+	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()}, "the spent key rests")
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
 }
 
 func (s *RefusedAttemptsSuite) TestAHandshakeThatFailsWithoutARefusalCountsNothing() {
@@ -352,6 +462,26 @@ func (s *RefusedAttemptsSuite) TestAQuotaFrameIsCountedAndRestsTheKey() {
 	s.Equal([]string{p.keys[1], p.keys[1]}, []string{p.Next(), p.Next()})
 }
 
+// A key refused after the handshake is counted but, like a 401 at the handshake, not rested.
+func (s *RefusedAttemptsSuite) TestAKeyRefusedAfterTheHandshakeIsCountedAndStaysInTurn() {
+	p := s.pool("invalid")
+
+	p.InvalidKey()
+
+	s.Equal(map[string]float64{"invalid_key": 1}, s.counted(p.keyVars[0]))
+	s.Equal([]string{p.keys[0], p.keys[1], p.keys[0]}, []string{p.Next(), p.Next(), p.Next()})
+}
+
+// A frame for want of funds is counted under 402, as the handshake counts it, and not rested.
+func (s *RefusedAttemptsSuite) TestAFrameForWantOfFundsIsCountedAs402AndStaysInTurn() {
+	p := s.pool("funds")
+
+	p.OutOfFunds()
+
+	s.Equal(map[string]float64{"402": 1}, s.counted(p.keyVars[0]))
+	s.Equal([]string{p.keys[0], p.keys[1], p.keys[0]}, []string{p.Next(), p.Next(), p.Next()})
+}
+
 // refusedAlert is the key_refused condition, fresh, after a first check a limit before start
 // that takes in what earlier tests counted, so its next checks hold only what the test did.
 func (s *RefusedAttemptsSuite) refusedAlert(start time.Time) alerts.ItemCheck {
@@ -403,7 +533,7 @@ func (s *RefusedAttemptsSuite) TestWhatIsNotARefusalAlertsNothing() {
 		status int
 	}{
 		{name: "answered"},
-		{name: "wrong key", status: http.StatusUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden},
 		{name: "server error", status: http.StatusInternalServerError},
 	} {
 		s.Run(tc.name, func() {
@@ -419,4 +549,236 @@ func (s *RefusedAttemptsSuite) TestWhatIsNotARefusalAlertsNothing() {
 			}
 		})
 	}
+}
+
+// badKeyAnswers are how each provider that does not answer a made-up key with a 401 answered
+// one on 2026-10-27, verbatim (a bogus-key curl of each endpoint).
+var badKeyAnswers = []struct {
+	name   string
+	status int
+	body   string
+}{
+	{"gemini openai-compatible", http.StatusBadRequest, "[{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]"},
+	{"gemini native", http.StatusBadRequest, "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n"},
+	{"google reason alone", http.StatusBadRequest, `{"error":{"code":400,"message":"x","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID"}]}}`},
+	{"xai", http.StatusBadRequest, `{"code":"invalid-argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}`},
+	{"xai handshake", http.StatusBadRequest, `{"code":"Client specified an invalid argument","error":"Incorrect API key provided. You can obtain an API key from https://console.x.ai."}`},
+	{"baseten", http.StatusForbidden, "{\"error\":\"please check the api-key you provided\"}\n"},
+	{"baseten dedicated deployment", http.StatusForbidden, "{\n\t\"error\": \"Authentication failed\"\n}\n"},
+	{"inworld key not in base64 id:secret", http.StatusForbidden, `{"code":7,"message":"Invalid authorization credentials","details":[]}`},
+	{"inworld key in the real shape", http.StatusForbidden, `{"code":7,"message":"API key does not exist or was deleted: \"Ym9n***\"","details":[]}`},
+}
+
+// sender sends a request carrying a key through a pool, the way a provider does.
+type sender struct {
+	name string
+	do   func(pool *Pool, request *http.Request) (*http.Response, error)
+}
+
+var senders = []sender{
+	{"WrapClient", func(pool *Pool, request *http.Request) (*http.Response, error) {
+		return pool.WrapClient(nil, Bearer).Do(request)
+	}},
+	{"WrapDoer", func(pool *Pool, request *http.Request) (*http.Response, error) {
+		return pool.WrapDoer(nil, Bearer).Do(request)
+	}},
+	{"Send", func(pool *Pool, request *http.Request) (*http.Response, error) {
+		return pool.Send(request.Context(), func(key string) (*http.Response, error) {
+			attempt := request.Clone(request.Context())
+			attempt.Header.Set("Authorization", "Bearer "+key)
+			return http.DefaultClient.Do(attempt)
+		})
+	}},
+}
+
+// sendVia sends a request through pool with via and returns the status and body it ended with.
+func (s *RefusedAttemptsSuite) sendVia(via sender, pool *Pool) (int, string) {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL, strings.NewReader("body"))
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer placeholder")
+	response, err := via.do(pool, request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(body)
+}
+
+// A provider's bad-key 400 or 403 is counted as a wrong key's 401 is: not rested or moved
+// past, handed back whole.
+func (s *RefusedAttemptsSuite) TestABadKeyAnswerThatIsNotA401IsCountedAndHandedBackWhole() {
+	for _, via := range senders {
+		for _, tc := range badKeyAnswers {
+			s.Run(via.name+"/"+tc.name, func() {
+				s.SetupTest()
+				p := s.pool("badkey")
+				s.answerWith(tc.status, tc.body, p.keys[0])
+
+				status, body := s.sendVia(via, p.Pool)
+
+				s.Equal(tc.status, status)
+				s.Equal(tc.body, body)
+				s.Equal(p.keys[:1], s.keysSeen())
+				s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+				s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+			})
+		}
+	}
+}
+
+func (s *RefusedAttemptsSuite) TestAHandshakeOnABadKeyThatIsNotA401IsCountedAndNotDialledAgain() {
+	for _, tc := range badKeyAnswers {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("badkeydial")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			response, key, err := s.dial(p.Pool)
+
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			body, readErr := io.ReadAll(response.Body)
+			s.Require().NoError(readErr)
+			// The dialer keeps at most 1 KiB of a refused handshake's body.
+			s.Equal(tc.body[:min(len(tc.body), 1024)], string(body))
+			s.Equal(p.keys[0], key)
+			s.Equal(p.keys[:1], s.keysSeen())
+			s.Equal([]string{p.keys[1], p.keys[0]}, []string{p.Next(), p.Next()}, "the key does not rest")
+			s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+		})
+	}
+}
+
+// A 400 or 403 is counted on what its body says, not on its status. The body is read only
+// as far as the pool reads any refusal (drainLimit) and is still handed back whole.
+func (s *RefusedAttemptsSuite) TestA400Or403IsCountedOnlyWhenItsBodySaysTheKeyIsNotValid() {
+	marker := "Incorrect API key provided"
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		counted bool
+	}{
+		{"bad request", http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"foo\": Cannot find field.","status":"INVALID_ARGUMENT"}}`, false},
+		{"other google reason", http.StatusBadRequest, `{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_SERVICE_BLOCKED"}]}}`, false},
+		{"model not allowed", http.StatusForbidden, `{"error":"you do not have access to this model"}`, false},
+		{"baseten text on a 400", http.StatusBadRequest, `{"error":"Authentication failed"}`, false},
+		{"xai text on a 403", http.StatusForbidden, marker, false},
+		{"google reason on a 403", http.StatusForbidden, `"API_KEY_INVALID"`, false},
+		{"empty 400", http.StatusBadRequest, "", false},
+		{"empty 403", http.StatusForbidden, "", false},
+		{"not json 400", http.StatusBadRequest, "<html>Bad Request</html>", false},
+		{"not json with the marker", http.StatusBadRequest, "error: " + marker, true},
+		{"marker in another case", http.StatusBadRequest, strings.ToLower(marker), false},
+		{"marker ending at the limit", http.StatusBadRequest, strings.Repeat(" ", drainLimit-len(marker)) + marker, true},
+		{"marker across the limit", http.StatusBadRequest, strings.Repeat(" ", drainLimit-len(marker)+1) + marker, false},
+		{"marker past the limit", http.StatusForbidden, strings.Repeat(" ", drainLimit) + marker, false},
+		{"marker on a server error", http.StatusInternalServerError, marker, false},
+		{"marker on a 404", http.StatusNotFound, marker, false},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("edge")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			status, body := s.postAs(p.Pool, "Bearer placeholder")
+
+			s.Equal(tc.status, status)
+			s.Equal(tc.body, body)
+			s.Equal(p.keys[:1], s.keysSeen())
+			s.Equal(p.keys[1], p.Next())
+			if tc.counted {
+				s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+			} else {
+				s.Empty(s.counted(p.keyVars[0]))
+			}
+		})
+	}
+}
+
+// A response a Send callback built without a body has nothing to tell a bad key by: a 400 or
+// 403 of it is not counted, and a 401 still is.
+func (s *RefusedAttemptsSuite) TestARefusalWithoutABodyIsCountedOnItsStatusAlone() {
+	for _, tc := range []struct {
+		status  int
+		counted bool
+	}{
+		{http.StatusBadRequest, false},
+		{http.StatusForbidden, false},
+		{http.StatusUnauthorized, true},
+	} {
+		s.Run(strconv.Itoa(tc.status), func() {
+			p := s.pool("bodiless")
+
+			response, err := p.Send(context.Background(), func(string) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Header: http.Header{}}, nil
+			})
+
+			s.Require().NoError(err)
+			s.Equal(tc.status, response.StatusCode)
+			s.Nil(response.Body)
+			if tc.counted {
+				s.Equal(map[string]float64{strconv.Itoa(tc.status): 1}, s.counted(p.keyVars[0]))
+			} else {
+				s.Empty(s.counted(p.keyVars[0]))
+			}
+		})
+	}
+}
+
+// A handshake answered with a 400 or 403 that is not about the key is not counted, and is
+// handed back as it came.
+func (s *RefusedAttemptsSuite) TestAHandshakeRefusedForAnotherReasonThan400Or403IsNotCounted() {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"bad request", http.StatusBadRequest, `{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT"}}`},
+		{"model not allowed", http.StatusForbidden, `{"error":"you do not have access to this model"}`},
+		{"empty 400", http.StatusBadRequest, ""},
+		{"empty 403", http.StatusForbidden, ""},
+	} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			p := s.pool("dialother")
+			s.answerWith(tc.status, tc.body, p.keys[0])
+
+			response, key, err := s.dial(p.Pool)
+
+			s.Require().Error(err)
+			s.Equal(tc.status, response.StatusCode)
+			body, readErr := io.ReadAll(response.Body)
+			s.Require().NoError(readErr)
+			s.Equal(tc.body, string(body))
+			s.Equal(p.keys[0], key)
+			s.Empty(s.counted(p.keyVars[0]))
+		})
+	}
+}
+
+// closeSpy is a body that records that it was closed.
+type closeSpy struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closeSpy) Close() error {
+	c.closed = true
+	return nil
+}
+
+// Closing the body a counted 400 or 403 is handed back with closes the provider's own body.
+func (s *RefusedAttemptsSuite) TestClosingACountedAnswersBodyClosesTheProvidersBody() {
+	p := s.pool("closes")
+	provider := &closeSpy{Reader: strings.NewReader(`{"error":"Incorrect API key provided"}`)}
+
+	response, err := p.Send(context.Background(), func(string) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{}, Body: provider}, nil
+	})
+
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.True(provider.closed)
+	s.Equal(map[string]float64{"400": 1}, s.counted(p.keyVars[0]))
 }

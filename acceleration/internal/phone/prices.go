@@ -12,6 +12,7 @@ import (
 // by country and direction in the vendor price list. A number needs no rate: each month is
 // billed at the price the vendor quoted, and one with no quote is billable work with no price.
 // A number on the customer's own trunk, and its minutes, are billed by the customer's carrier.
+// Each is in the default region, which phone work names none of its own and runs in.
 func PriceEntries(config Config) []pricing.Entry {
 	vendors := []string{SIPTrunkVendor}
 	for _, vendor := range config.Vendors {
@@ -20,7 +21,7 @@ func PriceEntries(config Config) []pricing.Entry {
 		}
 	}
 	free := func(vendor, model string) pricing.Entry {
-		return pricing.Entry{Modality: string(routing.Phone), Provider: vendor, Model: model, Free: true}
+		return pricing.Entry{Modality: string(routing.Phone), Provider: vendor, Model: model, Region: pricing.DefaultRegion, Free: true}
 	}
 	entries := []pricing.Entry{free(SIPTrunkVendor, ModelNumber), free(SIPTrunkVendor, ModelCallMinutes)}
 	for _, vendor := range vendors {

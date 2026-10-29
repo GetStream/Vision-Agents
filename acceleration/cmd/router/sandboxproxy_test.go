@@ -25,6 +25,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -88,7 +90,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	proxy, err := newSandboxProxy(settings, redis, &resolver.Resolver{}, nil, nil, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, proxy)
-	stop, _, err := serveSandboxProxy(proxy, settings.ProxyAddr, settings.ProxyPublicURL, false, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, settings.ProxyAddr, 0, settings.ProxyPublicURL, false, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -108,7 +110,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 // public URL, and stop is safe.
 func TestNoProxyServesNothing(t *testing.T) {
 	address := freeAddress(t)
-	stop, handOver, err := serveSandboxProxy(nil, address, tlsPublicURL, true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	stop, handOver, err := serveSandboxProxy(nil, address, 0, tlsPublicURL, true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
 	handOver()
@@ -301,7 +303,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 		egress.Record{Session: "w15tlsl-session", Allowed: []string{"example.com"}}, time.Minute))
 	t.Cleanup(func() { _ = sandboxStore(redis).Delete(context.Background(), credential) })
 	listen := freeAddress(t)
-	stop, _, err := serveSandboxProxy(proxy, listen, publicURL, false, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, listen, 0, publicURL, false, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, logger)
 	require.NoError(t, err)
@@ -484,7 +486,7 @@ func serveBareProxy(t *testing.T, address string, overlap bool) (stop func() err
 	caCert, caKey := newCA(t)
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
-	stop, handOver, err = serveSandboxProxy(proxy, address, "", overlap, func(server *http.Server, listener net.Listener) {
+	stop, handOver, err = serveSandboxProxy(proxy, address, 0, "", overlap, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -505,6 +507,60 @@ func servesProxy(address string) bool {
 	return response.StatusCode == http.StatusMethodNotAllowed
 }
 
+// TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout is the router proxy's keep-alive limit: a
+// sandbox connection that sends no next request is closed, where base held it open for ever.
+// The wait is bounded by 5 s, past the 200 ms timeout and short of the 10 s header timeout.
+func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
+	const idle = 200 * time.Millisecond
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: idle,
+		Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	address := freeAddress(t)
+	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
+		_ = server.Serve(listener)
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+	require.Eventually(t, func() bool { return servesProxy(address) }, 5*time.Second, 10*time.Millisecond)
+	conn, err := net.Dial("tcp", address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	reader := bufio.NewReader(conn)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: proxy\r\n\r\n")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
+	_, err = io.Copy(io.Discard, response.Body)
+	require.NoError(t, err)
+	answered := time.Now()
+
+	_, err = reader.ReadByte()
+
+	require.ErrorIs(t, err, io.EOF, "the idle connection was not closed")
+	require.GreaterOrEqual(t, time.Since(answered), idle)
+}
+
+// TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault: a router that sets nothing
+// gives the server the proxy's own default, the 90 s of egress/proxy.go:47 on base 131c510ab,
+// which a tunnel to a grant already had.
+func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing.T) {
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	served := make(chan *http.Server, 1)
+
+	stop, _, err := serveSandboxProxy(proxy, freeAddress(t), 0, "", false, func(server *http.Server, _ net.Listener) {
+		served <- server
+	}, slog.New(slog.DiscardHandler))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+	require.Equal(t, 90*time.Second, (<-served).IdleTimeout)
+}
+
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
 // is waited for. 192.0.2.1 is TEST-NET-1 (RFC 5737), on no interface of this host.
 func TestAnAddressThatCannotBeListenedOnStillFailsTheStart(t *testing.T) {
@@ -512,7 +568,7 @@ func TestAnAddressThatCannotBeListenedOnStillFailsTheStart(t *testing.T) {
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 
-	_, _, err = serveSandboxProxy(proxy, "192.0.2.1:8091", "", true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
+	_, _, err = serveSandboxProxy(proxy, "192.0.2.1:8091", 0, "", true, func(*http.Server, net.Listener) {}, slog.New(slog.DiscardHandler))
 
 	require.ErrorContains(t, err, "192.0.2.1:8091")
 }
@@ -528,7 +584,7 @@ func TestAHeldAddressFailsTheStartWithoutAnOverlapAsOnBase(t *testing.T) {
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 
-	_, _, err = serveSandboxProxy(proxy, holder.Addr().String(), "", false, func(*http.Server, net.Listener) {},
+	_, _, err = serveSandboxProxy(proxy, holder.Addr().String(), 0, "", false, func(*http.Server, net.Listener) {},
 		slog.New(slog.DiscardHandler))
 
 	require.EqualError(t, err, "listen tcp "+holder.Addr().String()+": bind: address already in use")
@@ -564,6 +620,9 @@ type SandboxProxyHandOverSuite struct {
 	// served is what each router's Serve ended with: serve in main takes all but
 	// http.ErrServerClosed for a failure that stops the router.
 	served chan error
+	// devrun is the proxy socket a supervisor holds across routers, as devrun holds the
+	// public one; nil, the default, has each router listen on address itself.
+	devrun *os.File
 }
 
 func TestSandboxProxyHandOverSuite(t *testing.T) {
@@ -594,6 +653,7 @@ func (s *SandboxProxyHandOverSuite) SetupTest() {
 	s.trusted = x509.NewCertPool()
 	s.accepted = make(chan struct{}, 16)
 	s.served = make(chan error, 4)
+	s.devrun = nil
 	s.credential = "w21ho-" + egress.NewCredential()
 	store := sandboxStore(s.redis)
 	s.Require().NoError(store.Put(context.Background(), s.credential,
@@ -619,7 +679,14 @@ func (s *SandboxProxyHandOverSuite) startRouterAt(publicURL, body string, logger
 	s.Require().NoError(err)
 	// This test's channels: a router's Serve may end after the next test has set its own.
 	accepted, served := s.accepted, s.served
-	stop, handOver, err = serveSandboxProxy(proxy, s.address, publicURL, true, func(server *http.Server, listener net.Listener) {
+	// Each router is handed a duplicate of the supervisor's socket, as exec hands a child its
+	// ExtraFiles, and closes it once it serves.
+	fd := 0
+	if s.devrun != nil {
+		fd, err = syscall.Dup(int(s.devrun.Fd()))
+		s.Require().NoError(err)
+	}
+	stop, handOver, err = serveSandboxProxy(proxy, s.address, fd, publicURL, true, func(server *http.Server, listener net.Listener) {
 		server.ConnState = func(_ net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				select {
@@ -780,6 +847,11 @@ func (s *SandboxProxyHandOverSuite) TestARouterDrainedBeforeItGetsTheAddressNeve
 
 // TestHandingOverSaysSoOnce, as metrics do, and a router that only stops says nothing of it.
 func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
+	// The router serves an inherited socket, whose address is not the proxy address it is
+	// given, so the line names the one it stopped serving.
+	s.holdProxySocket()
+	socket := s.address
+	s.address = "127.0.0.1:1"
 	var lines lockedBuffer
 	stop, handOver, err := s.startRouter("first", slog.New(slog.NewTextHandler(&lines, nil)))
 	s.Require().NoError(err)
@@ -789,6 +861,7 @@ func (s *SandboxProxyHandOverSuite) TestHandingOverSaysSoOnce() {
 	s.Require().NoError(stop())
 
 	s.Equal(1, strings.Count(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over"))
+	s.Contains(lines.String(), "stopped taking sandbox egress proxy connections for the router taking over\" address="+socket)
 	var stopped lockedBuffer
 	stop, handOver, err = s.startRouter("second", slog.New(slog.NewTextHandler(&stopped, nil)))
 	s.Require().NoError(err)
@@ -886,5 +959,193 @@ func (s *SandboxProxyHandOverSuite) TestTheWaitForTheAddressEndsWithTheRouterWhi
 		s.Require().Eventually(func() bool { return waitingGoroutines() == before }, 2*time.Second, 20*time.Millisecond,
 			"the wait outlived the router (hand over: %v)", viaHandOver)
 		s.Require().NoError(holder.Close())
+	}
+}
+
+// holdProxySocket is the supervisor's part of an overlap deploy: it listens on the proxy
+// address and keeps the socket alone, never accepting on it, so it outlives every router.
+func (s *SandboxProxyHandOverSuite) holdProxySocket() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	file, err := listener.(*net.TCPListener).File()
+	s.Require().NoError(err)
+	s.address = listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	s.devrun = file
+	s.T().Cleanup(func() { _ = file.Close() })
+}
+
+// TestRoutersOnTheInheritedSocketRefuseNoSandboxAcrossTheHandOver is AI-2071: a sandbox that
+// keeps opening tunnels through an overlap deploy is never refused, and every tunnel opened
+// after the old router hands over goes through the new one.
+func (s *SandboxProxyHandOverSuite) TestRoutersOnTheInheritedSocketRefuseNoSandboxAcrossTheHandOver() {
+	s.holdProxySocket()
+	_, handOverFirst, err := s.startRouter("first", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	type attempt struct {
+		body string
+		err  error
+		// afterHandOver: the sandbox dialled once the old router had handed over.
+		afterHandOver bool
+	}
+	var handedOver atomic.Bool
+	done := make(chan struct{})
+	attempts := make(chan attempt, 1<<14)
+	var stopping sync.Once
+	stopSandbox := func() { stopping.Do(func() { close(done) }) }
+	// A failed assertion ends the sandbox too, before the test's other cleanups run.
+	ended := make(chan struct{})
+	s.T().Cleanup(func() { stopSandbox(); <-ended })
+	go func() {
+		defer close(ended)
+		defer close(attempts)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			after := handedOver.Load()
+			tunnel, err := s.openTunnel()
+			body := ""
+			if err == nil {
+				body, err = tunnel.get()
+				_ = tunnel.conn.Close()
+			}
+			attempts <- attempt{body: body, err: err, afterHandOver: after}
+		}
+	}()
+	// Under load the sandbox is slow to start: the swap waits for its first tunnel.
+	var seen []attempt
+	next := func() attempt {
+		select {
+		case a, open := <-attempts:
+			s.Require().True(open)
+			seen = append(seen, a)
+			return a
+		case <-time.After(10 * time.Second):
+			s.FailNow("the sandbox got no answer")
+			return attempt{}
+		}
+	}
+	next()
+	_, _, err = s.startRouter("second", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	// Both routers take tunnels for a while before the swap, as they do in a deploy.
+	for range 20 {
+		next()
+	}
+
+	handOverFirst()
+	// Ordering: a dial counts as after the hand-over only once the old router's Serve has returned.
+	s.ErrorIs(s.servedWithin(), net.ErrClosed, "the draining router's Serve did not end with its listener")
+	handedOver.Store(true)
+	for after := 0; after < 20; {
+		if next().afterHandOver {
+			after++
+		}
+	}
+	stopSandbox()
+	for a := range attempts {
+		seen = append(seen, a)
+	}
+
+	for i, a := range seen {
+		s.Require().NoError(a.err, "attempt %d of %d failed (after the hand-over: %v)", i, len(seen), a.afterHandOver)
+		if a.afterHandOver {
+			s.Require().Equal("second", a.body, "attempt %d went to the router that had handed over", i)
+		}
+	}
+}
+
+// servedWithin is what a router's Serve ended with, failing the test if none ends in 5s.
+func (s *SandboxProxyHandOverSuite) servedWithin() error {
+	select {
+	case err := <-s.served:
+		return err
+	case <-time.After(5 * time.Second):
+		s.FailNow("no router stopped serving")
+		return nil
+	}
+}
+
+// TestHandingOverTheInheritedSocketLeavesItListeningAndTheTunnelsOpen: the old router closes its
+// own copy alone, so a sandbox that connects while no router accepts waits in the socket's queue
+// for the next one, and the tunnel it already had keeps working.
+func (s *SandboxProxyHandOverSuite) TestHandingOverTheInheritedSocketLeavesItListeningAndTheTunnelsOpen() {
+	s.holdProxySocket()
+	_, handOver, err := s.startRouter("first", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	open, err := s.openTunnel()
+	s.Require().NoError(err)
+
+	handOver()
+	s.Require().ErrorIs(s.servedWithin(), net.ErrClosed, "the router still accepts after its hand-over")
+	queued, err := net.DialTimeout("tcp", s.address, time.Second)
+	s.Require().NoError(err, "the hand-over closed the supervisor's socket")
+	s.T().Cleanup(func() { _ = queued.Close() })
+	s.Require().NoError(queued.SetDeadline(time.Now().Add(10 * time.Second)))
+	_, err = fmt.Fprintf(queued, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic %s\r\n\r\n",
+		base64.StdEncoding.EncodeToString([]byte("sbx:"+s.credential)))
+	s.Require().NoError(err)
+	_, _, err = s.startRouter("second", slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(queued), nil)
+	s.Require().NoError(err, "the sandbox queued during the hand-over was never served")
+	_ = response.Body.Close()
+	s.Equal(http.StatusOK, response.StatusCode)
+
+	body, err := open.get()
+	s.Require().NoError(err, "the hand-over cut a tunnel open on the draining router")
+	s.Equal("first", body)
+}
+
+// TestAnInheritedDescriptorThatIsNoSocketFailsTheStart names the setting, so a supervisor
+// passing the wrong descriptor is told which one.
+func TestAnInheritedDescriptorThatIsNoSocketFailsTheStart(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "not-a-socket")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	fd, err := syscall.Dup(int(file.Fd()))
+	require.NoError(t, err)
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+
+	_, _, err = serveSandboxProxy(proxy, freeAddress(t), fd, "", true, func(*http.Server, net.Listener) {},
+		slog.New(slog.DiscardHandler))
+
+	require.ErrorContains(t, err, fmt.Sprintf("could not serve on the inherited socket %d (code_sandbox.proxy_listen_fd)", fd))
+}
+
+// TestAnInheritedProxySocketIsHandedOverEvenWithoutAnInheritedPublicOne: the proxy's socket
+// alone says a supervisor runs the next router on it, so the hand-over stops this one accepting.
+func TestAnInheritedProxySocketIsHandedOverEvenWithoutAnInheritedPublicOne(t *testing.T) {
+	opened, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	file, err := opened.(*net.TCPListener).File()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	require.NoError(t, opened.Close())
+	fd, err := syscall.Dup(int(file.Fd()))
+	require.NoError(t, err)
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	served := make(chan error, 1)
+	stop, handOver, err := serveSandboxProxy(proxy, ":8091", fd, "", false, func(server *http.Server, listener net.Listener) {
+		served <- server.Serve(listener)
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+
+	handOver()
+
+	select {
+	case err := <-served:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the router still accepts on the inherited socket after its hand-over")
 	}
 }

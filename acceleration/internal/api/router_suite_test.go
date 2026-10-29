@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -32,6 +33,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
@@ -58,6 +60,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -74,6 +78,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -146,9 +151,13 @@ func (s *RouterSuite) BeforeTest(_, _ string) {
 	count, err := s.store.DB().NewSelect().Model((*store.ScheduledTask)(nil)).Count(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, count, "a task is left from an earlier test or run")
+	// A database that stalls past the driver's 10s read timeout fails the delete, and the next
+	// test would then fail on this one's tasks; the delete is tried again until it lands.
 	t.Cleanup(func() {
-		_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
-		require.NoError(t, err)
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			_, err := s.store.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(context.Background())
+			assert.NoError(c, err)
+		}, time.Minute, 100*time.Millisecond, "the tasks were never deleted")
 	})
 }
 
@@ -203,6 +212,10 @@ type RouterSuite struct {
 	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
 	// writes, so a test names its caller with proxiedClient rather than a key.
 	proxied bool
+	// byCustomer authenticates as a local router in proxy mode with nothing in front, as
+	// every example runs: a caller names its customer itself and is a backend unless it
+	// declares otherwise.
+	byCustomer bool
 	// shipping ships the conversation model's rows to a usage service of the suite's own,
 	// usage, as cmd/router's writer does.
 	shipping bool
@@ -335,6 +348,9 @@ type RouterSuite struct {
 	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
 	// the harness. Zero caps nothing.
 	runsPerApp int64
+	// knowledgeLimits is how documents are cut, for a suite about knowledge limits to set
+	// before it starts the harness. Zero is ingest.DefaultLimits.
+	knowledgeLimits ingest.Limits
 	// eventSecrets and bridge are the connector events endpoint's secrets and channel
 	// bridge, for a suite about connector events to set before it starts the harness. Nil
 	// takes no events and drops messages, as a deployment without them does.
@@ -417,6 +433,14 @@ type RouterSuite struct {
 	// daytona is where the sessions' sandboxes are made, for a suite whose agents run code to
 	// set before it starts the harness. Nil makes them on the Daytona the environment names.
 	daytona *daytonatest.Server
+	// llmInstances, llmFactories, knowledgeRegions and sandboxTargets are a suite about regions'
+	// own, set before it starts the harness: model instances laid over reasoningConfig, what
+	// registers their factories over the suite's stubs, a knowledge backend for each region
+	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
+	llmInstances     []routing.ProviderConfig
+	llmFactories     func(*llmrouter.Registry)
+	knowledgeRegions map[string]knowledge.Backend
+	sandboxTargets   map[string]string
 	// sandbox is what an app with no approved use case may do, for a suite about the
 	// sandbox to set before it starts the harness. The zero value is off.
 	sandbox dlc.Sandbox
@@ -431,6 +455,12 @@ type RouterSuite struct {
 	// phoneNow, set by a suite before it starts the harness, is the clock the phone service
 	// times call legs and months by. Nil is the wall clock.
 	phoneNow func() time.Time
+	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
+	// the harness. Nil is every vendor the router knows, with no credentials.
+	phoneVendors *phone.Registry
+	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
+	// suite to set before it starts the harness. Off, a session with a number cannot open.
+	sessionTelephony bool
 	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
 	registrar10DLC *dlc.Service
 	// manageOff builds the router with no manage key, as a deployment that never set
@@ -483,6 +513,9 @@ func (s *RouterSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
 	s.forgetPhoneVendors()
+	if s.knowledgeLimits == (ingest.Limits{}) {
+		s.knowledgeLimits = ingest.DefaultLimits
+	}
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
@@ -573,14 +606,14 @@ func (s *RouterSuite) SetupSuite() {
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
 	s.transports = transports
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
+	s.phoneRecorder = s.telephonyRecorder(logger)
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	// Every text, call and number asks the same admission as a model, as in cmd/router.
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
-	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -668,7 +701,8 @@ func (s *RouterSuite) SetupSuite() {
 		OpsKey:            suiteOpsKey,
 		ManageKey:         manageKey,
 		Secrets:           s.sealer,
-		Knowledge:         s.knowledgeWriter(),
+		Knowledge:         s.knowledgeWriter(policies),
+		KnowledgeLimits:   s.knowledgeLimits,
 		KnowledgeURLs:     s.pages(redisAddr),
 		Voices:            s.voiceService(),
 		VoiceLibrary:      voices.NewCatalogue(),
@@ -793,6 +827,16 @@ func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
 	s.T().Cleanup(recorder.Close)
 	return recorder
+}
+
+// vendorPriced is what used of a phone item costs at the vendor list's rates, as
+// telephonyRecorder prices it, read from vendor.json so a price change there leaves the tests
+// passing. The test names the item, so a row recorded under the wrong one fails.
+func (s *RouterSuite) vendorPriced(provider, model string, attributes map[string]string, used pricing.Quantities) int64 {
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	item := pricing.Item{Modality: string(routing.Phone), Provider: provider, Model: model, Region: pricing.DefaultRegion, Attributes: attributes}
+	return pricingtest.Micros(s.T(), list, item, used)
 }
 
 // redirected dials one server whatever host is asked for, or nothing when there is none.
@@ -981,13 +1025,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	// A model that runs the tool calls its test queued in the suite's schedulingScript,
 	// one call per person who speaks, for the scheduling tools' tests.
-	reasoning.Register("scheduling", func(routing.Spec) (llmrouter.Provider, error) {
-		model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
-		s.scheduledMu.Lock()
-		s.scheduled = append(s.scheduled, model)
-		s.scheduledMu.Unlock()
-		return model, nil
-	})
+	reasoning.Register("scheduling", s.schedulingModel)
 	// A model that runs crm's echo through a waiting binding's call_tool whenever somebody
 	// asks it something, a follow-up after a login included (chat_logins_test.go).
 	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
@@ -1001,8 +1039,13 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	if s.prices != nil {
 		pricer = s.prices
 	}
+	reasoned := reasoningConfig()
+	reasoned.Providers = append(reasoned.Providers, s.llmInstances...)
+	if s.llmFactories != nil {
+		s.llmFactories(reasoning)
+	}
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: reasoningConfig(), Registry: reasoning, Store: s.store, Live: s.live,
+		Config: reasoned, Registry: reasoning, Store: s.store, Live: s.live,
 		Quota: limiter, Gate: gate, Pricer: pricer, Logger: logger,
 		Models: llmrouter.NewCustomModels(s.configs, s.sealer, false),
 		Writer: s.shippingWriter(gate, logger),
@@ -1092,13 +1135,15 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // tenth of a second rather than a router's 30, so a change made in a test prices within it.
 const suitePriceReload = 100 * time.Millisecond
 
-// databasePrices seeds the suite's price list from the embedded vendor list, as a router's
-// first start does (once: every later start finds it seeded and adds nothing it already has),
-// and reads it every suitePriceReload until the suite ends.
+// databasePrices seeds the suite's price list from the fixtures' price file laid over the
+// embedded vendor list, as a router's first start does with a file of its own (once: every
+// later start finds it seeded and adds only what it lacks), and reads it every
+// suitePriceReload until the suite ends.
 func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.T().Cleanup(cancel)
-	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: prices.Vendor().Entries, Source: prices.VendorFile, Release: "suite"})
+	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: pricingtest.Entries(s.T()),
+		Source: pricingtest.FileName + ", " + prices.VendorFile, Release: "suite"})
 	s.Require().NoError(err)
 	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
 	s.Require().NoError(err)
@@ -1132,7 +1177,12 @@ func (s *RouterSuite) sessionManager(
 	}
 	var sandboxes *metered.Sandboxes
 	if s.daytona != nil {
-		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(), Logger: logger})
+		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(),
+			Targets: s.sandboxTargets, Recorder: s.metering, Logger: logger})
+	}
+	var telephony *phone.Service
+	if s.sessionTelephony {
+		telephony = s.telephony(logger)
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Sandboxes:     sandboxes,
@@ -1140,6 +1190,7 @@ func (s *RouterSuite) sessionManager(
 		STT:           streams.STT,
 		TTS:           streams.TTS,
 		Memory:        metering,
+		Phone:         telephony,
 		Transcript:    s.transcripts,
 		Conversations: conversations,
 		Stream:        s.stream,
@@ -1221,6 +1272,9 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 	if s.proxied {
 		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: true})
 	}
+	if s.byCustomer {
+		return auth.NewProxy(auth.ProxyOptions{})
+	}
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
@@ -1253,11 +1307,15 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
-	config, err := phone.DefaultConfig()
-	s.Require().NoError(err)
+	registry := s.phoneVendors
+	if registry == nil {
+		config, err := phone.DefaultConfig()
+		s.Require().NoError(err)
+		registry = vendors.Registry(config)
+	}
 
 	service, err := phone.NewService(phone.ServiceOptions{
-		Registry:  vendors.Registry(config),
+		Registry:  registry,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,
@@ -1301,9 +1359,21 @@ func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
 	return recorder
 }
 
-func (s *RouterSuite) knowledgeWriter() *metered.Knowledge {
+func (s *RouterSuite) knowledgeWriter(gate routing.Gate) *metered.Knowledge {
 	s.knowledge = newKnowledgeBase()
-	return metered.NewKnowledge(s.knowledge, s.metering)
+	backends := map[string]knowledge.Backend{pricing.DefaultRegion: s.knowledge}
+	maps.Copy(backends, s.knowledgeRegions)
+	return metered.NewRegionalKnowledge(backends, s.metering, gate, s.store)
+}
+
+// schedulingModel is a model that runs the tool calls its test queued in the suite's
+// schedulingScript, one call per person who speaks, for the scheduling tools' tests.
+func (s *RouterSuite) schedulingModel(routing.Spec) (llmrouter.Provider, error) {
+	model := &schedulingModel{script: &s.schedulingScript, failing: s.schedulingScript.failingTurns()}
+	s.scheduledMu.Lock()
+	s.scheduled = append(s.scheduled, model)
+	s.scheduledMu.Unlock()
+	return model, nil
 }
 
 // pages keeps the knowledge bases filled from pages published elsewhere. Its queue is in a
@@ -1318,7 +1388,8 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
 		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
-		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering),
+		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering, nil),
+		Limits:        s.knowledgeLimits,
 		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
@@ -2106,7 +2177,7 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 // authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
 // gateway serves, though the suite's callers still sign with the app's key.
 func (s *RouterSuite) authMode() auth.Mode {
-	if s.appMode || s.proxied {
+	if s.appMode || s.proxied || s.byCustomer {
 		return auth.Proxy
 	}
 	return auth.APIKey

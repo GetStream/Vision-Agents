@@ -1,10 +1,10 @@
 package pricing
 
 func (s *PricingSuite) TestACallIsBilledByTheStartedMinute() {
-	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "call_minutes",
+	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "call_minutes", Region: RegionUS,
 		When:  map[string]string{"direction": "outbound", "country": "US"},
 		Rates: map[Meter]Rate{CallSeconds: {USD: 0.007, Per: 60, Increment: 60}}})
-	item := Item{Modality: "phone", Provider: "telnyx", Model: "call_minutes",
+	item := Item{Modality: "phone", Provider: "telnyx", Model: "call_minutes", Region: RegionUS,
 		Attributes: map[string]string{"direction": "outbound", "country": "US"}}
 
 	s.Equal(int64(14_000), list.Quote(item, Quantities{CallSeconds: 61}).CostMicros, "61 seconds are two started minutes")
@@ -18,12 +18,12 @@ func (s *PricingSuite) TestACallIsBilledByTheStartedMinute() {
 }
 
 func (s *PricingSuite) TestATextIsBilledByItsSegmentsAndItsMedia() {
-	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "sms",
+	list := s.list(Entry{Modality: "phone", Provider: "telnyx", Model: "sms", Region: RegionUS,
 		When: map[string]string{"direction": "outbound", "country": "US"},
 		Rates: map[Meter]Rate{
 			MessageSegments: {USD: 0.0078, Per: 1}, MediaMessages: {USD: 0.015, Per: 1}, Messages: {USD: 0, Per: 1},
 		}})
-	item := Item{Modality: "phone", Provider: "telnyx", Model: "sms",
+	item := Item{Modality: "phone", Provider: "telnyx", Model: "sms", Region: RegionUS,
 		Attributes: map[string]string{"direction": "outbound", "country": "US"}}
 
 	s.Equal(int64(15_600), list.Quote(item, Quantities{Messages: 1, MessageSegments: 2}).CostMicros)

@@ -94,8 +94,10 @@ var securitySchemes = map[string]*huma.SecurityScheme{
 		Name: "Stream-Auth-Type",
 		Description: "Which kind of credential is presented: server for a process the " +
 			"customer runs, jwt for a request made on an end user's behalf, which is what a " +
-			"caller that names neither is taken to be. It has no query parameter counterpart, " +
-			"so a browser socket cannot claim to be a backend. The header is the caller's " +
+			"caller that names neither is taken to be. A socket in proxy mode, with no proxy " +
+			"that declares kinds, may send jwt or anonymous as the stream-auth-type query " +
+			"parameter instead, but never server, so a browser socket cannot claim to be a " +
+			"backend. The header is the caller's " +
 			"declaration and AppToken is the proof, so both have to say the same thing.",
 	},
 }
@@ -369,6 +371,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerRouterconfigs(api)
 	s.registerVoices(api)
 	s.registerCustomModels(api)
+	s.registerProviderKeys(api)
 	s.registerScheduledTasks(api)
 	s.registerKnowledge(api)
 	s.registerKnowledgeurls(api)

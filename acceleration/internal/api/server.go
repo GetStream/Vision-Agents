@@ -10,6 +10,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -45,6 +46,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
@@ -187,6 +189,9 @@ type Options struct {
 	// call recorded for the customer and key that asked. Absent when the deployment has no
 	// knowledge provider, in which case there is nothing to fill and the path says so.
 	Knowledge *metered.Knowledge
+	// KnowledgeLimits bound how much larger a posted document's passages can be than the
+	// document, as the router's settings name them.
+	KnowledgeLimits ingest.Limits
 	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
@@ -339,6 +344,7 @@ type Server struct {
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
+	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
@@ -516,6 +522,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
+		knowledgeLimits:    options.KnowledgeLimits,
 		pages:              options.KnowledgeURLs,
 		voices:             options.Voices,
 		library:            options.VoiceLibrary,
@@ -607,6 +614,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 		server.forwarder = node.NewForwarder(logger, credential)
 	}
+	if server.phone != nil {
+		server.phone.OnUnanswered(server.endUnanswered)
+	}
 	return server, nil
 }
 
@@ -661,12 +671,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
+	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
@@ -1429,6 +1441,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
 			Realtime:    candidate.Config.Realtime,
+			Region:      cmp.Or(candidate.Config.Region, pricing.DefaultRegion),
 			Supports:    supportsOf(candidate.Config.Terms),
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),

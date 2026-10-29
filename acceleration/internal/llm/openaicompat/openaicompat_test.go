@@ -387,7 +387,7 @@ func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
 	s.EqualValues(9_550, response.Usage.VendorCostMicros)
 	list, err := pricing.NewList("vendor", prices.Vendor().Entries, nil)
 	s.Require().NoError(err)
-	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
+	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7", Region: pricing.RegionUS}, response.Used())
 	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
 }
 

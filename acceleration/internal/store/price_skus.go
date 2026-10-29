@@ -39,7 +39,7 @@ type PriceSKU struct {
 func priceSKUs(ctx context.Context, db bun.IDB) ([]PriceSKU, error) {
 	var rows []PriceEntry
 	err := db.NewSelect().Model(&rows).
-		Column("pe.modality", "pe.provider", "pe.model", "pe.attributes", "pe.sku", "pe.withdrawn", "pe.effective_at").
+		Column("pe.modality", "pe.provider", "pe.model", "pe.region", "pe.byok", "pe.attributes", "pe.sku", "pe.withdrawn", "pe.effective_at").
 		Join("JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL").
 		Order("pe.effective_at", "pe.change", "pe.id").
 		Scan(ctx)
@@ -154,7 +154,7 @@ func AssignSKUs(history []PriceSKU, at time.Time, writes []PriceEntryWrite) ([]P
 			claimed[last.SKU] = item
 			continue
 		}
-		base := pricing.BaseSKU(write.Modality, write.Provider, write.Model, write.When)
+		base := pricing.BaseSKU(write.Modality, write.Provider, write.Model, write.Region, write.BYOK, write.When)
 		sku := base
 		taken := func(sku string) bool {
 			if other, ok := claimed[sku]; ok && other != item {

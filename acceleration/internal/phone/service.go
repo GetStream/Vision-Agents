@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -43,8 +44,13 @@ type Service struct {
 	recorder  *routing.Recorder
 	gate      *dlc.Gate
 	publicURL string
-	clock     func() time.Time
-	logger    *slog.Logger
+	// outcomes keeps how each placed call ended. Nil without a store.
+	outcomes *outcome.Keeper
+	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
+	// session's start timeout.
+	unanswered func(ctx context.Context, customerID, sessionID string)
+	clock      func() time.Time
+	logger     *slog.Logger
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
@@ -92,7 +98,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		options.Logger = slog.Default()
 	}
 
-	return &Service{
+	service := &Service{
 		registry:  options.Registry,
 		store:     options.Store,
 		stream:    options.Stream,
@@ -104,7 +110,34 @@ func NewService(options ServiceOptions) (*Service, error) {
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		clock:     options.Now,
 		logger:    options.Logger,
-	}, nil
+	}
+	if options.Store != nil {
+		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+	}
+	return service, nil
+}
+
+// Outcomes keeps how each placed call ended. Nil without a store.
+func (s *Service) Outcomes() *outcome.Keeper { return s.outcomes }
+
+// outcomeOf is the outcome a vendor's result is. It is the one place a vendor's word for a
+// call meets the router's: an empty result is a report that is not final, and so no outcome.
+func outcomeOf(result CallResult) (outcome.Outcome, error) {
+	switch result {
+	case "":
+		return "", nil
+	case CallCompleted:
+		return outcome.Completed, nil
+	case CallBusy:
+		return outcome.Busy, nil
+	case CallNoAnswer:
+		return outcome.NoAnswer, nil
+	case CallFailed:
+		return outcome.Failed, nil
+	case CallCanceled:
+		return outcome.Canceled, nil
+	}
+	return "", stack.Wrap(fmt.Errorf("phone: no outcome for the call result %q", result))
 }
 
 // Apps says which Stream app a customer's phone lines live in. A trunk and its routing rule
@@ -1007,10 +1040,38 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		}
 	}
 
+	// Only a vendor the router can be reached by can post how the call ended. A call through
+	// a customer's own trunk is told by the router's own bridge.
+	_, reader := provider.(StatusReader)
+	reports := reader && s.publicURL != ""
+	token, err := s.outcomes.Placed(ctx, outcome.Call{
+		Key: outcome.Key{
+			CustomerID: request.Owner.CustomerID, StreamAppPK: pin, CallType: callType, CallID: callID,
+			Local: request.From, Remote: request.To,
+		},
+		Vendor:  held.Vendor,
+		Reports: reports || trunk != nil,
+	})
+	if err != nil {
+		return Placed{}, err
+	}
+	if reports {
+		outbound.StatusURL = s.publicURL + "/v1/phone/status/" + token
+	}
+
 	if trunk != nil {
 		customerID := request.Owner.CustomerID
 		outbound.Connected = func(media sipbridge.MediaAddrs) {
 			s.recordBridgeMedia(context.WithoutCancel(ctx), customerID, sessionID, media)
+		}
+		// Call refuses to run without a store, so report always has its keeper.
+		outbound.Ended = func(status CallStatus) {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), trunkReportTimeout)
+			defer cancel()
+			if _, err := s.report(ctx, token, status); err != nil {
+				s.logger.Error("could not keep how a call through a customer's sip trunk ended",
+					"call", callID, "result", status.Result, "error", err)
+			}
 		}
 	}
 
@@ -1027,6 +1088,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	// and the call's app (CallPin) is known before its leg arrives.
 	if shared {
 		if err := s.store.RecordCallResource(ctx, resource); err != nil {
+			s.forgetOutcome(ctx, token, callID)
 			return Placed{}, stack.Wrap(err)
 		}
 	}
@@ -1038,10 +1100,15 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		if shared {
 			s.forgetCallResource(ctx, resource)
 		}
+		s.forgetOutcome(ctx, token, callID)
 		return Placed{}, stack.Wrap(err)
 	}
 
 	committed = true
+	if err := s.outcomes.Dialed(context.WithoutCancel(ctx), token, dialed.VendorCallID); err != nil {
+		s.logger.Error("could not keep a placed call's vendor id", "call", callID,
+			"vendor_call_id", dialed.VendorCallID, "error", err)
+	}
 	// The vendor bills the call from when the person answers, which is when their phone joins
 	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
@@ -1073,6 +1140,14 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		CallType:     callType,
 		StreamApp:    pin,
 	}, nil
+}
+
+// forgetOutcome drops the row kept for a call that never rang, which has no outcome. It runs
+// on a request that may be gone, and logs a failure rather than mask the one it follows.
+func (s *Service) forgetOutcome(ctx context.Context, token, callID string) {
+	if err := s.outcomes.Failed(context.WithoutCancel(ctx), token); err != nil {
+		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
+	}
 }
 
 // placedSites is where a placed call was sent: the Stream SIP host, and the host of the
@@ -1126,6 +1201,10 @@ func (s *Service) recordPlaced(
 		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
 	}
 }
+
+// trunkReportTimeout bounds keeping how a call through a customer's own trunk ended. The
+// bridge waits for it, and the node waits for the bridge when it stops.
+const trunkReportTimeout = 5 * time.Second
 
 // agentLogTimeout bounds writing a call_placed or bridge_media row. The node waits for the
 // bridge_media row when it stops.
@@ -1227,12 +1306,94 @@ func (s *Service) Answer(ctx context.Context, token string) (Plan, error) {
 	}, bridge.InitialDigits)
 }
 
+// ErrUnknownStatus is a status post for no call waiting for one: its token is unknown or swept,
+// or its vendor reports no status.
+var ErrUnknownStatus = errors.New("phone: that call is not waiting for its status")
+
+// ErrUnreadableStatus is a status post its vendor's provider could not read.
+var ErrUnreadableStatus = errors.New("phone: that status could not be read")
+
+// ReportStatus takes what a vendor posted to the status URL of the call token was made for.
+func (s *Service) ReportStatus(ctx context.Context, token, contentType string, body []byte) error {
+	if s.outcomes == nil {
+		return stack.Wrap(ErrUnknownStatus)
+	}
+	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
+	// database.
+	if id, err := uuid.Parse(token); err != nil || id.String() != token {
+		return stack.Wrap(ErrUnknownStatus)
+	}
+	call, err := s.outcomes.ByToken(ctx, token)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return stack.Wrap(ErrUnknownStatus)
+	}
+	if err != nil {
+		return err
+	}
+	provider, err := s.registry.Open(call.Vendor)
+	if err != nil {
+		return err
+	}
+	reader, ok := provider.(StatusReader)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s reports no status", ErrUnknownStatus, call.Vendor))
+	}
+	status, err := reader.ReadStatus(contentType, body)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrUnreadableStatus, err))
+	}
+	_, err = s.report(ctx, token, status)
+	return err
+}
+
+// report hands a vendor's status for the call token was made for to the keeper, which decides
+// what it means.
+func (s *Service) report(ctx context.Context, token string, status CallStatus) (outcome.Call, error) {
+	reported, err := outcomeOf(status.Result)
+	if err != nil {
+		return outcome.Call{}, err
+	}
+	call, err := s.outcomes.Reported(ctx, token, reported, status.Word)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	if err != nil {
+		return outcome.Call{}, err
+	}
+	// A repeated post asks again, which is harmless: ending a session that has ended does
+	// nothing.
+	if call.NobodyAnswered() && s.unanswered != nil {
+		s.unanswered(ctx, call.CustomerID, call.CallID)
+	}
+	return call, nil
+}
+
+// OnUnanswered sets what ends the session of a placed call once its vendor says nobody will
+// answer, rather than the agent waiting out its start timeout. Called before the service is
+// used. end is called on the vendor's status request, so it must not hold up the answer.
+func (s *Service) OnUnanswered(end func(ctx context.Context, customerID, sessionID string)) {
+	s.unanswered = end
+}
+
 // SweepBridges removes the bridges left behind by calls nobody answered.
 func (s *Service) SweepBridges(ctx context.Context) (int64, error) {
 	if s.store == nil {
 		return 0, nil
 	}
 	return s.store.SweepBridges(ctx)
+}
+
+// statusTokenLifetime is how long a placed call's status URL takes posts: past the longest a
+// call may last, with an hour for a vendor's late post.
+const statusTokenLifetime = MaxCallLength + time.Hour
+
+// SweepStatusTokens retires the status URLs of calls placed longer than statusTokenLifetime
+// ago, keeping their outcomes. It reports how many it retired.
+func (s *Service) SweepStatusTokens(ctx context.Context) (int64, error) {
+	if s.outcomes == nil {
+		return 0, nil
+	}
+	return s.outcomes.Sweep(ctx, s.now().Add(-statusTokenLifetime))
 }
 
 // ReleaseCall deletes the per-call Stream trunks and routes an ended call left behind in one

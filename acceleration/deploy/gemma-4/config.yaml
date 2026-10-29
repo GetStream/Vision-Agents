@@ -35,9 +35,9 @@ docker_server:
   # than the quantized mount, so the provider's model id is the same whether it is talking
   # to this deployment or to any other host of the same weights.
   #
-  # Prefix caching earns its keep here: a conversation resends its whole history every turn,
-  # so all but the newest message is a cache hit, which is also what the cached-input rate in
-  # router.yaml is priced against.
+  # Prefix caching saves GPU time on repeated conversation prefixes: a conversation resends its
+  # whole history every turn, so all but the newest message is a cache hit. Gemma has no
+  # separate cached-input rate.
   #
   # Image/audio limits are zero because this is a voice LLM. Skipping the vision encoder
   # frees VRAM for KV cache.

@@ -72,6 +72,7 @@ from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
 from .call_direction import CallDirection
 from .call_event import CallEvent
+from .call_outcome import CallOutcome
 from .call_tags import CallTags
 from .call_token import CallToken
 from .call_token_request import CallTokenRequest
@@ -330,6 +331,7 @@ from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
+from .policy_data_policy import PolicyDataPolicy
 from .policy_scope import PolicyScope
 from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
@@ -371,6 +373,9 @@ from .prices import Prices
 from .provider import Provider
 from .provider_benchmark import ProviderBenchmark
 from .provider_health import ProviderHealth
+from .provider_key import ProviderKey
+from .provider_key_page import ProviderKeyPage
+from .provider_key_request import ProviderKeyRequest
 from .provider_price import ProviderPrice
 from .quota import Quota
 from .quota_level import QuotaLevel
@@ -420,6 +425,7 @@ from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
 from .session_call import SessionCall
+from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
@@ -635,6 +641,7 @@ __all__ = (
     "Call",
     "CallDirection",
     "CallEvent",
+    "CallOutcome",
     "CallTags",
     "CallToken",
     "CallTokenRequest",
@@ -891,6 +898,7 @@ __all__ = (
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
+    "PolicyDataPolicy",
     "PolicyScope",
     "PolicyTags",
     "PostalAddress",
@@ -932,6 +940,9 @@ __all__ = (
     "Provider",
     "ProviderBenchmark",
     "ProviderHealth",
+    "ProviderKey",
+    "ProviderKeyPage",
+    "ProviderKeyRequest",
     "ProviderPrice",
     "Quota",
     "QuotaLevel",
@@ -981,6 +992,7 @@ __all__ = (
     "SearchResult",
     "Session",
     "SessionCall",
+    "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",

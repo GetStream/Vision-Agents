@@ -241,7 +241,10 @@ func (s *Session) observe(event tts.Event) {
 	case tts.SynthesisComplete:
 		// One utterance is one unit of billable work, the way one turn is for
 		// speech-to-text. An interrupted one still produced audio and still cost money.
-		settled := s.settle(typed.SynthesisID)
+		settled, repeated := s.settle(typed.SynthesisID)
+		if repeated {
+			return
+		}
 		characters := typed.Characters
 		if settled.sent {
 			characters = settled.characters
@@ -310,11 +313,17 @@ type settled struct {
 }
 
 // settle takes an utterance out of flight, so a late duplicate completion cannot bill
-// twice. An utterance the session never saw start is stamped with now.
-func (s *Session) settle(synthesisID string) settled {
+// twice: one for an utterance already settled that has not started again is reported
+// repeated, and records nothing. An utterance the session never saw start is stamped with
+// now.
+func (s *Session) settle(synthesisID string) (settled, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	current, ok := s.inFlight[synthesisID]
+	if _, known := s.finished[synthesisID]; known && !ok {
+		return settled{}, true
+	}
 	characters, sent := s.sent[synthesisID]
 	delete(s.sent, synthesisID)
 	reserved := s.reserved[synthesisID]
@@ -327,9 +336,8 @@ func (s *Session) settle(synthesisID string) settled {
 			s.finishedOrder = s.finishedOrder[1:]
 		}
 	}
-	current, ok := s.inFlight[synthesisID]
 	if !ok {
-		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent, reserved: reserved}
+		return settled{utterance: utterance{startedAt: time.Now().UTC()}, characters: characters, sent: sent, reserved: reserved}, false
 	}
 	delete(s.inFlight, synthesisID)
 	return settled{
@@ -337,7 +345,7 @@ func (s *Session) settle(synthesisID string) settled {
 		characters: characters,
 		sent:       sent,
 		reserved:   reserved,
-	}
+	}, false
 }
 
 // warnMiscounted logs, once a process for each provider and model, an adapter counting

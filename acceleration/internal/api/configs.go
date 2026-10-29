@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -157,6 +159,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.regionComplaint(ctx, config, nil); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -249,6 +256,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.Role == nil {
 		config.Role = existing.Role
 	}
+	// Kept for the same reason: a client that does not know the region must not move the
+	// agent's work out of it by saving.
+	if request.Body.Region == nil {
+		config.Region = existing.Region
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -291,6 +303,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.regionComplaint(ctx, config, &existing); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -323,8 +340,11 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 		return nil, errUnknownConfig
 	}
 	// A deleted config's tasks have no agent left to run on: paused, they stop failing
-	// every occurrence and counting against their users' limit, and stay readable.
-	if err := s.store.PauseScheduledTasksForConfig(ctx, customerID, request.Id); err != nil {
+	// every occurrence and counting against their users' limit, and stay readable. The delete
+	// has committed and nothing pauses them later, so the pause outlives a caller that hung up.
+	paused, cancel := detachedWrite(ctx)
+	defer cancel()
+	if err := s.store.PauseScheduledTasksForConfig(paused, customerID, request.Id); err != nil {
 		s.logger.Error("could not pause a deleted config's scheduled tasks",
 			"config", request.Id, "error", err)
 	}
@@ -582,6 +602,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	}
 	if _, ok := modeOf(request.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
+	if complaint, ok := agentRegionComplaint(request.Region); !ok {
+		return complaint, false
 	}
 	if len(keytermsOf(request.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
@@ -1811,6 +1834,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Name:               strings.TrimSpace(request.Name),
 		Role:               string(value(request.Role)),
 		Mode:               mode,
+		Region:             value(request.Region),
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
 		STS:                value(request.Sts),
@@ -1903,6 +1927,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		Id:        config.ID,
 		Name:      config.Name,
 		Mode:      AgentMode(config.Mode),
+		Region:    cmp.Or(config.Region, pricing.DefaultRegion),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
 	}
@@ -2208,6 +2233,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
@@ -2247,6 +2273,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	Region             string                   `json:"region" example:"us" doc:"Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`

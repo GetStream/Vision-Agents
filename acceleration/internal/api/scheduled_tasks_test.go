@@ -22,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -148,6 +149,17 @@ type schedulingModel struct {
 	failing int
 	// held, when set, keeps a scheduled turn's words back until it is closed.
 	held chan struct{}
+	// breaking, when set, breaks the next held scheduled turn (breakHeld).
+	breaking func()
+}
+
+// breakHeld has the next held scheduled turn fail with a provider error once it is cancelled,
+// as a connection that broke as the turn was cut off does, and run closing when the agent
+// closes its stream.
+func (m *schedulingModel) breakHeld(closing func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.breaking = closing
 }
 
 // failScheduled has the provider fail the next times a scheduled task comes due.
@@ -190,6 +202,10 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	if !scheduled {
 		held = nil
 	}
+	var breaking func()
+	if held != nil {
+		breaking, m.breaking = m.breaking, nil
+	}
 	m.mu.Unlock()
 
 	// A turn somebody started runs what the test queued; the round a tool's
@@ -210,6 +226,10 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 		script.Fail(errors.New("the provider is down"), "scheduling")
 		return script.Stream(), nil
 	}
+	if breaking != nil {
+		script.FailOnCancel(ctx, errors.New("connection reset by peer"))
+		script.OnClose(breaking)
+	}
 	if held != nil {
 		go func() {
 			select {
@@ -217,10 +237,16 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 				script.OutputText("Done.")
 				script.Done()
 			case <-ctx.Done():
+				if breaking != nil {
+					return
+				}
 				// A reply cancelled while it waited ends as a provider's would, with nothing
 				// written. Answering it anyway raced the turn being torn down, so a router
-				// stopped mid-turn could read back a reply it never got.
-				script.Fail(ctx.Err(), "scheduling")
+				// stopped mid-turn could read back a reply it never got. It ends cancelled, not
+				// failed: a failure reaches the conversation as agent.Error, which could finish
+				// an interrupted follow-up as failed before the interruption did, and a failed
+				// follow-up is never run again (replyCommand).
+				script.Cancel()
 			}
 		}()
 		return script.Stream(), nil
@@ -1126,6 +1152,70 @@ func (s *ScheduledTasksSuite) TestDeletingAConfigPausesItsTasks() {
 	}
 	s.Equal(map[string]string{orphaned.Id: store.ScheduledTaskPaused, other.Id: store.ScheduledTaskActive}, states,
 		"a task of a deleted agent has nothing to run on, and stops counting against the user's limit")
+}
+
+// A caller that hangs up once the delete committed still leaves the config's tasks paused
+// (AI-2183): nothing pauses them later, and every occurrence of one fails for want of its
+// config. The test holds the task's row locked, so the delete waits in the pause, after its
+// commit, and hangs up there, as net/http does when the caller goes.
+func (s *ScheduledTasksSuite) TestACallerThatHangsUpAfterTheDeleteStillLeavesItsTasksPaused() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	ctx := context.Background()
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	var holder int
+	s.Require().NoError(hold.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder))
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+
+	request, hangUp := context.WithCancel(context.WithValue(context.WithValue(ctx,
+		customerContextKey{}, s.customerID()), serverSideContextKey{}, true))
+	defer hangUp()
+	answered := make(chan error, 1)
+	go func() {
+		_, err := s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+		answered <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", holder).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the delete never reached its config's tasks")
+	hangUp()
+	s.Require().NoError(hold.Rollback())
+	s.Require().NoError(<-answered)
+
+	_, err = s.store.AgentConfig(ctx, s.customerID(), config)
+	s.Require().ErrorIs(err, store.ErrNoAgentConfig, "the delete committed before the caller hung up")
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+// The pause after a delete gives up at auditWriteTimeout (AI-2183): it runs without its
+// caller's cancellation, so a task row locked for longer would hold the request open. The
+// test locks the task's row until two seconds past the bound and reads how long the delete
+// took to return.
+func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLocked() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	ctx := context.Background()
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+	release := time.AfterFunc(auditWriteTimeout+2*time.Second, func() { _ = hold.Rollback() })
+	defer release.Stop()
+
+	request := context.WithValue(context.WithValue(ctx, customerContextKey{}, s.customerID()), serverSideContextKey{}, true)
+	start := time.Now()
+	_, err = s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+	took := time.Since(start)
+
+	s.Require().NoError(err)
+	s.Less(took, auditWriteTimeout+time.Second, "the pause waits on a locked task past its bound")
 }
 
 func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
@@ -2493,6 +2583,9 @@ type channelSink struct {
 	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
 	// to a number outside the US and Canada.
 	refusingMedia map[string]bool
+	// dialled, when set, is told the status URL of every call placed, before the call is
+	// answered as placed.
+	dialled func(statusURL string)
 }
 
 // refuseMedia has the provider refuse every file sent to number, and take its words.
@@ -2517,11 +2610,18 @@ func (c *channelSink) fail(number string, times int) {
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To    string          `json:"to"`
-		Text  json.RawMessage `json:"text"`
-		Media []string        `json:"media_urls"`
+		To             string          `json:"to"`
+		Text           json.RawMessage `json:"text"`
+		Media          []string        `json:"media_urls"`
+		StatusCallback string          `json:"StatusCallback"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	c.mu.Lock()
+	dialled := c.dialled
+	c.mu.Unlock()
+	if dialled != nil && body.StatusCallback != "" {
+		dialled(body.StatusCallback)
+	}
 	text := ""
 	var meta struct {
 		Body string `json:"body"`
@@ -3194,6 +3294,37 @@ func (s *ScheduledTasksSuite) TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetr
 	run := s.manualRun(task)
 	_, err := s.cutOff(s.router, task, run, found.Interrupt)
 	s.Equal(scheduling.ReasonNoReply, scheduling.ReasonOf(err), "%v", err)
+
+	deliveredTo, err := s.deliverRun(task, run)
+
+	s.Require().NoError(err)
+	s.Equal("whatsapp", deliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(writer))
+	s.Equal(2, s.scheduledTurns(), "the retry ran the cancelled turn again")
+}
+
+// A provider failure that arrives while the user cuts the turn off belongs to a turn already
+// given up on: the reply ends cancelled, not failed, and runs again on the retry.
+func (s *ScheduledTasksSuite) TestATurnWhoseProviderBrokeAsItWasCancelledRunsAgainOnTheRetry() {
+	writer := s.writerNumber()
+	task, found := s.onWhatsApp(writer, "whatsapp")
+	run := s.manualRun(task)
+	command := conversation.ReadBackPrefix + run.ID
+	// The interruption is held between the agent giving the reply up and the conversation
+	// cancelling it until the failure has finished the reply, the order the race can take. A
+	// failure that is dropped never does, so the hold ends after two seconds.
+	s.model().breakHeld(func() {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+			if state, _, _ := found.FollowUpReply(command); state == "failed" {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	_, err := s.cutOff(s.router, task, run, found.Interrupt)
+	s.Equal(scheduling.ReasonNoReply, scheduling.ReasonOf(err), "%v", err)
+	state, _, _ := found.FollowUpReply(command)
+	s.Equal("cancelled", state)
 
 	deliveredTo, err := s.deliverRun(task, run)
 

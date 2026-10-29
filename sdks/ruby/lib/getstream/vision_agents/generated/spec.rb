@@ -314,6 +314,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteProviderKey" => {
+          method: :delete, path: "/v1/agents/provider-keys/{provider}",
+          path_params: %w[provider].freeze, query: %w[region].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteRouterConfig" => {
           method: :delete, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -652,7 +658,7 @@ module GetStream
         }.freeze,
         "getPrices" => {
           method: :get, path: "/v1/prices",
-          path_params: [].freeze, query: %w[modality].freeze,
+          path_params: [].freeze, query: %w[modality region].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
@@ -992,6 +998,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "listProviderKeys" => {
+          method: :get, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "listProviders" => {
           method: :get, path: "/v1/{modality}/providers",
           path_params: %w[modality].freeze, query: [].freeze,
@@ -1286,6 +1298,12 @@ module GetStream
           body: "ConnectionCredentials", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "putProviderKey" => {
+          method: :put, path: "/v1/agents/provider-keys",
+          path_params: [].freeze, query: [].freeze,
+          body: "ProviderKeyRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "queryAudit" => {
           method: :post, path: "/v1/audit/query",
           path_params: [].freeze, query: [].freeze,
@@ -1297,6 +1315,12 @@ module GetStream
           path_params: [].freeze, query: [].freeze,
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
+        }.freeze,
+        "receiveCallStatus" => {
+          method: :post, path: "/v1/phone/status/{token}",
+          path_params: %w[token].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
         }.freeze,
         "receiveChannelMessage" => {
           method: :post, path: "/v1/agents/channels/hooks/{token}",
@@ -1694,15 +1718,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
-          required: %w[created_at id mode name updated_at].freeze, open: false
+          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -2082,7 +2106,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Contact" => {
-          properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,
+          properties: %w[attempts call_id error id instructions outcome state to_number vendor_call_id].freeze,
           required: %w[attempts id state to_number].freeze, open: false
         }.freeze,
         "ContactsRequest" => {
@@ -2154,7 +2178,7 @@ module GetStream
           required: %w[rows].freeze, open: false
         }.freeze,
         "DataPolicy" => {
-          properties: %w[allow_training retention].freeze,
+          properties: %w[allow_training region retention].freeze,
           required: [].freeze, open: false
         }.freeze,
         "DetectedObject" => {
@@ -2461,6 +2485,10 @@ module GetStream
           properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app resume_history tags tool_output_retention].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "PolicyDataPolicy" => {
+          properties: %w[allow_training retention].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "PostalAddress" => {
           properties: %w[city country postal_code state street].freeze,
           required: [].freeze, open: false
@@ -2474,16 +2502,16 @@ module GetStream
           required: %w[digits vendor].freeze, open: false
         }.freeze,
         "Price" => {
-          properties: %w[change description effective_at free local modality model provider rates sku tiers when withdrawn].freeze,
-          required: %w[free local modality provider model].freeze, open: false
+          properties: %w[byok change description effective_at free local modality model provider rates region sku tiers when withdrawn].freeze,
+          required: %w[free local modality provider model region].freeze, open: false
         }.freeze,
         "PriceChange" => {
           properties: %w[cancel_reason cancelled_at cancelled_by created_at created_by effective_at entries kind name reason source].freeze,
           required: %w[name kind reason source effective_at created_by created_at].freeze, open: false
         }.freeze,
         "PriceChangeEntry" => {
-          properties: %w[free modality model price_tiers prices provider rates sku tiers when withdrawn].freeze,
-          required: %w[sku modality provider model].freeze, open: false
+          properties: %w[byok free modality model price_tiers prices provider rates region sku tiers when withdrawn].freeze,
+          required: %w[sku modality provider model region].freeze, open: false
         }.freeze,
         "PriceChangeInput" => {
           properties: %w[confirm effective_at entries name reason source].freeze,
@@ -2494,16 +2522,16 @@ module GetStream
           required: %w[items has_more].freeze, open: false
         }.freeze,
         "PriceEntry" => {
-          properties: %w[effective_at free local modality model price_tiers prices provider rates sku tiers version when].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok effective_at free local modality model price_tiers prices provider rates region sku tiers version when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceEntryInput" => {
-          properties: %w[free local modality model price_tiers prices provider rates sku tiers version when withdrawn].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok free local modality model price_tiers prices provider rates region sku tiers version when withdrawn].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceItem" => {
-          properties: %w[modality model provider when].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[byok modality model provider region when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceList" => {
           properties: %w[at entries unpriced upcoming].freeze,
@@ -2514,8 +2542,8 @@ module GetStream
           required: %w[effective_at items confirmation_required].freeze, open: false
         }.freeze,
         "PricePreviewItem" => {
-          properties: %w[after before modality model needs_confirmation price_factors provider unpriced when].freeze,
-          required: %w[modality provider model].freeze, open: false
+          properties: %w[after before byok modality model needs_confirmation price_factors provider region unpriced when].freeze,
+          required: %w[modality provider model region].freeze, open: false
         }.freeze,
         "PriceRate" => {
           properties: %w[increment minimum per usd].freeze,
@@ -2534,8 +2562,8 @@ module GetStream
           required: %w[at entries upcoming].freeze, open: false
         }.freeze,
         "Provider" => {
-          properties: %w[benchmark description health languages model price provider realtime supports tier usage_share].freeze,
-          required: %w[health languages model provider realtime tier].freeze, open: false
+          properties: %w[benchmark description health languages model price provider realtime region supports tier usage_share].freeze,
+          required: %w[health languages model provider realtime region tier].freeze, open: false
         }.freeze,
         "ProviderBenchmark" => {
           properties: %w[characters_per_second cost_per_task elo intelligence_index latency_ms output_tokens_per_second search_index word_error_rate].freeze,
@@ -2544,6 +2572,18 @@ module GetStream
         "ProviderHealth" => {
           properties: %w[available error_rate errors latency_ms_avg requests].freeze,
           required: %w[available error_rate errors latency_ms_avg requests].freeze, open: false
+        }.freeze,
+        "ProviderKey" => {
+          properties: %w[created_at key_hint provider region updated_at].freeze,
+          required: %w[provider region key_hint created_at updated_at].freeze, open: false
+        }.freeze,
+        "ProviderKeyPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "ProviderKeyRequest" => {
+          properties: %w[api_key provider region].freeze,
+          required: %w[provider api_key].freeze, open: false
         }.freeze,
         "ProviderPrice" => {
           properties: %w[per_million_input_tokens per_million_output_tokens].freeze,
@@ -2674,12 +2714,16 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
           properties: %w[id type].freeze,
           required: %w[type id].freeze, open: false
+        }.freeze,
+        "SessionCallOutcome" => {
+          properties: %w[answered_at duration_seconds outcome].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SessionConnectorBinding" => {
           properties: %w[connection_id name].freeze,
@@ -2834,7 +2878,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -2922,8 +2966,8 @@ module GetStream
           required: %w[agent_id audio_out_ms_total bucket interrupted_count turn_count].freeze, open: false
         }.freeze,
         "UpcomingPriceEntry" => {
-          properties: %w[effective_at free local modality model price_tiers prices provider rates reason sku tiers version when withdrawn].freeze,
-          required: %w[reason modality provider model].freeze, open: false
+          properties: %w[byok effective_at free local modality model price_tiers prices provider rates reason region sku tiers version when withdrawn].freeze,
+          required: %w[reason modality provider model region].freeze, open: false
         }.freeze,
         "UpdateScheduledTaskRequest" => {
           properties: %w[deliver_to instructions next quiet_hours schedule title].freeze,

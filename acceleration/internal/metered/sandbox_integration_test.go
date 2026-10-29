@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -42,7 +43,7 @@ func models(rows []store.Request) []string {
 func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	sandboxes, server := s.sandboxes(sandbox.Lifecycle{IdleStop: time.Minute})
 	owner := s.sandboxOwner()
-	box, err := sandboxes.Open(owner, SandboxSpec{Config: sandbox.Config{CPU: 2, MemoryGB: 4, DiskGB: 10}})
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{Config: sandbox.Config{CPU: 2, MemoryGB: 4, DiskGB: 10}})
 	s.Require().NoError(err)
 	opened := time.Now()
 
@@ -67,19 +68,77 @@ func (s *MeteredSuite) TestASandboxIsMeteredFromCreateToDelete() {
 	s.Equal(owner.OrganizationID, row.OrganizationID)
 	s.Equal(map[string]string{AttributeSandboxID: "sandbox-1", AttributeSandboxClass: "container", AttributeSandboxCPU: "2",
 		AttributeSandboxMemoryGB: "4", AttributeSandboxDiskGB: "10", routing.AttributeMeasuredBy: routing.MeasuredByRouter,
-		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a"}, row.Attributes)
-	perSecond := (2*0.0504 + 4*0.0162 + 10*0.000108) / 3600 * 1e6
-	s.InDelta(perSecond*float64(seconds), float64(row.CostMicros), 1, "at Daytona's rates")
+		routing.AttributeSlice: "0", AttributeDeployment: "deploy-a", AttributeSandboxRegion: pricing.RegionUS}, row.Attributes)
+	s.Equal("sandbox-daytona-running-class-container-us", row.SKU, "work naming no region is billed in the us")
+	container := map[string]string{AttributeSandboxClass: "container"}
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxRunning, container, row.Meters), row.CostMicros, "at Daytona's rates")
 	s.True(row.Billable)
 	s.Equal([]string{"sandbox-1"}, server.Deleted())
 	held, _ := server.Sandbox("sandbox-1")
 	s.Equal(map[string]string{LabelDeployment: "deploy-a", LabelEnv: "test", LabelRouter: "shard-a", LabelOrganization: owner.OrganizationID,
-		LabelApp: owner.CustomerID, LabelSession: owner.SessionID, "code-toolbox-language": "python"}, held.Labels)
+		LabelApp: owner.CustomerID, LabelSession: owner.SessionID, LabelRegion: pricing.RegionUS, "code-toolbox-language": "python"}, held.Labels)
+}
+
+func (s *MeteredSuite) TestASandboxOfEUWorkIsMadeOnTheEUTargetAndPricedAtTheEUEntry() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	server := daytonatest.Start(s.T())
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour,
+		Targets: map[string]string{pricing.RegionEU: "eu"}, Logger: slog.New(slog.DiscardHandler)})
+	owner := s.sandboxOwner()
+	owner.Region = pricing.RegionEU
+
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+
+	s.Require().Len(server.Creations(), 1)
+	s.Equal("eu", server.Creations()[0]["target"], "made on the eu's Daytona target")
+	held, _ := server.Sandbox("sandbox-1")
+	s.Equal(pricing.RegionEU, held.Labels[LabelRegion])
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-eu", rows[0].SKU)
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionEU, false), rows[0].Meters), rows[0].CostMicros)
+}
+
+func (s *MeteredSuite) TestASandboxInARegionWithNoDaytonaTargetIsRefusedNamingIt() {
+	server := daytonatest.Start(s.T())
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(),
+		Logger: slog.New(slog.DiscardHandler)})
+	owner := s.sandboxOwner()
+	owner.Region = pricing.RegionEU
+
+	_, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "runs no sandboxes in region eu")
+	s.Empty(server.Creations())
+	s.False(sandboxes.Serves(pricing.RegionEU))
+	s.True(sandboxes.Serves(pricing.RegionUS), "the default region is always served")
+}
+
+func (s *MeteredSuite) TestAGapOfAnEUSandboxIsPricedInTheEU() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", Logger: slog.New(slog.DiscardHandler)})
+	used := pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}
+
+	s.Require().NoError(sandboxes.Reconcile(SandboxGap{Owner: s.owner, SandboxID: "sandbox-" + uuid.NewString(), Key: "2026-10-21",
+		At: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC), Model: SandboxRunning, Used: used, Class: "container", Region: pricing.RegionEU}))
+
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-eu", rows[0].SKU)
+	s.Equal(pricing.RegionEU, rows[0].Attributes[AttributeSandboxRegion])
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionEU, false), used), rows[0].CostMicros)
 }
 
 func (s *MeteredSuite) TestAnIdleSandboxIsMeteredAsStopped() {
 	sandboxes, _ := s.sandboxes(sandbox.Lifecycle{IdleStop: time.Second})
-	box, err := sandboxes.Open(s.sandboxOwner(), SandboxSpec{})
+	box, err := sandboxes.Open(s.ctx, s.sandboxOwner(), SandboxSpec{})
 	s.Require().NoError(err)
 
 	_, err = box.Run(s.ctx, "print(1)", nil)
@@ -92,13 +151,14 @@ func (s *MeteredSuite) TestAnIdleSandboxIsMeteredAsStopped() {
 	s.Equal(pricing.Quantities{pricing.VCPUSeconds: 1, pricing.MemoryGBSeconds: 1, pricing.DiskGBSeconds: 3}, rows[0].Meters,
 		"a second running at Daytona's default size")
 	s.Equal(pricing.Quantities{pricing.DiskGBSeconds: 6}, rows[1].Meters, "then its disk alone")
-	s.Zero(rows[1].CostMicros, "6 GiB-seconds of disk is 0.18 micro-dollars, rounded half up to none")
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxStopped, map[string]string{AttributeSandboxClass: "container"},
+		pricing.Quantities{pricing.DiskGBSeconds: 6}), rows[1].CostMicros, "6 GiB-seconds of disk at Daytona's rate, rounded half up")
 	s.True(rows[1].Billable)
 }
 
 func (s *MeteredSuite) TestAStoppedSandboxIsMeteredAsRunningAgain() {
 	sandboxes, server := s.sandboxes(sandbox.Lifecycle{IdleStop: time.Second})
-	box, err := sandboxes.Open(s.sandboxOwner(), SandboxSpec{})
+	box, err := sandboxes.Open(s.ctx, s.sandboxOwner(), SandboxSpec{})
 	s.Require().NoError(err)
 	_, err = box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
@@ -114,7 +174,7 @@ func (s *MeteredSuite) TestAStoppedSandboxIsMeteredAsRunningAgain() {
 
 func (s *MeteredSuite) TestAFailedDeleteKeepsTheMeterRunning() {
 	sandboxes, server := s.sandboxes(sandbox.Lifecycle{IdleStop: 2 * time.Second, StoppedDelete: time.Second})
-	box, err := sandboxes.Open(s.sandboxOwner(), SandboxSpec{})
+	box, err := sandboxes.Open(s.ctx, s.sandboxOwner(), SandboxSpec{})
 	s.Require().NoError(err)
 	_, err = box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
@@ -145,7 +205,7 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	id := "sandbox-" + uuid.NewString()
 	at := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
 	running := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T10:00:00Z", At: at, Model: SandboxRunning,
-		Used: pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
+		Used:  pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600},
 		Class: "container"}
 	stopped := SandboxGap{Owner: owner, SandboxID: id, Key: "2026-10-21T11:00:00Z", At: at.Add(time.Hour),
 		Model: SandboxStopped, Used: pricing.Quantities{pricing.DiskGBSeconds: 3 * 3600}, Class: "container", Orphan: true}
@@ -158,8 +218,11 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 	s.Require().Len(rows, 2, "a gap recorded twice is billed once")
 	s.Equal(routing.UsageID(SandboxReconciledKind, id, "2026-10-21T10:00:00Z"), rows[0].UsageID)
 	s.Equal(at, rows[0].StartedAt.UTC(), "dated to the period it bills")
-	s.EqualValues(66_924, rows[0].CostMicros, "an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
-	s.EqualValues(324, rows[1].CostMicros, "an hour of its 3 GiB disk")
+	container := map[string]string{AttributeSandboxClass: "container"}
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxRunning, container, running.Used), rows[0].CostMicros,
+		"an hour of Daytona's default sandbox running: 1 vCPU, 1 GiB and 3 GiB")
+	s.Equal(s.priced(routing.Sandbox, daytonaProvider, SandboxStopped, container, stopped.Used), rows[1].CostMicros,
+		"an hour of its 3 GiB disk")
 	s.Equal(map[string]string{AttributeSandboxID: id, AttributeSource: daytonaProvider, AttributeSandboxClass: "container",
 		AttributeDeployment: "deploy-a"}, rows[0].Attributes, "the deployment's, so only its own job reads it")
 	s.Equal("true", rows[1].Attributes[AttributeOrphan])
@@ -169,3 +232,67 @@ func (s *MeteredSuite) TestAGapIsRecordedFromDaytonasFiguresOnce() {
 
 // daytonaProvider is the provider sandbox rows are billed under.
 const daytonaProvider = "daytona"
+
+// customerDaytonaKey is the key the test's customer keeps for their own Daytona organization.
+const customerDaytonaKey = "dtn_customer_0123456789abcdef"
+
+func (s *MeteredSuite) TestASandboxOfAnOwnerWhoKeepsADaytonaKeyIsMadeInTheirOrganizationAndBilledAtTheBYOKFee() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	server := daytonatest.Start(s.T())
+	owner := s.sandboxOwner()
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", APIKey: "key-1", APIURL: server.APIURL(),
+		Every: time.Hour, Keys: keptKeys{owner.CustomerID + "/daytona/us": customerDaytonaKey}, Logger: slog.New(slog.DiscardHandler)})
+
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+
+	s.NotEmpty(server.Keys())
+	for _, key := range server.Keys() {
+		s.Equal(customerDaytonaKey, key, "every call made on the customer's key, never the deployment's")
+	}
+	held, _ := server.Sandbox("sandbox-1")
+	s.Equal(SandboxAccountCustomer, held.Labels[LabelAccount], "the sandbox says it is in the customer's organization")
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-us-byok", rows[0].SKU)
+	s.Zero(rows[0].BaseCostMicros, "Daytona bills the customer")
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionUS, true), rows[0].Meters), rows[0].CostMicros)
+}
+
+func (s *MeteredSuite) TestAnotherRegionsDaytonaKeyLeavesTheSandboxInTheDeploymentsOrganization() {
+	server := daytonatest.Start(s.T())
+	owner := s.sandboxOwner()
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, APIKey: "key-1", APIURL: server.APIURL(), Every: time.Hour,
+		Keys: keptKeys{owner.CustomerID + "/daytona/eu": customerDaytonaKey}, Logger: slog.New(slog.DiscardHandler)})
+
+	box, err := sandboxes.Open(s.ctx, owner, SandboxSpec{})
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Close())
+
+	s.Equal("key-1", server.Keys()[0])
+	held, _ := server.Sandbox("sandbox-1")
+	s.Empty(held.Labels[LabelAccount])
+}
+
+func (s *MeteredSuite) TestAGapOfASandboxInTheCustomersOrganizationIsPricedAtTheBYOKFee() {
+	list := pricingtest.List(s.T(), "fixtures")
+	s.recorder = routing.NewRecorder(routing.Sandbox, s.store, nil, list, slog.New(slog.DiscardHandler))
+	sandboxes := NewSandboxes(SandboxesOptions{Recorder: s.recorder, Deployment: "deploy-a", Logger: slog.New(slog.DiscardHandler)})
+	used := pricing.Quantities{pricing.VCPUSeconds: 3600, pricing.MemoryGBSeconds: 3600, pricing.DiskGBSeconds: 3 * 3600}
+
+	s.Require().NoError(sandboxes.Reconcile(SandboxGap{Owner: s.owner, SandboxID: "sandbox-" + uuid.NewString(), Key: "2026-10-21",
+		At: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC), Model: SandboxRunning, Used: used, Class: "container",
+		Region: pricing.RegionUS, BYOK: true}))
+
+	rows := s.rows()
+	s.Require().Len(rows, 1)
+	s.Equal("sandbox-daytona-running-class-container-us-byok", rows[0].SKU)
+	s.Zero(rows[0].BaseCostMicros)
+	s.Equal(pricingtest.Micros(s.T(), list, pricingtest.Sandbox(pricing.RegionUS, true), used), rows[0].CostMicros)
+}

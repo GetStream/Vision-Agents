@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -56,6 +57,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if errors.Is(err, session.ErrNoAgentCallType) {
 		return nil, errNoAgentCallType
 	}
+	if unanswered, ok := errors.AsType[*session.CallUnansweredError](err); ok {
+		return nil, callUnanswered(unanswered.Outcome)
+	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
@@ -90,6 +94,13 @@ func (s *Server) rememberTimezone(ctx context.Context, customerID string, spec s
 	}
 }
 
+// callUnanswered refuses a phone session whose placed call already ended, nobody having
+// answered; ended is how.
+func callUnanswered(ended outcome.Outcome) APIError {
+	return APIError{Type: ErrorTypeConflict, Code: codeCallUnanswered,
+		Message: "the call ended without an answer: " + string(ended)}
+}
+
 // errDeviceHistory refuses a history sent by an end user's device.
 var errDeviceHistory = forbidden("history is sent server-side: an assistant message in it is " +
 	"what the agent said, which a device cannot vouch for")
@@ -100,6 +111,14 @@ var errDeviceInstructions = forbidden("instructions are sent server-side: what t
 
 var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
 	"conversation the model is sent is billed to the app, which a device may not decide")
+
+// errDeviceMemoryUser refuses an end user's device naming whose memories the session reads.
+var errDeviceMemoryUser = forbidden("memory.user_id is sent server-side unless it is the caller's own " +
+	"user id: a session reads and writes the memories of the user it names")
+
+// errAnonymousMemory refuses memory to a caller whose user id nobody checked.
+var errAnonymousMemory = forbidden("memory needs a signed-in user: an anonymous caller's name is a claim " +
+	"nobody checked, so the memories kept under it could be anyone's")
 
 // refuseSessionRequest reports the failure a new session's request is refused with before
 // anything is made for it. createSession and the session socket both call it, so a request one
@@ -207,6 +226,14 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	if request.ResumeHistory != nil && !ServerSideFrom(ctx) {
 		return errDeviceResumeHistory, true
 	}
+	if request.Memory != nil && value(request.Memory.UserId) != "" && !ServerSideFrom(ctx) {
+		if !KindFrom(ctx).Verified() {
+			return errAnonymousMemory, true
+		}
+		if *request.Memory.UserId != CallerFrom(ctx).UserID {
+			return errDeviceMemoryUser, true
+		}
+	}
 	return APIError{}, false
 }
 
@@ -227,7 +254,7 @@ func (s *Server) registerSessionCreate(api huma.API) {
 		DefaultStatus: http.StatusCreated,
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The agent is in the call"},
-			"409": errorResponse("A session with that id already exists"),
+			"409": errorResponse("A session with that id already exists, or the call placed for this phone session ended without an answer (call_unanswered)"),
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createSession)

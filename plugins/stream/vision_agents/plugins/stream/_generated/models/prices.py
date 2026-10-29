@@ -20,7 +20,8 @@ class Prices:
     """
     Attributes:
         at (datetime.datetime): The moment the list is read at.
-        entries (list[Price]): Every item priced now, by modality, provider and model.
+        entries (list[Price]): Every item priced now, by modality, provider, model and region, each item's BYOK price
+            after the one that is not BYOK.
         upcoming (list[Price]): What the changes scheduled after at will set, soonest first.
     """
 

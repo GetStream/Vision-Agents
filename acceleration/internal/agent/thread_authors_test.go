@@ -45,7 +45,7 @@ func (s *AgentSuite) TestAThreadReadBackWithTwoAuthorsNamesEachOfThem() {
 
 	asked := s.writes("linq-kanat", "What are our names?")
 
-	s.Equal("be brief\n\n"+severalWriters, asked.Instructions)
+	s.Equal("be brief\n\n"+severalWriters, withoutClock(asked.Instructions))
 	s.Equal([]string{
 		"Speaker 1: Hi all, I'm Kanat", "Hi Kanat!",
 		"Speaker 2: I'm Ana. What is your return policy?", "Hi Ana! Thirty days.",
@@ -68,9 +68,9 @@ func (s *AgentSuite) TestASecondAuthorInAnOpenThreadIsNamedFromTheirFirstTurn() 
 	second := s.writes("slack-bob", "and the deploy?")
 	third := s.writes("slack-alice", "thanks")
 
-	s.Equal("be brief", first.Instructions, "one author so far")
+	s.Equal("be brief", withoutClock(first.Instructions), "one author so far")
 	s.Equal([]string{"is the build green?"}, contentsOf(first.Input))
-	s.Equal("be brief\n\n"+severalWriters, second.Instructions)
+	s.Equal("be brief\n\n"+severalWriters, withoutClock(second.Instructions))
 	s.Equal("Speaker 2: and the deploy?", contentsOf(second.Input)[2])
 	s.Equal("is the build green?", contentsOf(third.Input)[0], "a turn from before the second author stays as it was")
 	s.Equal("Speaker 1: thanks", contentsOf(third.Input)[4])
@@ -87,7 +87,7 @@ func (s *AgentSuite) TestATypedTurnWithoutAnAuthorInAThreadIsNotNamed() {
 
 	asked := s.writes("", "It is noon.")
 
-	s.Equal("be brief", asked.Instructions)
+	s.Equal("be brief", withoutClock(asked.Instructions))
 	s.Equal("It is noon.", contentsOf(asked.Input)[2])
 }
 
@@ -104,7 +104,7 @@ func (s *AgentSuite) TestATypedTurnWithoutAnAuthorAfterTwoAuthorsKeepsThemNamed(
 
 	asked := s.writes("", "It is noon.")
 
-	s.Equal("be brief\n\n"+severalWriters, asked.Instructions)
+	s.Equal("be brief\n\n"+severalWriters, withoutClock(asked.Instructions))
 	s.Equal([]string{"Speaker 1: remind us at noon", "Will do.", "Speaker 2: me too", "Both of you, then.", "It is noon."},
 		contentsOf(asked.Input))
 }
@@ -122,7 +122,7 @@ func (s *AgentSuite) TestOnePersonInWritingReachesTheModelAsAtBase() {
 
 		asked := s.writes(author, "What is my name?")
 
-		s.Equal("be brief", asked.Instructions, author)
+		s.Equal("be brief", withoutClock(asked.Instructions), author)
 		sent := make([]llm.Message, 0, len(asked.Input))
 		for _, message := range asked.Input {
 			// No provider reads Author (llm.Message).
