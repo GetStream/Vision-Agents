@@ -31,7 +31,7 @@ const channelInboundDoneKeep = channelMessageKeep
 const channelInboundFailedKeep = 30 * 24 * time.Hour
 
 // ChannelInbound is one inbound message queued to be written into its thread channel
-// (20261201120000_channel_thread_inbound.sql), with what writing it and opening its episode
+// (20261205120000_channel_thread_inbound.sql), with what writing it and opening its episode
 // card take.
 type ChannelInbound struct {
 	bun.BaseModel `bun:"table:channel_thread_inbound,alias:cti"`

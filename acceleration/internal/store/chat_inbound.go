@@ -30,7 +30,7 @@ const chatInboundDoneKeep = channelMessageKeep
 const chatInboundFailedKeep = 30 * 24 * time.Hour
 
 // ChatInbound is one Stream Chat message queued to be answered
-// (20261204120000_chat_inbound.sql), with where its delivery came from.
+// (20261205140000_chat_inbound.sql), with where its delivery came from.
 type ChatInbound struct {
 	bun.BaseModel `bun:"table:chat_inbound,alias:cd"`
 

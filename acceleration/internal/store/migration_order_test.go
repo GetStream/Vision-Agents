@@ -620,7 +620,7 @@ func (s *MigrationOrderSuite) auditRows(db *Store) int {
 }
 
 // chatInboundVersion is the chat_inbound migration.
-const chatInboundVersion int64 = 20261204120000
+const chatInboundVersion int64 = 20261205140000
 
 // TestChatInboundComeOffAndGoOnAgain: Down takes the queue of Stream Chat messages off and
 // leaves the migration before it applied; Up puts it back.
