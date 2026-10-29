@@ -268,6 +268,15 @@ func (s *Server) recorded(eventType string) bool {
 	return eventType == getstream.EventTypeMessageNew && len(s.chatInboundKeys) > 0
 }
 
+// awaitingOwnApp reports whether a delivery would be recorded before the deployment knows its
+// own app. The endpoint waits for the app (chatInboundOrigin) and records the message under it,
+// so a webhook recorded under no app would not be the same delivery, and both would answer it.
+// A hook a peer handed here was recorded there.
+func (s *Server) awaitingOwnApp(ctx context.Context, origin hookOrigin, eventType string) bool {
+	return origin.deployment && origin.app == 0 && s.recorded(eventType) && !node.Forwarded(ctx) &&
+		s.stream != nil && s.stream.DeploymentAppKnowable()
+}
+
 // acting reports whether a verified hook is one to act on: made recently, and not a
 // delivery already acted on.
 func (s *Server) acting(ctx context.Context, origin hookOrigin, eventType string, payload []byte) bool {

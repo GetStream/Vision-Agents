@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // ChatInboundSuite is Stream Chat delivering the messages written in agent channels to a
@@ -214,6 +215,52 @@ func (s *ChatInboundSuite) TestADeliveryCarriedToAnotherNodesWorkerIsAnsweredThe
 	s.await(worker, "ready")
 
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(suiteStreamApp, s.config(s.customerID()), ""), s.current))
+
+	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
+}
+
+// A router that has not learned its own app yet makes Stream deliver the webhook again, as the
+// endpoint does: recorded under no app, the webhook would not be the delivery the endpoint
+// records under the app once learned, and both would answer the message.
+func (s *ChatInboundSuite) TestAWebhookBeforeTheRouterKnowsItsAppIsMadeAgainAndAnsweredOnce() {
+	router, deployment := s.routerLearningItsApp(s.chatInboundKeys)
+	body := s.message(suiteStreamApp, s.config(s.customerID()), "")
+
+	s.Equal(http.StatusServiceUnavailable, s.hookedAt(router, body))
+	deployment.SetApp(suiteStreamApp)
+	s.Require().Equal(http.StatusOK, s.hookedAt(router, body))
+	s.Equal(http.StatusOK, s.deliversTo(&s.RouterSuite, router, body, signDelivery(s.current, "msg_"+s.utils.uuid(), time.Now(), body)))
+
+	s.Zero(s.queued(&s.RouterSuite), "the delivery is the message the webhook brought")
+}
+
+// Only a message written to an agent waits for the app: Stream delivers every message in the app
+// to the webhook, and the rest are not delivered again.
+func (s *ChatInboundSuite) TestAMessageTheRouterWroteItselfIsTakenBeforeTheRouterKnowsItsApp() {
+	router, _ := s.routerLearningItsApp(s.chatInboundKeys)
+
+	s.Equal(http.StatusOK, s.hookedAt(router, s.message(suiteStreamApp, s.config(s.customerID()), `"agent"`)))
+}
+
+// Without Stream Chat's deliveries nothing records a message in deployment mode, so the webhook
+// is acted on before the router knows its app, as it always was.
+func (s *ChatInboundSuite) TestWithoutStreamChatDeliveriesAWebhookBeforeTheRouterKnowsItsAppIsTaken() {
+	router, _ := s.routerLearningItsApp(nil)
+
+	s.Equal(http.StatusOK, s.hookedAt(router, s.message(suiteStreamApp, s.config(s.customerID()), "")))
+}
+
+// A peer recorded the webhook it hands over, so a node that has not learned its app yet takes
+// it rather than have Stream deliver it again.
+func (s *ChatInboundSuite) TestAWebhookHandedToANodeThatDoesNotKnowItsAppIsAnsweredThere() {
+	warm := s.stream
+	s.stream, _ = learningItsApp(s.chat.URL)
+	other := s.otherNodeDispatching(dispatch.NewPool())
+	s.stream = warm
+	worker := s.serverClient.on(other).opens("/v1/dispatch")
+	s.await(worker, "ready")
+
+	s.Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.message(suiteStreamApp, s.config(s.customerID()), ""), suiteStreamSecret))
 
 	s.Equal(s.channelID, s.await(worker, "message")["channel_id"])
 }
@@ -436,6 +483,48 @@ func (s *ChatInboundSuite) routerOnAClosedStore() string {
 	router := httptest.NewServer(server.Handler())
 	s.T().Cleanup(router.Close)
 	return router.URL
+}
+
+// routerLearningItsApp is a router in the suite's deployment, taking Stream Chat's deliveries
+// signed with keys, that has not learned its own app yet, and returns its URL and the deployment
+// to tell it.
+func (s *ChatInboundSuite) routerLearningItsApp(keys []ed25519.PublicKey) (string, *streamapp.Deployment) {
+	stream, deployment := learningItsApp(s.chat.URL)
+	server, err := NewServer(Options{
+		Routers:  map[routing.Modality]routing.Inspector{routing.LLM: idleInspector{}},
+		AuthMode: auth.Custom,
+		Auth: auth.Func(func(context.Context, *http.Request) (auth.Principal, error) {
+			return auth.Principal{}, errors.New("nobody signs in here")
+		}),
+		Store:           s.store,
+		Stream:          stream,
+		HookSecret:      suiteStreamSecret,
+		ChatInboundKeys: keys,
+		Logger:          slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	router := httptest.NewServer(server.Handler())
+	s.T().Cleanup(router.Close)
+	return router.URL, deployment
+}
+
+// learningItsApp is the suite's deployment, configured with no app id and not told it yet.
+func learningItsApp(chatURL string) (*streamapp.Clients, *streamapp.Deployment) {
+	deployment := streamapp.NewDeployment(streamapp.DeploymentOptions{APIKey: suiteStreamKey, Secret: suiteStreamSecret, BaseURL: chatURL})
+	return streamapp.NewClients(deployment, streamapp.ClientsOptions{}), deployment
+}
+
+// hookedAt posts body to the message webhook of the router at url, signed with the suite's
+// secret, and answers the status.
+func (s *ChatInboundSuite) hookedAt(url, body string) int {
+	request, err := http.NewRequest(http.MethodPost, url+"/v1/chat/hooks/stream", strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(signatureHeader, sign(body, suiteStreamSecret))
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	return response.StatusCode
 }
 
 // message is a message.new written in the channel in app, which names configID. A source is
