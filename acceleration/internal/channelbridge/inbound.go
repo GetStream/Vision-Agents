@@ -213,7 +213,8 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 // writeQueued admits a queued message (admit), then writes it into its thread channel under its
 // own Stream id, and the card of the episode it opens, and hands it to the agent (answer).
 // Either write already done by an attempt whose answer was lost counts as written; the
-// message is then rebuilt from its row. A message admit holds back, such as a keyword or one
+// message is then rebuilt from its row. An episode that cannot be opened or a card that
+// cannot be written costs the card, not the answer: it is logged and the message goes on. A message admit holds back, such as a keyword or one
 // the gate refuses, is done with nothing written. The message is done only once its turn is
 // claimed, so a router that stops between the write and the claim leaves it queued, and the
 // next attempt finds it written and claims it.
@@ -228,9 +229,11 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	config := store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}
 	inbound := message.Message()
+	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
+		"seq", message.Seq)
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
 	if err != nil {
-		return err
+		log.Error("could not open the episode of an inbound message", "error", err)
 	}
 	// An earlier attempt may have opened the episode and stopped before its card was written:
 	// it failed, its router stopped or its lease ran out. This Open then finds it open. The
@@ -249,11 +252,9 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	case err != nil:
 		return err
 	}
-	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
-		"seq", message.Seq)
 	log.Info("an inbound message is written into its thread channel", "message", id)
 	if err := b.cards.Write(ctx, opened); err != nil && !alreadyWritten(err) {
-		return err
+		log.Error("could not write the episode card of a thread", "error", err)
 	}
 	if b.answer == nil {
 		return nil
