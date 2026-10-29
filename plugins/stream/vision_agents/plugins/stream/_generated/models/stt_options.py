@@ -29,9 +29,9 @@ class SttOptions:
         Attributes:
             channels (int | Unset): Transcribe a multichannel recording per channel rather than mixed down.
             data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
-                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
-                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
-                the request is refused rather than sent somewhere that does not.
+                transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a
+                requirement rather than a description: a request naming one is only routed to a model whose declared handling
+                meets it, and if none does the request is refused rather than sent somewhere that does not.
             detect_language (bool | Unset): Let the provider identify the language instead of being told it.
             diarize (bool | Unset): Label each stretch of speech with who said it.
             eager_end_of_turn (bool | Unset): Send a transcript as soon as the model guesses the turn may be over, before it

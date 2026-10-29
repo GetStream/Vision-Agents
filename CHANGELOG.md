@@ -2,9 +2,15 @@
 
 ## Features
 
+### An iMessage photo reaches the agent
+
+A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).
+
 ### A photo in a thread channel reaches the agent
 
 A message in a `thread-` channel with an image attachment (`type: image`, `image_url` or `asset_url`), with or without text, is answered, and the agent sees the photo; an agent with no vision skill and a model that takes text alone says it cannot see it rather than staying silent (AI-2093).
+
+A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
 ### A Node.js tool's parameters can be a Zod schema
 
@@ -76,6 +82,22 @@ nothing is sent and the sign-in goes back to the dashboard, as before.
 `declineLogin` does: the router ends the call, runs nothing and tells the agent the person did
 not connect.
 
+### A Dart tool can answer with pictures
+
+`AgentTool.withPictures` in the Dart SDK takes a tool whose `run` returns a `ToolOutput` (`text` and `images`, each an `AgentImage`, both empty by default), as Swift's and Kotlin's `ToolOutput` do. A result with pictures is sent as `text` and `image_url` parts; one without stays a plain string (FLU-1126).
+
+### Dart sessions name where a sign-in goes back to
+
+`SessionOptions.returnUrl` in the Dart SDK is sent as the session's `return_url`, as Swift's
+`returnURL` and Kotlin's `returnUrl` are. Left null or empty, nothing is sent and the sign-in
+goes back to the dashboard, as before. `AgentSession.declineLogin(toolCallId)` answers such a
+sign-in with Not now: the router ends the call, runs nothing and tells the agent the person did
+not connect.
+
+### Dart sessions remember the user, and are listed by when they started
+
+`SessionOptions.memory` in the Dart SDK (a `SessionMemory` with `filter` and `appId`) has the agent remember the user the client was built for, as Swift's and Kotlin's `memory` do: it is sent with the client's own user id, and a client with no user id remembers nothing. `SessionOptions.timezone` is the zone the agent reads dates in. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort` (`SessionSort.updatedAt` or `relevance`). Each pubspec's `repository` points at the `accelerate` branch, and the README shows the `dependency_overrides` an app needs until the packages are on pub.dev (FLU-1126).
+
 ### The Swift SDK catches up with the other client SDKs
 
 `SessionOptions` takes `custom`, `modelOverwrites` (a public `ModelOverwrites`: models, thinking, temperature, output tokens, verbosity), `memory`, which remembers for the user `setUser` named, and `timezone`. `session.fork(_:)` forks with `ForkOptions`' new `configID`, `description`, `custom`, `modelOverwrites` and `incognito`. `SessionQuery` filters by `createdSince`, `createdBefore` and `custom`, and orders by `sort`. `session.events()` hands each caller its own `AsyncStream` of events, `responses.unwind()` reads every item a page at a time, `say(_:interrupt:)` stops the reply in flight first, and `interrupt(requestID:)` stops one request. `agents.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks, and reads their runs.
@@ -123,9 +145,93 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### The knowledge passage limits are configurable
 
-`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A value of 0 or below is the default (AI-1992).
+`knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
+
+### GPT-6.1 Terra is `openai/gpt-6.1-terra`
+
+OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
+
+### Fish Audio S2.1 Pro is `fish/s2.1-pro`
+
+Fish's successor to S2 Pro can be routed as `fish/s2.1-pro`, with the same `FISH_API_KEY` and voices, at $15 per 1M characters. `fish/s2-pro` is still served, and a `fish` target that names no model still gets `drama-3`.
+
+### Fish Audio's live transcriber is `fish/transcribe-stream-1`
+
+The router now streams to `fish/transcribe-stream-1`, reachable by name or by any shortcut whose terms it satisfies. It needs `FISH_API_KEY`, covers 29 languages, and declares `keyterms`, which can change on an open stream, and `endpointing`; `silence_ms` is its `silence_timeout_ms`, at least 3000 in its own turn detection. It ends a turn when the words read as finished, and a turn the server judges is not the caller's (noise, a television, another voice) is never reported. Sound tags such as `[laughter]` are taken out of the text. `eager_end_of_turn` turns on its early guess. `overwrites` takes `mode` (`auto`, `vad`) and `silence_timeout_ms`. $0.36 an audio hour.
+
+### The agent says why it stopped talking
+
+Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
 ## Bug Fixes
+
+### A Flutter app's own tools run against a local proxy router
+
+A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a caller's auth type from the `stream-auth-type` query parameter, which is how a socket can send it when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).
+
+### The Dart SDK's session socket connects to the hosted router
+
+A Dart socket opened with a key now sends its token as `authorization` too, with `stream-auth-type=jwt`, which is how Stream's proxy reads a socket's credential. Before, the hosted router refused the handshake with `401 stream-auth-type missing or invalid`, so `chat()`, `attach` and `VoiceSession` all failed there, on every platform. A router in `api_key` mode reads `token` as before and ignores both (#1426).
+
+### Every agent knows the date and the hour
+
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+
+### A Dart question with images is no longer refused in a saved conversation
+
+`Responses.create` in the Dart SDK sends a request id with every question, as Swift and Kotlin do. It left it out when the question had images, and the router refuses a question without one in a saved conversation with a 400. With a request id, a conversation kept in Stream Chat takes its images as data URIs only, so an `https` image that one without a user used to accept is now refused, as it is from Swift and Kotlin (FLU-1126).
+
+### The greeting is said when somebody joins the call, not when the agent does
+
+An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
+
+### Go clients keep working with a region
+
+An explicit `Backend.Region` or `STREAM_ACCELERATION_REGION` no longer makes the first resource request or `SetUser` fail with `set a URL or a region, not both`. Resolving a backend again accepts the URL derived from its region, while a conflicting URL or invalid region is still refused.
+
+### A thread task's reply is texted as soon as the agent finishes it
+
+A scheduled task made in an SMS, WhatsApp or iMessage thread now looks at the agent's reply every 100 ms and sends it shortly after the reply finishes. A task's follow-up that meets a reply still being written starts within 100 ms of that reply finishing. Before, the delivery looked at the reply only every 2 seconds, so each reply left up to 2 seconds late and no thread task took less than 2 seconds (AI-2139).
+
+### A request that names its model outside the options is refused
+
+`POST /v1/tts/recordings`, `POST /v1/stt/recordings`, `POST /v1/search`, `POST /v1/detection` and `POST /v1/image/generations` now answer a top-level `model` with a 400 `invalid_request` that says to name the model in `options.target`. Before, the field was ignored: the request was served by the default model and billed for it (AI-2180).
+
+### A voice that speaks each sentence as its own request no longer goes silent when an id is reused
+
+On `/v1/tts/stream`, a `speak` frame for an id whose final text was already sent, before that utterance has finished, is now refused with an `error` frame (`tts: "<id>" is still being spoken; give the next utterance an id of its own`), and the utterances after it are still heard. An id is free again once its utterance has finished. Before, on a voice such as Gemini, Fish or Speechify, the reused id could leave every later utterance on the socket held and never heard. An utterance sent in pieces (`final: false`, then `final: true`) on such a voice could do the same, and no longer does (AI-2171).
+
+### A scheduled task's reply cut off as its provider fails is run again
+
+When a user cuts off a scheduled task's reply and the provider's stream fails at the same moment, the reply now ends cancelled, not failed, and the retry runs the turn again and delivers it. Before, the failure could end the reply as failed before the cut-off ended it, and a failed reply is never run again, so the reminder was not sent. The agent no longer reports a failure of a reply it already gave up on, so the session's `error` event, the recorded response and a run's outcome no longer show one either (AI-2113).
+
+### A deleted agent's scheduled tasks are paused when its caller hangs up after the delete
+
+`DELETE /v1/agents/configs/{id}` now pauses the deleted config's scheduled tasks even if the caller hangs up after the delete is made. Before, those tasks could stay active, and every occurrence failed because the config was gone (AI-2183).
+
+### An audit row is kept when its caller hangs up after the change
+
+A caller that hangs up right after a change is made no longer loses the change's audit row. In `GET /v1/agents/connector-audit` this is the `grant_revoked` row of a delete (a connection's, a user's or a connector's) and the `grant_created` row of a consent or a credentials save. In `POST /v1/audit/query` it is every configuration change. The OAuth client a consent's tokens were issued to is kept the same way (AI-2163).
+
+### A bad key a provider refuses after accepting the websocket handshake is counted as refused
+
+`router_keypool_refused_attempts_total` now counts, with `status` `invalid_key`, a key a provider accepts at the websocket handshake and refuses right after, once per connection: Gemini Live's close 1007 "API key not valid", OpenAI Realtime's and Together's `invalid_api_key` frame, AssemblyAI's Error 1008 "Invalid API key" or "API key is disabled", ElevenLabs Scribe's `auth_error`, ElevenLabs speech's `invalid_api_key` and Inworld's code 7 "API key does not exist or was deleted" or "Invalid authorization credentials". AssemblyAI's 1008 "Insufficient funds" and "No metronome account found" frames are counted with status `402`. Any other frame or close is not counted, and the key is not rested. OpenAI Realtime and Together Nemotron now report the provider's reason for refusing a session, not "expected session.created" (AI-2164).
+
+### ElevenLabs voices are priced at their current rates
+
+`eleven_flash_v2_5` and `eleven_v3_conversational` are $40, and `eleven_multilingual_v2` and `eleven_v3` $80, per 1M characters in `prices/vendor.json`, ElevenLabs' current API rates. A deployment whose database already holds these four keeps its prices until they are edited there.
+
+### A bad key that Gemini, xAI, Baseten or Inworld answer with a 400 or 403 is counted as refused
+
+`router_keypool_refused_attempts_total` now also counts a 400 or 403 whose body says the key is not valid, with `status` `400` or `403`: Google's `API_KEY_INVALID` (and the Gemini OpenAI-compatible endpoint's "Please pass a valid API key"), xAI's "Incorrect API key provided", Baseten's "please check the api-key you provided" and, for a dedicated deployment, "Authentication failed" (403 only), and Inworld's "Invalid authorization credentials" and "API key does not exist or was deleted". Any other 400 or 403 is still not counted, and which keys rest is unchanged (AI-2136).
+
+### A key refused while voices are listed or cloned is counted
+
+The voice library (ElevenLabs, Cartesia, Inworld) and voice cloning (ElevenLabs, Cartesia, Fish) send their requests on the provider's key pool, as speech does. A 401 or 402 on them is counted in `router_keypool_refused_attempts_total` under the provider's key variable, and a key the pool rests on them (a 429, a spent quota) rests for calls too. They still send on the provider's first key and never move to another, so a cloned voice is listed and deleted on the account that made it. Before, they sent on the first key outside the pool, so a refused key went uncounted there.
+
+### Every 401 and 402 on a pooled key is counted as refused
+
+`router_keypool_refused_attempts_total` now counts every 401 and 402 a provider answers on a pooled key, whatever the body says, with `status` `401` or `402`. Before, it counted one only when the body said `quota_exceeded`, so Gemini's 402 "prepayment credits are depleted" raised no `key_refused` alert. Which keys rest and when a request moves to the next key is unchanged (AI-2123).
 
 ### Sandbox code can no longer write through a method-override header
 
@@ -134,6 +240,10 @@ Under the egress proxy broker, a request from sandbox code to a connector's host
 ### An end user's device opens only its own memories
 
 A session created by an end user's device (`POST /v1/agents/sessions` or the session socket's start frame) with a `memory.user_id` other than the caller's own user id is refused with `403`, and an anonymous caller naming any `memory.user_id` is refused too. Before, a signed-in user could name another user of the same app, read that user's memories through the agent and add to them. A backend may still name any of its users. `MEM0_API_KEY` is read as one key: a comma-separated list or `MEM0_API_KEY_1` is no longer taken as a pool, since a mem0 key belongs to one project.
+
+### A saved policy applies at once and stays applied
+
+The router that saves a policy, an API key or an agent config now reads the new value on its very next request: before, about one read in four made right after the save still got the old value, for a few milliseconds. A save whose request was cancelled just after it committed also left the old value in place; it now clears it. A read that loaded the old value just before a save can no longer write it back to Redis afterwards, where every router kept reading it for up to an hour. The router now uses rueidis v1.0.79 (AI-2104).
 
 ### An iMessage photo's caption is answered
 
@@ -154,6 +264,10 @@ Only the first 128 bytes of a heading, cut between characters, are now repeated 
 ### A knowledge base can have any name
 
 A knowledge base named with a space, a slash or a letter outside A-Z, such as `my docs` or an agent synced from a directory called `Support Bot`, was refused by turbopuffer on every write and lookup. turbopuffer now stores a base as `<customer>__<slug>-<hash>`: a readable slug of the name and 16 hex characters of its SHA-256, so names that read alike, such as `Support Bot` and `support-bot`, stay two bases. Bases written before this release are under their old names and are not read; write them again (AI-1994).
+
+### A knowledge write is refused when its organization may not pay for it
+
+`POST /v1/agents/knowledge`, a directory sync with knowledge and the URL crawler are admitted as a model call is before they write: a suspended organization is a 403 `account_suspended`, no credit or a spent limit a 402, one end user's spent limit a 429 with Retry-After. Nothing is written. Deleting a document is never refused for money. The URL crawler does not read a page for an organization that is refused: the page fails with the reason and is retried like any other. A provider failure while writing is now a 500 "something went wrong" rather than a 400 carrying the provider's response (AI-1990).
 
 ### The agent tells people apart in a group text chat
 
@@ -237,6 +351,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### A Dart tool's `run` returns a `ToolOutput`
+
+`AgentTool.run` in the Dart SDK returns a `ToolOutput` rather than a `String`, as Swift's and Kotlin's `run` do, so a tool that shows pictures is the same type as one that answers in words. The `AgentTool(...)` constructor still takes a handler returning a `String` and wraps it, but is no longer `const`; `AgentTool.withPictures` is. Code that called `tool.run(arguments)` itself reads `.text` from what it returns (FLU-1126).
+
 ### The SDKs go to production in us-east4 by default
 
 Every SDK's default router is `https://accelerate-us-east4.gcp.stream-io-api.com` in place of `https://accelerate.gcp.stream-io-api.com`, which GetStream/chat#19561 removes along with `accelerate-prod.gcp.stream-io-api.com`: production is only `accelerate-<region>`, and staging moves to `https://accelerate-staging.gcp.stream-io-api.com`. `STREAM_ACCELERATION_URL` names any router, and the new `STREAM_ACCELERATION_REGION` (or the `region` option, `Region` in Go and .NET) another production region by name: `europe-west4` is `https://accelerate-europe-west4.gcp.stream-io-api.com`. Every `accelerate-<region>` host authenticates through the proxy without being asked. A URL, passed in or in `STREAM_ACCELERATION_URL`, wins over a region in the environment; a URL and a region both passed in are refused, as is a name that is not shaped like a region. The Kotlin, Swift and Dart SDKs default to us-east4 too, and build another region's URL with `Backend.regionUrl` (`Backend.regionURL` in Swift). Which regions are served is the load balancer's to say, so another needs no SDK release.
@@ -262,6 +380,30 @@ In the management API, `PriceEntry` and `UpcomingPriceEntry` gain `sku`, `prices
 ### The price list's `markup_bps` columns are dropped
 
 Migration `20261130120000_drop_price_markup` drops `markup_bps` from `price_changes` and `price_entries`, with its checks, and the trigger that lets a change only be cancelled stops comparing it. Nothing has read the column since `20261118120000_price_entry_prices` stored every entry's price. Every router of a deployment must run a release with that migration before this one: a router built earlier can no longer read the price list once this has run. Down brings the columns back `NULL`; the markups they held do not come back (AI-2083).
+
+### Every price has a region, and work on the customer's own key is priced at a fee
+
+Every entry of the price list and every item priced names its region, `us` or `eu` for now, and whether it is BYOK, work done with the customer's own key. Both are matched exactly: EU work is never priced by a US entry, nor BYOK work by an entry that is not BYOK, nor the other way round, and work no entry of its own matches is unpriced. A provider instance runs in the `region` its routing config names, `us` (`pricing.DefaultRegion`) when it names none, as `router.yaml` names none today. Every entry of `prices/vendor.json` is `us`, and a `vendor.json` entry that names no region fails its tests. An entry of `ROUTER_PRICES_FILE` that names none is read as `us`, with a warning naming it, since a router built before this one refuses a `region` field in the file every router of the deployment reads; a later release refuses it. Reading a price file adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at 20% of its vendor's rates (`pricing.BYOKFeeBps`), where every other entry written without a price is priced at 120%: a million tokens that cost the vendor $1 are $1.20, or $0.20 on the customer's key. A file's own BYOK entry wins over the twin. A BYOK row's `base_cost_micros` is 0, since the vendor bills the customer. SKUs end in the region, then `byok`: `llm-anthropic-claude-haiku-5-5-us`, `llm-anthropic-claude-haiku-5-5-us-byok`.
+
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`, adds `region` (`us` on every existing row, and no default after) and `byok` (false), ends every existing SKU in `-us`, and indexes items by region and BYOK state. `requests.sku` and the usage ledger keep the SKU each row was billed under, so rows priced before it name their SKU without the region. A router built before this one can no longer read or write the price list once it has run: it keeps pricing with the list it holds, and reads again on its interval, until it is replaced. The first start after it adds only the BYOK twins, as one `release` change; every US item keeps its price and its SKU. Down refuses a list holding a BYOK or non-US entry.
+
+In the API, `PriceItem`, and so every price entry the management API answers, the preview and `getPrices`'s `Price`, gains `region` (required) and `byok`. `PriceEntryInput` requires `region`, a letter and up to 31 of a-z, 0-9 and hyphens (else 400 `validation_failed`), and takes `byok`. `getPrices` takes an optional `region`. `router prices show`, `sync --dry-run` and `check` name each item's region and BYOK state. `router_usage_unpriced_total` gains `region` and `byok` labels, and its alert names the item as `<modality>/<provider>/<model>/<region>/<byok>` (fingerprint `usage_unpriced:llm/anthropic/claude-haiku-5-5/eu/false`), so an item unpriced in one region or BYOK state alone alerts under that name (AI-2187).
+
+### An agent's work is done in the region its agent.yaml names, and never in another
+
+`agent.yaml` names `region` (`us` or `eu` for now), and so do `SyncAgentRequest`, `AgentConfigRequest` and `AgentConfigPatch`; `AgentConfig` always shows it. Migration `20261202135000_agent_region` adds `agent_configs.region`, `us` for every agent before it. An agent that names none is in `us`, and a sync, an update or a patch that leaves it out keeps the stored one. The Go, JavaScript and Python directory loaders send it. Every model the agent's sessions run, its knowledge base and its sandbox are in its region, and nothing about a region is looked up when work arrives: a session carries its config's region on every call it makes, as do the agent's channels, phone calls, scheduled tasks, plugin events, episode summaries and simulations (the simulated caller and the judge included). A sync, and a config create, update or patch, is refused before anything is written (400, naming each part and the region) when a model the agent names has no instance in the region (`llm: no instance of anthropic/claude-haiku-5-5 in region eu`; a shortcut or a vendor name passes when one of its instances is there, and a customer's own model, `custom/<name>`, runs in `us` alone), when its knowledge base is already kept in another region, since a knowledge base is never moved, and when it names a sandbox where no Daytona target serves the region. A read that fails fails the save. The region is in what `check_changes` compares and in the audit entry.
+
+A direct call names its own region: `data_policy` gains `region` on a request's `stt`, `tts` and `sts` options, `us` when it names none, and work naming two regions, its agent's and its data policy's, is refused naming both. A policy has no region: `Policy.data_policy` is `PolicyDataPolicy`, `allow_training` and `retention`, and a policy sending `region` is a 400. Only the model instances in the work's region serve it: with none there it is refused, a 400 naming the region (`no candidate in region eu`), and fallback walks the region's other candidates in the usual order. A customer's own model (`custom/<name>`) runs in `us`.
+
+`router.yaml` may declare a model once per region: an instance is its provider, model and `region`, and the same three twice is refused at start. An instance's `endpoint` is the base URL of its regional API and its `api_key_env` the name of the variable holding its key, read once at start, never logged; one that is unset or empty stops the router. The LLM factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both, and the router refuses to start with an instance setting one its factory does not take. Every vendor's default host is taken to be in `us`, so an instance anywhere else must set an `endpoint`. A `provider/model`, a vendor name and a shortcut resolve to every region's instances, a shortcut's `prefer` holds in each, and an instance's work is priced at its region's entry, under its `-eu` SKU. Live health and statistics stay keyed by provider and model, so an EU instance shares its US twin's health. `GET /v1/{modality}/providers` lists a model once per instance, each with a `region`.
+
+Knowledge and sandboxes are kept in the work's region. `knowledge.regions` (`ROUTER_KNOWLEDGE_REGIONS`, such as `eu=aws-eu-central-1`) gives a turbopuffer backend to each region, `us` always among them at `TURBOPUFFER_REGION` as before. A knowledge base stays in the region of its first write: migration `20261202125000_knowledge_region` adds `knowledge_namespaces`, recording every existing base as `us`. A read or write by work naming another region, an agent's, is refused rather than moved; work naming none, as the knowledge API's and a page's read, goes where the base is, and makes a new base in `us`; a delete goes where the base is. A sync writes the agent's knowledge in the agent's region. `router usage storage` samples every region's bases. `code_sandbox.targets` (`ROUTER_CODE_SANDBOX_TARGETS`, such as `eu=eu`) maps a region to the Daytona target its sandboxes are made on, `us` as before with none; a sandbox carries the `stream.region` label and its rows a `region` attribute, and the sweep and the reconciliation cover every target. A region with no knowledge backend or sandbox target is refused (AI-2187).
+
+### Customers keep their own provider keys, tried first and billed at the BYOK fee
+
+A customer may keep a key for their own account at a vendor, one per vendor and region: `putProviderKey` (`PUT /v1/agents/provider-keys`, `provider`, `region`, `us` when left out, and `api_key`), `listProviderKeys` and `deleteProviderKey` (`DELETE /v1/agents/provider-keys/{provider}?region=`), all server-side only and audited as `provider_key`. A key is taken for an LLM vendor the deployment routes whose factory builds with an instance's own key (OpenAI, Anthropic, Gemini, xAI and DeepSeek), for `turbopuffer` and for `daytona`; any other is a 400 `provider_takes_no_key`, and deleting a key that is not kept a 404 `provider_key_not_found`. Only a key is taken, never an endpoint. Migration `20261202130000_provider_keys` adds `provider_keys`, each key sealed with the deployment's keyring and bound to its customer, vendor and region so a sealed key copied to another row does not open, `knowledge_namespaces.account` (`stream` for every existing base) and the `provider_key` audit resource type. A key is never returned, logged or put in an error: `ProviderKey` shows its last four characters (`key_hint`), and so do its audit entries.
+
+For each candidate in the work's region whose vendor the customer keeps a key for there, the router tries the customer's own instance immediately before it: the same model at the deployment's endpoint, built with their key. A key is looked up for the work's region alone. The order between models is kept, and when the customer's instance fails the walk and the LLM fallback move on to the deployment's as to any next candidate. Work on a customer's key is priced at the item's BYOK entry (a `-byok` SKU, 20% of the vendor's rates, `base_cost_micros` 0), is kept out of the model's live health and fatal mark, and counts its failures in `router_requests_total` under `outcome="customer_key"`. A vendor's 401 or 403 on the customer's key is `error_code` `key_refused` on the request row, which `UsageEvent` and `ModelCallTiming` show. With a `turbopuffer` key for the work's region, a knowledge base first written from then on is kept in the customer's own turbopuffer account and priced at `knowledge-turbopuffer-*-byok`; a base stays in the account of its first write, and one in theirs whose key was deleted is refused rather than read from the deployment's. With a `daytona` key, the session's sandbox is made in the customer's own Daytona organization (labelled `stream.account=customer`, its secrets kept there under the `daytona` broker) and priced at `sandbox-daytona-*-byok`. `router usage storage`, `router usage sandboxes` and the hourly secret sweep reach each customer's account on their key, so the jobs need the router's keyring variables (AI-2187).
 
 ### The call a tool function is handed is named toolCallContext
 

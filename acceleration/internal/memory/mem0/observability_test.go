@@ -261,6 +261,23 @@ func (s *CallRecordingSuite) TestEachCallIsLoggedWithWhoseMemoriesItTouched() {
 	s.NotContains(s.logs.String(), "I moved", "what was said is never logged")
 }
 
+func (s *CallRecordingSuite) TestAQueuedConversationIsLoggedWithItsEventAndSession() {
+	s.platform.respond = `{"event_id":"event-1","status":"PENDING"}`
+
+	_, err := s.store.Remember(s.ctx, s.scope, []llm.Message{{Role: llm.User, Content: "I moved"}})
+	s.Require().NoError(err)
+
+	var queued []map[string]any
+	for _, line := range s.lines() {
+		if line["msg"] == "queued a conversation to remember" {
+			queued = append(queued, line)
+		}
+	}
+	s.Require().Len(queued, 1)
+	s.Equal("event-1", queued[0]["event"], "the event is how to ask mem0 what became of it")
+	s.Equal("session-1", queued[0]["run_id"], "mem0 may start it long after, so it names whose it was")
+}
+
 func (s *CallRecordingSuite) TestEachCallIsASpanUnderTheCallersSpan() {
 	s.platform.respond = `{"results":[{"id":"m1","memory":"Lives in Austin"},{"id":"m2","memory":"Has a dog"}]}`
 	ctx, parent := callSpans().Tracer("test").Start(s.ctx, "turn")

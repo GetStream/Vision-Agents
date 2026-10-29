@@ -1,6 +1,7 @@
 package session
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -129,6 +131,10 @@ type Spec struct {
 	AgentName string
 	// AgentID keys transcripts and statistics. Empty means the call id.
 	AgentID string
+	// Region is where everything the session does is done: every model it routes to, its
+	// knowledge and its sandbox. It is its config's, and a session that spelled itself out
+	// names none, which is pricing.DefaultRegion.
+	Region string
 	// Tags are the caller's own cost labels, carried onto every request the session
 	// makes.
 	Tags routing.Tags
@@ -247,12 +253,8 @@ type Spec struct {
 	// Timezone is the end user's IANA zone for this session, from the session
 	// request. Empty resolves at tool time (the user's stored zone, then the
 	// config's default). The manager fills it in from the store when it can, so
-	// the prompt's clock line and the tools agree.
+	// the agent's clock line and the tools agree.
 	Timezone string
-	// SchedulingTools says the scheduling tools were offered to this session,
-	// which the manager decides once it knows the caller and the store. It is
-	// what earns the prompt its clock line.
-	SchedulingTools bool
 
 	// SkillNames are the skills the voice model may hand to the subagent: the agent
 	// config's own, or one of the built-in think, recall and explain. Empty means the
@@ -357,6 +359,8 @@ func FromConfig(config store.AgentConfig) Spec {
 		ConfigID:   config.ID,
 		Role:       config.Role,
 		AgentName:  config.Name,
+		// Never empty, so the session's knowledge is never reached in another region than its own.
+		Region: cmp.Or(config.Region, pricing.DefaultRegion),
 		// A text agent holds its conversation in writing, so a session created from one
 		// joins no call unless the request asks for a voice session explicitly.
 		Text:           config.Mode == store.AgentModeText,
@@ -799,25 +803,9 @@ func (s Spec) LLMOverwrites() options.LLM {
 	}
 }
 
-// clockLine is the one line that tells the agent what day it is for the user,
-// accurate to the day so the provider's prompt cache survives: a session that
-// runs past midnight keeps yesterday's date until its next tool result, which
-// always carries the exact time. Empty when the zone is not known.
-func (s Spec) clockLine(now time.Time) string {
-	if s.Timezone == "" {
-		return ""
-	}
-	loc, err := time.LoadLocation(s.Timezone)
-	if err != nil {
-		return ""
-	}
-	return "Today is " + now.In(loc).Format("Monday, 2 January 2006") + " for the user (" + s.Timezone + ")."
-}
-
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
-// through whatever answers, ahead of whatever it was told to do once it has. The clock line
-// comes last: it differs by zone and day, and the provider caches a prompt by its prefix, so
-// the sessions of one config keep sharing what comes before it.
+// through whatever answers, ahead of whatever it was told to do once it has. The agent adds
+// the clock line to every turn itself.
 func (s Spec) prompt() string {
 	var parts []string
 	if s.Navigating {
@@ -828,11 +816,6 @@ func (s Spec) prompt() string {
 	}
 	if s.ServerInstructions != "" {
 		parts = append(parts, s.ServerInstructions)
-	}
-	if s.SchedulingTools {
-		if line := s.clockLine(time.Now()); line != "" {
-			parts = append(parts, line)
-		}
 	}
 	return strings.Join(parts, "\n\n")
 }

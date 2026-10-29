@@ -210,7 +210,8 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 				a.dropSpeech()
 			}
 			if !abandoned {
-				a.turns.interrupt(complete.ResponseID)
+				// The model heard the caller itself: the router has no words of theirs to report.
+				a.interrupted(complete.ResponseID, participant, interruption{cause: causeProvider})
 				a.emitter.Send(cut.cut(Interrupted{TurnID: complete.ResponseID, Participant: participant}))
 			}
 		}
@@ -608,7 +609,6 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	a.generating = false
 	a.saying = ""
-	participant := a.lastParticipant
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
 	}
@@ -617,20 +617,8 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	a.mu.Unlock()
 	a.settle()
 
-	if complete.Interrupted {
-		// The model stopped when it heard the caller, and what it had already sent is
-		// queued at the edge: leaving it there is the caller being talked over for as
-		// long as the queue is deep. An interrupt the caller asked for by hand already
-		// reported itself, so the model's own report of the same cut is not repeated.
-		if !alreadyAbandoned {
-			cut := Interrupted{TurnID: complete.ResponseID, Participant: participant}
-			if heardMs, ok := heard.heardBy(time.Now()); ok {
-				cut.SynthesisID, cut.HeardMs, cut.Message = complete.ResponseID, heardMs, heard.span()
-			}
-			a.turns.interrupt(complete.ResponseID)
-			a.emitter.Send(cut)
-		}
-	} else {
+	// An interrupted reply was reported by receiveSTS, or by whoever abandoned it first.
+	if !complete.Interrupted {
 		a.turns.completed(complete.ResponseID, 0, 1)
 		a.turns.spoke(complete.ResponseID, 0, complete.AudioDurationMs)
 		// Remembering happens off the turn path: extraction takes longer than a turn and

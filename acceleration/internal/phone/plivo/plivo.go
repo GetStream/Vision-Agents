@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -213,6 +214,10 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		RingTimeout:  int(outbound.RingTimeout.Seconds()),
 	}
 
+	if outbound.StatusURL != "" {
+		request.HangupURL, request.HangupMethod = outbound.StatusURL, http.MethodPost
+	}
+
 	var placed dialedCall
 	if err := p.do(ctx, http.MethodPost, p.path("Call", ""), nil, request, &placed); err != nil {
 		return phone.Dialed{}, err
@@ -221,6 +226,42 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	// exist yet, because Plivo has not dialled it. It is what its API takes to look the
 	// call up later, so it is what is reported.
 	return phone.Dialed{VendorCallID: placed.RequestUUID, Status: "queued"}, nil
+}
+
+// ReadStatus reads the form Plivo posts to a call's hangup_url. Plivo documents no HangupCause
+// there, so a post without one is not final: the call's leg end decides it.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("plivo: a call status is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("plivo: read a call status: %w", err))
+	}
+	word := form.Get("HangupCause")
+	if word == "" {
+		word = form.Get("CallStatus")
+		if word == "" {
+			return phone.CallStatus{}, stack.Wrap(errors.New("plivo: a call status without a HangupCause or CallStatus"))
+		}
+		return phone.CallStatus{Word: word}, nil
+	}
+	result, ok := finalStatuses[word]
+	if !ok {
+		result = phone.CallFailed
+	}
+	return phone.CallStatus{Result: result, Word: word}, nil
+}
+
+// finalStatuses are the HangupCause words that are not a failure. Only NORMAL_CLEARING and
+// USER_BUSY are documented by Plivo; the rest are unconfirmed.
+var finalStatuses = map[string]phone.CallResult{
+	"NORMAL_CLEARING":   phone.CallCompleted,
+	"USER_BUSY":         phone.CallBusy,
+	"CALL_REJECTED":     phone.CallBusy,
+	"NO_ANSWER":         phone.CallNoAnswer,
+	"NO_USER_RESPONSE":  phone.CallNoAnswer,
+	"ORIGINATOR_CANCEL": phone.CallCanceled,
 }
 
 // Answer renders Plivo's XML for pressing nothing and bridging to the trunk.
@@ -448,6 +489,9 @@ type callRequest struct {
 	AnswerMethod string `json:"answer_method,omitempty"`
 	// RingTimeout is how long to ring before giving up, in seconds.
 	RingTimeout int `json:"ring_timeout,omitempty"`
+	// HangupURL is where Plivo posts the call's end, as a form.
+	HangupURL    string `json:"hangup_url,omitempty"`
+	HangupMethod string `json:"hangup_method,omitempty"`
 }
 
 // dialedCall is what Plivo answers a placed call with. The uuid names the request rather

@@ -3,6 +3,7 @@ package siptrunk
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -348,4 +349,82 @@ func (s *SIPTrunkSuite) TestClosingTheServiceHangsUpThisProvidersCalls() {
 
 	s.True(s.dialer.call.wasHungUp())
 	s.False(live(p, dialed.VendorCallID))
+}
+
+// endsWith dials with the dialer failing with err, or answering when err is nil, and returns
+// how the call was reported to have ended.
+func (s *SIPTrunkSuite) endsWith(err error) phone.CallStatus {
+	s.dialer.err = err
+	ended := make(chan phone.CallStatus, 1)
+	placing := outbound()
+	placing.Ended = func(status phone.CallStatus) { ended <- status }
+
+	_, dialErr := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(dialErr)
+	if err == nil {
+		s.waitForDial()
+		s.Require().NoError(s.dialer.call.Hangup(context.Background()))
+	}
+	return s.reported(ended)
+}
+
+func (s *SIPTrunkSuite) reported(ended <-chan phone.CallStatus) phone.CallStatus {
+	select {
+	case status := <-ended:
+		return status
+	case <-time.After(time.Second):
+		s.FailNow("the call never said how it ended")
+		return phone.CallStatus{}
+	}
+}
+
+func refused(code int, reason string) error {
+	return fmt.Errorf("sipbridge: customer leg: %w", &sipbridge.Unanswered{Code: code, Reason: reason})
+}
+
+func (s *SIPTrunkSuite) TestABusyTrunkReportsBusy() {
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "486"}, s.endsWith(refused(486, "Busy Here")))
+}
+
+func (s *SIPTrunkSuite) TestADeclineReportsBusy() {
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "603"}, s.endsWith(refused(603, "Decline")))
+}
+
+func (s *SIPTrunkSuite) TestA480ReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "480"},
+		s.endsWith(refused(480, "Temporarily Unavailable")))
+}
+
+func (s *SIPTrunkSuite) TestARequestTimeoutReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "408"}, s.endsWith(refused(408, "Request Timeout")))
+}
+
+func (s *SIPTrunkSuite) TestARingTimeoutReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "ring timeout"}, s.endsWith(refused(0, "")))
+}
+
+func (s *SIPTrunkSuite) TestAnotherRefusalReportsFailed() {
+	s.Equal(phone.CallStatus{Result: phone.CallFailed, Word: "503"}, s.endsWith(refused(503, "Service Unavailable")))
+}
+
+func (s *SIPTrunkSuite) TestADialThatFailsWithoutARefusalReportsFailed() {
+	s.Equal(phone.CallFailed, s.endsWith(errors.New("connection refused")).Result)
+}
+
+func (s *SIPTrunkSuite) TestAnAnsweredCallThatEndsReportsCompleted() {
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye"}, s.endsWith(nil))
+}
+
+func (s *SIPTrunkSuite) TestStoppingTheNodeWhileRingingReportsCanceled() {
+	s.dialer.blocks = true
+	ended := make(chan phone.CallStatus, 1)
+	placing := outbound()
+	placing.Ended = func(status phone.CallStatus) { ended <- status }
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	s.waitForDial()
+
+	s.provider.stop()
+
+	s.Equal(phone.CallCanceled, s.reported(ended).Result)
 }

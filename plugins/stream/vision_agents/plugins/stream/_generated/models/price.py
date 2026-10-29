@@ -21,8 +21,9 @@ T = TypeVar("T", bound="Price")
 
 @_attrs_define
 class Price:
-    """What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of
-    its work is debited at, which X-Stream-Cost-Micros reports.
+    """What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or
+    without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros
+    reports. A byok price is a fee: the vendor bills the customer for the work itself.
 
         Attributes:
             free (bool): The work costs nothing.
@@ -30,6 +31,10 @@ class Price:
             modality (str): Such as llm, stt, tts, sms or phone.
             model (str):
             provider (str):
+            region (str): Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is
+                priced only by an entry of its own region, never another region's.
+            byok (bool | Unset): Work done with the customer's own key, which the vendor bills the customer for: priced only
+                by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
             change (str | Unset): The price change that set it: on an entry in force, the price_version of every row it
                 prices. Absent for a model the deployment runs itself that no change prices.
             description (str | Unset): In upcoming: why the change is made.
@@ -48,6 +53,8 @@ class Price:
     modality: str
     model: str
     provider: str
+    region: str
+    byok: bool | Unset = UNSET
     change: str | Unset = UNSET
     description: str | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
@@ -68,6 +75,10 @@ class Price:
         model = self.model
 
         provider = self.provider
+
+        region = self.region
+
+        byok = self.byok
 
         change = self.change
 
@@ -110,8 +121,11 @@ class Price:
                 "modality": modality,
                 "model": model,
                 "provider": provider,
+                "region": region,
             }
         )
+        if byok is not UNSET:
+            field_dict["byok"] = byok
         if change is not UNSET:
             field_dict["change"] = change
         if description is not UNSET:
@@ -147,6 +161,10 @@ class Price:
         model = d.pop("model")
 
         provider = d.pop("provider")
+
+        region = d.pop("region")
+
+        byok = d.pop("byok", UNSET)
 
         change = d.pop("change", UNSET)
 
@@ -205,6 +223,8 @@ class Price:
             modality=modality,
             model=model,
             provider=provider,
+            region=region,
+            byok=byok,
             change=change,
             description=description,
             effective_at=effective_at,

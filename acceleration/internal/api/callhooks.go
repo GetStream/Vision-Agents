@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -149,7 +151,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
 		return
 	}
-	if s.store == nil || s.dispatch == nil {
+	if s.store == nil {
 		return
 	}
 
@@ -212,7 +214,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
-		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to a suspended app",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a suspended app",
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
 	}
@@ -220,13 +222,29 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// so an organization that may not pay has nobody answer.
 	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
 		answer, _ := moneyError(err)
-		s.refuseArrivingCall(r, number, callType, callID, "refused an arriving call to an organization that may not pay for it",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to an organization that may not pay for it",
 			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
 		return
 	}
 	// Only a call that rings a number is worth recording as delivered: every video call in
 	// the app arrives here too.
 	if !s.acting(r.Context(), origin, getstream.EventTypeCallSessionStarted, payload) {
+		return
+	}
+	// A number with an agent never goes to a worker, even one waiting: the router answers
+	// it on this node.
+	if number.ConfigID != "" {
+		if s.sessions == nil {
+			s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a number with an agent on a router that runs no sessions",
+				"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
+			return
+		}
+		// The agent joins before it is answering, which can outlast Stream's wait for the
+		// hook: answered late, Stream delivers again while the agent joins.
+		go s.answerWithAgent(context.WithoutCancel(r.Context()), s.sessions, origin, event, number, callType, callID)
+		return
+	}
+	if s.dispatch == nil {
 		return
 	}
 	if s.forwardedToWorkers(r, payload, number.CustomerID) {
@@ -265,6 +283,59 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	s.logger.Info("arriving call sites", arrived...)
 }
 
+// answerWithAgent opens a session of the number's agent on the arriving call. It ends on its
+// own once the caller hangs up, as any phone session does (Session.observe).
+func (s *Server) answerWithAgent(ctx context.Context, sessions *session.Manager, origin hookOrigin, event callEvent, number store.PhoneNumber, callType, callID string) {
+	config, err := s.configs.AgentConfig(ctx, number.CustomerID, number.ConfigID)
+	if err != nil {
+		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call to a number whose agent is gone",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164,
+			"config", number.ConfigID, "error", err)
+		return
+	}
+	spec := session.FromConfig(config)
+	// The number names each caller's call for the session answering it, as dispatch does.
+	spec.ID = callID
+	spec.CallType, spec.CallID = callType, callID
+	spec.Text = false
+	spec.PersistConversation = true
+	// No user: a caller id is easy to fake, and as a user it would hand one caller the
+	// agent's memory of another.
+	spec.Phone = &session.PhoneSpec{Number: number.E164}
+	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound}
+	// The number's tags over the config's, as a campaign's over its config's.
+	tags := routing.Tags{}
+	maps.Copy(tags, spec.Tags)
+	maps.Copy(tags, number.Tags)
+	spec.Tags = tags
+	// Before Create: the manager picks the Stream app the agent joins in from this pin.
+	s.pinHook(origin, number.CustomerID, event.CallCid)
+	created, err := sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrSessionExists) {
+		// Delivered again: deployment mode acts on every delivery. Refusing would hang up
+		// on the agent already answering.
+		s.logger.Debug("an arriving call is already answered", "call", event.CallCid, "number", number.E164)
+		return
+	}
+	if err != nil {
+		// A delivery that came while the first one's agent was joining fails to open the
+		// conversation that agent has; refusing would hang up on it.
+		if _, live := sessions.Get(callID, session.OwnerOf(spec)); live {
+			s.logger.Debug("an arriving call is already answered", "call", event.CallCid, "number", number.E164, "error", err)
+			return
+		}
+		s.logger.Error("nobody could answer an arriving call",
+			"call", event.CallCid, "customer", number.CustomerID,
+			"number", number.E164, "config", number.ConfigID, "error", err)
+		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call its agent could not answer",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
+		return
+	}
+	s.logger.Info("an agent answered an arriving call",
+		"call", event.CallCid, "customer", number.CustomerID,
+		"number", number.E164, "config", number.ConfigID, "session", created.ID())
+}
+
 // releaseEndedCall tears down the per-call SIP trunks a placed call or transfer created,
 // now that the call is over. Everything short of a malformed event is a 200: Stream
 // retries a non-2xx, and nothing here is worth a redelivery: the caller is not waiting on
@@ -299,12 +370,12 @@ const endRefusedTimeout = 10 * time.Second
 // bridge has answered the caller by the time the call's session starts (the caller is its
 // first participant), so a call left alone would run until the caller hung up, and the vendor
 // bills its seconds; it is ended off the request, so the hook still answers at once.
-func (s *Server) refuseArrivingCall(r *http.Request, number store.PhoneNumber, callType, callID, why string, attributes ...any) {
+func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumber, callType, callID, why string, attributes ...any) {
 	s.logger.Info(why+"; ending it", attributes...)
 	if s.phone == nil {
 		return
 	}
-	ctx := context.WithoutCancel(r.Context())
+	ctx = context.WithoutCancel(ctx)
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, endRefusedTimeout)
 		defer cancel()

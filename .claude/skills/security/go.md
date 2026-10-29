@@ -52,6 +52,11 @@ Every operation not marked `x-client-accessible` answers a client-side caller 40
 - `Stream-Auth-Type: server` with a user token, and a server token in a socket's query
   string, are both client-side. Tested by `TestAPIKey` and
   `TestAServerTokenInASocketsQueryStringIsNotABackend`.
+- The `stream-auth-type` query parameter (`auth.AuthTypeParam`) may only weaken a caller. It
+  is read only in `proxy` mode without declared kinds, where a caller that says nothing is a
+  backend, only when the header is absent, and only as `jwt` or `anonymous`. Report any path
+  that reads it in another mode, believes it over the header, or takes `server` from it.
+  Tested by `TestProxy` and `TestProxyThatDeclaresKinds`.
 - A new `x-client-accessible` mark is a decision, not a default. The PR has to say why an
   end user's device needs it, and come with ownership tests (rule 3). Flag any mark on an
   operation that writes configuration, keys, policies, agents, phone numbers, connectors

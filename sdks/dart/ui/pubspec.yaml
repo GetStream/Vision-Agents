@@ -3,7 +3,7 @@ description: >-
   Flutter widgets for a conversation with a Stream Vision Agent: the transcript, what the agent
   is doing, somewhere to type, and a conversation kept in Stream Chat.
 version: 0.1.0
-repository: https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart/ui
+repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/ui
 topics: [ai, agents, chat, stream]
 
 # Stream Chat 10.4's floor, which is higher than the core's.

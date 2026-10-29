@@ -87,17 +87,13 @@ jobs:
             mem0: true
           - package: internal/memory/mem0
             mem0: true
-          # AI-2036
-          - package: internal/policy
-            skip: '^TestPolicySuite$/^TestAColdStartReadsItsFirstAccountsInBatches$'
           # AI-2037
           - package: internal/connectors/resolver
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
-          # AI-2038
-          - package: internal/sandbox/egress
-            skip: '^TestTunnelSuite$/^TestACheckWhoseForwarderLostThePortFindsTheWinnerUp$'
     # acceleration/internal/config/testing.yaml wins over the environment and names these two
     # host ports, so the services listen there and no ROUTER_* variable is set.
+    # Postgres keeps its data in memory: the suites truncate their tables before every test,
+    # and on disk each TRUNCATE waits on fsync.
     services:
       postgres:
         image: postgres:16-alpine
@@ -106,6 +102,7 @@ jobs:
         ports:
           - 55432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 3s

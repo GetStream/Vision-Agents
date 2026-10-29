@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -220,6 +222,93 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 		return stack.Wrap(fmt.Errorf("store: save knowledge document: %w", err))
 	}
 	return nil
+}
+
+// The accounts a knowledge base is kept in (KnowledgePlace.Account).
+const (
+	// KnowledgeAccountStream is the deployment's own account at the knowledge vendor.
+	KnowledgeAccountStream = "stream"
+	// KnowledgeAccountCustomer is the customer's own, on the key they keep for the base's region.
+	KnowledgeAccountCustomer = "customer"
+)
+
+// KnowledgePlace is where one of a customer's knowledge bases is kept: a region, and an account
+// in it.
+type KnowledgePlace struct {
+	Region  string
+	Account string
+}
+
+// KnowledgeNamespace is where one of a customer's knowledge bases is kept.
+type KnowledgeNamespace struct {
+	bun.BaseModel `bun:"table:knowledge_namespaces"`
+
+	CustomerID string    `bun:"customer_id,pk"`
+	Namespace  string    `bun:"namespace,pk"`
+	Region     string    `bun:"region,notnull"`
+	Account    string    `bun:"account,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+}
+
+// Place is where the base is kept.
+func (n KnowledgeNamespace) Place() KnowledgePlace {
+	return KnowledgePlace{Region: n.Region, Account: n.Account}
+}
+
+// KnowledgePlace is where a customer's knowledge base is kept, and false for one nothing has
+// been written to through the router.
+func (s *Store) KnowledgePlace(ctx context.Context, customerID, namespace string) (KnowledgePlace, bool, error) {
+	var kept KnowledgeNamespace
+	err := s.db.NewSelect().Model(&kept).
+		Where("customer_id = ?", customerID).
+		Where("namespace = ?", namespace).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KnowledgePlace{}, false, nil
+	}
+	if err != nil {
+		return KnowledgePlace{}, false, stack.Wrap(fmt.Errorf("store: knowledge place: %w", err))
+	}
+	return kept.Place(), true, nil
+}
+
+// ClaimKnowledgePlace records that a customer's knowledge base is kept at place, unless it is
+// kept somewhere already, and returns where it is kept: of two first writes at once, in two
+// regions or accounts, the one that lands first is where the base stays.
+func (s *Store) ClaimKnowledgePlace(ctx context.Context, customerID, namespace string, place KnowledgePlace) (KnowledgePlace, error) {
+	if customerID == "" || namespace == "" {
+		return KnowledgePlace{}, stack.Wrap(errors.New("store: a customer and a namespace are required"))
+	}
+	if place.Account == "" {
+		place.Account = KnowledgeAccountStream
+	}
+	kept := KnowledgeNamespace{CustomerID: customerID, Namespace: namespace, Region: place.Region, Account: place.Account,
+		CreatedAt: time.Now().UTC()}
+	// A no-op update, so RETURNING answers the row that was already there.
+	_, err := s.db.NewInsert().Model(&kept).
+		On("CONFLICT (customer_id, namespace) DO UPDATE").
+		Set("customer_id = EXCLUDED.customer_id").
+		Returning("region, account").
+		Exec(ctx)
+	if err != nil {
+		return KnowledgePlace{}, stack.Wrap(fmt.Errorf("store: claim knowledge place: %w", err))
+	}
+	return kept.Place(), nil
+}
+
+// KnowledgeInCustomerAccounts is every knowledge base kept in a customer's own account, by
+// customer and then namespace: what the hourly storage job reads on each one's key, since the
+// deployment's account does not list them.
+func (s *Store) KnowledgeInCustomerAccounts(ctx context.Context) ([]KnowledgeNamespace, error) {
+	kept := []KnowledgeNamespace{}
+	err := s.db.NewSelect().Model(&kept).
+		Where("account = ?", KnowledgeAccountCustomer).
+		Order("customer_id", "namespace").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: knowledge in customer accounts: %w", err))
+	}
+	return kept, nil
 }
 
 // KnowledgeDocument returns one document a customer filled a knowledge base with.

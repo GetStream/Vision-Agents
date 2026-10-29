@@ -284,6 +284,7 @@ const (
 	AuditResourceTypePlugin       AuditResourceType = "plugin"
 	AuditResourceTypePolicy       AuditResourceType = "policy"
 	AuditResourceTypePriceList    AuditResourceType = "price_list"
+	AuditResourceTypeProviderKey  AuditResourceType = "provider_key"
 	AuditResourceTypeRouterConfig AuditResourceType = "router_config"
 	AuditResourceTypeSkill        AuditResourceType = "skill"
 )
@@ -306,6 +307,8 @@ func (e AuditResourceType) Valid() bool {
 	case AuditResourceTypePolicy:
 		return true
 	case AuditResourceTypePriceList:
+		return true
+	case AuditResourceTypeProviderKey:
 		return true
 	case AuditResourceTypeRouterConfig:
 		return true
@@ -475,6 +478,36 @@ func (e CallDirection) Valid() bool {
 	case Inbound:
 		return true
 	case Outbound:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CallOutcome.
+const (
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the CallOutcome enum.
+func (e CallOutcome) Valid() bool {
+	switch e {
+	case CallOutcomeBusy:
+		return true
+	case CallOutcomeCanceled:
+		return true
+	case CallOutcomeCompleted:
+		return true
+	case CallOutcomeFailed:
+		return true
+	case CallOutcomeNoAnswer:
+		return true
+	case CallOutcomeUnknown:
 		return true
 	default:
 		return false
@@ -3008,6 +3041,11 @@ type AgentConfig struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
+	// Region Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
+	//
+	// Example: us
+	Region string `json:"region"`
+
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
 
@@ -3087,6 +3125,11 @@ type AgentConfigPatch struct {
 	// Plugins Deprecated: use connectors, a binding to a connector.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
@@ -3175,6 +3218,11 @@ type AgentConfigRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
@@ -3462,7 +3510,9 @@ type AttachNumberRequest struct {
 
 // AttachedNumber defines model for AttachedNumber.
 type AttachedNumber struct {
-	RouteId string `json:"route_id"`
+	// AgentConfigId The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+	AgentConfigId *string `json:"agent_config_id,omitempty"`
+	RouteId       string  `json:"route_id"`
 
 	// SipUri Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
 	SipUri  string `json:"sip_uri"`
@@ -3512,7 +3562,7 @@ type AuditEntry struct {
 	// ResourceName What it was called when it changed, for a resource that has a name.
 	ResourceName *string `json:"resource_name,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
 	ResourceType AuditResourceType `json:"resource_type"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3530,7 +3580,7 @@ type AuditFilter struct {
 	// ResourceId One resource's own history.
 	ResourceId *string `json:"resource_id,omitempty"`
 
-	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
 	ResourceType *AuditResourceType `json:"resource_type,omitempty"`
 
 	// Source Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3558,7 +3608,7 @@ type AuditQuery struct {
 	Limit *int64 `json:"limit,omitempty"`
 }
 
-// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
+// AuditResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
 type AuditResourceType string
 
 // AuditSource Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
@@ -3848,6 +3898,15 @@ type CallEvent struct {
 	// TurnId The exchange it was about, which lines it up against that turn's timings.
 	TurnId *string `json:"turn_id,omitempty"`
 }
+
+// CallOutcome How a placed call ended.
+// completed: the person answered and the call ended.
+// busy: the line was busy or the person declined.
+// no_answer: it rang and nobody answered.
+// failed: the vendor could not place it, for a bad number or a carrier fault.
+// canceled: the vendor says the call was hung up before an answer.
+// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+type CallOutcome string
 
 // CallToken defines model for CallToken.
 type CallToken struct {
@@ -4808,9 +4867,18 @@ type Contact struct {
 	CallId *string `json:"call_id,omitempty"`
 
 	// Error Why they could not be rung, when they could not be.
-	Error        *string      `json:"error,omitempty"`
-	Id           string       `json:"id"`
-	Instructions *string      `json:"instructions,omitempty"`
+	Error        *string `json:"error,omitempty"`
+	Id           string  `json:"id"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Outcome How a placed call ended.
+	// completed: the person answered and the call ended.
+	// busy: the line was busy or the person declined.
+	// no_answer: it rang and nobody answered.
+	// failed: the vendor could not place it, for a bad number or a carrier fault.
+	// canceled: the vendor says the call was hung up before an answer.
+	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+	Outcome      *CallOutcome `json:"outcome,omitempty"`
 	State        ContactState `json:"state"`
 	ToNumber     string       `json:"to_number"`
 	VendorCallId *string      `json:"vendor_call_id,omitempty"`
@@ -5240,10 +5308,15 @@ type DataImport struct {
 	Tables *map[string]int64 `json:"tables,omitempty"`
 }
 
-// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 type DataPolicy struct {
 	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
 	AllowTraining *bool `json:"allow_training,omitempty"`
+
+	// Region Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// Retention The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
 	//
@@ -5383,7 +5456,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -6299,7 +6372,7 @@ type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
-	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
 	ErrorCode   *string `json:"error_code,omitempty"`
 	InputTokens *int64  `json:"input_tokens,omitempty"`
 	Model       string  `json:"model"`
@@ -6430,6 +6503,8 @@ type PhoneCapability string
 
 // PhoneNumber defines model for PhoneNumber.
 type PhoneNumber struct {
+	// AgentConfigId The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+	AgentConfigId     *string           `json:"agent_config_id,omitempty"`
 	Capabilities      []PhoneCapability `json:"capabilities"`
 	Country           string            `json:"country"`
 	E164              string            `json:"e164"`
@@ -6679,8 +6754,8 @@ type Policy struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Budget *map[string]interface{} `json:"budget,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
-	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+	// DataPolicy What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
+	DataPolicy *PolicyDataPolicy `json:"data_policy,omitempty"`
 
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
@@ -6703,6 +6778,17 @@ type Policy struct {
 	//
 	// Example: 30d
 	ToolOutputRetention *string `json:"tool_output_retention,omitempty"`
+}
+
+// PolicyDataPolicy What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
+type PolicyDataPolicy struct {
+	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+	AllowTraining *bool `json:"allow_training,omitempty"`
+
+	// Retention The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+	//
+	// Example: none
+	Retention *string `json:"retention,omitempty"`
 }
 
 // PolicyScope Whose policy: an organization's, an app's, or one end user's.
@@ -6736,8 +6822,11 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor"`
 }
 
-// Price What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+// Price What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 type Price struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Change The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
 	Change *string `json:"change,omitempty"`
 
@@ -6760,6 +6849,9 @@ type Price struct {
 
 	// Rates What a customer is charged, by meter.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// Sku The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
 	Sku *string `json:"sku,omitempty"`
@@ -6799,6 +6891,8 @@ type PriceChange struct {
 
 // PriceChangeEntry defines model for PriceChangeEntry.
 type PriceChangeEntry struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
 	Free *bool `json:"free,omitempty"`
 
 	// Modality Such as llm, stt, tts, sms or phone.
@@ -6814,6 +6908,9 @@ type PriceChangeEntry struct {
 
 	// Rates The vendor's cost, by meter, for reference.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// Sku The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
 	Sku string `json:"sku"`
@@ -6863,6 +6960,9 @@ type PriceChangePage struct {
 
 // PriceEntry defines model for PriceEntry.
 type PriceEntry struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// EffectiveAt When the entry took effect, or takes effect.
 	EffectiveAt *time.Time `json:"effective_at,omitempty"`
 
@@ -6886,6 +6986,9 @@ type PriceEntry struct {
 	// Rates The vendor's cost, by meter, for reference: nothing is charged from it.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
 
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
 	// Sku The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
 	Sku *string `json:"sku,omitempty"`
 
@@ -6901,6 +7004,9 @@ type PriceEntry struct {
 
 // PriceEntryInput defines model for PriceEntryInput.
 type PriceEntryInput struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Free The vendor charges nothing for it. A free entry has no price.
 	Free *bool `json:"free,omitempty"`
 
@@ -6914,14 +7020,17 @@ type PriceEntryInput struct {
 	// PriceTiers What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch.
 	PriceTiers *[]PriceTier `json:"price_tiers,omitempty"`
 
-	// Prices What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+	// Prices What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
 	Prices   *map[string]PriceRate `json:"prices,omitempty"`
 	Provider string                `json:"provider"`
 
 	// Rates The vendor's cost, by meter, kept for reference: input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, characters, audio_ms, images, requests, message_segments, call_seconds and the rest pricing knows. Required unless the entry is free or withdrawn. An unknown meter, and a rate of more than $1000 a unit, are refused.
 	Rates *map[string]PriceRate `json:"rates,omitempty"`
 
-	// Sku The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
+
+	// Sku The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
 	Sku *string `json:"sku,omitempty"`
 
 	// Tiers The vendor's cost for long prompts. Each tier rates every meter the entry does.
@@ -6939,10 +7048,16 @@ type PriceEntryInput struct {
 
 // PriceItem defines model for PriceItem.
 type PriceItem struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality string `json:"modality"`
 	Model    string `json:"model"`
 	Provider string `json:"provider"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// When The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
 	When *map[string]string `json:"when,omitempty"`
@@ -6979,6 +7094,9 @@ type PricePreviewItem struct {
 	After  *PricedEntry `json:"after,omitempty"`
 	Before *PricedEntry `json:"before,omitempty"`
 
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// Modality Such as llm, stt, tts, sms or phone.
 	Modality          string `json:"modality"`
 	Model             string `json:"model"`
@@ -6987,6 +7105,9 @@ type PricePreviewItem struct {
 	// PriceFactors By meter, the factor its price moves by. Absent for a meter with no price before or after.
 	PriceFactors *map[string]float64 `json:"price_factors,omitempty"`
 	Provider     string              `json:"provider"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// Unpriced It is priced before the change and billable with no price after.
 	Unpriced *bool `json:"unpriced,omitempty"`
@@ -7044,7 +7165,7 @@ type Prices struct {
 	// At The moment the list is read at.
 	At time.Time `json:"at"`
 
-	// Entries Every item priced now, by modality, provider and model.
+	// Entries Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
 	Entries []Price `json:"entries"`
 
 	// Upcoming What the changes scheduled after at will set, soonest first.
@@ -7070,6 +7191,11 @@ type Provider struct {
 	// Provider Example: elevenlabs
 	Provider string `json:"provider"`
 	Realtime bool   `json:"realtime"`
+
+	// Region Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+	//
+	// Example: us
+	Region string `json:"region"`
 
 	// Supports The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
 	//
@@ -7136,6 +7262,51 @@ type ProviderHealth struct {
 
 	// Requests Requests seen in the current health window.
 	Requests int64 `json:"requests"`
+}
+
+// ProviderKey defines model for ProviderKey.
+type ProviderKey struct {
+	// CreatedAt When a key for the provider in the region was first put.
+	CreatedAt time.Time `json:"created_at"`
+
+	// KeyHint The key's last four characters, so one key can be told from another; empty for a key under 16 characters. The key itself is never returned.
+	//
+	// Example: x9Qa
+	KeyHint string `json:"key_hint"`
+
+	// Provider Example: anthropic
+	Provider string `json:"provider"`
+
+	// Region Example: us
+	Region string `json:"region"`
+
+	// UpdatedAt When the key now kept was put.
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ProviderKeyPage defines model for ProviderKeyPage.
+type ProviderKeyPage struct {
+	HasMore bool          `json:"has_more"`
+	Items   []ProviderKey `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// ProviderKeyRequest defines model for ProviderKeyRequest.
+type ProviderKeyRequest struct {
+	// ApiKey The key, as the vendor issued it. Stored sealed and never returned.
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// Provider The vendor the key is for, as the router names it: a language model vendor whose models take a key of their own here (openai, anthropic, gemini, xai, deepseek where routed), turbopuffer or daytona.
+	//
+	// Example: anthropic
+	Provider string `json:"provider"`
+
+	// Region The region whose work the key is used for: only the instances running there are tried on it. Omitted is us.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 }
 
 // ProviderPrice What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit.
@@ -7673,8 +7844,11 @@ type Session struct {
 	AgentId string  `json:"agent_id"`
 
 	// CallId The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
-	CallId   string `json:"call_id"`
-	CallType string `json:"call_type"`
+	CallId string `json:"call_id"`
+
+	// CallOutcome How the call the router placed for a session ended.
+	CallOutcome *SessionCallOutcome `json:"call_outcome,omitempty"`
+	CallType    string              `json:"call_type"`
 
 	// ClosedAt When the session ended. Absent while it is still running.
 	ClosedAt *time.Time `json:"closed_at,omitempty"`
@@ -7762,6 +7936,24 @@ type SessionCall struct {
 
 	// Type The call type, such as default.
 	Type string `json:"type"`
+}
+
+// SessionCallOutcome How the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	// AnsweredAt When the person picked up: their phone joined the call.
+	AnsweredAt *time.Time `json:"answered_at,omitempty"`
+
+	// DurationSeconds How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
+	DurationSeconds *int64 `json:"duration_seconds,omitempty"`
+
+	// Outcome How a placed call ended.
+	// completed: the person answered and the call ended.
+	// busy: the line was busy or the person declined.
+	// no_answer: it rang and nobody answered.
+	// failed: the vendor could not place it, for a bad number or a carrier fault.
+	// canceled: the vendor says the call was hung up before an answer.
+	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+	Outcome *CallOutcome `json:"outcome,omitempty"`
 }
 
 // SessionConnectorBinding The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
@@ -7964,6 +8156,15 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetNumberAgentRequest defines model for SetNumberAgentRequest.
+type SetNumberAgentRequest struct {
+	// Agent The name of the agent config that answers the number. Give this or config_id.
+	Agent *string `json:"agent,omitempty"`
+
+	// ConfigId The id of the agent config that answers the number. Give this or agent.
+	ConfigId *string `json:"config_id,omitempty"`
 }
 
 // SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
@@ -8428,7 +8629,7 @@ type StreamWritesInto string
 
 // StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
 type StsOptions struct {
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// Images The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
@@ -8489,7 +8690,7 @@ type SttOptions struct {
 	// Channels Transcribe a multichannel recording per channel rather than mixed down.
 	Channels *int `json:"channels,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// DetectLanguage Let the provider identify the language instead of being told it.
@@ -8655,6 +8856,11 @@ type SyncAgentRequest struct {
 	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+
+	// Region agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
+	//
+	// Example: eu
+	Region *string `json:"region,omitempty"`
 
 	// ResumeHistory How a conversation is handed back to the model when a session carries it on.
 	ResumeHistory *ResumeHistory `json:"resume_history,omitempty"`
@@ -9051,7 +9257,7 @@ type TtsOptions struct {
 	// ChunkSchedule Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
 	ChunkSchedule *[]int `json:"chunk_schedule,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// Emotion Affect to speak with, for the providers that take one.
@@ -9128,6 +9334,9 @@ type TurnStatsBucket struct {
 
 // UpcomingPriceEntry defines model for UpcomingPriceEntry.
 type UpcomingPriceEntry struct {
+	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+	Byok *bool `json:"byok,omitempty"`
+
 	// EffectiveAt When the entry took effect, or takes effect.
 	EffectiveAt *time.Time `json:"effective_at,omitempty"`
 
@@ -9153,6 +9362,9 @@ type UpcomingPriceEntry struct {
 
 	// Reason The change's reason.
 	Reason string `json:"reason"`
+
+	// Region Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+	Region string `json:"region"`
 
 	// Sku The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
 	Sku *string `json:"sku,omitempty"`
@@ -9253,7 +9465,7 @@ type UsageEvent struct {
 	// CostMicros What the organization is charged for the work, in millionths of a dollar.
 	CostMicros int64 `json:"cost_micros"`
 
-	// ErrorCode Why it failed, when it did.
+	// ErrorCode Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Meter The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added.
@@ -9918,6 +10130,21 @@ type PluginOAuthCallbackParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// ListProviderKeysParams defines parameters for ListProviderKeys.
+type ListProviderKeysParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// DeleteProviderKeyParams defines parameters for DeleteProviderKey.
+type DeleteProviderKeyParams struct {
+	// Region The region the key is kept for. Omitted is us.
+	Region *string `form:"region,omitempty" json:"region,omitempty"`
+}
+
 // ListScheduledTasksParams defines parameters for ListScheduledTasks.
 type ListScheduledTasksParams struct {
 	// Limit Up to 200. Omitted is 25.
@@ -10090,6 +10317,9 @@ type ListUserPoliciesParams struct {
 type GetPricesParams struct {
 	// Modality Only this modality's items, such as llm, stt, tts, sms or phone.
 	Modality *string `form:"modality,omitempty" json:"modality,omitempty"`
+
+	// Region Only this region's items, such as us or eu.
+	Region *string `form:"region,omitempty" json:"region,omitempty"`
 }
 
 // ListLimitsParams defines parameters for ListLimits.
@@ -10389,6 +10619,9 @@ type CreateCustomModelJSONRequestBody = CustomModelRequest
 // UpdateCustomModelJSONRequestBody defines body for UpdateCustomModel for application/json ContentType.
 type UpdateCustomModelJSONRequestBody = CustomModelRequest
 
+// PutProviderKeyJSONRequestBody defines body for PutProviderKey for application/json ContentType.
+type PutProviderKeyJSONRequestBody = ProviderKeyRequest
+
 // CreateRunJSONRequestBody defines body for CreateRun for application/json ContentType.
 type CreateRunJSONRequestBody = CreateRunRequest
 
@@ -10484,6 +10717,9 @@ type PressPhoneDigitsJSONRequestBody = PressDigitsRequest
 
 // BuyPhoneNumberJSONRequestBody defines body for BuyPhoneNumber for application/json ContentType.
 type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
+
+// SetPhoneNumberAgentJSONRequestBody defines body for SetPhoneNumberAgent for application/json ContentType.
+type SetPhoneNumberAgentJSONRequestBody = SetNumberAgentRequest
 
 // AttachPhoneNumberJSONRequestBody defines body for AttachPhoneNumber for application/json ContentType.
 type AttachPhoneNumberJSONRequestBody = AttachNumberRequest
@@ -11185,7 +11421,7 @@ type ClientInterface interface {
 
 	// DeleteAgentConfig Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -12046,6 +12282,42 @@ type ClientInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListProviderKeys The keys the calling customer keeps for their own accounts at the vendors
+	//
+	// Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/provider-keys (the `ListProviderKeys` operationId).
+	ListProviderKeys(ctx context.Context, params *ListProviderKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutProviderKeyWithBody Keep a key for the customer's own account at a vendor
+	//
+	// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+	PutProviderKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutProviderKey Keep a key for the customer's own account at a vendor
+	//
+	// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+	PutProviderKey(ctx context.Context, body PutProviderKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteProviderKey Forget a key the customer keeps for a vendor
+	//
+	// Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/provider-keys/{provider} (the `DeleteProviderKey` operationId).
+	DeleteProviderKey(ctx context.Context, provider string, params *DeleteProviderKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateRunWithBody Run an agent on one input and wait for its answer
 	//
@@ -13076,6 +13348,31 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemovePhoneNumberAgent Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgent Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DetachPhoneNumber Stop a number taking calls, keeping it
 	//
 	// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
@@ -13171,6 +13468,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveCallStatus Receive a placed call's status
+	//
+	// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+	ReceiveCallStatus(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSipTrunks The calling customer's own SIP trunks
 	//
@@ -13440,7 +13744,7 @@ type ClientInterface interface {
 
 	// GetPrices Read the price list
 	//
-	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 	//
 	// Corresponds with GET /v1/prices (the `GetPrices` operationId).
 	GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -14533,7 +14837,7 @@ func (c *Client) CreateAgentConfig(ctx context.Context, body CreateAgentConfigJS
 
 // DeleteAgentConfig Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -16274,6 +16578,82 @@ func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditor
 // Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListProviderKeys The keys the calling customer keeps for their own accounts at the vendors
+//
+// Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/provider-keys (the `ListProviderKeys` operationId).
+func (c *Client) ListProviderKeys(ctx context.Context, params *ListProviderKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProviderKeysRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutProviderKeyWithBody Keep a key for the customer's own account at a vendor
+//
+// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+func (c *Client) PutProviderKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutProviderKeyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutProviderKey Keep a key for the customer's own account at a vendor
+//
+// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+func (c *Client) PutProviderKey(ctx context.Context, body PutProviderKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutProviderKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteProviderKey Forget a key the customer keeps for a vendor
+//
+// Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/provider-keys/{provider} (the `DeleteProviderKey` operationId).
+func (c *Client) DeleteProviderKey(ctx context.Context, provider string, params *DeleteProviderKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteProviderKeyRequest(c.Server, provider, params)
 	if err != nil {
 		return nil, err
 	}
@@ -18433,6 +18813,61 @@ func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors
 	return c.Client.Do(req)
 }
 
+// RemovePhoneNumberAgent Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *Client) RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemovePhoneNumberAgentRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequestWithBody(c.Server, e164, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgent Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequest(c.Server, e164, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DetachPhoneNumber Stop a number taking calls, keeping it
 //
 // Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
@@ -18619,6 +19054,23 @@ func (c *Client) SetSandboxRecipientsWithBody(ctx context.Context, contentType s
 // Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 func (c *Client) SetSandboxRecipients(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSandboxRecipientsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveCallStatus Receive a placed call's status
+//
+// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+func (c *Client) ReceiveCallStatus(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveCallStatusRequest(c.Server, token)
 	if err != nil {
 		return nil, err
 	}
@@ -19197,7 +19649,7 @@ func (c *Client) UpdateUserPolicy(ctx context.Context, userId string, body Updat
 
 // GetPrices Read the price list
 //
-// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 //
 // Corresponds with GET /v1/prices (the `GetPrices` operationId).
 func (c *Client) GetPrices(ctx context.Context, params *GetPricesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -24800,6 +25252,173 @@ func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, err
 	return req, nil
 }
 
+// NewListProviderKeysRequest constructs an http.Request for the ListProviderKeys method
+func NewListProviderKeysRequest(server string, params *ListProviderKeysParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/provider-keys")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutProviderKeyRequest calls the generic PutProviderKey builder with application/json body
+func NewPutProviderKeyRequest(server string, body PutProviderKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutProviderKeyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPutProviderKeyRequestWithBody constructs an http.Request for the PutProviderKey method, with any body, and a specified content type
+func NewPutProviderKeyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/provider-keys")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteProviderKeyRequest constructs an http.Request for the DeleteProviderKey method
+func NewDeleteProviderKeyRequest(server string, provider string, params *DeleteProviderKeyParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "provider", provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/provider-keys/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Region != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "region", *params.Region, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateRunRequest calls the generic CreateRun builder with application/json body
 func NewCreateRunRequest(server string, body CreateRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -28328,6 +28947,87 @@ func NewReleasePhoneNumberRequest(server string, e164 string) (*http.Request, er
 	return req, nil
 }
 
+// NewRemovePhoneNumberAgentRequest constructs an http.Request for the RemovePhoneNumberAgent method
+func NewRemovePhoneNumberAgentRequest(server string, e164 string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetPhoneNumberAgentRequest calls the generic SetPhoneNumberAgent builder with application/json body
+func NewSetPhoneNumberAgentRequest(server string, e164 string, body SetPhoneNumberAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPhoneNumberAgentRequestWithBody(server, e164, "application/json", bodyReader)
+}
+
+// NewSetPhoneNumberAgentRequestWithBody constructs an http.Request for the SetPhoneNumberAgent method, with any body, and a specified content type
+func NewSetPhoneNumberAgentRequestWithBody(server string, e164 string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDetachPhoneNumberRequest constructs an http.Request for the DetachPhoneNumber method
 func NewDetachPhoneNumberRequest(server string, e164 string) (*http.Request, error) {
 	var err error
@@ -28612,6 +29312,40 @@ func NewSetSandboxRecipientsRequestWithBody(server string, contentType string, b
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReceiveCallStatusRequest constructs an http.Request for the ReceiveCallStatus method
+func NewReceiveCallStatusRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/status/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -29546,6 +30280,18 @@ func NewGetPricesRequest(server string, params *GetPricesParams) (*http.Request,
 		if params.Modality != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "modality", *params.Modality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Region != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "region", *params.Region, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32134,7 +32880,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteAgentConfigWithResponse Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -33093,6 +33839,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
+
+	// ListProviderKeysWithResponse The keys the calling customer keeps for their own accounts at the vendors
+	//
+	// Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/provider-keys (the `ListProviderKeys` operationId).
+	ListProviderKeysWithResponse(ctx context.Context, params *ListProviderKeysParams, reqEditors ...RequestEditorFn) (*ListProviderKeysResponse, error)
+
+	// PutProviderKeyWithBodyWithResponse Keep a key for the customer's own account at a vendor
+	//
+	// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+	PutProviderKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutProviderKeyResponse, error)
+
+	// PutProviderKeyWithResponse Keep a key for the customer's own account at a vendor
+	//
+	// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+	PutProviderKeyWithResponse(ctx context.Context, body PutProviderKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*PutProviderKeyResponse, error)
+
+	// DeleteProviderKeyWithResponse Forget a key the customer keeps for a vendor
+	//
+	// Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/provider-keys/{provider} (the `DeleteProviderKey` operationId).
+	DeleteProviderKeyWithResponse(ctx context.Context, provider string, params *DeleteProviderKeyParams, reqEditors ...RequestEditorFn) (*DeleteProviderKeyResponse, error)
 
 	// CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
 	//
@@ -34217,6 +35003,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*ReleasePhoneNumberResponse, error)
 
+	// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
+
 	// DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
 	//
 	// Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
@@ -34320,6 +35133,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/phone/sandbox/recipients (the `SetSandboxRecipients` operationId).
 	SetSandboxRecipientsWithResponse(ctx context.Context, body SetSandboxRecipientsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxRecipientsResponse, error)
+
+	// ReceiveCallStatusWithResponse Receive a placed call's status
+	//
+	// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+	ReceiveCallStatusWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallStatusResponse, error)
 
 	// ListSipTrunksWithResponse The calling customer's own SIP trunks
 	//
@@ -34617,7 +35439,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetPricesWithResponse Read the price list
 	//
-	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+	// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -37844,6 +38666,8 @@ type DeleteAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -37877,6 +38701,11 @@ func (r DeleteAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -45045,6 +45874,309 @@ func (r GetPluginLogoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPluginLogoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListProviderKeysResponse200Headers the declared response headers of an HTTP 200 response for ListProviderKeys
+type ListProviderKeysResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListProviderKeysResponse402Headers the declared response headers of an HTTP 402 response for ListProviderKeys
+type ListProviderKeysResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListProviderKeysResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProviderKeyPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListProviderKeysResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListProviderKeysResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListProviderKeysResponse) GetJSON200() *ProviderKeyPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListProviderKeysResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListProviderKeysResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListProviderKeysResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListProviderKeysResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListProviderKeysResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListProviderKeysResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListProviderKeysResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListProviderKeysResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListProviderKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListProviderKeysResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutProviderKeyResponse200Headers the declared response headers of an HTTP 200 response for PutProviderKey
+type PutProviderKeyResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// PutProviderKeyResponse402Headers the declared response headers of an HTTP 402 response for PutProviderKey
+type PutProviderKeyResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type PutProviderKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProviderKey
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *PutProviderKeyResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *PutProviderKeyResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutProviderKeyResponse) GetJSON200() *ProviderKey {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PutProviderKeyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutProviderKeyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PutProviderKeyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutProviderKeyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PutProviderKeyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutProviderKeyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PutProviderKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutProviderKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutProviderKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutProviderKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteProviderKeyResponse204Headers the declared response headers of an HTTP 204 response for DeleteProviderKey
+type DeleteProviderKeyResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DeleteProviderKeyResponse402Headers the declared response headers of an HTTP 402 response for DeleteProviderKey
+type DeleteProviderKeyResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DeleteProviderKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteProviderKeyResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DeleteProviderKeyResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteProviderKeyResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteProviderKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteProviderKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteProviderKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteProviderKeyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -53219,6 +54351,222 @@ func (r ReleasePhoneNumberResponse) ContentType() string {
 	return ""
 }
 
+// RemovePhoneNumberAgentResponse204Headers the declared response headers of an HTTP 204 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// RemovePhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type RemovePhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *RemovePhoneNumberAgentResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *RemovePhoneNumberAgentResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RemovePhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemovePhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemovePhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemovePhoneNumberAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetPhoneNumberAgentResponse200Headers the declared response headers of an HTTP 200 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// SetPhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type SetPhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PhoneNumber
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SetPhoneNumberAgentResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *SetPhoneNumberAgentResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON200() *PhoneNumber {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPhoneNumberAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DetachPhoneNumberResponse204Headers the declared response headers of an HTTP 204 response for DetachPhoneNumber
 type DetachPhoneNumberResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -53927,6 +55275,47 @@ func (r SetSandboxRecipientsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetSandboxRecipientsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveCallStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveCallStatusResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveCallStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveCallStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveCallStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveCallStatusResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -60657,7 +62046,7 @@ func (c *ClientWithResponses) CreateAgentConfigWithResponse(ctx context.Context,
 
 // DeleteAgentConfigWithResponse Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -62153,6 +63542,70 @@ func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, plu
 		return nil, err
 	}
 	return ParseGetPluginLogoResponse(rsp)
+}
+
+// ListProviderKeysWithResponse The keys the calling customer keeps for their own accounts at the vendors
+//
+// Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/provider-keys (the `ListProviderKeys` operationId).
+func (c *ClientWithResponses) ListProviderKeysWithResponse(ctx context.Context, params *ListProviderKeysParams, reqEditors ...RequestEditorFn) (*ListProviderKeysResponse, error) {
+	rsp, err := c.ListProviderKeys(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProviderKeysResponse(rsp)
+}
+
+// PutProviderKeyWithBodyWithResponse Keep a key for the customer's own account at a vendor
+//
+// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+func (c *ClientWithResponses) PutProviderKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutProviderKeyResponse, error) {
+	rsp, err := c.PutProviderKeyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutProviderKeyResponse(rsp)
+}
+
+// PutProviderKeyWithResponse Keep a key for the customer's own account at a vendor
+//
+// Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/provider-keys (the `PutProviderKey` operationId).
+func (c *ClientWithResponses) PutProviderKeyWithResponse(ctx context.Context, body PutProviderKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*PutProviderKeyResponse, error) {
+	rsp, err := c.PutProviderKey(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutProviderKeyResponse(rsp)
+}
+
+// DeleteProviderKeyWithResponse Forget a key the customer keeps for a vendor
+//
+// Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/provider-keys/{provider} (the `DeleteProviderKey` operationId).
+func (c *ClientWithResponses) DeleteProviderKeyWithResponse(ctx context.Context, provider string, params *DeleteProviderKeyParams, reqEditors ...RequestEditorFn) (*DeleteProviderKeyResponse, error) {
+	rsp, err := c.DeleteProviderKey(ctx, provider, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteProviderKeyResponse(rsp)
 }
 
 // CreateRunWithBodyWithResponse Run an agent on one input and wait for its answer
@@ -63950,6 +65403,51 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 	return ParseReleasePhoneNumberResponse(rsp)
 }
 
+// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *ClientWithResponses) RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error) {
+	rsp, err := c.RemovePhoneNumberAgent(ctx, e164, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemovePhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgentWithBody(ctx, e164, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgent(ctx, e164, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
+}
+
 // DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
 //
 // Callers stop reaching the agent. The number is kept and still charged, and it keeps placing calls. Attaching it again turns calls back on. Detaching a number that is not attached changes nothing.
@@ -64112,6 +65610,21 @@ func (c *ClientWithResponses) SetSandboxRecipientsWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseSetSandboxRecipientsResponse(rsp)
+}
+
+// ReceiveCallStatusWithResponse Receive a placed call's status
+//
+// Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/status/{token} (the `ReceiveCallStatus` operationId).
+func (c *ClientWithResponses) ReceiveCallStatusWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallStatusResponse, error) {
+	rsp, err := c.ReceiveCallStatus(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveCallStatusResponse(rsp)
 }
 
 // ListSipTrunksWithResponse The calling customer's own SIP trunks
@@ -64590,7 +66103,7 @@ func (c *ClientWithResponses) UpdateUserPolicyWithResponse(ctx context.Context, 
 
 // GetPricesWithResponse Read the price list
 //
-// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+// Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -68524,6 +70037,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -76884,6 +78404,366 @@ func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, err
 		}
 		response.JSON500 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseListProviderKeysResponse parses an HTTP response from a ListProviderKeysWithResponse call
+func ParseListProviderKeysResponse(rsp *http.Response) (*ListProviderKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListProviderKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProviderKeyPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListProviderKeysResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListProviderKeysResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutProviderKeyResponse parses an HTTP response from a PutProviderKeyWithResponse call
+func ParsePutProviderKeyResponse(rsp *http.Response) (*PutProviderKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutProviderKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProviderKey
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers PutProviderKeyResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers PutProviderKeyResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteProviderKeyResponse parses an HTTP response from a DeleteProviderKeyWithResponse call
+func ParseDeleteProviderKeyResponse(rsp *http.Response) (*DeleteProviderKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteProviderKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteProviderKeyResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DeleteProviderKeyResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
 	}
 
 	return response, nil
@@ -86452,6 +88332,261 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 	return response, nil
 }
 
+// ParseRemovePhoneNumberAgentResponse parses an HTTP response from a RemovePhoneNumberAgentWithResponse call
+func ParseRemovePhoneNumberAgentResponse(rsp *http.Response) (*RemovePhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemovePhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers RemovePhoneNumberAgentResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers RemovePhoneNumberAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetPhoneNumberAgentResponse parses an HTTP response from a SetPhoneNumberAgentWithResponse call
+func ParseSetPhoneNumberAgentResponse(rsp *http.Response) (*SetPhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PhoneNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SetPhoneNumberAgentResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers SetPhoneNumberAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseDetachPhoneNumberResponse parses an HTTP response from a DetachPhoneNumberWithResponse call
 func ParseDetachPhoneNumberResponse(rsp *http.Response) (*DetachPhoneNumberResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -87293,6 +89428,44 @@ func ParseSetSandboxRecipientsResponse(rsp *http.Response) (*SetSandboxRecipient
 			headers.XStreamBalanceWarning = &value
 		}
 		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReceiveCallStatusResponse parses an HTTP response from a ReceiveCallStatusWithResponse call
+func ParseReceiveCallStatusResponse(rsp *http.Response) (*ReceiveCallStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveCallStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil

@@ -208,7 +208,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 - **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
   opens the thread's conversation as `answerThread` does (the session the backend keeps on the
   channel, else one on the task's config, closed after the turn), under the thread's turn lease,
-  and runs the follow-up. The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
+  and runs the follow-up. It looks at the follow-up's reply every `replyPoll` (100 ms), so the
+  reply leaves as the turn ends (AI-2139). The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
   and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
   `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
   sends the reply the thread holds, with its files (`Session.FollowUpFinished`), without a
@@ -222,6 +223,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
   `thread_gone`, final. A task without `channel_thread` is delivered as before.
   `TestTelnyxChannelSuite/TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread`,
+  `TestTelnyxChannelSuite/TestATaskReplyIsTextedAsSoonAsItsTurnEnds`,
   `TestTelnyxChannelSuite/TestARetriedOccurrenceIsNotTextedTwice`,
   `TestTelnyxChannelSuite/TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt`,
   `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,

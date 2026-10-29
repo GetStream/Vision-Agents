@@ -97,6 +97,20 @@ func scheduleTools() []harness.Tool {
 	}
 }
 
+// zoneUser is the user whose stored zone a session runs in, the one its scheduled tasks
+// belong to: a verified end user or a backend acting for one, else the person of a thread
+// on a line of one person. Empty for an incognito session, which speaks for nobody, and for
+// a guest or an anonymous caller, whose id the app has not vouched for.
+func zoneUser(spec Spec) string {
+	switch {
+	case spec.Incognito:
+		return ""
+	case verifiedCaller(spec):
+		return spec.Caller.UserID
+	}
+	return spec.ThreadPerson
+}
+
 // schedulingRunner builds the schedule runner for a session, and the tools it
 // adds to what the session offers, or nil when this session may not schedule:
 // the config has not enabled it, there is no store to hold tasks, the session

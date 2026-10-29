@@ -37,14 +37,16 @@ import (
 const pricesUsage = `usage: router prices <command>
 
   show [--at time] [--json] [--unpriced]
-                             the price list in force: each entry's SKU, its vendor rates and
-                             its price; --unpriced lists the routed items no entry prices.
-                             Reads the database
+                             the price list in force: each entry's item, region and byok,
+                             its SKU, its vendor rates and its price; --unpriced lists the
+                             routed items no entry prices. Reads the database
   sync --dry-run             what the next start would load from ROUTER_PRICES_FILE and
-                             vendor.json, writing nothing. Reads the database
+                             vendor.json, each item with its region and byok, writing
+                             nothing. Reads the database
   check [--file path]        parse a price file (default: the embedded vendor.json) and
-                             build a price list from it, with no database; a --file is
-                             also laid over vendor.json as a router's start lays it
+                             build a price list from it, with no database, counting its
+                             entries by region and byok; a --file is also laid over
+                             vendor.json as a router's start lays it
   drift [--since 168h] [--json]
                              per model, how far the cost of rows whose vendor said what it
                              charged is from that figure, over every shard. Reads the database
@@ -126,14 +128,14 @@ func pricesVersion(settings config.Config) string {
 }
 
 // loadPriceFiles reads the price files a router loads into its database: the deployment's own
-// first, then the embedded vendor.json, the first winning for an item and When. A file that
-// does not parse, or two that do not make a list together, stop the router at start, naming
-// the file and the entry. A file's markup_bps is not read, which is logged.
+// first, then the embedded vendor.json, the first winning for an item, region, BYOK state and
+// When. A file that does not parse, or two that do not make a list together, stop the router
+// at start, naming the file and the entry. A file's markup_bps is not read, which is logged.
 func loadPriceFiles(settings config.Config, logger *slog.Logger) (store.PriceLoad, error) {
 	var files []prices.File
 	var names []string
 	if settings.PricesFile != "" {
-		own, err := prices.Load(settings.PricesFile)
+		own, err := prices.LoadDeployment(settings.PricesFile, logger)
 		if err != nil {
 			return store.PriceLoad{}, err
 		}
@@ -284,7 +286,8 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 		return encoder.Encode(shown)
 	case *unpricedOnly:
 		for _, item := range shown.Unpriced {
-			if _, err := fmt.Fprintf(out, "%s/%s/%s\n", item.Modality, item.Provider, item.Model); err != nil {
+			name := prices.Name(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK})
+			if _, err := fmt.Fprintln(out, name); err != nil {
 				return err
 			}
 		}
@@ -676,7 +679,7 @@ func runPricesCheck(args []string, out io.Writer) error {
 	merged := ""
 	if *path != "" {
 		var err error
-		if file, err = prices.Load(*path); err != nil {
+		if file, err = prices.LoadDeployment(*path, slog.New(slog.NewTextHandler(os.Stderr, nil))); err != nil {
 			return err
 		}
 		name = *path
@@ -692,8 +695,33 @@ func runPricesCheck(args []string, out io.Writer) error {
 	if file.MarkupBps != nil {
 		ignored = fmt.Sprintf("; markup_bps %d is ignored: each entry carries its price", *file.MarkupBps)
 	}
-	_, err := fmt.Fprintf(out, "%s: %d entries%s%s\n", name, len(file.Entries), merged, ignored)
+	inRegions := ""
+	if len(file.Entries) > 0 {
+		inRegions = ", " + regionCounts(file.Entries)
+	}
+	_, err := fmt.Fprintf(out, "%s: %d entries%s%s%s\n", name, len(file.Entries), inRegions, merged, ignored)
 	return err
+}
+
+// regionCounts is how many entries each region has and how many of them are BYOK, as in
+// "eu 4 (2 byok), us 304 (78 byok)".
+func regionCounts(entries []pricing.Entry) string {
+	counts, byok := map[string]int{}, map[string]int{}
+	for _, entry := range entries {
+		counts[entry.Region]++
+		if entry.BYOK {
+			byok[entry.Region]++
+		}
+	}
+	parts := make([]string, 0, len(counts))
+	for _, region := range slices.Sorted(maps.Keys(counts)) {
+		part := fmt.Sprintf("%s %d", region, counts[region])
+		if byok[region] > 0 {
+			part += fmt.Sprintf(" (%d byok)", byok[region])
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // runPricesExport writes the price: blocks of a routing config as a price file. It is how

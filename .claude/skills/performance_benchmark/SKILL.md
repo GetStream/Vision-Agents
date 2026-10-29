@@ -13,6 +13,8 @@ three models are the router's own `mock/*` providers, so a run reaches no vendor
 nothing. **What a run measures is the router**: its audio path, turn taking, sockets and
 database. It says nothing about model quality; that is Voicebench (`voicebench` skill).
 
+Follow the [benchmark rules](../../../AGENTS.md#benchmark-rules).
+
 ## 1. What a run needs
 
 **Keys.** `STREAM_API_KEY` and `STREAM_API_SECRET`, from the repo-root `.env`. Nothing else:

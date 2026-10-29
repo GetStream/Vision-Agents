@@ -44,10 +44,15 @@ type org struct {
 	hold, listing chan struct{}
 }
 
+// orgSecret is a secret of the organization its key reaches: a key lists and deletes its own
+// organization's secrets alone.
 type orgSecret struct {
-	id, name string
-	created  time.Time
+	id, name, key string
+	created       time.Time
 }
+
+// deploymentKey is the key the suite's sweepers reach the deployment's organization with.
+const deploymentKey = "key-1"
 
 func newOrg() *org {
 	o := &org{}
@@ -65,6 +70,7 @@ func (o *org) serve(w http.ResponseWriter, r *http.Request) {
 	o.calls = append(o.calls, r.Method+" "+r.URL.Path)
 	hold, listing := o.hold, o.listing
 	o.mu.Unlock()
+	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if r.Method == http.MethodDelete {
 		o.mu.Lock()
 		defer o.mu.Unlock()
@@ -75,7 +81,7 @@ func (o *org) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		o.secrets = slices.DeleteFunc(o.secrets, func(held orgSecret) bool { return held.id == id })
+		o.secrets = slices.DeleteFunc(o.secrets, func(held orgSecret) bool { return held.id == id && held.key == key })
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -98,7 +104,7 @@ func (o *org) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	var matched []map[string]any
 	for _, held := range o.secrets {
-		if strings.Contains(held.name, r.URL.Query().Get("name")) {
+		if held.key == key && strings.Contains(held.name, r.URL.Query().Get("name")) {
 			matched = append(matched, map[string]any{"id": held.id, "name": held.name, "placeholder": "dtn_secret_" + held.id,
 				"hosts": []string{"api.github.com"}, "createdAt": held.created, "updatedAt": time.Now()})
 		}
@@ -115,11 +121,14 @@ func (o *org) serve(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(answer)
 }
 
-// add puts a secret named name at Daytona, made age ago.
-func (o *org) add(name string, age time.Duration) {
+// add puts a secret named name in the deployment's organization, made age ago.
+func (o *org) add(name string, age time.Duration) { o.addFor(deploymentKey, name, age) }
+
+// addFor puts a secret named name in the organization key reaches, made age ago.
+func (o *org) addFor(key, name string, age time.Duration) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.secrets = append(o.secrets, orgSecret{id: "secret-" + uuid.NewString(), name: name, created: time.Now().Add(-age)})
+	o.secrets = append(o.secrets, orgSecret{id: "secret-" + uuid.NewString(), name: name, key: key, created: time.Now().Add(-age)})
 }
 
 func (o *org) names() []string {
@@ -214,7 +223,7 @@ func (s *SweepSuite) sweeper(directory *node.Directory) *Sweeper {
 }
 
 func (s *SweepSuite) sweeperEvery(directory *node.Directory, every time.Duration) *Sweeper {
-	sweeper, err := NewSweeper(SweepOptions{APIKey: "key-1", APIURL: s.org.server.URL + "/api", Prefix: s.prefix,
+	sweeper, err := NewSweeper(SweepOptions{APIKey: deploymentKey, APIURL: s.org.server.URL + "/api", Prefix: s.prefix,
 		Sessions: directory, Slots: concurrency.New(s.redis, nil), Every: every, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	sweeper.wait = func(context.Context) error { return nil }
@@ -234,6 +243,20 @@ func (s *SweepSuite) TestAnEndedSessionsSecretIsDeletedAndALiveOnesKept() {
 	s.Require().NoError(s.sweeper(s.directory).Sweep(s.ctx))
 
 	s.Equal([]string{s.named("session-live", "github")}, s.org.names())
+}
+
+func (s *SweepSuite) TestACustomersOwnOrganizationIsSweptOnTheirKey() {
+	s.live("session-live")
+	s.org.addFor("customer-key", s.named("session-ended", "github"), 2*time.Hour)
+	s.org.addFor("customer-key", s.named("session-live", "github"), 2*time.Hour)
+	s.Require().NoError(s.sweeper(s.directory).Sweep(s.ctx))
+	s.Len(s.org.names(), 2, "the deployment's key reaches nothing of the customer's")
+
+	sweeper := s.sweeper(s.directory)
+	sweeper.options.Accounts = func(context.Context) ([]string, error) { return []string{"customer-key"}, nil }
+	s.Require().NoError(sweeper.Sweep(s.ctx))
+
+	s.Equal([]string{s.named("session-live", "github")}, s.org.names(), "the ended session's, on the customer's key")
 }
 
 // A session id and a binding may both hold _, so the session is not just what comes before the

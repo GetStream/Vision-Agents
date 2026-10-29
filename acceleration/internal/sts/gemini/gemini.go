@@ -642,6 +642,15 @@ func (s *STS) endpoint(key string) string {
 	return s.options.URL + separator + "key=" + url.QueryEscape(key)
 }
 
+// refusesKey reports whether the socket closed the way the Live API refuses a key it does not
+// take: it accepts the handshake, then closes with 1007 and this text once the setup frame
+// arrives.
+func refusesKey(err error) bool {
+	var closed *websocket.CloseError
+	return errors.As(err, &closed) && closed.Code == websocket.CloseInvalidFramePayloadData &&
+		strings.Contains(closed.Text, "API key not valid")
+}
+
 // handshake configures the session and waits for the server to accept it.
 func (s *STS) handshake(conn *websocket.Conn, handle string) error {
 	payload, err := json.Marshal(clientMessage{Setup: s.setup(handle)})
@@ -657,6 +666,9 @@ func (s *STS) handshake(conn *websocket.Conn, handle string) error {
 	}
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
+		if refusesKey(err) {
+			s.keys.InvalidKey()
+		}
 		return stack.Wrap(fmt.Errorf("gemini: read setup: %w", err))
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {

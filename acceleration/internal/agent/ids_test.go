@@ -364,12 +364,12 @@ func TestANameTheCallerSpelledIsBookedThoughAnotherSpellingIsClose(t *testing.T)
 func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
 	said := []llm.Message{{Role: llm.User, Content: "Surname Jonas, j o n e s. And my son Joseph is coming too."}}
 	for arguments, misspelled := range map[string]bool{
-		`{"guest_name":"Jonas"}`:                       true,
-		`{"guest_name":"Ann Jonas"}`:                   true,
-		`{"guest_name":"Jones"}`:                       false,
-		`{"guest_name":"Joseph Jones"}`:                false,
-		`{"name":"Jones","companion_name":"Joseph"}`:   false,
-		`{"name":"Jones","restaurant_name":"Jonah's"}`: false,
+		`{"guest_name":"Jonas"}`:                     true,
+		`{"guest_name":"Ann Jonas"}`:                 true,
+		`{"guest_name":"Jones"}`:                     false,
+		`{"guest_name":"Joseph Jones"}`:              false,
+		`{"name":"Jones","companion_name":"Joseph"}`: false,
+		`{"name":"Jones","shop_name":"Joles"}`:       false,
 	} {
 		_, _, got := misspelledName(said, llm.ToolCall{Name: "add_guest", Arguments: arguments})
 		assert.Equal(t, misspelled, got, arguments)

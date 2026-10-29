@@ -6,6 +6,7 @@
 package llmtest
 
 import (
+	"context"
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -26,6 +27,12 @@ type Script struct {
 	failure   error
 	abandoned bool
 	closeOnce sync.Once
+	// breaking is the context FailOnCancel watches, and broke is closed once the failure is
+	// written or the response ended without one.
+	breaking context.Context
+	broke    chan struct{}
+	// closing runs when the code under test closes the stream (OnClose).
+	closing func()
 }
 
 // New returns a script and the stream it is read from.
@@ -82,6 +89,38 @@ func (s *Script) Cancel() {
 	s.Done()
 }
 
+// FailOnCancel has the response fail with err once ctx is cancelled: a provider whose
+// connection broke as the caller cut the turn off reports a real error, not a cancellation. A
+// Close after the cancel waits for that failure, so the failure is always written.
+func (s *Script) FailOnCancel(ctx context.Context, err error) {
+	broke := make(chan struct{})
+	s.mu.Lock()
+	s.breaking, s.broke = ctx, broke
+	s.mu.Unlock()
+	go func() {
+		defer close(broke)
+		select {
+		case <-ctx.Done():
+			// A response that settled before the cancel came is over, and nothing broke it.
+			select {
+			case <-s.ended:
+			default:
+				s.Fail(err, "read")
+			}
+		case <-s.ended:
+		}
+	}()
+}
+
+// OnClose runs f when the code under test closes the stream, before the response ends: a
+// provider whose connection takes a while to shut down, while the work the close is part of
+// waits for it.
+func (s *Script) OnClose(f func()) {
+	s.mu.Lock()
+	s.closing = f
+	s.mu.Unlock()
+}
+
 // Done settles the response, which is what unblocks whoever is draining it.
 func (s *Script) Done() {
 	s.closeOnce.Do(func() { close(s.ended) })
@@ -125,6 +164,16 @@ func (s *Script) Err() error {
 
 // Close abandons the response, which is what the code under test calls to barge in.
 func (s *Script) Close() error {
+	s.mu.Lock()
+	breaking, broke, closing := s.breaking, s.broke, s.closing
+	s.mu.Unlock()
+	if breaking != nil && breaking.Err() != nil {
+		<-broke
+	}
+	if closing != nil {
+		closing()
+	}
+
 	s.mu.Lock()
 	s.abandoned = true
 	s.mu.Unlock()

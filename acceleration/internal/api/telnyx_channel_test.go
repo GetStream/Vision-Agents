@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,7 +45,10 @@ type TelnyxChannelSuite struct {
 type telnyxLine struct {
 	RouterSuite
 
-	telnyx *fakeTelnyx
+	// fake is the test's Telnyx as of the latest SetupTest. It is atomic because the dial of a
+	// late send from an earlier test and the condition goroutine a Never or Eventually leaves
+	// behind read it while the next SetupTest replaces it.
+	fake atomic.Pointer[fakeTelnyx]
 	// app is the Telnyx account's provider app id, private the key the test signs events
 	// with, apiKey the number's bearer key, line the number, and connection and config the
 	// connection and the agent that answers on it.
@@ -86,20 +90,22 @@ func (s *telnyxLine) SetupSuite() {
 		Schemes:   map[string]core.Scheme{bearer.Name: bearer.New()},
 		Verifiers: map[string]core.Verifier{verifier.Name(): verifier},
 	}
-	s.channelProvider = func() string { return s.telnyx.server.Listener.Addr().String() }
+	s.channelProvider = func() string { return s.telnyx().server.Listener.Addr().String() }
 	s.logged = &lockedLog{}
 	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
+func (s *telnyxLine) telnyx() *fakeTelnyx { return s.fake.Load() }
+
 func (s *telnyxLine) SetupTest() {
 	s.useApp(s.data.createApp())
-	s.telnyx = newFakeTelnyx(s.T())
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	s.Require().NoError(err)
 	s.app, s.private = "profile-"+s.utils.uuid(), private
-	s.apiKey, s.line = "synthetic-telnyx-key-"+s.utils.uuid(), "+17735550002"
+	s.apiKey, s.line = telnyxKeyPrefix+s.utils.uuid(), "+17735550002"
+	s.fake.Store(newFakeTelnyx(s.T(), "Bearer "+s.apiKey))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, oauthClientPath("telnyx"),
 		ConnectorOAuthClientRequest{ProviderAppID: s.app, SigningSecret: base64.StdEncoding.EncodeToString(public)}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections",
@@ -174,7 +180,7 @@ func (s *TelnyxChannelSuite) TestStopKeepsTheAgentAwayUntilStart() {
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Hi, are you there?"), time.Now()))
 
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Zero(s.episodes(), "a keyword opens no card")
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "start"), time.Now()))
@@ -195,7 +201,7 @@ func (s *TelnyxChannelSuite) TestHelpIsAnsweredWithoutTheAgent() {
 
 	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxHelp}, s.took(1)[0].withoutAuthorization())
 	channel := s.threadChannel(person)
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Zero(s.liveOptOuts(person))
 }
 
@@ -209,7 +215,7 @@ func (s *TelnyxChannelSuite) TestAStopTelnyxRepeatsIsConfirmedOnce() {
 	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
 
 	s.took(1)
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveOptOuts(person))
 }
 
@@ -241,7 +247,7 @@ func (s *TelnyxChannelSuite) TestAStopTheStoreFailedToRecordIsRecordedWhenTelnyx
 	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
 
 	s.Equal(telnyxMessage{from: s.line, to: person, text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(1, s.liveOptOuts(person))
 }
 
@@ -257,8 +263,22 @@ func (s *TelnyxChannelSuite) TestAReplyFinishedAfterStopIsNotSent() {
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
-	s.Equal(telnyxStopped, s.telnyx.sent()[0].text)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(telnyxStopped, s.telnyx().sent()[0].text)
+}
+
+// The test's Telnyx answers a late send of an earlier test 200, whatever refusal is pending, and
+// does not take it; it takes a send with no key or an unknown one, so a test sees it.
+func (s *TelnyxChannelSuite) TestTheFakeTelnyxSetsAsideOnlyAnEarlierTestsSends() {
+	s.telnyx().refuse(http.StatusTooManyRequests, nil)
+
+	s.Equal(http.StatusOK, s.sendsAs(earlierTest(), "late"))
+	s.Empty(s.telnyx().sent())
+	s.Equal(http.StatusTooManyRequests, s.sendsAs("", "refused"), "the refusal waited for a send of this test")
+	s.Equal(http.StatusOK, s.sendsAs("", "no key"))
+	s.Equal(http.StatusOK, s.sendsAs("Bearer unknown", "other key"))
+	taken := s.took(2)
+	s.Equal([]string{"no key", "other key"}, []string{taken[0].text, taken[1].text})
 }
 
 // A reply whose first send Telnyx answered 429 is not sent again once the person texted STOP
@@ -273,8 +293,12 @@ func (s *TelnyxChannelSuite) TestAReplyRetriedAfterStopIsNotSent() {
 	var once, released sync.Once
 	free := func() { released.Do(func() { close(release) }) }
 	defer free()
-	original := s.telnyx.server.Config.Handler
-	s.telnyx.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	original := s.telnyx().server.Config.Handler
+	s.telnyx().server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.telnyx().earlier(r) {
+			original.ServeHTTP(w, r)
+			return
+		}
 		raw, err := io.ReadAll(r.Body)
 		s.NoError(err)
 		var sent struct{ Text string }
@@ -293,6 +317,7 @@ func (s *TelnyxChannelSuite) TestAReplyRetriedAfterStopIsNotSent() {
 		original.ServeHTTP(w, r)
 	})
 
+	s.Equal(http.StatusOK, s.sendsAs(earlierTest(), "Noted."), "a late send of an earlier test is not this test's first reply")
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	select {
 	case <-inflight:
@@ -303,8 +328,8 @@ func (s *TelnyxChannelSuite) TestAReplyRetriedAfterStopIsNotSent() {
 	s.took(1)
 	free()
 
-	s.Never(func() bool { return len(s.telnyx.sent()) > 1 }, dropped, 20*time.Millisecond)
-	s.Equal(telnyxStopped, s.telnyx.sent()[0].text)
+	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Equal(telnyxStopped, s.telnyx().sent()[0].text)
 }
 
 // Each opt-out word (stopWords: CTIA 5.1.3, FCC 24-24 and Telnyx's defaults) records an
@@ -352,7 +377,7 @@ func (s *TelnyxChannelSuite) TestAMessageWhoseOptOutCannotBeReadIsAnswered500And
 	s.Equal(http.StatusInternalServerError, s.deliver(s.received(s.line, person, "Hi"), time.Now()))
 
 	channel := s.threadChannel(person)
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
 }
 
 // Telnyx answers STOP, START and HELP itself, and the event says so in
@@ -367,7 +392,7 @@ func (s *TelnyxChannelSuite) TestKeywordsTelnyxAnsweredAreRecordedAndNotAnswered
 	s.Zero(s.liveOptOuts(person))
 
 	channel := s.threadChannel(person)
-	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
 	s.Zero(s.episodes(), "a keyword opens no card")
 }
 
@@ -541,17 +566,43 @@ func (s *telnyxLine) streamDelivers(channel string, index int) int {
 	return s.signedly("/v1/chat/hooks/stream", string(payload))
 }
 
-// took waits until the test's Telnyx took count messages, and returns them.
+// took waits until the test's Telnyx took count of its messages, and returns them.
 func (s *telnyxLine) took(count int) []telnyxMessage {
-	s.Require().Eventually(func() bool { return len(s.telnyx.sent()) >= count }, settleFor, 10*time.Millisecond,
-		"Telnyx took %d messages, not %d", len(s.telnyx.sent()), count)
-	return s.telnyx.sent()
+	s.Require().Eventually(func() bool { return len(s.telnyx().sent()) >= count }, settleFor, 10*time.Millisecond,
+		"Telnyx took %d messages, not %d", len(s.telnyx().sent()), count)
+	return s.telnyx().sent()
 }
+
+// sendsAs posts a send of text to the test's Telnyx with the Authorization header, or none when it
+// is empty, and returns the status Telnyx answered. It gives up after settleFor.
+func (s *telnyxLine) sendsAs(authorization, text string) int {
+	body, err := json.Marshal(map[string]string{"from": s.line, "to": "+13125550001", "text": text})
+	s.Require().NoError(err)
+	request, err := http.NewRequest(http.MethodPost, s.telnyx().server.URL+"/v2/messages", bytes.NewReader(body))
+	s.Require().NoError(err)
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
+	client := s.telnyx().server.Client()
+	client.Timeout = settleFor
+	response, err := client.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+// earlierTest is the header an earlier test's number sends with.
+func earlierTest() string { return "Bearer " + telnyxKeyPrefix + "earlier-test" }
 
 // fakeTelnyx takes messages as Telnyx's send endpoint does (send): POST /v2/messages, a bearer
 // API key, and from, to and text. It answers 200 with the message queued.
 type fakeTelnyx struct {
 	server *httptest.Server
+	// authorization is the header the test's own number sends with. A send with another test's
+	// (earlier) is a reply an earlier test's bridge finished late (it sends off the request,
+	// channelbridge/keywords.go): it is answered 200 as Telnyx would, before any refusal, and
+	// not taken. A send with no key or an unknown one is taken, so a test sees it.
+	authorization string
 
 	mu       sync.Mutex
 	messages []telnyxMessage
@@ -581,13 +632,23 @@ func (m telnyxMessage) withoutAuthorization() telnyxMessage {
 	return m
 }
 
-func newFakeTelnyx(t *testing.T) *fakeTelnyx {
-	telnyx := &fakeTelnyx{}
+func newFakeTelnyx(t *testing.T, authorization string) *fakeTelnyx {
+	telnyx := &fakeTelnyx{authorization: authorization}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v2/messages", telnyx.send)
 	telnyx.server = httptest.NewTLSServer(mux)
 	t.Cleanup(telnyx.server.Close)
 	return telnyx
+}
+
+// telnyxKeyPrefix starts the API key of every test's number: the bearer header of a send tells
+// whose test it came from.
+const telnyxKeyPrefix = "synthetic-telnyx-key-"
+
+// earlier reports whether r is a send of an earlier test's number, not this test's.
+func (f *fakeTelnyx) earlier(r *http.Request) bool {
+	header := r.Header.Get("Authorization")
+	return strings.HasPrefix(header, "Bearer "+telnyxKeyPrefix) && header != f.authorization
 }
 
 func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +662,7 @@ func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
-	if len(f.refusals) > 0 {
+	if len(f.refusals) > 0 && !f.earlier(r) {
 		status, then := f.refusals[0], f.refused
 		f.refusals = f.refusals[1:]
 		f.mu.Unlock()
@@ -611,7 +672,9 @@ func (f *fakeTelnyx) send(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
-	f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
+	if !f.earlier(r) {
+		f.messages = append(f.messages, telnyxMessage{from: sent.From, to: sent.To, text: sent.Text, authorization: r.Header.Get("Authorization")})
+	}
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{

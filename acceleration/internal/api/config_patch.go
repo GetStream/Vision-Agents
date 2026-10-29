@@ -13,6 +13,7 @@ import (
 // left out keeps what is stored.
 type AgentConfigPatch struct {
 	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty"`
 	Mode               *AgentMode               `json:"mode,omitempty"`
@@ -128,6 +129,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, errUnknownConfig
 	}
 	existing := agentConfigOf(config)
+	original := config
 	before := config.MCPServers
 	heard := config.STT
 	was := sandboxOfConfig(config)
@@ -136,6 +138,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := configComplaint(AgentConfigRequest{
 		Name:           override(config.Name, patch.Name),
 		Mode:           patch.Mode,
+		Region:         patch.Region,
 		Keyterms:       patch.Keyterms,
 		Sandbox:        patch.Sandbox,
 		SandboxOptions: patch.SandboxOptions,
@@ -160,6 +163,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.Mode != nil {
 		config.Mode, _ = modeOf(patch.Mode)
 	}
+	config.Region = override(config.Region, patch.Region)
 	config.STT = override(config.STT, patch.Stt)
 	config.TTS = override(config.TTS, patch.Tts)
 	config.STS = override(config.STS, patch.Sts)
@@ -265,6 +269,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.regionComplaint(ctx, config, &original); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
 	}
 

@@ -117,6 +117,8 @@ type Action struct {
 	LatencyMs float64
 	// Unheard says none of the interrupted reply has gone out, and it is only abandoned so.
 	Unheard bool
+	// Interruption is why an interrupt abandons the reply, for the agent to report.
+	Interruption interruption
 	// LineID is the caller's line a turn queued, held or answered was heard as, so a
 	// watcher can say of that line that it waits for the agent to finish.
 	LineID string
@@ -492,12 +494,13 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 	c.wentOn[transcript.Participant.ID] = time.Now()
 	c.mu.Unlock()
 	return c.decide(Action{
-		Kind:        ActInterrupt,
-		Reason:      "the caller said more before hearing any of the reply, so it answers words they have moved on from",
-		Participant: transcript.Participant,
-		TurnID:      state.Unheard.turnID,
-		Text:        saying,
-		Unheard:     true,
+		Kind:         ActInterrupt,
+		Reason:       "the caller said more before hearing any of the reply, so it answers words they have moved on from",
+		Participant:  transcript.Participant,
+		TurnID:       state.Unheard.turnID,
+		Text:         saying,
+		Unheard:      true,
+		Interruption: interruption{cause: causeUnheard, words: saying},
 	}), true
 }
 
@@ -796,6 +799,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 				Participant: ready.Participant,
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
+				Interruption: interruption{cause: causeSettled, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+					words: ready.Text},
 			}),
 			c.decide(answering),
 		}
@@ -906,6 +911,8 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 		Participant: seen.participant,
 		TurnID:      seen.turnID,
 		LatencyMs:   ruling.TookMs,
+		Interruption: interruption{cause: causeTalking, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+			words: seen.text},
 	})}
 }
 

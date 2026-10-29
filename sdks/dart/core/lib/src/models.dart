@@ -333,6 +333,9 @@ final class SessionOptions {
     this.modelOverwrites,
     this.tools = const [],
     this.tags = const {},
+    this.returnUrl,
+    this.memory,
+    this.timezone,
   });
 
   /// An id to hold the session by, for a caller that wants to know it before the session
@@ -380,6 +383,37 @@ final class SessionOptions {
 
   /// Cost labels, carried onto every request the session makes.
   final Map<String, String> tags;
+
+  /// Where a sign-in the conversation asks for goes back to. Name the app's own scheme in
+  /// reverse domain form, such as `com.example.app:/connected`, and the router hands the
+  /// browser back to the app. It is kept with the session, so a conversation carried on later
+  /// goes back there too. Null sends the sign-in back to the dashboard, which a phone cannot
+  /// open.
+  final String? returnUrl;
+
+  /// Has the agent remember the signed-in user: what it learned about them before is recalled
+  /// here, and what it learns here is kept for their next session. Null remembers nothing, and
+  /// an [incognito] session recalls but keeps nothing new.
+  final SessionMemory? memory;
+
+  /// The user's IANA zone, such as `Europe/Amsterdam`, which the device knows and the router
+  /// does not. Dart's own `DateTime.timeZoneName` is an abbreviation such as `CET`, not a
+  /// zone, so read it with a plugin such as `flutter_timezone`. The agent reads dates in it,
+  /// and it is remembered as the user's for the scheduled tasks that follow. Null sends none,
+  /// and a zone the router does not know is refused.
+  final String? timezone;
+}
+
+/// What a session remembers about the user [Backend.userId] names. It is always theirs: a
+/// device recalls nobody else's. With no user id, nothing is recalled or kept.
+final class SessionMemory {
+  const SessionMemory({this.filter = const {}, this.appId});
+
+  /// Your own labels, which narrow what is recalled. They cannot widen it past the user.
+  final Map<String, String> filter;
+
+  /// Separates two of your apps sharing one memory account.
+  final String? appId;
 }
 
 /// What the agent says as it joins a call, before anyone speaks.
@@ -452,6 +486,10 @@ final class SessionQuery {
     this.state,
     this.limit,
     this.cursor,
+    this.createdSince,
+    this.createdBefore,
+    this.custom = const {},
+    this.sort,
   });
 
   /// Only those opened against this agent name.
@@ -478,6 +516,28 @@ final class SessionQuery {
   /// The [ListPage.nextCursor] of the page before, asked with the same filters. Omitted is
   /// the first page.
   final String? cursor;
+
+  /// Only those started at or after this.
+  final DateTime? createdSince;
+
+  /// Only those started before this.
+  final DateTime? createdBefore;
+
+  /// Only those whose [SessionOptions.custom] labels hold every one of these pairs.
+  final Map<String, String> custom;
+
+  /// The order. Omitted is most recently active first, or best match first for a search.
+  final SessionSort? sort;
+}
+
+/// An order to list conversations in. Every one is descending: the router offers no ascending
+/// one.
+enum SessionSort {
+  /// Most recently active first.
+  updatedAt,
+
+  /// Best match first, which only sorts a search.
+  relevance,
 }
 
 /// One page of a list, and where the next one starts.

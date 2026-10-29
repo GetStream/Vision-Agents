@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -74,6 +75,16 @@ func (s *MeteredSuite) SetupTest() {
 	s.owner = routing.Owner{CustomerID: uuid.NewString(), Attribution: routing.Attribution{APIKey: "key-a"}}
 }
 
+// priced is what used of the item costs at the vendor list's rates, read from vendor.json so a
+// price change there leaves the tests passing. The test names the item, so a row recorded
+// under the wrong one fails.
+func (s *MeteredSuite) priced(modality routing.Modality, provider, model string, attributes map[string]string,
+	used pricing.Quantities,
+) int64 {
+	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Region: pricing.DefaultRegion, Attributes: attributes}
+	return pricingtest.Micros(s.T(), s.prices, item, used)
+}
+
 // rows drains the recorder and returns the test customer's rows, oldest first.
 func (s *MeteredSuite) rows() []store.Request {
 	s.recorder.Close()
@@ -88,7 +99,7 @@ func (s *MeteredSuite) fixture() (*Knowledge, *turbopuffertest.Server) {
 	server := turbopuffertest.Start(s.T())
 	backend, err := turbopuffer.New(turbopuffer.Options{APIKey: "test-key", BaseURL: server.URL, Cost: listCost})
 	s.Require().NoError(err)
-	return NewKnowledge(backend, s.recorder), server
+	return NewKnowledge(backend, s.recorder, nil), server
 }
 
 func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
@@ -114,14 +125,13 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 	for i, want := range []struct {
 		model string
 		used  pricing.Quantities
-		cost  int64
 	}{
-		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: passage}, 20},
+		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: passage}},
 		{KnowledgeLookup, pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: turbopuffertest.MinimumQueried,
-			pricing.BytesReturned: passage, pricing.Results: 1}, 1},
+			pricing.BytesReturned: passage, pricing.Results: 1}},
 		{KnowledgeLookup, pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: turbopuffertest.MinimumQueried,
-			pricing.BytesReturned: passage, pricing.Results: 1}, 1},
-		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: int64(len("pricing.md#0"))}, 20},
+			pricing.BytesReturned: passage, pricing.Results: 1}},
+		{KnowledgeWrite, pricing.Quantities{pricing.Requests: 1, pricing.BytesWritten: int64(len("pricing.md#0"))}},
 	} {
 		row := rows[i]
 		s.Equal("knowledge", row.Modality, "row %d", i)
@@ -131,7 +141,8 @@ func (s *MeteredSuite) TestEachKnowledgeCallWritesOneRowOfWhatItWasBilled() {
 		s.True(row.Success)
 		s.Equal(want.used, row.Quantities(), "row %d", i)
 		s.True(row.Billable, "row %d is priced", i)
-		s.EqualValues(want.cost, row.CostMicros, "row %d at the vendor list's rate", i)
+		s.Equal(s.priced(routing.Knowledge, "turbopuffer", want.model, nil, want.used), row.CostMicros,
+			"row %d at the vendor list's rate", i)
 		s.NotEmpty(row.Attributes[routing.AttributeProviderCostMicros], "row %d keeps what it cost under turbopuffer's formula", i)
 	}
 	s.Equal("1.282", rows[1].Attributes[routing.AttributeProviderCostMicros],
@@ -155,7 +166,11 @@ func (s *MeteredSuite) TestALookupOnALargeNamespaceSellsAtTheMinimumAndKeepsWhat
 	lookup := rows[1]
 	s.Equal(KnowledgeLookup, lookup.Model)
 	s.EqualValues(10_000_000_000, lookup.Quantities()[pricing.BytesQueried], "the bytes turbopuffer billed are on the row")
-	s.EqualValues(1, lookup.CostMicros, "priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
+	passage := int64(len("pricing.md#0") + len("A call costs a penny.") + len("pricing.md"))
+	used := pricing.Quantities{pricing.Requests: 1, pricing.BytesQueried: 10_000_000_000, pricing.BytesReturned: passage,
+		pricing.Results: 1}
+	s.Equal(s.priced(routing.Knowledge, "turbopuffer", KnowledgeLookup, nil, used), lookup.CostMicros,
+		"priced per lookup, at turbopuffer's minimum, until a large-namespace rate exists")
 	s.Equal("10.002", lookup.Attributes[routing.AttributeProviderCostMicros],
 		"10 GB queried at $1 a PB, and 43 bytes returned: what shows a namespace costing more than it pays")
 }
@@ -209,7 +224,7 @@ func (s *MeteredSuite) TestAnHourOfStorageIsBilledOnceHoweverOftenItIsSampled() 
 	hour := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
 
 	for _, at := range []time.Time{hour.Add(17 * time.Minute), hour.Add(48 * time.Minute), hour.Add(time.Hour)} {
-		stored, err := base.Storage(s.ctx, s.owner, namespace, at)
+		stored, err := base.Storage(s.ctx, s.owner, pricing.DefaultRegion, namespace, at)
 		s.Require().NoError(err)
 		s.EqualValues(2_000_000_000, stored.ByteHours)
 	}
@@ -221,7 +236,9 @@ func (s *MeteredSuite) TestAnHourOfStorageIsBilledOnceHoweverOftenItIsSampled() 
 	s.Equal(hour.Add(time.Hour), rows[1].StartedAt.UTC())
 	s.Equal(KnowledgeStorage, rows[0].Model)
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 2_000_000_000}, rows[0].Quantities())
-	s.EqualValues(904, rows[0].CostMicros, "2 GB for an hour at $0.33 a GB-month of 730 hours")
+	stored := pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 2_000_000_000}
+	s.Equal(s.priced(routing.Knowledge, "turbopuffer", KnowledgeStorage, nil, stored), rows[0].CostMicros,
+		"2 GB for an hour at the vendor list's rate")
 	s.Equal(routing.MeasuredByRouter, rows[0].Attributes[routing.AttributeMeasuredBy])
 }
 
@@ -230,7 +247,7 @@ func (s *MeteredSuite) TestAnEmptyKnowledgeBaseWritesNoStorageRow() {
 	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
 	server.Holds(namespace, 0)
 
-	stored, err := base.Storage(s.ctx, s.owner, namespace, time.Now())
+	stored, err := base.Storage(s.ctx, s.owner, pricing.DefaultRegion, namespace, time.Now())
 
 	s.Require().NoError(err)
 	s.Zero(stored.ByteHours)
@@ -298,15 +315,12 @@ func (s *MeteredSuite) TestEachMemoryCallIsARowOfItsRequests() {
 
 	rows := s.rows()
 	s.Require().Len(rows, 3)
-	for i, want := range []struct {
-		model string
-		cost  int64
-	}{{MemorySearch, 2_490}, {MemoryAdd, 249}, {MemoryForget, 0}} {
+	for i, model := range []string{MemorySearch, MemoryAdd, MemoryForget} {
 		s.Equal("memory", rows[i].Modality)
 		s.Equal("mem0", rows[i].Provider)
-		s.Equal(want.model, rows[i].Model, "row %d", i)
+		s.Equal(model, rows[i].Model, "row %d", i)
 		s.Equal(pricing.Quantities{pricing.Requests: 1}, rows[i].Quantities(), "row %d is one request", i)
-		s.EqualValues(want.cost, rows[i].CostMicros, "row %d", i)
+		s.Equal(s.priced(routing.Memory, "mem0", model, nil, pricing.Quantities{pricing.Requests: 1}), rows[i].CostMicros, "row %d", i)
 	}
 	s.True(rows[0].Billable, "$2.49 a thousand searches")
 	s.True(rows[1].Billable, "$0.249 a thousand adds")
@@ -322,7 +336,7 @@ func (s *MeteredSuite) TestEveryKnowledgeCallIsRecorded() {
 	}
 	backend, err := turbopuffer.New(turbopuffer.Options{Cost: listCost, Timeout: 30 * time.Second})
 	s.Require().NoError(err)
-	owned := NewKnowledge(backend, s.recorder).For(s.owner)
+	owned := NewKnowledge(backend, s.recorder, nil).For(s.owner)
 	namespace := fmt.Sprintf("acceleration-test-metered-%d", time.Now().UnixNano())
 	passages := []knowledge.Document{{ID: "pricing.md#0", Text: "A call costs a penny.", Source: "pricing.md"}}
 

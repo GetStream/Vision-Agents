@@ -13,7 +13,8 @@
 id: linq
 # A new revision for any change to what this file says; see AGENTS.md.
 # Revision 2 (AI-2092): the text is every part's value, not the first part's.
-revision: 2
+# Revision 3 (AI-2094): a media part is a file of the message (media).
+revision: 3
 name: Linq
 category: Communication
 description: Answer people over iMessage on the customer's own Linq line.
@@ -79,6 +80,18 @@ channel:
     # first part, as it did on revision 1, and ignores text_parts. A newer build reads text_parts.
     text: $.data.parts[0].value
     text_parts: $.data.parts[*].value
+    # [events], message.received: a media part is {type: media, id, filename, mime_type,
+    # size_bytes, url}, its url on cdn.linqapp.com; a photo sent with a caption is
+    # [media image/jpeg, text] (staging, 2026-10-27). Images are JPEG, PNG, GIF, HEIC, HEIF,
+    # TIFF and BMP ([attachments], «Supported File Types»). A url does not expire, or, on a
+    # number on the ephemeral tier, is signed for 15 minutes ([attachments], «Attachment URL
+    # Patterns»): the router fetches a photo when it answers, seconds after it arrives. The
+    # bridge passes on a file whose mime_type is image/*, as a photo (channelbridge writeInto).
+    # A build before media (a rollback) ignores it and reads the text.
+    #   [attachments] https://docs.linqapp.com/channel/imessage/llms-full.txt, «Attachments», opened October 27, 2026
+    media:
+      url: $.data.parts[*].url
+      mime_type: $.data.parts[*].mime_type
   reply:
     # [send]: POST https://api.linqapp.com/api/partner/v3/chats/{chatId}/messages. Linq
     # answers 200 with the message sent, and 400, 401, 404 or 429 when it is not ([send]).

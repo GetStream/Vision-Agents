@@ -44,6 +44,9 @@ func (s *Server) generateImage(ctx context.Context, request *generateImageReques
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
+	if request.Body.Model != nil {
+		return nil, errTopLevelModel
+	}
 
 	drawing, err := imageRequestOf(request.Body)
 	if err != nil {
@@ -253,4 +256,7 @@ type ImageGenerationRequest struct {
 	Options *ImageOptions      `json:"options,omitempty"`
 	Prompt  string             `json:"prompt" doc:"What to draw, in the caller's own words." example:"A yellow watering can beside a seedling, flat illustration, no text"`
 	Tags    *map[string]string `json:"tags,omitempty"`
+
+	// Model is never accepted: it is read only to refuse it (errTopLevelModel).
+	Model any `json:"model,omitempty" hidden:"true"`
 }

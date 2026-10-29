@@ -502,13 +502,14 @@ func (s *ChannelSuite) TestTextPartsIsCheckedWhenTheManifestIsParsed() {
 
 // A build from before text_parts ignores it and reads text, so after a rollback a stored
 // revision 2 of linq still gives the first part's text instead of an empty path that drops
-// every message (AI-2092 R1.1). The old build is this rule without TextParts.
+// every message (AI-2092 R1.1). The old build is this rule without TextParts, and without
+// Media (AI-2094).
 func (s *ChannelSuite) TestAStoredLinqRevisionStaysReadableByABuildWithoutTextParts() {
 	m := s.load("linq")
 	s.Equal("$.data.parts[0].value", m.Channel.Messages.Text)
 	s.Require().NotEmpty(m.Channel.Messages.TextParts)
 	older := *m.Channel
-	older.Messages.TextParts = ""
+	older.Messages.TextParts, older.Messages.Media = "", nil
 	read, err := older.Read(m.ID, s.recorded("linq.received.json"))
 	s.Require().NoError(err)
 	s.Require().Len(read.Messages, 1)
@@ -573,6 +574,144 @@ func (s *ChannelSuite) TestTextPartsReadsOneElementOfEveryPart() {
 
 func (s *ChannelSuite) TestABlockWithOnlyTextPartsIsNotZero() {
 	s.False(MessageRule{TextParts: "$.parts[*].value"}.IsZero())
+}
+
+// AI-2094: the live photo with its caption (staging, 2026-10-27 15:48:35Z) was
+// [media image/jpeg IMG_7564.jpeg, text]. Its media part is a file of the message: url and
+// mime type.
+func (s *ChannelSuite) TestLinqReadsAPhotosMediaPartAsAFile() {
+	read := s.read("linq", "linq.received.media.json")
+	s.Require().Len(read.Messages, 1)
+	s.Equal("What is in this photo?", read.Messages[0].Text)
+	s.Equal([]Media{{
+		URL:      "https://cdn.linqapp.com/attachments/partners/synthetic-partner/00000000-0000-4000-8000-0000000000f1/IMG_7564.jpeg",
+		MIMEType: "image/jpeg",
+	}}, read.Messages[0].Media)
+}
+
+// Every part with both a url and a mime type is a file, in order; any other part is not.
+func (s *ChannelSuite) TestLinqReadsEveryMediaPartAndNoOtherPart() {
+	part := func(name, mime string) string {
+		return `{"type":"media","filename":"` + name + `","mime_type":"` + mime + `","url":"https://cdn.linqapp.com/attachments/` + name + `"}`
+	}
+	photo := Media{URL: "https://cdn.linqapp.com/attachments/a.jpeg", MIMEType: "image/jpeg"}
+	caption := `{"type":"text","value":"What is in this photo?"}`
+	m := s.load("linq")
+	for _, tc := range []struct {
+		name, parts string
+		media       []Media
+	}{
+		{"text, media", "[" + caption + "," + part("a.jpeg", "image/jpeg") + "]", []Media{photo}},
+		{"media only", "[" + part("a.jpeg", "image/jpeg") + "]", []Media{photo}},
+		{"two images", "[" + part("a.jpeg", "image/jpeg") + "," + part("b.heic", "image/heic") + "]",
+			[]Media{photo, {URL: "https://cdn.linqapp.com/attachments/b.heic", MIMEType: "image/heic"}}},
+		{"a video", "[" + part("c.mov", "video/quicktime") + "]", []Media{{URL: "https://cdn.linqapp.com/attachments/c.mov", MIMEType: "video/quicktime"}}},
+		{"a media part with no url", `[{"type":"media","filename":"a.jpeg","mime_type":"image/jpeg"}]`, nil},
+		{"a media part with a null url", `[{"type":"media","mime_type":"image/jpeg","url":null}]`, nil},
+		{"a media part with an empty url", `[{"type":"media","mime_type":"image/jpeg","url":""}]`, nil},
+		{"a media part with no mime type", `[{"type":"media","url":"https://cdn.linqapp.com/attachments/a.jpeg"}]`, nil},
+		{"an app card", `[{"type":"imessage_app","url":"https://example.com/card"}]`, nil},
+		{"text only", "[" + caption + "]", nil},
+		{"no parts", "[]", nil},
+		{"parts null", "null", nil},
+	} {
+		read, err := m.Channel.Read(m.ID, s.linqParts(tc.parts))
+		s.Require().NoError(err, tc.name)
+		s.Require().Len(read.Messages, 1, tc.name)
+		s.Equal(tc.media, read.Messages[0].Media, tc.name)
+	}
+}
+
+// A body whose parts are not an array is refused, as a text path to one is.
+func (s *ChannelSuite) TestLinqPartsThatAreNotAnArrayAreRefused() {
+	m := s.load("linq")
+	_, err := m.Channel.Read(m.ID, s.linqParts(`{"type":"media","url":"https://example.com/a.jpeg","mime_type":"image/jpeg"}`))
+	s.ErrorContains(err, "parts is not an array")
+}
+
+// A media part whose url or mime type is not a value is skipped: the text is still read, and
+// the other files with it.
+func (s *ChannelSuite) TestLinqMediaOfTheWrongShapeIsSkipped() {
+	m := s.load("linq")
+	caption := `{"type":"text","value":"What is in this photo?"}`
+	good := `{"type":"media","url":"https://cdn.linqapp.com/attachments/a.jpeg","mime_type":"image/jpeg"}`
+	for _, bad := range []string{
+		`{"type":"media","url":{"href":"x"},"mime_type":"image/jpeg"}`,
+		`{"type":"media","url":"https://example.com/a.jpeg","mime_type":["image/jpeg"]}`,
+	} {
+		read, err := m.Channel.Read(m.ID, s.linqParts("["+bad+","+caption+","+good+"]"))
+		s.Require().NoError(err, bad)
+		s.Require().Len(read.Messages, 1, bad)
+		s.Equal("What is in this photo?", read.Messages[0].Text, bad)
+		s.Equal([]Media{{URL: "https://cdn.linqapp.com/attachments/a.jpeg", MIMEType: "image/jpeg"}}, read.Messages[0].Media, bad)
+	}
+}
+
+func (s *ChannelSuite) TestMediaIsCheckedWhenTheManifestIsParsed() {
+	media := func(url, mime string) string {
+		return "text: $.text\n    media:\n      url: " + url + "\n      mime_type: " + mime
+	}
+	for _, tc := range []struct{ name, media, want string }{
+		{"no [*]", media("$.parts[0].url", "$.parts[0].mime_type"), `channel.messages.media.url: "$.parts[0].url" has no [*] past messages.each`},
+		{"no url", "text: $.text\n    media:\n      mime_type: $.parts[*].mime_type", `channel.messages.media.url: "" is not a path`},
+		{"no mime type", "text: $.text\n    media:\n      url: $.parts[*].url", `channel.messages.media.mime_type: "" is not a path`},
+		{"mime type without [*]", media("$.parts[*].url", "$.mime_type"), `channel.messages.media.mime_type: "$.mime_type" has no [*]`},
+		{"another element", media("$.parts[*].url", "$.files[*].mime_type"), `channel.messages.media: url "$.parts[*].url" and mime_type "$.files[*].mime_type" differ up to their last [*]`},
+		{"a deeper element", media("$.parts[*].url", "$.parts[*].types[*].mime_type"), "differ up to their last [*]"},
+		{"not a path", media("$.parts[?@.url].url", "$.parts[*].mime_type"), "channel.messages.media.url: \"$.parts[?@.url].url\" is not a path of member names"},
+	} {
+		_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", tc.media, 1)))
+		s.ErrorContains(err, tc.want, tc.name)
+	}
+	_, err := ParseManifest(minimal(strings.Replace(strings.Replace(baseChannel, "text: $.text", media("$.parts[*].url", "$.parts[*].mime_type"), 1), "format: json", "format: form", 1)))
+	s.ErrorContains(err, `channel.messages.media.url: "$.parts[*].url": a form is flat`)
+	_, err = ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", media("$.parts[*].url", "$.parts[*].mime_type"), 1)))
+	s.NoError(err)
+}
+
+// With each, media are the files of the message each binds.
+func (s *ChannelSuite) TestMediaAreTheFilesOfEachMessageOfABatch() {
+	batch := func(url, mime string) string {
+		return strings.NewReplacer(
+			"thread_key:", "each: $.messages[*]\n    thread_key:",
+			"$.chat", "$.messages[*].chat",
+			"$.from", "$.messages[*].from",
+			"$.id", "$.messages[*].id",
+			"text: $.text", "text: $.messages[*].text\n    media:\n      url: "+url+"\n      mime_type: "+mime,
+		).Replace(baseChannel)
+	}
+	m, err := ParseManifest(minimal(batch("$.messages[*].files[*].url", "$.messages[*].files[*].type")))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"messages":[
+		{"chat":"c","from":"u","id":"1","files":[{"url":"https://example.com/a.png","type":"image/png"},{"url":"https://example.com/b.pdf","type":"application/pdf"}]},
+		{"chat":"c","from":"u","id":"2","files":[{"url":"https://example.com/c.gif","type":"image/gif"}]},
+		{"chat":"c","from":"u","id":"3"}]}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 3)
+	s.Equal([]Media{{URL: "https://example.com/a.png", MIMEType: "image/png"}, {URL: "https://example.com/b.pdf", MIMEType: "application/pdf"}}, read.Messages[0].Media)
+	s.Equal([]Media{{URL: "https://example.com/c.gif", MIMEType: "image/gif"}}, read.Messages[1].Media)
+	s.Empty(read.Messages[2].Media)
+
+	for _, path := range []string{"$.files[*].url", "$.messages[0].files[*].url"} {
+		_, err := ParseManifest(minimal(batch(path, "$.messages[*].files[*].type")))
+		s.ErrorContains(err, "does not start with messages.each", path)
+	}
+	_, err = ParseManifest(minimal(batch("$.messages[*].url", "$.messages[*].type")))
+	s.ErrorContains(err, "has no [*] past messages.each")
+}
+
+// Without media a message is read without files, as before (Telnyx and WhatsApp).
+func (s *ChannelSuite) TestAMessageIsReadWithoutFilesWhenTheBlockHasNoMedia() {
+	m, err := ParseManifest(minimal(baseChannel))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1","text":"hi","url":"https://example.com/a.png","mime_type":"image/png"}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Nil(read.Messages[0].Media)
+}
+
+func (s *ChannelSuite) TestABlockWithOnlyMediaIsNotZero() {
+	s.False(MessageRule{Media: &MediaRule{}}.IsZero())
 }
 
 func (s *ChannelSuite) TestALinqReplyGoesToTheChat() {

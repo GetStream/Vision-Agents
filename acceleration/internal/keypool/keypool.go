@@ -106,8 +106,16 @@ var (
 	shared   = map[string]*Pool{}
 )
 
-// quotaExceededStatus is the status label of a refusal that came as a websocket frame.
-const quotaExceededStatus = "quota_exceeded"
+// The status labels of a refusal that came in a websocket frame or close after the handshake,
+// which has no HTTP status: a spent quota, and a key the provider does not take.
+const (
+	quotaExceededStatus = "quota_exceeded"
+	invalidKeyStatus    = "invalid_key"
+)
+
+// outOfFundsStatus is the label of a refusal in a frame for the lack of money, the one the
+// same refusal gets at the handshake as an HTTP 402.
+var outOfFundsStatus = strconv.Itoa(http.StatusPaymentRequired)
 
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
 // finds under envVars. The first of envVars names the pool's key variable in its metrics.
@@ -141,6 +149,8 @@ type Pool struct {
 	*ring
 	// pin is set on a pool made by Pin.
 	pin *pin
+	// first is set on a pool made by First.
+	first bool
 }
 
 // ring is the state every pool over the same keys shares: whose turn it is and which keys
@@ -177,8 +187,23 @@ func (p *Pool) Pin() *Pool {
 	return &Pool{ring: p.ring, pin: &pin{}}
 }
 
-// Len is how many keys the pool holds.
-func (p *Pool) Len() int { return len(p.keys) }
+// First is a view of the pool that sends every request on the first key, the one Peek
+// names. It never takes a turn and never moves to another key, so a request is sent once.
+// A refusal on it is counted, and rests the key for every view of the pool, as on any other.
+//
+// It is for a client whose requests reach state kept under one account for as long as the
+// process lives: a voice cloned on one key is found and deleted only on that key.
+func (p *Pool) First() *Pool {
+	return &Pool{ring: p.ring, first: true}
+}
+
+// Len is how many keys the pool holds, or for First the one it sends on.
+func (p *Pool) Len() int {
+	if p.first {
+		return min(1, len(p.keys))
+	}
+	return len(p.keys)
+}
 
 // Peek is the first key, without taking a turn, or "" for an empty pool.
 func (p *Pool) Peek() string {
@@ -189,10 +214,14 @@ func (p *Pool) Peek() string {
 }
 
 // Next takes the next key that is not resting, or for a pin the key it keeps to while
-// that key is not resting. When every key is, it is the one whose cooldown ends first: a
-// request sent on it may still go through, and failing it here would only fail it sooner.
+// that key is not resting, or for First the first key whether it rests or not. When every
+// key is, it is the one whose cooldown ends first: a request sent on it may still go through,
+// and failing it here would only fail it sooner.
 // It is "" for an empty pool.
 func (p *Pool) Next() string {
+	if p.first {
+		return p.Peek()
+	}
 	if p.pin == nil {
 		return p.ring.take()
 	}
@@ -283,6 +312,20 @@ func (p *Pool) QuotaExceeded(key string) {
 	p.Cooldown(key, MaxCooldown)
 }
 
+// InvalidKey counts as refused, under the status "invalid_key", a key a provider accepted at
+// the websocket handshake and refused in a frame or close after it. Like a 401 at the
+// handshake it leaves the key in turn: a key to replace, not one to wait out.
+func (p *Pool) InvalidKey() {
+	p.countRefused(invalidKeyStatus)
+}
+
+// OutOfFunds counts as refused, under the status "402", a key a provider accepted at the
+// websocket handshake and then refused in a frame for want of funds: the status the handshake
+// gives the same refusal. Like a 402 there it leaves the key in turn.
+func (p *Pool) OutOfFunds() {
+	p.countRefused(outOfFundsStatus)
+}
+
 // CooldownFromResponse rests key for as long as the response's Retry-After asks, or for
 // DefaultCooldown when it does not say.
 func (p *Pool) CooldownFromResponse(key string, response *http.Response) {
@@ -317,16 +360,69 @@ func (p *Pool) refused(response *http.Response) (time.Duration, bool) {
 	case http.StatusTooManyRequests:
 		return p.retryAfter(response), true
 	case http.StatusUnauthorized, http.StatusPaymentRequired:
-		if response.Body == nil {
-			return 0, false
-		}
-		peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
-		response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
-		if bytes.Contains(peeked, []byte("quota_exceeded")) {
+		if bytes.Contains(peek(response), []byte("quota_exceeded")) {
 			return MaxCooldown, true
 		}
 	}
 	return 0, false
+}
+
+// badKeyMarker is what a provider that answers a key it does not know with a 400 or 403, not
+// a 401, says in the body, as each answered a made-up key on 2026-10-27. It counts only on its
+// own status, so a generic text on another status is not taken for a bad key.
+type badKeyMarker struct {
+	status int
+	text   []byte
+}
+
+var badKeyMarkers = []badKeyMarker{
+	// Google's native API (x-goog-api-key, ?key=): a 400 whose google.rpc.ErrorInfo reason
+	// is API_KEY_INVALID.
+	{http.StatusBadRequest, []byte(`"API_KEY_INVALID"`)},
+	// Gemini's OpenAI-compatible endpoint: a 400 that gives no reason, only this message.
+	{http.StatusBadRequest, []byte("Please pass a valid API key")},
+	// xAI: a 400, on HTTP and on the websocket handshake alike.
+	{http.StatusBadRequest, []byte("Incorrect API key provided")},
+	// Baseten's inference API: a 403.
+	{http.StatusForbidden, []byte("please check the api-key you provided")},
+	// Baseten's dedicated deployments (HTTP and websocket handshake): a 403 with only this
+	// generic text, so it counts on a 403 alone.
+	{http.StatusForbidden, []byte("Authentication failed")},
+	// Inworld: a 403, gRPC code 7 (PERMISSION_DENIED), for a key that is not base64 of
+	// id:secret (the websocket answers that one with a 101 and a frame, counted there)...
+	{http.StatusForbidden, []byte("Invalid authorization credentials")},
+	// ...and for a key of that shape that is revoked or made up.
+	{http.StatusForbidden, []byte("API key does not exist or was deleted")},
+}
+
+// rejectsKey reports whether a response says the provider would not take the key at all: a
+// 401 for a key it does not know, a 402 for an account out of credit, such as Gemini's
+// "prepayment credits are depleted", or a 400 or 403 whose body says the key is not valid,
+// which is how Google, xAI, Baseten and Inworld refuse one. Each is counted as refused, so a
+// key to replace or top up shows up, even when refused leaves it in turn. Any other 400 or
+// 403 is the request's fault, or a key allowed in but not to this, and is not counted.
+func rejectsKey(response *http.Response) bool {
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusPaymentRequired:
+		return true
+	case http.StatusBadRequest, http.StatusForbidden:
+		peeked := peek(response)
+		return slices.ContainsFunc(badKeyMarkers, func(marker badKeyMarker) bool {
+			return marker.status == response.StatusCode && bytes.Contains(peeked, marker.text)
+		})
+	}
+	return false
+}
+
+// peek reads the start of a response's body and puts it back, so the caller still reads it
+// whole.
+func peek(response *http.Response) []byte {
+	if response.Body == nil {
+		return nil
+	}
+	peeked, _ := io.ReadAll(io.LimitReader(response.Body, drainLimit))
+	response.Body = peekedBody{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
+	return peeked
 }
 
 // peekedBody is a body with what was read of it put back in front.
@@ -351,10 +447,12 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 			return response, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return response, nil
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 
 		if attempt >= attempts-1 || ctx.Err() != nil {
@@ -495,10 +593,12 @@ func (p *Pool) Dial(
 			return conn, response, key, err
 		}
 		rest, refused := p.refused(response)
+		if refused || rejectsKey(response) {
+			p.countRefused(strconv.Itoa(response.StatusCode))
+		}
 		if !refused {
 			return conn, response, key, err
 		}
-		p.countRefused(strconv.Itoa(response.StatusCode))
 		p.Cooldown(key, rest)
 		if attempt >= attempts-1 || ctx.Err() != nil {
 			return conn, response, key, err

@@ -36,17 +36,20 @@ var ErrNoPriceChange = errors.New("store: there is no such price change")
 // in force for an item is the newest whose EffectiveAt has passed under a change that was not
 // cancelled, and a newer row replaces an older one whole.
 type PriceEntry struct {
-	bun.BaseModel `bun:"table:price_entries,alias:pe"`
+	bun.BaseModel `bun:"table:price_list_entries,alias:pe"`
 
 	ID     int64  `bun:"id,pk,autoincrement"`
 	Change string `bun:"change,notnull"`
 	// SKU names the item across every change of its price (AssignSKUs).
 	SKU string `bun:"sku,notnull"`
-	// Modality, Provider and Model are the item; Attributes is the entry's When: the item
-	// attributes it applies to, such as {"service_tier": "flex"}. Empty is the default entry.
+	// Modality, Provider, Model, Region and BYOK are the item; Attributes is the entry's When:
+	// the item attributes it applies to, such as {"service_tier": "flex"}. Empty is the default
+	// entry.
 	Modality   string            `bun:"modality,notnull"`
 	Provider   string            `bun:"provider,notnull"`
 	Model      string            `bun:"model,notnull"`
+	Region     string            `bun:"region,notnull"`
+	BYOK       bool              `bun:"byok,notnull"`
 	Attributes map[string]string `bun:"attributes,type:jsonb,nullzero"`
 	Free       bool              `bun:"free,notnull"`
 	// Rates are the vendor's, for reference: nothing is charged from them.
@@ -68,7 +71,7 @@ type PriceEntry struct {
 
 // priceEntryColumns are PriceEntry's columns, read and returned by name rather than as *, so
 // a column a later release adds or drops does not break the read.
-const priceEntryColumns = "id, change, sku, modality, provider, model, attributes, free, rates, tiers, prices, " +
+const priceEntryColumns = "id, change, sku, modality, provider, model, region, byok, attributes, free, rates, tiers, prices, " +
 	"price_tiers, withdrawn, effective_at, created_at"
 
 // Entry is the row as a price list prices with it, its Version the change that wrote it.
@@ -77,6 +80,8 @@ func (e PriceEntry) Entry() pricing.Entry {
 		Modality:   e.Modality,
 		Provider:   e.Provider,
 		Model:      e.Model,
+		Region:     e.Region,
+		BYOK:       e.BYOK,
 		SKU:        e.SKU,
 		Free:       e.Free,
 		Rates:      e.Rates,
@@ -112,6 +117,8 @@ func priceEntryOf(change string, entry pricing.Entry) PriceEntry {
 		Modality:   entry.Modality,
 		Provider:   entry.Provider,
 		Model:      entry.Model,
+		Region:     entry.Region,
+		BYOK:       entry.BYOK,
 		Attributes: entry.When,
 		Free:       entry.Free,
 		Rates:      entry.Rates,
@@ -149,9 +156,10 @@ const priceChangeColumns = "name, kind, reason, source, effective_at, created_by
 
 // PriceLoad is what a router's start loads into the price list: its price files, merged.
 type PriceLoad struct {
-	// Entries are every file's, the first file's entry winning for an item and When. One
-	// with no price is priced at its vendor rates times pricing.PriceFactorBps as it is
-	// written, and one with no SKU is given one (AssignSKUs).
+	// Entries are every file's, the first file's entry winning for an item, region, BYOK state
+	// and When. One with no price is priced at its vendor rates times pricing.PriceFactorBps,
+	// or pricing.BYOKFeeBps for a BYOK one, as it is written, and one with no SKU is given one
+	// (AssignSKUs).
 	Entries []pricing.Entry
 	// Source names the files, for the change's source.
 	Source string
@@ -175,9 +183,10 @@ func (s *Store) PricesToLoad(ctx context.Context, entries []pricing.Entry) (bool
 
 // SyncPrices loads the router's price files into the price list, in one transaction. A
 // database with no change yet gets them all as its seed. Otherwise only the entries for an
-// item and When no change that stands has ever priced are added, as one release change: an
-// item the database has priced keeps its price and its withdrawal, whatever the files say
-// now. It reports the change it wrote, the entries in it as written, and whether it wrote one.
+// item, region, BYOK state and When no change that stands has ever priced are added, as one
+// release change: an item the database has priced keeps its price and its withdrawal, whatever
+// the files say now. It reports the change it wrote, the entries in it as written, and whether
+// it wrote one.
 func (s *Store) SyncPrices(ctx context.Context, load PriceLoad) (PriceChange, []pricing.Entry, bool, error) {
 	var change PriceChange
 	var added []pricing.Entry
@@ -322,7 +331,7 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 		if dryRun {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, "TRUNCATE price_entries, price_changes"); err != nil {
+		if _, err := tx.ExecContext(ctx, "TRUNCATE price_list_entries, price_changes"); err != nil {
 			return err
 		}
 		// The removal is recorded before the seed, under a name of its own, so the log reads
@@ -359,7 +368,8 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 }
 
 // pricesToLoad is whether the database has no change yet, and the entries a load would add:
-// all of them to an empty one, else those for an item and When no change that stands wrote.
+// all of them to an empty one, else those for an item, region, BYOK state and When no change
+// that stands wrote.
 func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (bool, []pricing.Entry, error) {
 	var changes int
 	if err := db.NewSelect().Model((*PriceChange)(nil)).ColumnExpr("count(*)").Scan(ctx, &changes); err != nil {
@@ -370,7 +380,7 @@ func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (boo
 	}
 	var priced []PriceEntry
 	err := db.NewSelect().Model(&priced).
-		ColumnExpr("pe.modality, pe.provider, pe.model, pe.attributes").
+		ColumnExpr("pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes").
 		Join("JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL").
 		Distinct().
 		Scan(ctx)
@@ -379,7 +389,7 @@ func pricesToLoad(ctx context.Context, db bun.IDB, entries []pricing.Entry) (boo
 	}
 	known := make(map[string]bool, len(priced))
 	for _, row := range priced {
-		known[prices.Name(pricing.Entry{Modality: row.Modality, Provider: row.Provider, Model: row.Model, When: row.Attributes})] = true
+		known[prices.Name(row.Entry())] = true
 	}
 	var added []pricing.Entry
 	for _, entry := range entries {
@@ -398,9 +408,9 @@ func ReleaseName(release string) string {
 	return notInName.ReplaceAllString(strings.ToLower(release), "_")
 }
 
-// ActivePriceEntries is the entry in force at at for every item and When: the newest that has
-// taken effect under a change not cancelled, ties going to the later change. An item whose
-// newest entry withdrew it is left out.
+// ActivePriceEntries is the entry in force at at for every item, region, BYOK state and When:
+// the newest that has taken effect under a change not cancelled, ties going to the later
+// change. An item whose newest entry withdrew it is left out.
 func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEntry, error) {
 	return activePriceEntries(ctx, s.db, at)
 }
@@ -408,11 +418,11 @@ func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEn
 func activePriceEntries(ctx context.Context, db bun.IDB, at time.Time) ([]PriceEntry, error) {
 	var newest []PriceEntry
 	err := db.NewRaw(`
-SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.attributes) `+qualified("pe", priceEntryColumns)+`
-FROM price_entries AS pe
+SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes) `+qualified("pe", priceEntryColumns)+`
+FROM price_list_entries AS pe
 JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL
 WHERE pe.effective_at <= ?
-ORDER BY pe.modality, pe.provider, pe.model, pe.attributes, pe.effective_at DESC, pe.change DESC, pe.id DESC`, at).
+ORDER BY pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes, pe.effective_at DESC, pe.change DESC, pe.id DESC`, at).
 		Scan(ctx, &newest)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: active price entries: %w", err))

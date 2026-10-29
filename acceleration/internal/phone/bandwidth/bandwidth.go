@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -308,12 +309,51 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		CallTimeout:   outbound.RingTimeout.Seconds(),
 	}
 
+	if outbound.StatusURL != "" {
+		request.DisconnectURL, request.DisconnectMethod = outbound.StatusURL, http.MethodPost
+	}
+
 	var placed dialedCall
 	path := "/api/v2/accounts/" + url.PathEscape(p.accountID) + "/calls"
 	if err := p.doVoice(ctx, http.MethodPost, path, request, &placed); err != nil {
 		return phone.Dialed{}, err
 	}
 	return phone.Dialed{VendorCallID: placed.CallID, Status: placed.State}, nil
+}
+
+// ReadStatus reads the JSON Bandwidth posts to a call's disconnectUrl. Only a disconnect event
+// ends the call; any other event is a report that is not final.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/json" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("bandwidth: a call status is json, not %q", contentType))
+	}
+	var event struct {
+		EventType string `json:"eventType"`
+		Cause     string `json:"cause"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("bandwidth: read a call status: %w", err))
+	}
+	if event.EventType == "" {
+		return phone.CallStatus{}, stack.Wrap(errors.New("bandwidth: a call status without an eventType"))
+	}
+	if event.EventType != "disconnect" {
+		return phone.CallStatus{Word: event.EventType}, nil
+	}
+	result, ok := finalStatuses[event.Cause]
+	if !ok {
+		result = phone.CallFailed
+	}
+	return phone.CallStatus{Result: result, Word: event.Cause}, nil
+}
+
+// finalStatuses are the disconnect causes that are not a failure.
+var finalStatuses = map[string]phone.CallResult{
+	"hangup":   phone.CallCompleted,
+	"busy":     phone.CallBusy,
+	"rejected": phone.CallBusy,
+	"timeout":  phone.CallNoAnswer,
+	"cancel":   phone.CallCanceled,
 }
 
 // Answer renders Bandwidth's BXML for pressing the digits and then bridging to the trunk.
@@ -543,6 +583,9 @@ type callRequest struct {
 	AnswerMethod  string `json:"answerMethod,omitempty"`
 	// CallTimeout is how long to ring before giving up, in seconds, and fractional.
 	CallTimeout float64 `json:"callTimeout,omitempty"`
+	// DisconnectURL is where Bandwidth posts the call's end, as JSON.
+	DisconnectURL    string `json:"disconnectUrl,omitempty"`
+	DisconnectMethod string `json:"disconnectMethod,omitempty"`
 }
 
 type dialedCall struct {

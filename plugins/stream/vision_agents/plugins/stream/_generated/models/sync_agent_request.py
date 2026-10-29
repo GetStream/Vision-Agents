@@ -89,6 +89,12 @@ class SyncAgentRequest:
                 the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
                 unless its entry sets user: then each end user connects it with their own account, from the conversation, the
                 first time the agent needs it.
+            region (str | Unset): agent.yaml's region: where the agent's work is done, us or eu for now. Every model its
+                sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there.
+                A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming
+                each and the region, when its knowledge base is already kept in another region, since a knowledge base is never
+                moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its
+                region. Example: eu.
             resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
                 on.
             role (AgentRole | Unset): What the agent is for in the app, beyond answering people. agent_moderator is the
@@ -142,6 +148,7 @@ class SyncAgentRequest:
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     role: AgentRole | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
@@ -254,6 +261,8 @@ class SyncAgentRequest:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
 
+        region = self.region
+
         resume_history: dict[str, Any] | Unset = UNSET
         if not isinstance(self.resume_history, Unset):
             resume_history = self.resume_history.to_dict()
@@ -356,6 +365,8 @@ class SyncAgentRequest:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if region is not UNSET:
+            field_dict["region"] = region
         if resume_history is not UNSET:
             field_dict["resume_history"] = resume_history
         if role is not UNSET:
@@ -545,6 +556,8 @@ class SyncAgentRequest:
 
                 plugins.append(plugins_item)
 
+        region = d.pop("region", UNSET)
+
         _resume_history = d.pop("resume_history", UNSET)
         resume_history: ResumeHistory | Unset
         if isinstance(_resume_history, Unset):
@@ -654,6 +667,7 @@ class SyncAgentRequest:
             mode=mode,
             plugin_events=plugin_events,
             plugins=plugins,
+            region=region,
             resume_history=resume_history,
             role=role,
             sandbox=sandbox,

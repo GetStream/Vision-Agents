@@ -57,12 +57,13 @@ func (s *AgentSuite) searches(found search.Result) {
 // same selection a deployed one does without needing a key for anything.
 func (s *AgentSuite) searchRouter() *searchrouter.Router {
 	registry := searchrouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (search.Provider, error) {
+	registry.Register("stub", func(spec routing.Spec) (search.Provider, error) {
+		s.builtIn.add(routing.Search, spec.Region)
 		return s.finds, nil
-	})
+	}, routing.OverrideRegion)
 
 	router, err := searchrouter.New(searchrouter.Options{
-		Config: routing.ModalityConfig{
+		Config: s.regional(routing.ModalityConfig{
 			Providers: []routing.ProviderConfig{{
 				Provider:  "stub",
 				Model:     "now",
@@ -70,7 +71,7 @@ func (s *AgentSuite) searchRouter() *searchrouter.Router {
 				Realtime:  true,
 				Tier:      routing.LowLatency,
 			}},
-		},
+		}),
 		Registry: registry,
 		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})

@@ -504,8 +504,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 	}
 	if err != nil {
-		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. If it names a step one of your "+
-			"tools does, call that tool and try again; otherwise tell the caller, in your own words.", err))
+		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()

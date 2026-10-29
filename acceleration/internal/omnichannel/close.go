@@ -279,13 +279,13 @@ func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
 	return c.mark(ctx, episode, map[string]any{"text": summary, statusField: store.EpisodeSummarized})
 }
 
-// ask is the summary of the episode's lines, from the agent config's own LLM.
+// ask is the summary of the episode's lines, from the agent config's own LLM in its region.
 func (c *Closer) ask(ctx context.Context, config store.AgentConfig, episode store.ClosedEpisode, said told) (string, error) {
 	target := config.LLM
 	if target == "" {
 		target = defaultSummaryTarget
 	}
-	session, err := c.llm.Start(ctx, llmrouter.Request{CustomerID: episode.CustomerID, CallID: episode.CallID, Target: target})
+	session, err := c.llm.Start(ctx, llmrouter.Request{CustomerID: episode.CustomerID, CallID: episode.CallID, Region: config.Region, Target: target})
 	if err != nil {
 		return "", err
 	}
