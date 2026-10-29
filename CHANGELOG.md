@@ -175,7 +175,7 @@ A Dart socket opened with a key now sends its token as `authorization` too, with
 
 ### Every agent knows the date and the hour
 
-Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named, else the agent config's `scheduling.default_timezone`. An agent that knows none of them takes a time of day the user gives in their own local time, and asks for their zone only when they bring up another one or a tool needs it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
 
 ### A Dart question with images is no longer refused in a saved conversation
 

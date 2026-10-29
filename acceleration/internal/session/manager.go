@@ -1,6 +1,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -661,6 +662,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			spec.Timezone, created.spec.Timezone = zone, zone
 		}
 	}
+	// A user with no zone of their own is in the config's default one, the zone a task they
+	// scheduled would take, so the agent's clock line and the scheduling tools agree.
+	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
 	// The scheduling tools are offered beside the plugins, inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
@@ -747,7 +751,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Edge:          edge,
 			Text:          spec.Text,
 			Instructions:  spec.prompt(),
-			Timezone:      spec.Timezone,
+			Timezone:      zone,
 			CustomerID:    spec.CustomerID,
 			Attribution:   spec.Attribution,
 			Caller:        spec.Caller,

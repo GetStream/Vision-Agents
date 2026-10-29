@@ -81,7 +81,8 @@ type Options struct {
 	// Instructions is the system prompt, sent with every turn.
 	Instructions string
 	// Timezone is the end user's IANA zone, which every turn's clock line tells the day and
-	// the hour in beside UTC. Empty when it is not known.
+	// the hour in beside UTC: theirs, or the agent config's default zone when theirs is not
+	// known. Empty when neither is.
 	Timezone string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
@@ -361,7 +362,7 @@ type Agent struct {
 	// and lives here rather than in the options because a caller may change what the
 	// agent is part way through a call.
 	prompt string
-	// zone is Options.Timezone loaded, nil when the user's zone is not known.
+	// zone is Options.Timezone loaded, nil when no zone is known for the user.
 	zone *time.Location
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
