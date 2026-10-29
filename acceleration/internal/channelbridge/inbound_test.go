@@ -194,6 +194,7 @@ func (s *InboundSuite) TestACardStreamChatAlreadyHoldsCountsAsWritten() {
 	s.Equal(0, s.row(thread, "1793125611.816139").Attempts, "written on its first attempt")
 	omni, card := s.card(thread)
 	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
+	s.NotContains(s.logs.String(), "could not write the episode card", "a card already there is no failure")
 }
 
 // A later message of a thread finds its episode open with its card written, and writes nothing
