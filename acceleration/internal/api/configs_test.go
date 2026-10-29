@@ -709,6 +709,7 @@ var privateWebhookURLs = map[string]string{
 	"https://hooks.acme.invalid/check":  "must be a public https URL", // never resolves, RFC 6761 section 6.4
 	"https://user:pass@8.8.8.8/check":   "must be a public https URL", // userinfo, which egress never sends
 	"https:///check":                    "must be a public https URL", // no host
+	"https://hooks acme.com/check":      "must be a public https URL", // a host url.Parse refuses
 	"http://8.8.8.8/check":              "not an https url",           // plain http, which egress never sends
 }
 
