@@ -112,6 +112,8 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 
 	switch {
 	case failing:
+		// A provider can finish asking for a tool before it fails the rest of the answer.
+		script.ToolCalls(calls...)
 		script.Fail(failure, "stream")
 	case len(calls) > 0:
 		script.OutputText(answer)

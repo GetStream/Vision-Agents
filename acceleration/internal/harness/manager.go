@@ -614,8 +614,10 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		m.mu.Unlock()
 		return nil, false
 	}
-	if len(m.tools(running)) > 0 && len(response.ToolCalls) > 0 && running.live() &&
-		running.rounds < toolRounds {
+	// A failed answer's tool calls are not run: the answer is asked again or settled as
+	// failed below, and running them as well would run them once for each attempt.
+	if len(m.tools(running)) > 0 && len(response.ToolCalls) > 0 && response.Status != llm.StatusFailed &&
+		running.live() && running.rounds < toolRounds {
 		running.rounds++
 		m.mu.Unlock()
 		return m.resume(running, response)
