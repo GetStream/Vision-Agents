@@ -117,9 +117,9 @@ func NewWorker(options Options) (*Worker, error) {
 // queued before it stopped, then when an answer ends, at the first message due, and at least
 // once a look.
 //
-// ctx is the router's stop signal: a draining router claims no more messages, so it starts no
-// answer its drain could cut, and the ones still queued wait for another router. The answers
-// already running go on until Close.
+// ctx is the router's stop signal: a draining router claims no more messages, and the ones
+// still queued wait for another router. The answers already running go on: the drain waits for
+// them (Running), and so does Close.
 func (w *Worker) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(w.ctx, cancel)
@@ -160,6 +160,12 @@ func (w *Worker) Kick() {
 func (w *Worker) Close() {
 	w.cancel()
 	w.working.Wait()
+}
+
+// Running is how many answers the worker is running now, for a draining router to wait for, as
+// scheduling.Scheduler.Running.
+func (w *Worker) Running() int {
+	return len(w.slots)
 }
 
 // answerDue claims as many due messages as there are free slots and answers each on its own

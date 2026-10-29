@@ -62,9 +62,10 @@ var readableID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // write finishes or wake says a message was queued, at the first one due, and at least once a
 // lease: with nothing queued it sends Postgres 2 queries a minute.
 //
-// ctx is the router's stop signal: a draining router takes no more messages, so it starts no
-// turn its drain could cut, and the ones still queued wait for another router. The writes
-// already taken finish, and Close waits for them.
+// ctx is the router's stop signal: a draining router takes no more messages, and the ones
+// still queued wait for another router. The writes already taken finish and hand their
+// messages over; the drain waits for them and for the turns they start (Running), and Close
+// for the writes.
 func (b *Bridge) Start(ctx context.Context, answer Answer) {
 	b.answer = answer
 	ctx, cancel := context.WithCancel(ctx)
@@ -90,6 +91,14 @@ func (b *Bridge) Start(ctx context.Context, answer Answer) {
 			}
 		}
 	}()
+}
+
+// Running is how many queued messages the worker is writing now and how many turns it handed
+// the agent have not ended, for a draining router to wait for, as scheduling.Scheduler.Running.
+// A turn counts from before its write's slot frees, so the two never both read zero between
+// the write and the turn.
+func (b *Bridge) Running() int {
+	return len(b.slots) + int(b.turning.Load())
 }
 
 // wake tells the worker there may be a message to write, without waiting.
@@ -214,10 +223,10 @@ func (b *Bridge) attempt(message store.ChannelInbound) {
 // own Stream id, and the card of the episode it opens, and hands it to the agent (answer).
 // Either write already done by an attempt whose answer was lost counts as written; the
 // message is then rebuilt from its row. An episode that cannot be opened or a card that
-// cannot be written costs the card, not the answer: it is logged and the message goes on. A message admit holds back, such as a keyword or one
-// the gate refuses, is done with nothing written. The message is done only once its turn is
-// claimed, so a router that stops between the write and the claim leaves it queued, and the
-// next attempt finds it written and claims it.
+// cannot be written costs the card, not the answer: it is logged and the message goes on. A
+// message admit holds back, such as a keyword or one the gate refuses, is done with nothing
+// written. The message is done only once its turn is claimed, so a router that stops between
+// the write and the claim leaves it queued, and the next attempt finds it written and claims it.
 func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) error {
 	thread, err := b.store.ChannelThread(ctx, message.ChannelID)
 	if err != nil {
@@ -269,10 +278,14 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	}
 	log.Info("an inbound message is handed to the agent", "message", id)
 	// Off the worker's slot: a turn waits for the thread's earlier one and for the reply, up to
-	// minutes, and the thread's next message waits for this row only. Close does not wait for
-	// it, so a router stops no later than before: a turn the process cuts is lost as one the
+	// minutes, and the thread's next message waits for this row only. A draining router waits
+	// for it (Running); Close does not, so a turn the drain's end cuts is lost as one the
 	// message hook started was.
-	go turn()
+	b.turning.Add(1)
+	go func() {
+		defer b.turning.Add(-1)
+		turn()
+	}()
 	return nil
 }
 

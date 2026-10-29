@@ -173,6 +173,28 @@ func (s *WorkerSuite) TestAfterTheStopSignalAWorkerFinishesItsAnswerAndClaimsNoO
 	s.Equal(1, answers.of(later))
 }
 
+// Running counts the answers in flight, for a draining router to wait for, until each ends.
+func (s *WorkerSuite) TestRunningCountsTheAnswersInFlight() {
+	release := make(chan struct{})
+	started := make(chan struct{}, 2)
+	first, second := s.queue(), s.queue()
+	worker := s.start(Options{Answer: func(context.Context, store.ChatInbound) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	}})
+	<-started
+	<-started
+
+	s.Equal(2, worker.Running())
+	close(release)
+
+	s.Require().Eventually(func() bool {
+		return s.row(first).State == store.ChatInboundDone && s.row(second).State == store.ChatInboundDone
+	}, 5*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return worker.Running() == 0 }, 5*time.Second, 10*time.Millisecond)
+}
+
 // An answer Close cut short is no attempt: the row waits for its lease to run out, and a
 // router answers it then.
 func (s *WorkerSuite) TestAnAnswerCloseCutShortIsLeftForItsLease() {

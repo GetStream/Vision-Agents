@@ -287,7 +287,9 @@ type Bridge struct {
 	working sync.WaitGroup
 	// replying counts the replies Reply sends on goroutines of their own (Replying).
 	replying atomic.Int32
-	mu       sync.Mutex
+	// turning counts the turns the worker handed the agent that have not ended (Running).
+	turning atomic.Int32
+	mu      sync.Mutex
 	// held are the replies callers send themselves (Hold), by the command they answer.
 	held map[string]chan conversation.FinishedReply
 }

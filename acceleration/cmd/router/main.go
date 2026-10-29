@@ -1492,8 +1492,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
 	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
+	var deliveries *chatinbound.Worker
 	if pgStore != nil && len(chatInboundKeys) > 0 {
-		deliveries, err := chatinbound.NewWorker(chatinbound.Options{Store: pgStore, Answer: server.AnswerChatInbound, Logger: logger})
+		deliveries, err = chatinbound.NewWorker(chatinbound.Options{Store: pgStore, Answer: server.AnswerChatInbound, Logger: logger})
 		if err != nil {
 			return err
 		}
@@ -1561,7 +1562,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1593,8 +1594,8 @@ type stopping struct {
 	peers  *http.Server
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
-	// held is how many sessions and scheduled deliveries the process is
-	// still running.
+	// held is how many sessions, scheduled deliveries, inbound writes and
+	// turns, and chat answers the process is still running.
 	held      func() int
 	telephony *phone.Service
 	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
@@ -1675,15 +1676,23 @@ func stopServing(s stopping) error {
 	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
 }
 
-// running is how many sessions and scheduled deliveries a router holds; one
-// without sessions or a scheduled-task worker holds none of them.
-func running(sessions *session.Manager, scheduler *scheduling.Scheduler) int {
+// running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
+// over, and chat answers a router holds; one without one of them holds none of its work. A
+// turn counts until it ends, also before the session it opens is counted.
+func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
+	deliveries *chatinbound.Worker) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
 	}
 	if scheduler != nil {
 		held += scheduler.Running()
+	}
+	if bridge != nil {
+		held += bridge.Running()
+	}
+	if deliveries != nil {
+		held += deliveries.Running()
 	}
 	return held
 }

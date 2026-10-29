@@ -893,6 +893,31 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() 
 	s.Require().Eventually(func() bool { return running.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
 }
 
+// Running counts a write in flight, then the turn it handed over until the turn ends: a
+// draining router waits for both, and never sees zero between the write and its turn.
+func (s *InboundSuite) TestRunningCountsTheWriteInFlightAndTheTurnItHandedOver() {
+	s.emptyQueue() // a message an earlier test left due would be written too
+	thread := s.thread("fake_line")
+	waiting, releaseWrite := s.chat.Hold("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "hello", nil)
+	releaseTurn := make(chan struct{})
+	bridge := s.newBridge(nil)
+	bridge.Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) {
+		return func() { <-releaseTurn }, nil
+	})
+	<-waiting
+
+	s.Equal(1, bridge.Running(), "the write in flight")
+	releaseWrite()
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return bridge.Running() == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return bridge.Running() != 1 }, 200*time.Millisecond, 10*time.Millisecond, "the turn handed over")
+
+	close(releaseTurn)
+
+	s.Require().Eventually(func() bool { return bridge.Running() == 0 }, 5*time.Second, 10*time.Millisecond)
+}
+
 // handedTo starts a bridge whose worker hands each message to a turn that does nothing, and
 // returns what it hands over. options are as bridge takes them.
 func (s *InboundSuite) handedTo(options *Options) <-chan Written {
