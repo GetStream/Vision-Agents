@@ -1824,6 +1824,35 @@ func (c *testClient) failure(method, path string, body any) (int, string) {
 //
 // It returns the status when the handshake is refused.
 func (c *testClient) watch(path string) (*websocket.Conn, int) {
+	connection, response, err := c.dial(path)
+	if err != nil {
+		c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
+		return nil, response.StatusCode
+	}
+	c.suite.T().Cleanup(func() { _ = connection.Close() })
+	return connection, response.StatusCode
+}
+
+// refusal is what the router said when it refused to open a socket, for a test asserting
+// on the message as well as the status.
+func (c *testClient) refusal(path string) (int, string) {
+	connection, response, err := c.dial(path)
+	if err == nil {
+		_ = connection.Close()
+		c.suite.Require().FailNow("the handshake for " + path + " was accepted")
+	}
+	c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
+	payload, err := readAll(response)
+	c.suite.Require().NoError(err)
+	var answered ErrorResponse
+	if err := json.Unmarshal(payload, &answered); err != nil || answered.Error.Message == "" {
+		return response.StatusCode, string(payload)
+	}
+	return response.StatusCode, answered.Error.Message
+}
+
+// dial opens a socket with the client's credentials, the way watch describes.
+func (c *testClient) dial(path string) (*websocket.Conn, *http.Response, error) {
 	address := "ws" + strings.TrimPrefix(c.base(), "http") + path
 	query := url.Values{}
 	if key := c.header.Get(auth.APIKeyHeader); key != "" {
@@ -1841,13 +1870,7 @@ func (c *testClient) watch(path string) (*websocket.Conn, int) {
 		}
 	}
 
-	connection, response, err := websocket.DefaultDialer.Dial(address, c.header.Clone())
-	if err != nil {
-		c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
-		return nil, response.StatusCode
-	}
-	c.suite.T().Cleanup(func() { _ = connection.Close() })
-	return connection, response.StatusCode
+	return websocket.DefaultDialer.Dial(address, c.header.Clone())
 }
 
 // opens a socket the handshake must accept.
