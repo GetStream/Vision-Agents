@@ -1185,6 +1185,9 @@ pub struct AttachNumberRequest {
 ///`AttachedNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AttachedNumber {
+    ///The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_config_id: ::std::option::Option<::std::string::String>,
     pub route_id: ::std::string::String,
     ///Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
     pub sip_uri: ::std::string::String,
@@ -7612,6 +7615,9 @@ impl ::std::convert::TryFrom<::std::string::String> for PhoneCapability {
 ///`PhoneNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PhoneNumber {
+    ///The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_config_id: ::std::option::Option<::std::string::String>,
     pub capabilities: ::std::vec::Vec<PhoneCapability>,
     pub country: ::std::string::String,
     pub e164: ::std::string::String,
@@ -10608,6 +10614,16 @@ pub struct SessionVideo {
     ///Track or processor source. Omitted requires one unambiguous available source.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
+}
+///`SetNumberAgentRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SetNumberAgentRequest {
+    ///The name of the agent config that answers the number. Give this or config_id.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent: ::std::option::Option<::std::string::String>,
+    ///The id of the agent config that answers the number. Give this or agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<::std::string::String>,
 }
 ///The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
