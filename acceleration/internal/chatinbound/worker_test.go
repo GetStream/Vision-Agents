@@ -242,6 +242,25 @@ func (s *WorkerSuite) TestTwoWorkersAnswerEachDeliveryOnce() {
 	}
 }
 
+// A Kick never waits for the loop: the endpoint kicks on its request, before the worker has
+// started and after it closed as well, and a Kick that waited would hold that request forever.
+func (s *WorkerSuite) TestAKickBeforeStartOrAfterCloseReturnsAtOnce() {
+	worker, err := NewWorker(Options{Store: s.store, Answer: (&answers{}).answer(nil)})
+	s.Require().NoError(err)
+	kicked := make(chan struct{})
+	go func() {
+		defer close(kicked)
+		worker.Kick()
+		worker.Kick()
+		worker.Start()
+		worker.Close()
+		worker.Kick()
+		worker.Kick()
+	}()
+
+	s.Eventually(func() bool { return isClosed(kicked) }, 5*time.Second, time.Millisecond)
+}
+
 // A worker with no store or no answer could only fail later, on its first message.
 func (s *WorkerSuite) TestAWorkerNeedsAStoreAndAnAnswer() {
 	_, err := NewWorker(Options{Answer: (&answers{}).answer(nil)})
