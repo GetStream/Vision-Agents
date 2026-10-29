@@ -4104,6 +4104,54 @@ func (s *AgentSuite) TestAVerificationRefusedOnceIsNotSentTheSameValuesAgain() {
 	s.False(again, "a call that could not be made may be tried again")
 }
 
+func (s *AgentSuite) TestARefusedCallRunsAgainOnceAnotherCallHasDoneWhatItNeeded() {
+	order := llm.ToolCall{ID: "c1", Name: "checkout_basket", Arguments: `{"store":"lakeside"}`}
+	refusal := `{"error":"the basket is empty"}`
+	asked := func(id, name, arguments string) llm.Message {
+		return llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: id, Name: name, Arguments: arguments}}}
+	}
+	answered := func(id, content string) llm.Message {
+		return llm.Message{Role: llm.ToolResult, ToolCallID: id, Content: content}
+	}
+	refused := []llm.Message{
+		{Role: llm.User, Content: "Order a kettle from the lakeside store"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{order}},
+		answered("c1", refusal),
+	}
+	retry := llm.ToolCall{ID: "c9", Name: "checkout_basket", Arguments: `{"store": "lakeside"}`}
+	with := func(more ...llm.Message) []llm.Message {
+		return append(slices.Clone(refused), more...)
+	}
+
+	_, again := refusedBefore(refused, retry)
+	s.True(again, "sent again straight away, the same values get the same answer")
+
+	_, again = refusedBefore(with(asked("c2", "add_item", `{"item":"kettle"}`), answered("c2", `{"basket":["kettle"]}`)), retry)
+	s.False(again, "another tool has done what the order needed, so the order is made")
+
+	_, again = refusedBefore(with(asked("c2", "get_basket", `{}`), answered("c2", `{"basket":[]}`)), retry)
+	s.True(again, "a call whose name says it only reads changed nothing")
+
+	_, again = refusedBefore(with(asked("c2", "add_item", `{"item":"kettle"}`), answered("c2", `{"error":"sold out"}`)), retry)
+	s.True(again, "a call that failed changed nothing")
+
+	for _, router := range []string{
+		alreadyCalled + `{"basket":["kettle"]}`,
+		fmt.Sprintf(leftBlank, "add_item", "item"),
+		unfoundIDResult("item_id", "K-1", nil),
+		`{"status":"authorization_required","message":"sign in first"}`,
+	} {
+		_, again = refusedBefore(with(asked("c2", "add_item", `{"item":"kettle"}`), answered("c2", router)), retry)
+		s.True(again, "the router answered in the tool's place, so nothing changed: %s", router)
+	}
+
+	_, again = refusedBefore(with(
+		asked("c2", "add_item", `{"item":"kettle"}`), answered("c2", `{"basket":["kettle"]}`),
+		asked("c3", "checkout_basket", `{"store":"lakeside"}`), answered("c3", refusal),
+	), retry)
+	s.True(again, "refused again since the change, the call waits for the next one")
+}
+
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
 	for said, asked := range map[string]bool{
 		"What time would you like?":                         true,

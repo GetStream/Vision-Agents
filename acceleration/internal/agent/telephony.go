@@ -246,9 +246,20 @@ func undoneResult(content string) bool {
 // refusedBefore returns the answer of an identical call the tool already refused on this
 // call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
 // sent verify_account the PIN it had misheard three times over and was refused each time;
-// only what the caller says next can change the answer.
+// the same values get the same answer.
+//
+// That holds only while nothing the answer depends on has changed. A tool often refuses
+// because a step is missing (the item is not in the basket, the account is locked), and
+// once another tool has done that step the same values are the right call: held back, the
+// step is done and the call it was for never is. So a refusal holds only until a call that
+// may have changed something (changedState) has run since. That call is judged by its name,
+// so a misjudged one costs at most one more try, which the tool refuses again and which is
+// then held until something changes again.
 func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
+		if changedState(history, i) {
+			return "", false
+		}
 		result := history[i]
 		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) || !failedResult(result.Content) {
 			continue
@@ -262,6 +273,26 @@ func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// changedState reports whether history[i] is the result of a call that may have changed
+// something: the tool ran and succeeded, and its name does not say it only reads. An answer
+// the router gave in the tool's place (alreadyCalled, notRun, undoneResult, or one opening
+// with didNotWork) did not run it.
+func changedState(history []llm.Message, i int) bool {
+	result := history[i]
+	if result.Role != llm.ToolResult || failedResult(result.Content) || undoneResult(result.Content) ||
+		strings.HasPrefix(result.Content, alreadyCalled) || strings.Contains(result.Content, notRun) {
+		return false
+	}
+	for j := i - 1; j >= 0; j-- {
+		for _, asked := range history[j].ToolCalls {
+			if asked.ID == result.ToolCallID {
+				return !readsOnly(asked.Name)
+			}
+		}
+	}
+	return false
 }
 
 // alreadyRefused opens the answer to a call repeated after the tool refused it.
