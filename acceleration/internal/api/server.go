@@ -614,6 +614,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 		server.forwarder = node.NewForwarder(logger, credential)
 	}
+	if server.phone != nil {
+		server.phone.OnUnanswered(server.endUnanswered)
+	}
 	return server, nil
 }
 
@@ -668,12 +671,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
+	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)

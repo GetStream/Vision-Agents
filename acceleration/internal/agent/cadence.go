@@ -240,7 +240,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		current.carried = ""
 		if current.text != "" && !revisesTranscript(current.text, text) {
 			// A new utterance that is not a revision of the words in flight, which is how a
-			// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
+			// transcriber splitting "6:15" into "6:00." and "fifteen" arrives. Keep both so
 			// the next answer is about everything the caller said, not only the tail.
 			current.carried = strings.TrimSpace(current.text)
 		}
@@ -303,8 +303,8 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		delay = c.finalGapLocked()
 	}
 	if incompleteIdentifier(text) {
-		// Member IDs, PINs and clock times arrive a digit at a time. Answering
-		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
+		// Member IDs, PINs and clock times arrive a digit at a time, and answering before
+		// the last digit lands passes a tool the identifier without it.
 		delay = c.retry
 	}
 	c.scheduleLocked(current, delay)
@@ -683,7 +683,7 @@ func revisesTranscript(previous, next string) bool {
 }
 
 // growsTranscript reports whether next is previous with more words or a longer last token,
-// which is how "ABC12345" becomes "ABC123456" after the agent already answered the short
+// which is how "KTR58302" becomes "KTR583027" after the agent already answered the short
 // form.
 func growsTranscript(previous, next string) bool {
 	prev := strings.ToLower(words(previous))
@@ -699,7 +699,7 @@ func growsTranscript(previous, next string) bool {
 //
 // Words grown onto something being read out stay whole: "order 1 2" then "3 4" is one
 // order number, as are "one two" then "three" and "A B C" then "1 2", and a last token that
-// grew ("ABC12345" to "ABC123456") is not new words at all.
+// grew ("KTR58302" to "KTR583027") is not new words at all.
 func answeredPrefix(answered, text string) string {
 	before := strings.ToLower(words(answered))
 	now := strings.ToLower(words(text))

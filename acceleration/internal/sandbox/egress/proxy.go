@@ -42,8 +42,9 @@ const (
 	// handshakeTimeout bounds a sandbox's TLS handshake and each request's headers in a
 	// tunnel: http.DefaultTransport's TLSHandshakeTimeout (net/http/transport.go).
 	handshakeTimeout = 10 * time.Second
-	// idleTimeout closes a tunnel no request has used for it: http.DefaultTransport's
-	// IdleConnTimeout (net/http/transport.go).
+	// idleTimeout closes a tunnel no request has used for it, and a tunnel to an allowed domain
+	// that has carried no byte for it: http.DefaultTransport's IdleConnTimeout
+	// (net/http/transport.go).
 	idleTimeout = 90 * time.Second
 	// headerTimeout ends a request whose host sends no response header in time: nginx's
 	// proxy_read_timeout default
@@ -238,14 +239,62 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	tunnelsOpen.Inc()
 	defer tunnelsOpen.Dec()
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
-	sandbox := &readFirst{Conn: conn, first: bytes.NewReader(early)}
-	// Either side ending ends the tunnel: closing both stops the other copy.
+	idle := &idleTunnel{timeout: p.idleTimeout, ends: [2]net.Conn{conn, upstream}}
+	idle.touch()
+	sandbox := idle.watch(conn)
+	remote := idle.watch(upstream)
+	// Either side ending, or the tunnel going idle, ends it: closing both stops the other copy.
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, sandbox); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
+	go func() {
+		_, _ = io.Copy(remote, &readFirst{Conn: sandbox, first: bytes.NewReader(early)})
+		done <- struct{}{}
+	}()
+	go func() { _, _ = io.Copy(sandbox, remote); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
 	_ = upstream.Close()
+}
+
+// IdleTimeout is how long a connection to the proxy may sit with no request before the server
+// closes it: the one a tunnel is given.
+func (p *Proxy) IdleTimeout() time.Duration {
+	return p.idleTimeout
+}
+
+// idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end sends moves
+// the deadline of both, so a tunnel with a transfer in one direction and silence in the other
+// lives on, and a copy stuck writing to a peer that reads nothing fails at the deadline too.
+type idleTunnel struct {
+	timeout time.Duration
+	ends    [2]net.Conn
+}
+
+// touch gives both ends timeout from now to send a byte.
+func (i *idleTunnel) touch() {
+	deadline := time.Now().Add(i.timeout)
+	for _, end := range i.ends {
+		_ = end.SetDeadline(deadline)
+	}
+}
+
+// watch is conn with each read a touch. Only Read and Write are on it, so io.Copy cannot hand
+// the bytes to the kernel and skip the touch.
+func (i *idleTunnel) watch(conn net.Conn) net.Conn {
+	return &watched{Conn: conn, tunnel: i}
+}
+
+// watched is a tunnel end whose reads keep the tunnel's deadline.
+type watched struct {
+	net.Conn
+	tunnel *idleTunnel
+}
+
+func (c *watched) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.tunnel.touch()
+	}
+	return n, err
 }
 
 // tunnel is one CONNECT: the sandbox's credential, the host it asked for and the host's label

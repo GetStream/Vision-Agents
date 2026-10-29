@@ -107,3 +107,12 @@ func (s *ScheduledTasksSuite) TestANodeWithNoKeyringRefusesEveryForward() {
 	text, _, err = s.forwardDelivery(other, nil)
 	s.refused(text, err)
 }
+
+func (s *ScheduledTasksSuite) TestTheUnansweredPeerPathIsRefusedWithoutAPeer() {
+	body, err := json.Marshal(map[string]string{"customer_id": s.customerID(), "session_id": s.utils.uuid()})
+	s.Require().NoError(err)
+
+	status, answer := s.deliver(unansweredPeerPath, string(body), "")
+
+	s.Equal(http.StatusNotFound, status, "body: %s", answer)
+}

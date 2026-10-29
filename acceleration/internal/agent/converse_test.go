@@ -420,7 +420,7 @@ func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 
 	var superseded, asked Action
 	for _, action := range s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Text: "okay so wait make it six",
+		Participant: caller, Mode: stt.ModeReplacement, Text: "okay so wait make it seven",
 	}, s.talking()) {
 		switch action.Kind {
 		case ActSupersede:
@@ -432,7 +432,7 @@ func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 
 	s.Equal(first.ID, superseded.TurnID, "the first ask is about words that have changed")
 	s.NotEqual(first.ID, asked.Candidate.ID)
-	s.Equal("okay so wait make it six", asked.Text)
+	s.Equal("okay so wait make it seven", asked.Text)
 	s.True(asked.Candidate.Unfinished)
 
 	s.Empty(kinds(s.converse.Ruled(harness.Decided{
@@ -448,7 +448,7 @@ func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
 
 func (s *ConverseSuite) TestASettledTurnWaitsOnAnOverlapAskInFlight() {
 	s.build(DuplexOptions{})
-	s.overhears("okay wait make it six", s.talking())
+	s.overhears("okay wait make it seven", s.talking())
 
 	ready := s.held()
 	action := s.converse.Settled(ready, s.talking())
@@ -466,7 +466,7 @@ func (s *ConverseSuite) TestATurnQueuedBehindAnOverlapAskIsHeardOnceItIsAnswered
 	// A transcript closes the caller's line on Heard. A turn that never sends it leaves the
 	// line open, and whatever the caller says next is written over it.
 	s.build(DuplexOptions{})
-	s.overhears("okay wait make it six", s.talking())
+	s.overhears("okay wait make it seven", s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 
@@ -474,7 +474,7 @@ func (s *ConverseSuite) TestATurnQueuedBehindAnOverlapAskIsHeardOnceItIsAnswered
 	s.Require().True(waiting)
 	s.eventually(func() bool {
 		for _, heard := range s.heard() {
-			if heard.Text == "okay wait make it six" {
+			if heard.Text == "okay wait make it seven" {
 				return true
 			}
 		}
@@ -529,13 +529,13 @@ func (s *ConverseSuite) TestATurnQueuedAfterItsRulingIsHeardOnlyOnce() {
 
 	// Events arrive in order, so once a later turn is heard, a second report of the queued
 	// one would already be here.
-	later := s.settle("and a high chair", s.quiet())
+	later := s.settle("and a birthday cake", s.quiet())
 	s.converse.Ruled(harness.Decided{
 		CandidateID: later.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
 	s.eventually(func() bool {
 		heard := s.heard()
-		return len(heard) > 0 && heard[len(heard)-1].Text == "and a high chair"
+		return len(heard) > 0 && heard[len(heard)-1].Text == "and a birthday cake"
 	}, "the later turn was never heard")
 
 	var reports int
@@ -552,11 +552,11 @@ func (s *ConverseSuite) TestAQueuedTurnIsDroppedOnceTheSameWordsAreAnsweredInFul
 	// Everything they went on to say is answered, and the queued part must not be answered
 	// again, late, once the agent stops.
 	s.build(DuplexOptions{})
-	s.overhears("okay wait make it six", s.talking())
+	s.overhears("okay wait make it seven", s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 
-	ready := s.settle("okay wait make it six people please", s.quiet())
+	ready := s.settle("okay wait make it seven people please", s.quiet())
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
@@ -573,7 +573,7 @@ func (s *ConverseSuite) TestAQueuedTurnRestatedShorterOwesTheRestOfIt() {
 	// The transcriber went back over the run of speech and kept less of it. The answer is to
 	// the words it kept, so the rest is still owed.
 	dropped := testutil.ToFloat64(staleQueuedTurns)
-	s.queueSettledTurn("okay wait make it six", 0, harness.Continue)
+	s.queueSettledTurn("okay wait make it seven", 0, harness.Continue)
 
 	ready := s.settle("okay wait", s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
@@ -582,7 +582,7 @@ func (s *ConverseSuite) TestAQueuedTurnRestatedShorterOwesTheRestOfIt() {
 
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
 	s.Equal("okay wait", answered[0].Text)
-	s.Equal("make it six", answered[0].Unanswered)
+	s.Equal("make it seven", answered[0].Unanswered)
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the rest was answered with the shorter turn")
 	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
@@ -593,7 +593,7 @@ func (s *ConverseSuite) TestAQueuedTurnANewerUtteranceOpensWithIsNotOwedAgain() 
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn("a window seat too", 7, harness.Continue)
 
-	answered := s.answerFinal("a window seat too and make it six", 8)
+	answered := s.answerFinal("a window seat too and make it seven", 8)
 
 	s.Empty(answered.Unanswered)
 	_, waiting := s.converse.Waiting(s.quiet())
@@ -604,14 +604,14 @@ func (s *ConverseSuite) TestAQueuedTurnANewerUtteranceOpensWithIsNotOwedAgain() 
 func (s *ConverseSuite) TestQueuedWordsAreOwedToOneAnswerOnly() {
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	queued := s.queueSettledTurn("a window seat too", 0, harness.Continue)
-	first := s.settle("wait make it six", s.quiet())
+	first := s.settle("wait make it seven", s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
 	s.Require().Equal(queued.Text, answered[0].Unanswered)
 
-	second := s.settle("and gluten free", s.talking())
+	second := s.settle("and no shellfish", s.talking())
 	answered = s.converse.Ruled(harness.Decided{
 		CandidateID: second.ID, Disposition: harness.Respond, Floor: harness.Stop,
 	}, s.talking())
@@ -745,7 +745,7 @@ func (s *ConverseSuite) TestANewerNumberedUtteranceWithTheSamePrefixFoldsTheQueu
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn(queuedText, 7, harness.Continue)
 
-	const nextText = "Way make it six"
+	const nextText = "Way make it seven"
 	s.converse.Observe(stt.Transcript{
 		Participant: caller,
 		Mode:        stt.ModeFinal,
@@ -775,7 +775,7 @@ func (s *ConverseSuite) TestAQueuedTurnKeepsItsParticipantWhenUtteranceNumbersMa
 	s.queueSettledTurn(queuedText, 7, harness.Continue)
 
 	other := stt.Participant{ID: "other", UserID: "other", Name: "Jordan"}
-	const nextText = "Way make it six"
+	const nextText = "Way make it seven"
 	s.converse.Observe(stt.Transcript{
 		Participant: other,
 		Mode:        stt.ModeFinal,
@@ -807,10 +807,10 @@ func (s *ConverseSuite) TestCorrectingAnOlderQueuedUtterancePreservesTheActiveNu
 		Participant: caller,
 		Mode:        stt.ModeFinal,
 		Utterance:   8,
-		Text:        "No high chair.",
+		Text:        "No birthday cake.",
 	}, s.quiet())
 	active := s.held()
-	s.Equal("No high chair.", active.Text)
+	s.Equal("No birthday cake.", active.Text)
 	s.Require().Equal(ActAsk, s.converse.Settled(active, s.quiet()).Kind)
 
 	s.converse.Observe(stt.Transcript{
@@ -820,7 +820,7 @@ func (s *ConverseSuite) TestCorrectingAnOlderQueuedUtterancePreservesTheActiveNu
 		Text:        corrected,
 	}, s.quiet())
 	ready := s.held()
-	s.Equal("No high chair. "+corrected, ready.Text)
+	s.Equal("No birthday cake. "+corrected, ready.Text)
 	asked := s.converse.Settled(ready, s.quiet())
 	s.Require().Equal(ActAsk, asked.Kind)
 	answered := s.converse.Ruled(harness.Decided{
@@ -1147,7 +1147,7 @@ func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithDifferentWordsTheCallerSaid
 	// not on their own after it.
 	s.build(DuplexOptions{})
 	dropped := testutil.ToFloat64(staleQueuedTurns)
-	s.overhears("okay wait make it six", s.talking())
+	s.overhears("okay wait make it seven", s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 
@@ -1158,7 +1158,7 @@ func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithDifferentWordsTheCallerSaid
 
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
 	s.Equal("what time do you close", answered[0].Text)
-	s.Equal("okay wait make it six", answered[0].Unanswered)
+	s.Equal("okay wait make it seven", answered[0].Unanswered)
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting, "the queued turn was answered with the newer one")
 	s.Equal(1.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
@@ -1181,7 +1181,7 @@ func (s *ConverseSuite) TestAWordOfAssentAfterAQueuedTurnIsAnsweredWithIt() {
 func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithTheTurnThatInterrupts() {
 	queued := s.queueSettledTurn("a window seat too", 0, harness.Continue)
 
-	ready := s.settle("wait make it six", s.talking())
+	ready := s.settle("wait make it seven", s.talking())
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Stop,
 	}, s.talking())
@@ -1194,7 +1194,7 @@ func (s *ConverseSuite) TestAQueuedTurnIsAnsweredWithTheTurnThatInterrupts() {
 
 func (s *ConverseSuite) TestQueuedWordsAnsweredWithANewerTurnAreHeardWhenSaidAgain() {
 	queued := s.queueSettledTurn("a window seat too", 0, harness.Continue)
-	ready := s.settle("wait make it six", s.quiet())
+	ready := s.settle("wait make it seven", s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
@@ -1211,7 +1211,7 @@ func (s *ConverseSuite) TestOnlyTheQueuedWordsNotYetAnsweredAreAnsweredWithANewe
 	// A transcriber that keeps a run open after its answer sends the answered words again
 	// in front of the new ones.
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table on the patio.",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table by the fire.",
 	}, s.quiet())
 	first := s.held()
 	s.Require().Equal(ActAsk, s.converse.Settled(first, s.quiet()).Kind)
@@ -1219,7 +1219,7 @@ func (s *ConverseSuite) TestOnlyTheQueuedWordsNotYetAnsweredAreAnsweredWithANewe
 		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())))
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table on the patio. A window seat too.",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 1, Text: "a table by the fire. A window seat too.",
 	}, s.quiet())
 	grown := s.held()
 	s.Require().Equal("A window seat too.", grown.Said())
@@ -1228,7 +1228,7 @@ func (s *ConverseSuite) TestOnlyTheQueuedWordsNotYetAnsweredAreAnsweredWithANewe
 		CandidateID: grown.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.talking())))
 
-	newer := s.answerFinal("wait make it six", 2)
+	newer := s.answerFinal("wait make it seven", 2)
 
 	s.Equal("A window seat too.", newer.Unanswered)
 }
@@ -1260,7 +1260,7 @@ func (s *ConverseSuite) TestATurnQueuedBehindAnotherIsNotCountedAsFolded() {
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	s.queueSettledTurn("a window seat too", 0, harness.Continue)
 
-	newer := s.queueSettledTurn("and a high chair", 0, harness.Continue)
+	newer := s.queueSettledTurn("and a birthday cake", 0, harness.Continue)
 
 	action, waiting := s.converse.Waiting(s.quiet())
 	s.Require().True(waiting)
@@ -1368,7 +1368,7 @@ func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardOnALineOfItsOwn() {
 	// not written over whatever line is open by the time the agent stops.
 	s.build(DuplexOptions{})
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it seven",
 	}, s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
@@ -1384,7 +1384,7 @@ func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardOnALineOfItsOwn() {
 	s.Require().True(waiting)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the queued turn was never heard")
 	heard := s.heard()[0]
-	s.Equal("make it six", heard.Text)
+	s.Equal("make it seven", heard.Text)
 	s.NotEmpty(heard.LineID)
 	s.NotEqual(queued.LineID, heard.LineID, "it was heard under the line let go of")
 }
@@ -1393,12 +1393,12 @@ func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
 	// The line it waited in was heard with its words in it.
 	s.build(DuplexOptions{})
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it seven",
 	}, s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "and a high chair",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 8, Text: "and a birthday cake",
 	}, s.quiet())
 	asked := s.converse.Settled(s.held(), s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
@@ -1407,11 +1407,11 @@ func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
 
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
 	s.Equal(queued.LineID, answered[0].LineID)
-	s.Equal("make it six", answered[0].Unanswered)
+	s.Equal("make it seven", answered[0].Unanswered)
 	_, waiting := s.converse.Waiting(s.quiet())
 	s.False(waiting)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the line was never heard")
-	s.Equal("make it six and a high chair", s.heard()[0].Text)
+	s.Equal("make it seven and a birthday cake", s.heard()[0].Text)
 	s.Never(func() bool { return len(s.heard()) > 1 }, 50*time.Millisecond, 5*time.Millisecond,
 		"the queued words were heard a second time")
 
@@ -1428,7 +1428,7 @@ func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
 func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardBeforeTheTurnAnsweredWithIt() {
 	s.build(DuplexOptions{})
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it six",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 7, Text: "make it seven",
 	}, s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
@@ -1441,7 +1441,7 @@ func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardBeforeTheTurnAnswere
 	}, s.quiet())
 
 	s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 9, Text: "and a high chair",
+		Participant: caller, Mode: stt.ModeReplacement, Utterance: 9, Text: "and a birthday cake",
 	}, s.quiet())
 	asked = s.converse.Settled(s.held(), s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
@@ -1449,12 +1449,12 @@ func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardBeforeTheTurnAnswere
 	}, s.quiet())
 
 	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
-	s.Equal("make it six", answered[0].Unanswered)
+	s.Equal("make it seven", answered[0].Unanswered)
 	s.eventually(func() bool { return len(s.heard()) == 2 }, "the queued words were never heard")
 	heard := s.heard()
-	s.Equal("make it six", heard[0].Text, "the queued words are heard first, as they were said")
+	s.Equal("make it seven", heard[0].Text, "the queued words are heard first, as they were said")
 	s.NotEqual(queued.LineID, heard[0].LineID, "it was heard under the line let go of")
-	s.Equal("and a high chair", heard[1].Text)
+	s.Equal("and a birthday cake", heard[1].Text)
 	s.Equal(answered[0].LineID, heard[1].LineID)
 	s.NotEqual(heard[0].LineID, heard[1].LineID)
 }
@@ -1519,7 +1519,7 @@ func (s *ConverseSuite) TestATurnWaitingOnTheAgentNamesTheLineItWasHeardAs() {
 	// A watcher says of the caller's line that it is answered once the agent finishes,
 	// which it can only do knowing which line the queued turn is.
 	s.build(DuplexOptions{})
-	s.overhears("okay wait make it six", s.talking())
+	s.overhears("okay wait make it seven", s.talking())
 	queued := s.converse.Settled(s.held(), s.talking())
 	s.Require().Equal(ActQueue, queued.Kind)
 	_, waiting := s.converse.Waiting(s.quiet())
@@ -1734,7 +1734,7 @@ func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce(
 	}, s.talking())
 	s.Require().Equal([]ActionKind{ActInterrupt}, kinds(stopped))
 
-	ready := s.settle("actually wait, make it six", s.quiet())
+	ready := s.settle("actually wait, make it seven", s.quiet())
 	answered := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
 	}, s.quiet())
@@ -2150,7 +2150,7 @@ func (s *ConverseSuite) TestAFinishedTurnWhoseControllerTimedOutIsAnswered() {
 }
 
 func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesTheFloor() {
-	ready := s.settle("make it six people, and gluten instead", s.talking())
+	ready := s.settle("make it seven people, and no shellfish instead", s.talking())
 
 	actions := s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID,
@@ -2158,7 +2158,7 @@ func (s *ConverseSuite) TestAFinishedTurnOverTheAgentWhoseControllerFailedTakesT
 	}, s.talking())
 	s.Equal([]ActionKind{ActInterrupt, ActAnswer}, kinds(actions),
 		"queueing it would leave the caller waiting out the whole reply")
-	s.Equal("make it six people, and gluten instead", actions[1].Text)
+	s.Equal("make it seven people, and no shellfish instead", actions[1].Text)
 }
 
 func (s *ConverseSuite) TestATurnHeldOverTheAgentIsAnsweredOnceItStopsTalking() {
@@ -2467,7 +2467,7 @@ func TestWordsGoneBackOverAreJoinedOnce(t *testing.T) {
 		{"When Wait. Wait.", "Wait. Wait.", "When Wait. Wait."},
 		{"Tell me", "is it going to rain", "Tell me is it going to rain"},
 		{"Tell me", "Tell me, is it going to rain", "Tell me, is it going to rain"},
-		{"make it six", "six people please", "make it six people please"},
+		{"make it seven", "seven people please", "make it seven people please"},
 	} {
 		if got := joinOverlapping(tc.held, tc.more); got != tc.want {
 			t.Errorf("joinOverlapping(%q, %q) = %q, want %q", tc.held, tc.more, got, tc.want)

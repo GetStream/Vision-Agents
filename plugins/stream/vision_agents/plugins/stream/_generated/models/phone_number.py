@@ -28,6 +28,8 @@ class PhoneNumber:
         monthly_cost_micros (int):
         purchased_at (datetime.datetime):
         vendor (str):
+        agent_config_id (str | Unset): The agent config that answers the number's calls. Absent, its calls are
+            dispatched to a worker.
         released_at (datetime.datetime | None | Unset):
         sip_trunk_id (str | Unset): The customer's own SIP trunk calls from this number are dialled through. Present
             only for vendor sip_trunk.
@@ -41,6 +43,7 @@ class PhoneNumber:
     monthly_cost_micros: int
     purchased_at: datetime.datetime
     vendor: str
+    agent_config_id: str | Unset = UNSET
     released_at: datetime.datetime | None | Unset = UNSET
     sip_trunk_id: str | Unset = UNSET
     stream_trunk_id: str | Unset = UNSET
@@ -62,6 +65,8 @@ class PhoneNumber:
         purchased_at = self.purchased_at.isoformat()
 
         vendor = self.vendor
+
+        agent_config_id = self.agent_config_id
 
         released_at: None | str | Unset
         if isinstance(self.released_at, Unset):
@@ -91,6 +96,8 @@ class PhoneNumber:
                 "vendor": vendor,
             }
         )
+        if agent_config_id is not UNSET:
+            field_dict["agent_config_id"] = agent_config_id
         if released_at is not UNSET:
             field_dict["released_at"] = released_at
         if sip_trunk_id is not UNSET:
@@ -123,6 +130,8 @@ class PhoneNumber:
         purchased_at = datetime.datetime.fromisoformat(d.pop("purchased_at"))
 
         vendor = d.pop("vendor")
+
+        agent_config_id = d.pop("agent_config_id", UNSET)
 
         def _parse_released_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -159,6 +168,7 @@ class PhoneNumber:
             monthly_cost_micros=monthly_cost_micros,
             purchased_at=purchased_at,
             vendor=vendor,
+            agent_config_id=agent_config_id,
             released_at=released_at,
             sip_trunk_id=sip_trunk_id,
             stream_trunk_id=stream_trunk_id,

@@ -50,7 +50,7 @@ func (s *SessionCreateSuite) TestASessionWithoutAnIdIsGivenAUUIDv7() {
 }
 
 func (s *SessionCreateSuite) TestASessionIsHeldByAStringIdOfTheCallersOwn() {
-	id := "order_4471-" + s.utils.uuid()[24:]
+	id := "order_3825-" + s.utils.uuid()[24:]
 
 	created := s.client.createSession(textSession(&id))
 
@@ -204,9 +204,9 @@ func (s *SessionCreateSuite) TestAnEndedSessionTellsTheBackendWhatItSpentAndWhat
 	s.Equal(int64(1), read.Usage.Requests)
 
 	score := 4
-	s.Require().NoError(s.store.ReviewCall(context.Background(), s.customerID(), opened.Id, "Asked about order 4471.", &score, "Answered it."))
+	s.Require().NoError(s.store.ReviewCall(context.Background(), s.customerID(), opened.Id, "Asked about order 3825.", &score, "Answered it."))
 	read = s.serverClient.getSession(opened.Id)
-	s.Equal("Asked about order 4471.", value(read.Summary))
+	s.Equal("Asked about order 3825.", value(read.Summary))
 	s.Equal(4, value(read.ReviewScore))
 	s.Equal("Answered it.", value(read.ReviewNotes))
 }
@@ -307,14 +307,14 @@ func (s *SessionCreateSuite) TestABackendNamingNobodyCreatesASessionNoUserOwns()
 func (s *SessionCreateSuite) TestASessionAnswersFromTheHistoryItWasOpenedWith() {
 	request := historySession(true)
 	request.History = &[]HistoryMessage{
-		{Role: HistoryRoleUser, Text: "Hi, where is order 4471?"},
-		{Role: HistoryRoleAssistant, Text: "Order 4471 ships on Friday."},
+		{Role: HistoryRoleUser, Text: "Hi, where is order 3825?"},
+		{Role: HistoryRoleAssistant, Text: "Order 3825 ships on Friday."},
 		{Role: HistoryRoleUser, Text: "Thanks."},
 	}
 	opened := s.serverClient.createSession(request)
 
-	s.Equal("user: Hi, where is order 4471?\n"+
-		"assistant: Order 4471 ships on Friday.\n"+
+	s.Equal("user: Hi, where is order 3825?\n"+
+		"assistant: Order 3825 ships on Friday.\n"+
 		"user: Thanks.\n"+
 		"user: When does my order ship?",
 		s.answerTo(opened.Id, "When does my order ship?"))
@@ -323,7 +323,7 @@ func (s *SessionCreateSuite) TestASessionAnswersFromTheHistoryItWasOpenedWith() 
 func (s *SessionCreateSuite) TestNamedHistoryIsQuotedBehindANoteThatNamesAreLabels() {
 	request := historySession(true)
 	request.History = &[]HistoryMessage{
-		{Role: HistoryRoleUser, Text: "Where is order 4471?", Name: pointerTo("Ann"),
+		{Role: HistoryRoleUser, Text: "Where is order 3825?", Name: pointerTo("Ann"),
 			CreatedAt: pointerTo(time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC))},
 		{Role: HistoryRoleAssistant, Text: "It ships on Friday."},
 	}
@@ -333,7 +333,7 @@ func (s *SessionCreateSuite) TestNamedHistoryIsQuotedBehindANoteThatNamesAreLabe
 
 	s.Require().Len(lines, 4)
 	s.True(strings.HasPrefix(lines[0], "system: The conversation so far was kept by the caller"), lines[0])
-	s.Equal(`user: {"author":{"display_name":"Ann"},"sent_at":"2026-10-06T09:00:00Z","text":"Where is order 4471?"}`, lines[1])
+	s.Equal(`user: {"author":{"display_name":"Ann"},"sent_at":"2026-10-06T09:00:00Z","text":"Where is order 3825?"}`, lines[1])
 	s.Equal("assistant: It ships on Friday.", lines[2])
 	s.Equal("user: And order 4472?", lines[3])
 }
@@ -367,7 +367,7 @@ func (s *SessionCreateSuite) TestAnIncognitoSessionKeepsNothingOfTheHistoryItWas
 func (s *SessionCreateSuite) TestARecordedSessionRecordsItsOwnTurnsAndNotTheHistory() {
 	request := historySession(false)
 	request.History = &[]HistoryMessage{
-		{Role: HistoryRoleUser, Text: "Where is order 4471?"},
+		{Role: HistoryRoleUser, Text: "Where is order 3825?"},
 		{Role: HistoryRoleAssistant, Text: "It ships on Friday."},
 	}
 	opened := s.serverClient.createSession(request)

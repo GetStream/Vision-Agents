@@ -136,11 +136,11 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 		Participant: "Alex",
 		Text:        "cough",
 		Speaking:    true,
-		Reply:       "party of four at 7:30",
+		Reply:       "party of three at 6:15",
 	}))
 
 	question := s.waitAsked(1)[0].Input[0].Content
-	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
+	s.Contains(question, `is speaking right now and has so far said "party of three at 6:15"`)
 }
 
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {

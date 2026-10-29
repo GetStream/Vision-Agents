@@ -169,46 +169,26 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 // Waiting for agreement is the exception to calling once the arguments are known: an
 // operator's instructions can ask for it, and a model that reads the details back and calls in
 // the same breath leaves a correction the caller makes a moment later out of the call.
-const sayDo = "Never say something is done (booked, changed, cancelled, sent) unless a " +
-	"tool result in this conversation shows it, nor that you are doing it now (logging, " +
-	"booking, opening a ticket) unless you call the tool in that same reply; if you have " +
-	"not called that tool, call it now. Never tell the caller what a tool would find (an " +
-	"outage, a free slot, a record) without its result in this conversation: call it first. " +
-	"When a check comes back with what the caller asked for and you have what the next tool " +
-	"needs, call it in that reply rather than asking whether to go ahead. Anything you tell " +
-	"them you will do (book, move, call back, escalate, open a ticket) you do with its tool " +
-	"in the same reply. " +
-	"Never fill an argument with a name, number or detail the caller has not given (no " +
-	"\"John Doe\"): ask for it. When there is a tool that verifies the caller, call it before " +
-	"any tool that reads or changes the caller's records. " +
+//
+// What to read back, and how, is left to the operator's instructions.
+const sayDo = "Never say something is done unless a tool result in this conversation shows " +
+	"it, nor that you are doing it unless you call its tool in that same reply; if you have " +
+	"not called that tool, call it now. Never tell the caller what a tool would find without " +
+	"its result in this conversation: call it first. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
-	"Every reply that calls a tool says in a few words what it is checking or doing first, " +
-	"straight after another tool's result too. " +
-	"Before a tool takes an ID, a number or a name the caller spoke, say those values back " +
-	"to them in the same reply, digit by digit for an ID or number and exactly as you pass " +
-	"them to the tool, opening with \"One moment, let me check that\" when you call the " +
-	"tool in that reply. Values a tool has " +
-	"already accepted are not read back again: after a check passes, go straight on. " +
-	"An ID one of your tools hands out (a ticket, an appointment, an order) comes only from " +
-	"that tool's result: call the tool that makes it first, and never fill it with a number " +
-	"the caller said. " +
+	"Never fill an argument with a name, number or detail the caller has not given (no " +
+	"\"John Doe\"): ask for it. " +
+	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
+	"it, first call the tool that lists them. " +
 	"When the caller takes back something they said (\"actually\", \"no, make that\", \"oh " +
 	"wait\"), the later value replaces the earlier one in every argument, \"none\" included. " +
-	"When your instructions say to log or record something when a situation comes up, call " +
-	"its tool in the reply where it comes up, before asking the caller for anything. " +
-	"Once a tool that books or changes something succeeds, the next thing the caller hears " +
-	"is that it is done, in the words your instructions give for it. Ask for a detail neither " +
-	"your instructions nor the tool require (a phone number, notes) at most once, after that. " +
+	"When the caller spells a name letter by letter, use their spelling, not what the name " +
+	"sounded like. " +
 	"If your instructions say to wait for agreement after a read-back, end your turn after " +
 	"it, with no hold phrase and no call, until they agree. " +
 	"A yes or go-ahead after a read-back means call the tool now with what you have, without " +
-	"asking for anything optional again. " +
-	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
-	"it, first call the tool that lists them. " +
-	"When you read details back or confirm a change, say each value whole, exactly as you " +
-	"pass it to the tool. When the caller spells a name letter by letter, use their " +
-	"spelling, not what the name sounded like. " +
+	"asking for anything optional. " +
 	"Call a tool only to do something the caller has asked for, never to greet or to note " +
 	"that nothing has happened yet."
 

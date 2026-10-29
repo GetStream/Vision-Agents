@@ -102,14 +102,14 @@ type appointmentBook struct {
 }
 
 func newAppointmentBook() *appointmentBook {
-	return &appointmentBook{appointment: appointment{date: "Friday", time: "10am"}}
+	return &appointmentBook{appointment: appointment{date: "Monday", time: "9am"}}
 }
 
 func (b *appointmentBook) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	var arguments struct {
-		AppointmentID string `json:"appointment_id"`
-		Date          string `json:"new_date"`
-		Time          string `json:"new_time"`
+		AppointmentID string `json:"visit_id"`
+		Date          string `json:"new_day"`
+		Time          string `json:"new_slot"`
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -117,12 +117,12 @@ func (b *appointmentBook) Run(_ context.Context, call llm.ToolCall) ([]llm.Conte
 		b.wasRejected = true
 		return nil, fmt.Errorf("appointment arguments are not JSON: %w", err)
 	}
-	if arguments.AppointmentID != "a2" || arguments.Date == "" || arguments.Time == "" {
+	if arguments.AppointmentID != "v7" || arguments.Date == "" || arguments.Time == "" {
 		b.wasRejected = true
 		return nil, errors.New("appointment id, date, and time are required")
 	}
 	b.appointment.date, b.appointment.time = arguments.Date, arguments.Time
-	return llm.TextParts("Appointment a2 is now Tuesday morning."), nil
+	return llm.TextParts("Visit v7 is now Wednesday afternoon."), nil
 }
 
 func (b *appointmentBook) state() (appointment, bool) {
@@ -131,18 +131,18 @@ func (b *appointmentBook) state() (appointment, bool) {
 	return b.appointment, b.wasRejected
 }
 
-func rescheduleAppointmentTool() harness.Tool {
+func moveVisitTool() harness.Tool {
 	return harness.Tool{
-		Name:        "reschedule_appointment",
+		Name:        "move_visit",
 		Description: "move an existing appointment",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"appointment_id": map[string]any{"type": "string"},
-				"new_date":       map[string]any{"type": "string"},
-				"new_time":       map[string]any{"type": "string"},
+				"visit_id": map[string]any{"type": "string"},
+				"new_day":  map[string]any{"type": "string"},
+				"new_slot": map[string]any{"type": "string"},
 			},
-			"required": []any{"appointment_id", "new_date", "new_time"},
+			"required": []any{"visit_id", "new_day", "new_slot"},
 		},
 	}
 }
@@ -158,12 +158,12 @@ func (s *AgentSuite) TestABodyOnlyCallForAMultiFieldToolRecoversAndReschedules()
 func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	book := newAppointmentBook()
 	s.runner = &stubToolRunner{run: book.Run}
-	s.tools = harness.Tools{Tools: []harness.Tool{rescheduleAppointmentTool()}}
+	s.tools = harness.Tools{Tools: []harness.Tool{moveVisitTool()}}
 	s.join(false)
 	s.model.reply = nil
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
-	callerText := "Please move appointment a2 from Friday at 10am to Tuesday morning."
+	callerText := "Please move visit v7 from Monday at 9am to Wednesday afternoon."
 	s.says(participant, callerText)
 
 	s.eventually(func() bool {
@@ -174,9 +174,9 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	firstScript := s.model.script(firstRequest.ID)
 	firstScript.OutputText("One moment, checking that appointment. ")
 	if asAsk {
-		firstScript.OutputText(`<ask skill="reschedule_appointment">Move the Friday 10am appointment to Tuesday morning.</ask>`)
+		firstScript.OutputText(`<ask skill="move_visit">Move the Monday 9am visit to Wednesday afternoon.</ask>`)
 	} else {
-		firstScript.OutputText(`<call tool="reschedule_appointment">Move the Friday 10am appointment to Tuesday morning.</call>`)
+		firstScript.OutputText(`<call tool="move_visit">Move the Monday 9am visit to Wednesday afternoon.</call>`)
 	}
 	firstScript.Done()
 
@@ -188,44 +188,44 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 			return true
 		}
 		requests := s.model.requests()
-		return len(requests) > 1 && strings.Contains(requests[1].Instructions, "reschedule_appointment") &&
+		return len(requests) > 1 && strings.Contains(requests[1].Instructions, "move_visit") &&
 			s.model.script(requests[1].ID) != nil
 	}, "neither a malformed call nor a corrective response was observed")
 	state, rejected := book.state()
 	s.Require().False(rejected, "a malformed prose body reached the appointment service")
-	s.Equal(appointment{date: "Friday", time: "10am"}, state,
+	s.Equal(appointment{date: "Monday", time: "9am"}, state,
 		"the appointment must stay unchanged until the corrected call runs")
 
 	requests := s.model.requests()
 	s.Require().GreaterOrEqual(len(requests), 2)
 	correction := requests[1]
-	s.Contains(correction.Instructions, "reschedule_appointment")
-	s.Contains(correction.Instructions, "appointment_id")
-	s.Contains(correction.Instructions, "new_date")
-	s.Contains(correction.Instructions, "new_time")
+	s.Contains(correction.Instructions, "move_visit")
+	s.Contains(correction.Instructions, "visit_id")
+	s.Contains(correction.Instructions, "new_day")
+	s.Contains(correction.Instructions, "new_slot")
 	s.Contains(correction.Instructions, "not run")
 	s.Contains(correction.Input, llm.Message{Role: llm.User, Content: callerText})
 	s.Require().Len(correction.Tools, 1)
-	s.Equal("reschedule_appointment", correction.Tools[0].Name)
-	s.Equal([]any{"appointment_id", "new_date", "new_time"}, correction.Tools[0].Parameters["required"])
+	s.Equal("move_visit", correction.Tools[0].Name)
+	s.Equal([]any{"visit_id", "new_day", "new_slot"}, correction.Tools[0].Parameters["required"])
 	correctedScript := s.model.script(correction.ID)
 	s.Require().NotNil(correctedScript)
 	correctedScript.ToolCalls(llm.ToolCall{
 		ID:        "reschedule-correct",
-		Name:      "reschedule_appointment",
-		Arguments: `{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`,
+		Name:      "move_visit",
+		Arguments: `{"visit_id":"v7","new_day":"Wednesday","new_slot":"afternoon"}`,
 	})
 	correctedScript.Done()
 
 	s.eventually(func() bool {
 		state, _ := book.state()
-		return state == (appointment{date: "Tuesday", time: "morning"})
+		return state == (appointment{date: "Wednesday", time: "afternoon"})
 	}, "the corrected native call did not update the appointment")
 	run := s.awaitToolRan()
 	s.NoError(run.Err)
-	s.Equal("reschedule_appointment", run.Tool)
-	s.JSONEq(`{"appointment_id":"a2","new_date":"Tuesday","new_time":"morning"}`, run.Arguments)
-	s.Contains(run.Result, "now Tuesday morning")
+	s.Equal("move_visit", run.Tool)
+	s.JSONEq(`{"visit_id":"v7","new_day":"Wednesday","new_slot":"afternoon"}`, run.Arguments)
+	s.Contains(run.Result, "now Wednesday afternoon")
 
 	s.eventually(func() bool {
 		requests := s.model.requests()
@@ -236,13 +236,13 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	s.Equal(1, countOfMessages(final.Input, llm.User), "the successful reply should need no second caller turn")
 	s.True(slices.ContainsFunc(final.Input, func(message llm.Message) bool {
 		return message.Role == llm.ToolResult && message.ToolCallID == "reschedule-correct" &&
-			strings.Contains(message.Content, "now Tuesday morning")
+			strings.Contains(message.Content, "now Wednesday afternoon")
 	}), "the final response must receive the actual tool result")
 	audioBeforeFinal := len(s.edge.heard())
 	finalScript := s.model.script(final.ID)
-	finalScript.OutputText("Your appointment is now set for Tuesday morning.")
+	finalScript.OutputText("Your appointment is now set for Wednesday afternoon.")
 	finalScript.Done()
-	s.eventually(func() bool { return s.spokenText("Tuesday morning") },
+	s.eventually(func() bool { return s.spokenText("Wednesday afternoon") },
 		"the caller never heard the appointment update")
 	s.eventually(func() bool {
 		return len(s.edge.heard()) > audioBeforeFinal && slices.ContainsFunc(s.reported(), func(event Event) bool {
@@ -1353,9 +1353,7 @@ func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
 	ran := s.awaitToolRan()
 	s.Require().Error(ran.Err)
 	s.Contains(ran.Result, "did not work")
-	// Told only to tell the caller, Gemma answered "reboot the gateway before dispatching a
-	// truck" by reading the caller reboot steps instead of calling the reboot tool it had.
-	s.Contains(ran.Result, "If it names a step one of your tools does, call that tool and try again")
+	s.NotContains(ran.Result, "try again", "a failure is told to the caller, not answered with other calls")
 	s.eventually(func() bool {
 		return s.spokenText("cannot look that up")
 	}, "the caller was left in silence by a tool that failed")

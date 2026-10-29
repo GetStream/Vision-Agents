@@ -1316,6 +1316,12 @@ module GetStream
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "receiveCallStatus" => {
+          method: :post, path: "/v1/phone/status/{token}",
+          path_params: %w[token].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveChannelMessage" => {
           method: :post, path: "/v1/agents/channels/hooks/{token}",
           path_params: %w[token].freeze, query: [].freeze,
@@ -1366,6 +1372,12 @@ module GetStream
         }.freeze,
         "releasePhoneNumber" => {
           method: :delete, path: "/v1/phone/numbers/{e164}",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "removePhoneNumberAgent" => {
+          method: :delete, path: "/v1/phone/numbers/{e164}/agent",
           path_params: %w[e164].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
@@ -1482,6 +1494,12 @@ module GetStream
           method: :put, path: "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
           path_params: %w[customer_id id].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "setPhoneNumberAgent" => {
+          method: :put, path: "/v1/phone/numbers/{e164}/agent",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: "SetNumberAgentRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "setPluginClient" => {
@@ -1796,7 +1814,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AttachedNumber" => {
-          properties: %w[route_id sip_uri trunk_id].freeze,
+          properties: %w[agent_config_id route_id sip_uri trunk_id].freeze,
           required: %w[route_id sip_uri trunk_id].freeze, open: false
         }.freeze,
         "AuditChange" => {
@@ -2100,7 +2118,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Contact" => {
-          properties: %w[attempts call_id error id instructions state to_number vendor_call_id].freeze,
+          properties: %w[attempts call_id error id instructions outcome state to_number vendor_call_id].freeze,
           required: %w[attempts id state to_number].freeze, open: false
         }.freeze,
         "ContactsRequest" => {
@@ -2428,7 +2446,7 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
-          properties: %w[capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
+          properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
           required: %w[capabilities country e164 monthly_cost_micros purchased_at vendor].freeze, open: false
         }.freeze,
         "PhoneSandbox" => {
@@ -2708,12 +2726,16 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
           properties: %w[id type].freeze,
           required: %w[type id].freeze, open: false
+        }.freeze,
+        "SessionCallOutcome" => {
+          properties: %w[answered_at duration_seconds outcome].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "SessionConnectorBinding" => {
           properties: %w[connection_id name].freeze,
@@ -2761,6 +2783,10 @@ module GetStream
         }.freeze,
         "SessionVideo" => {
           properties: %w[max_frames source].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "SetNumberAgentRequest" => {
+          properties: %w[agent config_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SetPluginClientRequest" => {

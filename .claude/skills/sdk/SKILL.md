@@ -46,7 +46,7 @@ The structure of an agent folder is like this
 - agent.yaml (use this to detect/validate the folder for syncing)
 - instructions.md
 - guardrail.md
-- skills 
+- skills
 - knowledge (markdown files and urls)
 - simulations (`*.yaml`, each a list of simulations: `name`, `scenario`, `assertion`, and optionally `mode`, `variations`, `max_turns`, `caller_target`, `judge_target`, `caller_stt`, `caller_tts`, `caller_voice`, `tags`)
 
@@ -158,7 +158,7 @@ Guest users
 
 user = client.guestUser(options); // gets or creates a guest user (searches in cookie or device storage)
 
-client.claimGuestUser(guestUser, realUser); // only supported server side. 
+client.claimGuestUser(guestUser, realUser); // only supported server side.
 ```
 
 ## Server side SDKs
@@ -168,19 +168,19 @@ client.claimGuestUser(guestUser, realUser); // only supported server side.
 * placing an outbound call
 * syncing the folder config for an agent
 
-Include Stream's server side SDK as a dependency. 
+Include Stream's server side SDK as a dependency.
 
-Here's an example of python 
+Here's an example of python
 
 Normal call
 
 ```
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
-	    config="simple_voice_ai", 
+	    config="simple_voice_ai",
 	    cost_tracking={env: "production"},
 	    memory_filter={user_id: 123}, # memory visibility
-    ) 
+    )
     return agent
 
 
@@ -670,6 +670,8 @@ The usage events list (AI-1985): `listUsageEvents` (`GET /v1/usage/events`, `Usa
 Unrevoking a spend-limit grant (AI-1985): `unrevokeLimitGrant` (`POST /v1/spend/limits/grants/{grant_id}/unrevoke`, body `LimitGrantUnrevocation {reason}`, answers `LimitGrant`) is new, server-side only; 400 `invalid_expiry` for an expired grant, 409 `too_many_grants` past 20 live. `manageUnrevokeLimitGrant` is `Staff` and in no SDK. Go has the regenerated client, JavaScript the regenerated types and Python (`plugins/stream`) the regenerated operation and model; .NET, Ruby, Rust and PHP have their generated code regenerated. Every server-side SDK with a grants resource needs an `unrevoke` beside `revoke`. Swift, Kotlin and Dart need nothing, since it is server-side only. The usage service's `addCredit` gains `reverses_id` and `CreditEntry` `reverses_id` and `reversed_by_id`; no SDK is generated from that spec.
 
 Swift closes its gaps with the other client SDKs (no spec change): `SessionOptions` gains `custom`, `modelOverwrites` (a public `ModelOverwrites`), `memory` and `timezone`; `ForkOptions` gains `configID`, `description`, `custom`, `modelOverwrites` and `incognito`, and its `agent` is now the name, as everywhere else, rather than a config id; `AgentSession` gains `fork(_:)`, `events()` (an `AsyncStream` per caller, 256 deep, finished when it falls behind), `say(_:interrupt:)` and `interrupt(requestID:)`; `Responses.unwind(responseID:)` pages every item. It is now ahead of the others on four things. `SessionOptions.memory` sends `memory.user_id` as the user `setUser` named, so a phone's session recalls and stores memories. `SessionQuery` takes `createdSince`, `createdBefore`, `custom` and `sort`. `SessionOptions.timezone` sends `timezone`. And `agents.scheduledTasks` wraps the seven scheduled-task operations a device may call (`listScheduledTasks`, `getScheduledTask`, `updateScheduledTask`, `pauseScheduledTask`, `resumeScheduledTask`, `deleteScheduledTask`, `listScheduledTaskRuns`). Kotlin needs `memory`, the query fields, `timezone`, `say` with an interrupt and the scheduled tasks. Dart needs `memory`, the query fields, `timezone`, `interrupt` with a request id and the scheduled tasks. JavaScript needs the query fields typed on `SessionQuery` and the scheduled tasks. The server SDKs have no scheduled-task resource either (list, get, update, pause, resume, delete, runs, and the server-side create and run). A client SDK sends only its own user's id as `memory.user_id`, never one the app passes in, as Swift does. `sdks/swift/generate.py` now drops a nullable field from `required`, since the generator ignores `nullable`; a generator with the same habit would fail to decode a scheduled task that has not run yet (`last_run_at: null`).
+`Session.call_outcome` (`SessionCallOutcome`: `outcome`, `answered_at`, `duration_seconds`; enum `CallOutcome`) says how a placed call ended, and `Contact.outcome` (`CallOutcome`) how a campaign contact's call ended. Go has them through the generated client; other SDKs have it in their regenerated models. No SDK has a hand-written read of either yet.
+`createSession` answers 409 `call_unanswered` (a new `ErrorDetail.code`) for a phone session whose placed call already ended busy, `no_answer`, `failed` or `canceled`; the message names which. No schema changed beyond the `ErrorDetail.code` description and `createSession`'s 409. Go surfaces it from `Agent.StartCall` as a `*stream.RouterError` (no code change) and has the regenerated client; JavaScript, Python (`plugins/stream`), Kotlin, .NET and Rust have their regenerated code. Every other SDK's start-a-call should surface it as a refusal the caller can branch on by code, not wait on a session; Swift needs its generated code regenerated when it next regenerates.
 
 Kotlin has the scheduled tasks (no spec change): `agents.scheduledTasks` wraps the seven client-accessible operations as `list(ScheduledTaskQuery)`, `get`, `update`, `pause`, `resume`, `delete` and `runs`, with the models generated from the spec (`sdks/kotlin/generate.py` now allowlists them). A schedule's and a snooze's `in` is `after` (`ScheduledTask.Schedule.after`, `ScheduledTask.Next.After`), `in` being a Kotlin keyword. The Kotlin generator keeps a required nullable field nullable, so a task that has not run yet (`last_run_at: null`) reads. Dart and JavaScript still need the scheduled tasks.
 Kotlin closes four of those (no spec change): `SessionOptions.memory` (`SessionOptions.Memory`, `filter` and `appId`) sends `memory.user_id` as the user `setUser` named, never one the app passes in; `SessionQuery` takes `createdSince` and `createdBefore` (`kotlin.time.Instant`, as `filter.created_at` `$gte`/`$lt`), `custom` (`filter.custom`) and `sort` (`SessionQuery.Sort`, sent as one `{"field": ...}` with no direction, since descending is the only one); and `AgentSession.say(text, interrupt = true)` sends an `interrupt` frame and then the `say`, since the router's `say` has no flag; and `SessionOptions.timezone` sends `timezone`. Kotlin has the scheduled tasks too (`agents.scheduledTasks`).
@@ -687,3 +689,5 @@ Every price names its region and whether it is BYOK (AI-2187): `PriceItem`, and 
 
 A socket may declare its auth type in the query (no spec shape change: the `AuthType` scheme's and the dispatch socket's descriptions). In `proxy` mode without declared kinds, where a caller that says nothing is a backend, the router reads `stream-auth-type` from the query when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`, so a socket can be the device that created its session and is asked to run that device's tools. Dart sends `stream-auth-type=jwt` on a socket opened by customer id, and on a keyed socket `authorization=<token>&stream-auth-type=jwt` beside `token`, which Stream's proxy needs (as JavaScript sends it) and the router ignores. Swift and Kotlin set the header on the handshake and need nothing. JavaScript (customer-id mode sends no auth type on requests or sockets, so it stays a backend on both sides and works) and the other SDKs may want the same query parameter later, for a browser or client socket opened by customer id against such a router.
 Customers keep their own provider keys (BYOK, AI-2187): `listProviderKeys` (`GET /v1/agents/provider-keys`, a `ProviderKeyPage` by cursor), `putProviderKey` (`PUT /v1/agents/provider-keys`, a `ProviderKeyRequest` of `provider`, an optional `region`, `us` when left out, and a write-only `api_key`, answered with a `ProviderKey`) and `deleteProviderKey` (`DELETE /v1/agents/provider-keys/{provider}?region=`, 204), all server-side only. A `ProviderKey` is `provider`, `region`, `key_hint` (the last four characters, empty for a key under 16) and its times; the key itself is never returned. A provider whose work is never routed on a customer's key is a 400 `provider_takes_no_key`, and deleting a key that is not kept a 404 `provider_key_not_found`; both codes are in `ErrorDetail.code`'s description. `AuditResourceType` gains `provider_key`. Go has the regenerated client, JavaScript the regenerated types, Python (`plugins/stream`) the regenerated models and operations, .NET, Ruby, Rust and PHP their regenerated generated code, and Kotlin its regenerated `ErrorDetail` (its description only). No server SDK wraps the three operations by hand yet: one that does should never log or echo `api_key`, and should leave `region` out rather than send `us` for the default. Swift and Dart need nothing: they generate neither schema, and the operations are not client-accessible.
+
+A phone number can be answered by an agent config with no worker (AI-1320): `setPhoneNumberAgent` (`PUT /v1/phone/numbers/{e164}/agent`, body `SetNumberAgentRequest {config_id, agent}`, answers `PhoneNumber`) and `removePhoneNumberAgent` (`DELETE /v1/phone/numbers/{e164}/agent`, 204) are new; `PhoneNumber` and `AttachedNumber` gain `agent_config_id`; `DELETE /v1/agents/configs/{id}` can answer 409 while a number is answered by the config. Go has the regenerated client, `Phone.SetAgent(ctx, number, agent)`, `Phone.RemoveAgent` and a `WaitForCall` that fails at once on a number an agent answers. JavaScript has the regenerated types and Python (`plugins/stream`) the regenerated models and operations. Swift's generator could not run here (it needs the chat repo's generator) and the operations are server-side only, so it should be regenerated next time. .NET, Ruby, Rust and PHP need their regenerated models and operations, and every server-side SDK needs a `setAgent` and `removeAgent` beside `attach` and `detach`, and a number-waiting call that refuses a number an agent answers. Kotlin and Dart need nothing, since it is server-side only.

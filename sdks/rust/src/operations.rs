@@ -3152,6 +3152,36 @@ impl Client {
         )
         .await
     }
+    /// Have an agent answer a number's calls
+    ///
+    /// `PUT /v1/phone/numbers/{e164}/agent` (`setPhoneNumberAgent`).
+    pub async fn set_phone_number_agent(
+        &self,
+        e164: &str,
+        body: &types::SetNumberAgentRequest,
+    ) -> Result<types::PhoneNumber> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/phone/numbers/{e164}/agent", e164 = segment(e164)),
+            None::<&()>,
+            Some(body),
+            "setPhoneNumberAgent",
+        )
+        .await
+    }
+    /// Send a number's calls back to dispatch
+    ///
+    /// `DELETE /v1/phone/numbers/{e164}/agent` (`removePhoneNumberAgent`).
+    pub async fn remove_phone_number_agent(&self, e164: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/numbers/{e164}/agent", e164 = segment(e164)),
+            None::<&()>,
+            None::<&()>,
+            "removePhoneNumberAgent",
+        )
+        .await
+    }
     /// Point a number at a Stream call
     ///
     /// `POST /v1/phone/numbers/{e164}/attach` (`attachPhoneNumber`).
@@ -3250,6 +3280,19 @@ impl Client {
             None::<&()>,
             body,
             "setSandboxRecipients",
+        )
+        .await
+    }
+    /// Receive a placed call's status
+    ///
+    /// `POST /v1/phone/status/{token}` (`receiveCallStatus`).
+    pub async fn receive_call_status(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/status/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveCallStatus",
         )
         .await
     }

@@ -339,6 +339,10 @@ type PhoneNumber struct {
 	// can be on a trunk without it, to place calls only.
 	AttachedAt *time.Time `bun:"attached_at"`
 	ReleasedAt *time.Time `bun:"released_at"`
+
+	// ConfigID is the agent config that answers the number's calls. Empty sends them to
+	// dispatch. Only an attached number has one: detaching or releasing it clears it.
+	ConfigID string `bun:"config_id,nullzero"`
 }
 
 // CallBridge is what a vendor is told to do when the person it called picks up.
@@ -366,6 +370,36 @@ type CallBridge struct {
 	CallID    string    `bun:"call_id,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	ExpiresAt time.Time `bun:"expires_at,notnull"`
+}
+
+// PhoneCall is one phone call the router placed, and how it ended. Which outcome a call has is
+// decided in package outcome; the store only keeps it.
+type PhoneCall struct {
+	bun.BaseModel `bun:"table:phone_calls,alias:pc"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// Token is in the URL the vendor posts the call's status to, and the only thing proving the
+	// post is about this call. Empty once swept.
+	Token      string `bun:"token,nullzero"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the deployment's
+	// own app.
+	StreamAppPK  int64  `bun:"stream_app_pk,nullzero"`
+	CallType     string `bun:"call_type,notnull"`
+	CallID       string `bun:"call_id,notnull"`
+	Vendor       string `bun:"vendor,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Reports is whether the vendor posts a final status for the call.
+	Reports      bool       `bun:"reports,notnull"`
+	VendorCallID string     `bun:"vendor_call_id,nullzero"`
+	PlacedAt     time.Time  `bun:"placed_at,notnull"`
+	AnsweredAt   *time.Time `bun:"answered_at"`
+	EndedAt      *time.Time `bun:"ended_at"`
+	// Outcome is empty until decided.
+	Outcome      string     `bun:"outcome,nullzero"`
+	VendorStatus string     `bun:"vendor_status,nullzero"`
+	DecidedAt    *time.Time `bun:"decided_at"`
 }
 
 // CallResource is the Stream SIP trunk and routing rule one outbound leg was given, kept so
