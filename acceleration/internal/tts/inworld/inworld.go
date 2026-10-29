@@ -177,9 +177,14 @@ type TTS struct {
 	// every utterance still being spoken: one stays here after it has been reported complete
 	// so the tail the server is still sending is forwarded rather than dropped. lookup wants
 	// both, utteranceFor and complete only the unsettled ones.
-	active   map[string]*utterance
-	started  bool
-	shutdown bool
+	active map[string]*utterance
+	// reopened is the socket an idle abnormal close was last recovered onto, and when. One
+	// that drops again within options.reconnect is not recovered, so a server that drops
+	// every socket as it opens fails the session instead of being redialled in a loop.
+	reopened   *websocket.Conn
+	reopenedAt time.Time
+	started    bool
+	shutdown   bool
 }
 
 // New validates the options and returns an unstarted provider.
@@ -568,16 +573,20 @@ func (t *TTS) handleReadError(conn *websocket.Conn, err error) {
 	t.mu.Lock()
 	shutdown, superseded := t.shutdown, t.conn != conn
 	idle := len(t.active) == 0
+	retry := t.reopened != conn || time.Since(t.reopenedAt) >= t.options.reconnect
 	t.mu.Unlock()
 	if shutdown || superseded {
 		return
 	}
 
-	if idle && websocket.IsCloseError(err, websocket.CloseAbnormalClosure) {
+	if idle && retry && websocket.IsCloseError(err, websocket.CloseAbnormalClosure) {
 		// An EOF between utterances lost no speech. Reconnect before reporting
 		// success; an EOF with any context still active remains a real failure.
 		_ = conn.Close()
 		if reconnectErr := t.dial(context.Background()); reconnectErr == nil {
+			t.mu.Lock()
+			t.reopened, t.reopenedAt = t.conn, time.Now()
+			t.mu.Unlock()
 			t.logger.Warn("reopened the voice after an idle connection failure", "error", err)
 			t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
 			return

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -440,8 +441,7 @@ func (s *InworldSocketSuite) TestAnIdleEOFReconnectsAndTheNextUtteranceIsAudible
 	provider, conn := s.connect(fake, Options{})
 	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
 
-	// This is the failure seen on calls: the previous reply has closed, and the
-	// server drops TCP without a WebSocket close frame while the caller speaks.
+	// The previous reply has closed when the server drops TCP without a close frame.
 	s.Require().NoError(provider.Synthesize(tts.Request{ID: "previous", Text: "hello", Final: true}))
 	s.frames(conn, 3)
 	s.Require().NoError(closed(conn, "previous"))
@@ -473,7 +473,7 @@ func (s *InworldSocketSuite) TestAnIdleEOFReconnectsAndTheNextUtteranceIsAudible
 			s.Equal("next", typed.SynthesisID)
 			s.Equal([]int16{1000, 2000, -1000}, typed.Audio.Samples)
 		case tts.Error:
-			s.Fail("idle recovery emitted a fatal measurement error", typed.Error())
+			s.Fail("idle recovery reported an error", typed.Error())
 		}
 	}
 	s.True(heard)
@@ -495,6 +495,57 @@ func (s *InworldSocketSuite) TestAnIdleEOFFailsWhenTheVoiceCannotReconnect() {
 	failure := events[len(events)-1].(tts.Error)
 	s.True(failure.Fatal)
 	s.ErrorContains(failure.Err, "reopen after websocket: close 1006")
+}
+
+func (s *InworldSocketSuite) TestAReopenedSocketThatDropsAtOnceFailsTheSession() {
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
+
+	// From here every socket the server accepts drops without a close frame.
+	var accepted atomic.Int32
+	go func() {
+		for {
+			select {
+			case next := <-fake.conns:
+				accepted.Add(1)
+				_ = next.Close()
+			case <-fake.request:
+			case <-fake.done:
+				return
+			}
+		}
+	}()
+	s.Require().NoError(conn.Close())
+
+	events := s.collect(provider, func(event tts.Event) bool { _, failed := event.(tts.Error); return failed })
+	s.True(events[len(events)-1].(tts.Error).Fatal, "a voice that cannot keep a socket open fails the session")
+	s.Never(func() bool { return accepted.Load() > 1 }, 300*time.Millisecond, 10*time.Millisecond,
+		"one reconnect per idle spell, not one for every socket the server drops")
+}
+
+func (s *InworldSocketSuite) TestAReopenedSocketThatDropsAfterAnIdleSpellIsReopenedAgain() {
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{reconnect: 50 * time.Millisecond})
+	reopened := func() {
+		events := s.collect(provider, func(event tts.Event) bool {
+			_, connected := event.(tts.Connected)
+			_, failed := event.(tts.Error)
+			return connected || failed
+		})
+		s.Require().IsType(tts.Connected{}, events[len(events)-1])
+	}
+	reopened()
+
+	for range 2 {
+		s.Require().NoError(conn.Close())
+		reopened()
+		conn = fake.accept()
+		s.Require().NotNil(conn)
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (s *InworldSocketSuite) TestAnEOFWhileTheAudioTailIsPendingRemainsAFailure() {
