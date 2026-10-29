@@ -1487,6 +1487,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		server.SetChatInboundKick(deliveries.Kick)
 		deliveries.Start()
 		defer deliveries.Close()
 	}

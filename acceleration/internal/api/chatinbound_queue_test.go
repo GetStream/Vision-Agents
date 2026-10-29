@@ -15,7 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
@@ -545,13 +544,7 @@ func (s *ChatInboundQueueSuite) queue(body string) string {
 // answering runs the queue's worker on the suite's router until the test ends, trying a
 // delivery again an hour on, after the test.
 func (s *ChatInboundQueueSuite) answering() {
-	worker, err := chatinbound.NewWorker(chatinbound.Options{
-		Store: s.store, Answer: s.router.AnswerChatInbound, Poll: 20 * time.Millisecond,
-		Retries: []time.Duration{time.Hour},
-	})
-	s.Require().NoError(err)
-	worker.Start()
-	s.T().Cleanup(worker.Close)
+	s.chatInbounds.answering(&s.RouterSuite)
 }
 
 // receives reports whether a message of type wanted arrives on connection before a delivery

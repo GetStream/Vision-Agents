@@ -152,6 +152,72 @@ func (s *StoreSuite) TestAChatInboundQueuedInACallersTransactionIsQueuedOnlyWith
 	s.Equal(1, s.chatRows())
 }
 
+// deliveryKey is a key no other test recorded: hook deliveries outlive a test.
+func (s *StoreSuite) deliveryKey() string {
+	return fmt.Sprintf("1257545:message:msg-%d", time.Now().UnixNano())
+}
+
+// The message webhook recorded the message first: it answers it, and the delivery queues nothing.
+func (s *StoreSuite) TestAChatInboundIsNotQueuedUnderAKeyRecordedBefore() {
+	key := s.deliveryKey()
+	first, err := s.store.FirstDelivery(s.ctx, key)
+	s.Require().NoError(err)
+	s.Require().True(first)
+
+	queued, err := s.store.QueueFirstChatInbound(s.ctx, key, s.chatInbound("msg-one"))
+
+	s.Require().NoError(err)
+	s.False(queued)
+	s.Zero(s.chatRows())
+}
+
+// A delivery queued first records its key, so the message webhook that comes after it, or the
+// delivery made again, acts on nothing.
+func (s *StoreSuite) TestAChatInboundQueuedFirstRecordsItsKey() {
+	key := s.deliveryKey()
+
+	queued, err := s.store.QueueFirstChatInbound(s.ctx, key, s.chatInbound("msg-one"))
+	s.Require().NoError(err)
+	s.Require().True(queued)
+
+	first, err := s.store.FirstDelivery(s.ctx, key)
+	s.Require().NoError(err)
+	s.False(first)
+	again, err := s.store.QueueFirstChatInbound(s.ctx, key, s.chatInbound("msg-one"))
+	s.Require().NoError(err)
+	s.False(again)
+	s.Equal(1, s.chatRows())
+}
+
+// The key and the row are one transaction: a delivery that could not be queued records no key,
+// so when Stream Chat makes it again, it is queued then.
+func (s *StoreSuite) TestAChatInboundThatCouldNotBeQueuedRecordsNoKey() {
+	key := s.deliveryKey()
+
+	_, err := s.store.QueueFirstChatInbound(s.ctx, key, s.chatInbound("msg-one", func(delivery *ChatInbound) { delivery.StreamApp = 0 }))
+	s.Require().Error(err)
+
+	queued, err := s.store.QueueFirstChatInbound(s.ctx, key, s.chatInbound("msg-one"))
+	s.Require().NoError(err)
+	s.True(queued)
+}
+
+// Once the message webhook is off, the endpoint is what forgets the keys older than a day.
+func (s *StoreSuite) TestQueueingAChatInboundForgetsTheKeysOfADayAgo() {
+	old := s.deliveryKey()
+	_, err := s.store.DB().ExecContext(s.ctx, "INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?)", old, time.Now().Add(-deliveryKeptFor-time.Hour))
+	s.Require().NoError(err)
+	// As a store that has forgotten none yet.
+	s.store.deliveriesPruned.Store(0)
+
+	_, err = s.store.QueueFirstChatInbound(s.ctx, s.deliveryKey(), s.chatInbound("msg-one"))
+	s.Require().NoError(err)
+
+	kept, err := s.store.DB().NewSelect().Table("hook_deliveries").Where("key = ?", old).Count(s.ctx)
+	s.Require().NoError(err)
+	s.Zero(kept, "a key of a day ago is still recorded")
+}
+
 func (s *StoreSuite) TestAChatMessageIsNotClaimedBeforeItIsDue() {
 	s.queuedChat("msg-one", func(delivery *ChatInbound) { delivery.NextAttemptAt = s.base.Add(time.Second) })
 
