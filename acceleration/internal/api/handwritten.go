@@ -244,7 +244,9 @@ func documentHandWritten(api huma.API) {
 		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON " +
 			"objects carrying a `type`.\n" +
 			"The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an " +
-			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
+			"optional `sample_rate`: 8000, 12000, 16000, 22050, 24000, 32000, 44100 or 48000, and " +
+			"16000 when left out. Any other rate is refused with an `error` frame carrying `code` " +
+			"`invalid_request`. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
 			"`history` and `call` are server-side only. A `call` is refused from a backend too, " +

@@ -432,7 +432,7 @@ func (s *SocketSessionSuite) TestASampleRateTheSocketDoesNotCarryIsRefused() {
 			refused := s.answersStart(sampleRate)
 
 			s.Equal("error", refused["type"], "the socket answered %v", refused)
-			s.Contains(refused["error"], "sample_rate")
+			s.Equal(errSocketSampleRate.Message, refused["error"])
 			s.Equal("invalid_request", refused["code"])
 			s.Equal("invalid_request", refused["error_type"])
 		})
