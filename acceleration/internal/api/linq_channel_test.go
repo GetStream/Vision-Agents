@@ -767,12 +767,16 @@ func (s *LinqChannelSuite) TestAPersonWhoOptedOutInTheirOwnChatSilencesAGroupThe
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(group, "+12025550199", "Hi all"), time.Now()))
 	channel := s.threadChannel(group)
 	s.written(channel, 1)
+	// The inbound worker answers "Hi all": its reply has left before the member writes, so it
+	// is not taken for one their STOP should have held back.
+	s.turnsEnded()
+	answered := len(s.linq.sent())
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.inGroup(group, member, "Hello"), time.Now()))
 
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.answeredAfter(channel, 0)
-	s.Never(func() bool { return s.holds(channel, "Hello") || len(s.linq.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Never(func() bool { return s.holds(channel, "Hello") || len(s.linq.sent()) > answered }, dropped, 20*time.Millisecond)
 	s.ErrorIs(s.reachable(channel), channelbridge.ErrOptedOut)
 }
 
