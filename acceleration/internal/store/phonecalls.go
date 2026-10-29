@@ -96,6 +96,23 @@ func (s *Store) ChangePhoneCall(ctx context.Context, where PhoneCallWhere, chang
 	return PhoneCall{}, ErrNoPhoneCall
 }
 
+// PhoneCallByToken reads the phone call token was made for, from whichever shard holds it,
+// without locking it. It returns ErrNoPhoneCall when none does.
+func (s *Store) PhoneCallByToken(ctx context.Context, token string) (PhoneCall, error) {
+	call, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (PhoneCall, error) {
+		var call PhoneCall
+		err := PhoneCallWhere{Token: token}.on(db.NewSelect().Model(&call)).OrderExpr("pc.id DESC").Limit(1).Scan(ctx)
+		return call, err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return PhoneCall{}, ErrNoPhoneCall
+	}
+	if err != nil {
+		return PhoneCall{}, stack.Wrap(fmt.Errorf("store: phone call by token: %w", err))
+	}
+	return call, nil
+}
+
 // PhoneCalls returns the customer's newest phone call for each of callIDs, from every shard.
 // A call id with none is left out.
 func (s *Store) PhoneCalls(ctx context.Context, customerID string, callIDs []string) ([]PhoneCall, error) {

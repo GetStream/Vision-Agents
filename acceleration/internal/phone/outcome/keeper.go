@@ -81,7 +81,7 @@ func (k *Keeper) Ended(ctx context.Context, key Key, at time.Time) error {
 
 // ByToken reads the call a token was made for.
 func (k *Keeper) ByToken(ctx context.Context, token string) (Call, error) {
-	row, err := k.store.ChangePhoneCall(ctx, store.PhoneCallWhere{Token: token}, func(*store.PhoneCall) bool { return false })
+	row, err := k.store.PhoneCallByToken(ctx, token)
 	if err != nil {
 		return Call{}, asUnknown(err)
 	}

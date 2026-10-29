@@ -282,6 +282,15 @@ func (s *OutcomeSuite) TestABadTokenChangesNothing() {
 	s.Empty(s.read(placed.CallID).Outcome)
 }
 
+func (s *OutcomeSuite) TestATokenThatIsNotAUUIDChangesNothing() {
+	placed := s.place()
+
+	err := s.report("not-a-token", CallBusy, "busy")
+
+	s.ErrorIs(err, ErrUnknownStatus)
+	s.Empty(s.read(placed.CallID).Outcome)
+}
+
 func (s *OutcomeSuite) TestACallAnsweredAndEndedIsCompleted() {
 	placed := s.place()
 	s.clock.advance(20 * time.Second)

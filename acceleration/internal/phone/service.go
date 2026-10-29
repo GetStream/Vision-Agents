@@ -1318,6 +1318,11 @@ func (s *Service) ReportStatus(ctx context.Context, token, contentType string, b
 	if s.outcomes == nil {
 		return stack.Wrap(ErrUnknownStatus)
 	}
+	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
+	// database.
+	if id, err := uuid.Parse(token); err != nil || id.String() != token {
+		return stack.Wrap(ErrUnknownStatus)
+	}
 	call, err := s.outcomes.ByToken(ctx, token)
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return stack.Wrap(ErrUnknownStatus)
