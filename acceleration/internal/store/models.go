@@ -368,6 +368,36 @@ type CallBridge struct {
 	ExpiresAt time.Time `bun:"expires_at,notnull"`
 }
 
+// PhoneCall is one phone call the router placed, and how it ended. Which outcome a call has is
+// decided in package outcome; the store only keeps it.
+type PhoneCall struct {
+	bun.BaseModel `bun:"table:phone_calls,alias:pc"`
+
+	ID int64 `bun:"id,pk,autoincrement"`
+	// Token is in the URL the vendor posts the call's status to, and the only thing proving the
+	// post is about this call. Empty once swept.
+	Token      string `bun:"token,nullzero"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// StreamAppPK is the Stream app the call is in. Zero, stored as NULL, is the deployment's
+	// own app.
+	StreamAppPK  int64  `bun:"stream_app_pk,nullzero"`
+	CallType     string `bun:"call_type,notnull"`
+	CallID       string `bun:"call_id,notnull"`
+	Vendor       string `bun:"vendor,notnull"`
+	LocalNumber  string `bun:"local_number,notnull"`
+	RemoteNumber string `bun:"remote_number,notnull"`
+	// Reports is whether the vendor posts a final status for the call.
+	Reports      bool       `bun:"reports,notnull"`
+	VendorCallID string     `bun:"vendor_call_id,nullzero"`
+	PlacedAt     time.Time  `bun:"placed_at,notnull"`
+	AnsweredAt   *time.Time `bun:"answered_at"`
+	EndedAt      *time.Time `bun:"ended_at"`
+	// Outcome is empty until decided.
+	Outcome      string     `bun:"outcome,nullzero"`
+	VendorStatus string     `bun:"vendor_status,nullzero"`
+	DecidedAt    *time.Time `bun:"decided_at"`
+}
+
 // CallResource is the Stream SIP trunk and routing rule one outbound leg was given, kept so
 // the call.session_ended hook knows what to delete once the call ends.
 type CallResource struct {

@@ -3253,6 +3253,19 @@ impl Client {
         )
         .await
     }
+    /// Receive a placed call's status
+    ///
+    /// `POST /v1/phone/status/{token}` (`receiveCallStatus`).
+    pub async fn receive_call_status(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/status/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveCallStatus",
+        )
+        .await
+    }
     /// The calling customer's own SIP trunks
     ///
     /// `GET /v1/phone/trunks` (`listSipTrunks`).

@@ -72,6 +72,7 @@ from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
 from .call_direction import CallDirection
 from .call_event import CallEvent
+from .call_outcome import CallOutcome
 from .call_tags import CallTags
 from .call_token import CallToken
 from .call_token_request import CallTokenRequest
@@ -424,6 +425,7 @@ from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
 from .session_call import SessionCall
+from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
@@ -639,6 +641,7 @@ __all__ = (
     "Call",
     "CallDirection",
     "CallEvent",
+    "CallOutcome",
     "CallTags",
     "CallToken",
     "CallTokenRequest",
@@ -989,6 +992,7 @@ __all__ = (
     "SearchResult",
     "Session",
     "SessionCall",
+    "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
