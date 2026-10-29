@@ -14,8 +14,9 @@ import (
 // Lease is how far a claim pushes a queued message's next attempt: no other router takes it
 // while this one answers it. It outlasts the longest answer, a thread channel's, which waits
 // up to askTimeout (2 min) for the thread's turn and up to another for the reply
-// (api.answerThread), plus a minute for closing the session it opened. A lease that ran out
-// mid-answer would have a second router answer the message again.
+// (api.answerThread), plus a minute for closing the session it opened. A lease that runs out
+// mid-answer gives no second answer: a session or dispatch answer settled the row as it started,
+// and a thread channel's turn is claimed (AGENTS.md «Rules»).
 const Lease = 5 * time.Minute
 
 // look is the longest wait between looks for due messages, so a message another router
@@ -136,8 +137,8 @@ func (w *Worker) Start() {
 	}()
 }
 
-// Close stops claiming and waits for the answers in flight, so one is recorded rather than
-// left for its lease to run out and another router to answer it again.
+// Close stops claiming and waits for the answers in flight, so what came of each is recorded
+// rather than left for its lease to run out and another router to try it again.
 func (w *Worker) Close() {
 	w.cancel()
 	w.working.Wait()
@@ -208,11 +209,12 @@ func (w *Worker) attempt(delivery store.ChatDelivery) {
 	log.Info("answering a queued chat delivery", "attempts", delivery.Attempts)
 	err := w.answer(w.ctx, delivery)
 	if err != nil && w.ctx.Err() != nil {
-		// Close cut it short: the lease runs out and a router answers it again.
+		// Close cut it short: the lease runs out and a router tries it again, which answers
+		// nothing if its answer had started.
 		log.Info("left a queued chat delivery for another router", "error", err)
 		return
 	}
-	// Recorded even while Close waits: an answered message left leased is answered again.
+	// Recorded even while Close waits: an answered message left leased is tried again.
 	writing, done := context.WithTimeout(context.WithoutCancel(w.ctx), recordTimeout)
 	defer done()
 	attempts := delivery.Attempts + 1
@@ -233,6 +235,6 @@ func (w *Worker) attempt(delivery store.ChatDelivery) {
 	case err != nil:
 		log.Error("could not record a queued chat delivery's attempt", "error", err)
 	case !changed:
-		log.Warn("a queued chat delivery's lease ran out before its attempt was recorded")
+		log.Warn("a queued chat delivery's lease ran out before its attempt was recorded, or its answer started on another try")
 	}
 }
