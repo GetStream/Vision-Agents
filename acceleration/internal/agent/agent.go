@@ -1804,7 +1804,6 @@ func (a *Agent) ask(ready candidate) {
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
-		InParts:      a.converse.inParts(ready.Participant.ID),
 	}); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)

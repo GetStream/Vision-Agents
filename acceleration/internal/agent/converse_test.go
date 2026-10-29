@@ -1340,28 +1340,6 @@ func (s *ConverseSuite) TestAQueuedTurnSurvivesANewTurnThatStartsTheSameWay() {
 	s.Equal(queued.Candidate.ID, action.Candidate.ID)
 }
 
-func (s *ConverseSuite) TestACallerWhoWentOnBeforeHearingTheReplyIsGivingAThoughtInParts() {
-	first := s.settle("Question, Andre lies.", s.quiet())
-	answered := s.converse.Ruled(harness.Decided{
-		CandidateID: first.ID, Disposition: harness.Respond, Floor: harness.Continue,
-	}, s.quiet())
-	s.Require().Equal([]ActionKind{ActAnswer}, kinds(answered))
-	s.False(s.converse.inParts(caller.ID), "nothing yet says they are not done")
-
-	unheard := floor{Talking: true, LastParticipant: caller,
-		Unheard: unheardReply{turnID: first.ID, participant: caller.ID}}
-	actions := s.converse.Observe(stt.Transcript{
-		Participant: caller, Mode: stt.ModeReplacement, Utterance: 2, Text: "Delphina says Andre lies.",
-	}, unheard)
-	s.Require().Contains(kinds(actions), ActInterrupt)
-	s.True(s.converse.inParts(caller.ID), "going on over the reply is saying they had not finished")
-	s.False(s.converse.inParts("somebody else"))
-
-	part := s.converse.Settled(s.held(), s.quiet()).Candidate
-	s.converse.Ruled(harness.Decided{CandidateID: part.ID, Disposition: harness.Respond, Floor: harness.Continue}, s.quiet())
-	s.False(s.converse.inParts(caller.ID), "an answer they heard out ends it")
-}
-
 func (s *ConverseSuite) TestATurnQueuedInALineLetGoOfIsHeardOnALineOfItsOwn() {
 	// The caller's queued words shared a line with what they said next, which the agent
 	// let go of. That line is gone, so the queued words are heard under one of their own,
