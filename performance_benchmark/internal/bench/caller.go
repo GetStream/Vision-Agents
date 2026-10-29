@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
-	"github.com/GetStream/Vision-Agents/benchmark/rtc/streamrtc"
-	"github.com/GetStream/Vision-Agents/benchmark/rtc/transport"
+	"github.com/GetStream/Vision-Agents/performance_benchmark/internal/rtc/audio"
+	"github.com/GetStream/Vision-Agents/performance_benchmark/internal/rtc/streamrtc"
+	"github.com/GetStream/Vision-Agents/performance_benchmark/internal/rtc/transport"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )

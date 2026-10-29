@@ -687,8 +687,8 @@ const (
 	// InterruptCancel stops waiting for the call when the turn is interrupted, as Pipecat
 	// does by default (cancel_on_interruption=True).
 	InterruptCancel = "cancel"
-	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
-	// not flagged CANCELLABLE; its result goes into the history.
+	// InterruptWait lets the call finish after an interruption; its result goes into the
+	// history.
 	InterruptWait = "wait"
 )
 
