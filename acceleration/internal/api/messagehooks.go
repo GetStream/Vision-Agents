@@ -245,7 +245,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 					if errors.Is(err, node.ErrNoReply) {
 						// The other node may have placed it before its reply was lost: queued
 						// again, it would be placed twice.
-						s.logger.Warn("a queued chat delivery another node may have placed is left settled",
+						s.logger.Warn("a queued chat inbound message another node may have placed is left settled",
 							"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
 					} else {
 						s.unanswered(ctx, origin)

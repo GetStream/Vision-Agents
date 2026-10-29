@@ -1,6 +1,6 @@
 //go:build integration
 
-package chatdelivery
+package chatinbound
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func (s *WorkerSuite) SetupSuite() {
 	}
 	s.ctx = context.Background()
 	// A database of this suite's own, as the worker claims every row in it.
-	db, err := store.Open(testenv.Database(dsn, "chatdelivery"))
+	db, err := store.Open(testenv.Database(dsn, "chatinbound"))
 	s.Require().NoError(err)
 	s.store = db
 	s.Require().NoError(db.Migrate(s.ctx))
@@ -47,7 +47,7 @@ func (s *WorkerSuite) SetupSuite() {
 
 func (s *WorkerSuite) SetupTest() {
 	// A row an earlier test left queued would be the next test's worker's to answer.
-	_, err := s.store.DB().NewDelete().Model((*store.ChatDelivery)(nil)).Where("TRUE").Exec(s.ctx)
+	_, err := s.store.DB().NewDelete().Model((*store.ChatInbound)(nil)).Where("TRUE").Exec(s.ctx)
 	s.Require().NoError(err)
 }
 
@@ -63,7 +63,7 @@ func (s *WorkerSuite) TestAQueuedDeliveryIsAnsweredOnce() {
 
 	s.start(Options{Answer: answers.answer(nil)})
 
-	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryDone }, 5*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatInboundDone }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return answers.of(queued) > 1 }, 200*time.Millisecond, 10*time.Millisecond)
 	s.Equal(1, answers.of(queued))
 }
@@ -81,7 +81,7 @@ func (s *WorkerSuite) TestADeliveryThatKeepsFailingIsTriedAfterEachWaitThenGiven
 		Logger:  slog.New(slog.NewTextHandler(&logged, nil)),
 	})
 
-	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryFailed }, 5*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatInboundFailed }, 5*time.Second, 10*time.Millisecond)
 	row := s.row(queued)
 	s.Equal(3, row.Attempts)
 	s.NotNil(row.FinishedAt)
@@ -89,7 +89,7 @@ func (s *WorkerSuite) TestADeliveryThatKeepsFailingIsTriedAfterEachWaitThenGiven
 	s.Require().Len(at, 3)
 	s.GreaterOrEqual(at[1].Sub(at[0]), 100*time.Millisecond)
 	s.GreaterOrEqual(at[2].Sub(at[1]), 300*time.Millisecond)
-	s.Contains(logged.String(), `level=WARN msg="gave up a queued chat delivery" seq=`)
+	s.Contains(logged.String(), `level=WARN msg="gave up a queued chat inbound message" seq=`)
 	s.Contains(logged.String(), "message="+queued)
 }
 
@@ -107,7 +107,7 @@ func (s *WorkerSuite) TestADeliveryThatFailedOnceIsAnsweredOnTheNextTry() {
 		Retries: []time.Duration{50 * time.Millisecond},
 	})
 
-	s.Eventually(func() bool { return s.row(queued).State == store.ChatDeliveryDone }, 5*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatInboundDone }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(1, s.row(queued).Attempts)
 	s.Equal(2, answers.of(queued))
 }
@@ -136,7 +136,7 @@ func (s *WorkerSuite) TestCloseWaitsForTheAnswerInFlightAndRecordsIt() {
 	close(release)
 
 	s.Eventually(func() bool { return isClosed(closed) }, 5*time.Second, 10*time.Millisecond)
-	s.Equal(store.ChatDeliveryDone, s.row(queued).State)
+	s.Equal(store.ChatInboundDone, s.row(queued).State)
 	s.Never(func() bool { return answers.of(later) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "a closed worker claimed a delivery")
 }
 
@@ -145,7 +145,7 @@ func (s *WorkerSuite) TestCloseWaitsForTheAnswerInFlightAndRecordsIt() {
 func (s *WorkerSuite) TestAnAnswerCloseCutShortIsLeftForItsLease() {
 	started := make(chan struct{}, 1)
 	queued := s.queue()
-	worker := s.start(Options{Answer: func(ctx context.Context, _ store.ChatDelivery) error {
+	worker := s.start(Options{Answer: func(ctx context.Context, _ store.ChatInbound) error {
 		started <- struct{}{}
 		<-ctx.Done()
 		return ctx.Err()
@@ -155,7 +155,7 @@ func (s *WorkerSuite) TestAnAnswerCloseCutShortIsLeftForItsLease() {
 	worker.Close()
 
 	row := s.row(queued)
-	s.Equal(store.ChatDeliveryQueued, row.State)
+	s.Equal(store.ChatInboundQueued, row.State)
 	s.Zero(row.Attempts)
 	s.True(row.NextAttemptAt.After(time.Now().Add(Lease-time.Minute)), "the lease was let go of: %s", row.NextAttemptAt)
 }
@@ -169,7 +169,7 @@ func (s *WorkerSuite) TestAtMostInFlightAnswersRunAtOnce() {
 	for range inFlight + 1 {
 		s.queue()
 	}
-	s.start(Options{Answer: func(context.Context, store.ChatDelivery) error {
+	s.start(Options{Answer: func(context.Context, store.ChatInbound) error {
 		mu.Lock()
 		started++
 		mu.Unlock()
@@ -184,7 +184,7 @@ func (s *WorkerSuite) TestAtMostInFlightAnswersRunAtOnce() {
 
 	s.Eventually(func() bool { return count() == inFlight }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return count() > inFlight }, 300*time.Millisecond, 10*time.Millisecond)
-	unclaimed, err := s.store.DB().NewSelect().Model((*store.ChatDelivery)(nil)).Where("next_attempt_at <= now()").Count(s.ctx)
+	unclaimed, err := s.store.DB().NewSelect().Model((*store.ChatInbound)(nil)).Where("next_attempt_at <= now()").Count(s.ctx)
 	s.Require().NoError(err)
 	s.Equal(1, unclaimed)
 	close(release)
@@ -214,7 +214,7 @@ func (s *WorkerSuite) TestAnAnswerThatOutlastsItsLeaseIsAnsweredAgainAndSaysSo()
 		return strings.Contains(logged.String(), "lease ran out before its attempt was recorded")
 	}, 5*time.Second, 10*time.Millisecond)
 	s.Equal(2, answers.of(queued))
-	s.Equal(store.ChatDeliveryDone, s.row(queued).State)
+	s.Equal(store.ChatInboundDone, s.row(queued).State)
 }
 
 // Two routers' workers answer every message once between them, and close while answering.
@@ -238,7 +238,7 @@ func (s *WorkerSuite) TestTwoWorkersAnswerEachDeliveryOnce() {
 	closing.Wait()
 	for _, id := range queued {
 		s.Equal(1, answers.of(id), id)
-		s.Equal(store.ChatDeliveryDone, s.row(id).State, id)
+		s.Equal(store.ChatInboundDone, s.row(id).State, id)
 	}
 }
 
@@ -267,7 +267,7 @@ func (s *WorkerSuite) TestAWorkerWithEverySlotTakenWaitsForOneToFree() {
 // A look that could not read the queue is tried again a poll on, so a database that was away
 // for a moment does not leave the queue unanswered.
 func (s *WorkerSuite) TestALookThatFailedIsTriedAgainAPollOn() {
-	closed, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "chatdelivery"))
+	closed, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "chatinbound"))
 	s.Require().NoError(err)
 	s.Require().NoError(closed.Close())
 	worker, err := NewWorker(Options{Store: closed, Answer: (&answers{}).answer(nil), Poll: 30 * time.Millisecond})
@@ -309,7 +309,7 @@ func (s *WorkerSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 // queue queues a delivery due now and returns its message id.
 func (s *WorkerSuite) queue() string {
 	id := "message-" + uuid.NewString()
-	queued, err := s.store.QueueChatDelivery(s.ctx, store.ChatDelivery{
+	queued, err := s.store.QueueChatInbound(s.ctx, store.ChatInbound{
 		StreamApp: 1, MessageID: id, Deployment: true, Body: []byte(`{}`), NextAttemptAt: time.Now(),
 	})
 	s.Require().NoError(err)
@@ -332,21 +332,21 @@ func (s *WorkerSuite) start(options Options) *Worker {
 
 // finished records a queued delivery answered ago, and returns its message id.
 func (s *WorkerSuite) finished(messageID string, ago time.Duration) string {
-	_, err := s.store.DB().NewUpdate().Model((*store.ChatDelivery)(nil)).
-		Set("state = ?", store.ChatDeliveryDone).Set("finished_at = ?", time.Now().Add(-ago)).
+	_, err := s.store.DB().NewUpdate().Model((*store.ChatInbound)(nil)).
+		Set("state = ?", store.ChatInboundDone).Set("finished_at = ?", time.Now().Add(-ago)).
 		Where("message_id = ?", messageID).Exec(s.ctx)
 	s.Require().NoError(err)
 	return messageID
 }
 
 func (s *WorkerSuite) exists(messageID string) bool {
-	exists, err := s.store.DB().NewSelect().Model((*store.ChatDelivery)(nil)).Where("message_id = ?", messageID).Exists(s.ctx)
+	exists, err := s.store.DB().NewSelect().Model((*store.ChatInbound)(nil)).Where("message_id = ?", messageID).Exists(s.ctx)
 	s.Require().NoError(err)
 	return exists
 }
 
-func (s *WorkerSuite) row(messageID string) store.ChatDelivery {
-	var row store.ChatDelivery
+func (s *WorkerSuite) row(messageID string) store.ChatInbound {
+	var row store.ChatInbound
 	s.Require().NoError(s.store.DB().NewSelect().Model(&row).Where("message_id = ?", messageID).Scan(s.ctx))
 	return row
 }
@@ -360,7 +360,7 @@ type answers struct {
 // answer is an Answer that records the attempt, then fails it with what outcome says for the
 // message's nth attempt, or answers it when outcome is nil.
 func (a *answers) answer(outcome func(attempt int) error) Answer {
-	return func(_ context.Context, delivery store.ChatDelivery) error {
+	return func(_ context.Context, delivery store.ChatInbound) error {
 		a.mu.Lock()
 		if a.at == nil {
 			a.at = map[string][]time.Time{}

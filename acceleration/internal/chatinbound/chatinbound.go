@@ -1,4 +1,4 @@
-// Package chatdelivery checks that a request came from Stream Chat's own delivery of
+// Package chatinbound checks that a request came from Stream Chat's own delivery of
 // messages to the router, and from nobody else.
 //
 // The request is signed as Standard Webhooks signs one with a public key
@@ -11,7 +11,7 @@
 // The specification's Go library (github.com/standard-webhooks/standard-webhooks/libraries,
 // v0.0.1, its only version) checks only the symmetric v1, so the check is written here on
 // crypto/ed25519.
-package chatdelivery
+package chatinbound
 
 import (
 	"crypto/ed25519"
@@ -59,24 +59,24 @@ const maxSignatures = 2 * maxKeys
 // ErrUnsigned is a request Stream cannot be proven to have sent: no id, timestamp or
 // signature, one in another shape, or none that a key verifies. It never says which, so an
 // answer teaches a forger nothing.
-var ErrUnsigned = errors.New("chatdelivery: the request is not signed by Stream")
+var ErrUnsigned = errors.New("chatinbound: the request is not signed by Stream")
 
 // ErrStale is a signed timestamp further from now than Tolerance, in either direction: a
 // recording of a real request replayed later, or a clock far ahead.
-var ErrStale = errors.New("chatdelivery: the request's signed timestamp is too far from now")
+var ErrStale = errors.New("chatinbound: the request's signed timestamp is too far from now")
 
 // ParsePublicKeys reads the keys as configured: each the standard base64 of a 32-byte
 // ed25519 public key, one or two of them. None is no keys, which leaves deliveries off.
 func ParsePublicKeys(written []string) ([]ed25519.PublicKey, error) {
 	if len(written) > maxKeys {
-		return nil, stack.Wrap(errors.New("chatdelivery: at most two delivery keys are held at once, the current one and the one before it"))
+		return nil, stack.Wrap(errors.New("chatinbound: at most two delivery keys are held at once, the current one and the one before it"))
 	}
 	var keys []ed25519.PublicKey
 	for _, encoded := range written {
 		key, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil || len(key) != ed25519.PublicKeySize {
 			// The value is a public key, but naming its position is enough to find it.
-			return nil, stack.Wrap(errors.New("chatdelivery: delivery key " + strconv.Itoa(len(keys)+1) +
+			return nil, stack.Wrap(errors.New("chatinbound: delivery key " + strconv.Itoa(len(keys)+1) +
 				" is not the base64 of a 32-byte ed25519 public key"))
 		}
 		keys = append(keys, key)

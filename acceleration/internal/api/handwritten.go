@@ -775,7 +775,7 @@ func documentHandWritten(api huma.API) {
 	document.AddOperation(&huma.Operation{
 		OperationID: "receiveChatDelivery",
 		Method:      http.MethodPost,
-		Path:        chatDeliveryPath,
+		Path:        chatInboundPath,
 		Summary:     "Receive a message Stream Chat delivers",
 		Description: "Where Stream Chat delivers each message written in an agent channel, which is " +
 			"answered as the message webhook answers it. The body is the message.new event with " +

@@ -35,7 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatdelivery"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -1242,7 +1242,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// A key that does not read is refused at start: the endpoint would otherwise answer
 	// every delivery 401 and Stream's messages would go unanswered with nothing in the log
 	// but rejections.
-	chatDeliveryKeys, err := chatdelivery.ParsePublicKeys(settings.Stream.DeliveryKeys)
+	chatInboundKeys, err := chatinbound.ParsePublicKeys(settings.Chat.InboundKeys)
 	if err != nil {
 		return err
 	}
@@ -1293,7 +1293,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
-		ChatDeliveryKeys:      chatDeliveryKeys,
+		ChatInboundKeys:       chatInboundKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
@@ -1481,9 +1481,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer scheduler.Close()
 	}
 	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
-	// where Stream Chat deliveries are set up (stream.delivery_keys): nothing else queues one.
-	if pgStore != nil && len(chatDeliveryKeys) > 0 {
-		deliveries, err := chatdelivery.NewWorker(chatdelivery.Options{Store: pgStore, Answer: server.AnswerChatDelivery, Logger: logger})
+	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
+	if pgStore != nil && len(chatInboundKeys) > 0 {
+		deliveries, err := chatinbound.NewWorker(chatinbound.Options{Store: pgStore, Answer: server.AnswerChatInbound, Logger: logger})
 		if err != nil {
 			return err
 		}
