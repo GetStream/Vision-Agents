@@ -4083,25 +4083,27 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
-func (s *AgentSuite) TestABookingMadeBeforeTheCallerSpokeAgainIsNotMadeTwice() {
-	booking := llm.ToolCall{ID: "c1", Name: "book_room", Arguments: `{"name":"Quillon","time":"18:45"}`}
+func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {
+	order := llm.ToolCall{ID: "c1", Name: "place_order", Arguments: `{"item":"lantern","quantity":1}`}
 	history := []llm.Message{
-		{Role: llm.User, Content: "book it for Quillon at 18:45"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booking}},
-		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"name":"Quillon","time":"18:45"}`},
-		{Role: llm.User, Content: "yes, please go ahead"},
+		{Role: llm.User, Content: "One lantern, please."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{order}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"order_id":"o-1"}`},
 	}
-	again := llm.ToolCall{ID: "c2", Name: "book_room", Arguments: `{"time": "18:45", "name": "Quillon"}`}
+	again := llm.ToolCall{ID: "c2", Name: "place_order", Arguments: `{"quantity": 1, "item": "lantern"}`}
+
 	earlier, repeated := answeredSinceCaller(history, again, nil)
-	s.True(repeated)
-	s.Contains(earlier, "Quillon")
+	s.True(repeated, "asked for again before the caller said anything more, it is the same order")
+	s.Contains(earlier, "o-1")
 
-	_, repeated = answeredSinceCaller(history, llm.ToolCall{ID: "c3", Name: "find_room", Arguments: booking.Arguments}, nil)
-	s.False(repeated, "a lookup is free to run again once the caller has spoken")
+	asked := append(slices.Clone(history), llm.Message{Role: llm.User, Content: "Make that another one, same again."})
+	_, repeated = answeredSinceCaller(asked, again, nil)
+	s.False(repeated, "the caller asked for a second lantern")
 
-	history[2].Content = `{"error":"no room at 18:45"}`
-	_, repeated = answeredSinceCaller(history, again, nil)
-	s.False(repeated, "a booking that failed may be tried again")
+	failed := slices.Clone(history)
+	failed[2] = llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"error":"out of stock"}`}
+	_, repeated = answeredSinceCaller(failed, again, nil)
+	s.False(repeated, "an order that failed may be tried again")
 }
 
 func (s *AgentSuite) TestACallRefusedIsNotSentTheSameValuesAgainUntilTheCallerSpeaks() {
@@ -4142,6 +4144,39 @@ func (s *AgentSuite) TestACallRefusedIsNotSentTheSameValuesAgainUntilTheCallerSp
 		_, repeated = refusedBefore(history, again)
 		s.True(repeated, refusal)
 	}
+}
+
+func (s *AgentSuite) TestAReadAfterAChangeIsReadAgain() {
+	// A basket was read, an item added, and the basket asked for again: answered from the
+	// first read, the caller would be told the item is not in it.
+	read := llm.ToolCall{ID: "c1", Name: "get_basket", Arguments: `{}`}
+	add := llm.ToolCall{ID: "c2", Name: "add_to_basket", Arguments: `{"item":"umbrella"}`}
+	history := []llm.Message{
+		{Role: llm.User, Content: "Add an umbrella and tell me what's in my basket."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{read}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"items":["scarf"]}`},
+	}
+	again := llm.ToolCall{ID: "c3", Name: "get_basket", Arguments: `{}`}
+
+	_, cached := answeredSinceCaller(history, again, nil)
+	s.True(cached, "nothing changed, so the first read still answers")
+
+	failed := append(slices.Clone(history), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{add}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"error":"out of stock"}`})
+	_, cached = answeredSinceCaller(failed, again, nil)
+	s.True(cached, "an addition that failed changed nothing")
+
+	added := append(slices.Clone(history), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{add}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"added":"umbrella"}`})
+	_, cached = answeredSinceCaller(added, again, nil)
+	s.False(cached, "an item was added since the basket was read")
+
+	removed := append(slices.Clone(added), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c4", Name: "remove_from_basket", Arguments: `{"item":"umbrella"}`}}},
+		llm.Message{Role: llm.ToolResult, ToolCallID: "c4", Content: `{"removed":"umbrella"}`})
+	_, repeated := answeredSinceCaller(removed, llm.ToolCall{ID: "c5", Name: add.Name, Arguments: add.Arguments}, nil)
+	s.False(repeated, "the umbrella was taken out since it was added, so adding it again is a new addition")
+	_, repeated = answeredSinceCaller(added, llm.ToolCall{ID: "c5", Name: add.Name, Arguments: add.Arguments}, nil)
+	s.True(repeated, "nothing happened since it was added")
 }
 
 func (s *AgentSuite) TestOnlyAQuestionTheCallerOwesAnAnswerToShortensTheWait() {
@@ -5113,22 +5148,13 @@ func (s *AgentSuite) TestAnArgumentTheDescriptionNamesButTheSchemaLeavesOptional
 		"a call that leaves out an argument the schema does not require was refused")
 }
 
-func (s *AgentSuite) TestASucceededCallIsAnsweredFromItEvenAfterTheCallerSpoke() {
-	booked := llm.ToolCall{ID: "1", Name: "book_room", Arguments: `{"time": "18:45"}`}
-	history := []llm.Message{
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{booked}},
-		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"time": "18:45"}`},
-		{Role: llm.User, Content: "Thanks."},
-	}
-	_, repeated := answeredSinceCaller(history, llm.ToolCall{Name: "book_room", Arguments: `{"time":"18:45"}`}, nil)
-	s.True(repeated)
-
+func (s *AgentSuite) TestACallThatFailedIsTriedAgainAfterTheCallerSpeaks() {
 	failed := []llm.Message{
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "1", Name: "find_booking", Arguments: `{}`}}},
 		{Role: llm.ToolResult, ToolCallID: "1", Content: `{"error": "identity not verified"}`},
 		{Role: llm.User, Content: "My member ID is KTR583027."},
 	}
-	_, repeated = answeredSinceCaller(failed, llm.ToolCall{Name: "find_booking", Arguments: `{}`}, nil)
+	_, repeated := answeredSinceCaller(failed, llm.ToolCall{Name: "find_booking", Arguments: `{}`}, nil)
 	s.False(repeated, "a call that failed may be tried again")
 }
 
@@ -5136,9 +5162,9 @@ func (s *AgentSuite) TestACallTheRouterHeldBackRunsOnceThePersonHasActed() {
 	echo := llm.ToolCall{ID: "1", Name: "crm__echo", Arguments: `{"text":"a joke"}`}
 	answered := func(result string) bool {
 		history := []llm.Message{
+			{Role: llm.User, Content: "Send it."},
 			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{echo}},
 			{Role: llm.ToolResult, ToolCallID: "1", Content: result},
-			{Role: llm.User, Content: "I pressed it, try again."},
 		}
 		_, repeated := answeredSinceCaller(history, llm.ToolCall{ID: "2", Name: echo.Name, Arguments: echo.Arguments}, nil)
 		return repeated
@@ -5171,12 +5197,14 @@ func (s *AgentSuite) TestOnlyAResultThatSaysItFailedIsAFailure() {
 	s.False(failedResult(`{"error":""}`))
 }
 
-func (s *AgentSuite) TestACallThatOnlyFillsInABlankIsTheSameCall() {
-	s.True(fillsIn(`{"name": "Quillon", "phone": ""}`, `{"name": "Quillon", "phone": "512-550-1422"}`))
-	s.False(fillsIn(`{"guests": 4, "phone": ""}`, `{"guests": 6, "phone": ""}`))
-	s.True(fillsIn(`{"name": "Quillon"}`, `{"name": "Quillon", "phone": "512-550-1422"}`), "a text argument the first call left out")
-	s.False(fillsIn(`{"guests": 6}`, `{"guests": 6, "breakfast": true}`), "a choice the first call never made")
-	s.True(fillsIn(`{"guests": 2}`, `{"guests": 2, "late_checkout": false}`), "a choice left at its default")
+func (s *AgentSuite) TestACallThatAddsAValueIsADifferentCall() {
+	s.True(fillsIn(`{"title":"Kiln repair","note":""}`, `{"note":"  ","title":"Kiln repair"}`))
+	s.True(fillsIn(`{"title":"Kiln repair"}`, `{"title":"Kiln repair","note":null}`), "a key sent with no value")
+	s.True(fillsIn(`{"title":"Kiln repair","note":""}`, `{"title":"Kiln repair"}`), "a blank key left out")
+	s.False(fillsIn(`{"title":"Kiln repair"}`, `{"title":"Kiln repair","day":"Friday"}`), "a day the first call never asked for")
+	s.False(fillsIn(`{"title":"Kiln repair","note":""}`, `{"title":"Kiln repair","note":"bring gloves"}`), "a blank filled in")
+	s.False(fillsIn(`{"seats":2}`, `{"seats":2,"urgent":false}`), "false may not be what the tool does without it")
+	s.False(fillsIn(`{"seats":2}`, `{"seats":3}`))
 }
 
 func TestALineComposedUnaskedSaysWhatItIsFor(t *testing.T) {
