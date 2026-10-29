@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -10,12 +13,24 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatdelivery"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // chatDeliveryPath is where Stream Chat delivers the messages written in agent channels
 // itself, rather than through the app's webhook, which the customer can overwrite.
 const chatDeliveryPath = "/v1/chat/internal/messages"
+
+// chatDeliveryPeerPath is where a router's queue worker hands a queued delivery to the router
+// answering in its channel. It is served by hand and named in no spec: only a peer calls it,
+// through the peer forwarder, which is what node.Forwarded(ctx) attests.
+const chatDeliveryPeerPath = "/internal/chat-deliveries/answer"
+
+// errChatDeliveryUnsettled is a queued delivery nothing took this time: the reason is logged
+// where it happened, and the worker tries again.
+var errChatDeliveryUnsettled = errors.New("api: nothing took the queued chat delivery")
 
 // chatDelivery is what Stream Chat delivers: the message.new event the webhook carries, and
 // the app it was written in. The app is read from the signed body and never from a header,
@@ -72,7 +87,8 @@ func (s *Server) receiveChatDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if addressed(delivery.messageEvent) && s.acting(r.Context(), origin, delivery.Type, body) {
-		s.routeArrivingMessage(r, origin, body, delivery.messageEvent)
+		origin.handOver = s.replayed(r, body)
+		s.routeArrivingMessage(r.Context(), origin, delivery.messageEvent)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -101,4 +117,81 @@ func (s *Server) chatDeliveryOrigin(w http.ResponseWriter, app int64) (hookOrigi
 		return hookOrigin{}, false
 	}
 	return hookOrigin{customer: streamapp.CustomerOf(app), app: app}, true
+}
+
+// queuedChatDelivery is a queued delivery as one router hands it to another: the origin the
+// endpoint verified, and the event.
+type queuedChatDelivery struct {
+	Seq        int64  `json:"seq"`
+	StreamApp  int64  `json:"stream_app"`
+	CustomerID string `json:"customer_id"`
+	Deployment bool   `json:"deployment"`
+	APIKey     string `json:"api_key"`
+	Body       []byte `json:"body"`
+}
+
+// origin is where the delivery came from, as the endpoint verified it.
+func (q queuedChatDelivery) origin() hookOrigin {
+	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey}
+}
+
+// AnswerChatDelivery answers a delivery the endpoint queued, as it would have answered it on
+// the request, and returns once the answer has ended: the worker's lease holds the delivery
+// until then (chatdelivery.Lease). The endpoint already checked it is an addressed new
+// message, first delivered and fresh, so none of that is checked again: a retry ten minutes
+// on would read as stale.
+func (s *Server) AnswerChatDelivery(ctx context.Context, delivery store.ChatDelivery) error {
+	queued := queuedChatDelivery{Seq: delivery.Seq, StreamApp: delivery.StreamApp, CustomerID: delivery.CustomerID,
+		Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
+	var event chatDelivery
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		return stack.Wrap(fmt.Errorf("api: read queued chat delivery: %w", err))
+	}
+	origin := queued.origin()
+	origin.queued = true
+	origin.handOver = func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+		return s.handChatDeliveryToPeer(ctx, address, queued)
+	}
+	if !s.routeArrivingMessage(ctx, origin, event.messageEvent) {
+		return errChatDeliveryUnsettled
+	}
+	return nil
+}
+
+// handChatDeliveryToPeer gives a queued delivery to the node at address. The signed request is
+// gone by now, so the peer takes this router's word for its origin, which only a node holding
+// the deployment's credential can give (answerChatDeliveryForPeer).
+func (s *Server) handChatDeliveryToPeer(ctx context.Context, address string, queued queuedChatDelivery) (*node.ForwardResponse, error) {
+	body, err := json.Marshal(queued)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, chatDeliveryPeerPath, bytes.NewReader(body))
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	s.logger.Info("handing a queued chat delivery to another node", "seq", queued.Seq, "node", address)
+	return s.forwarder.Ask(ctx, address, request, body)
+}
+
+// answerChatDeliveryForPeer is the peer hand-off's other end: the message is answered here, off
+// the request, as the webhook's is. Anything not handed over by a peer is answered as no such
+// route, because the payload names its app and customer outright, which is only a peer's to say.
+func (s *Server) answerChatDeliveryForPeer(w http.ResponseWriter, r *http.Request) {
+	if !node.Forwarded(r.Context()) {
+		writeError(w, notFound("no such route"))
+		return
+	}
+	var queued queuedChatDelivery
+	var event chatDelivery
+	if json.NewDecoder(r.Body).Decode(&queued) != nil || json.Unmarshal(queued.Body, &event) != nil {
+		writeError(w, invalidRequest("the queued delivery could not be read"))
+		return
+	}
+	s.logger.Info("answering a queued chat delivery another node handed over", "seq", queued.Seq, "stream_app", queued.StreamApp)
+	if !s.routeArrivingMessage(r.Context(), queued.origin(), event.messageEvent) {
+		writeError(w, unavailable("nothing took the queued delivery"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

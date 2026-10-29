@@ -325,3 +325,19 @@ func signDelivery(key ed25519.PrivateKey, id string, at time.Time, body string) 
 func public(key ed25519.PrivateKey) ed25519.PublicKey {
 	return key.Public().(ed25519.PublicKey)
 }
+
+// ChatDeliveryLeaseSuite is the queue's lease against the answers it holds a delivery for.
+type ChatDeliveryLeaseSuite struct {
+	suite.Suite
+}
+
+func TestChatDeliveryLeaseSuite(t *testing.T) {
+	suite.Run(t, new(ChatDeliveryLeaseSuite))
+}
+
+// A thread's answer waits up to askTimeout for the turn and up to askTimeout for the reply,
+// then lets go of the turn (answerThread): a lease shorter than that has a second router
+// answer the message again (TestAnAnswerThatOutlastsItsLeaseIsAnsweredAgainAndSaysSo).
+func (s *ChatDeliveryLeaseSuite) TestTheLeaseOutlastsTheLongestAnswer() {
+	s.Greater(chatdelivery.Lease, 2*askTimeout+20*threadTurnPoll)
+}

@@ -1480,6 +1480,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 		scheduler.Start(ctx)
 		defer scheduler.Close()
 	}
+	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
+	// where Stream Chat deliveries are set up (stream.delivery_keys): nothing else queues one.
+	if pgStore != nil && len(chatDeliveryKeys) > 0 {
+		deliveries, err := chatdelivery.NewWorker(chatdelivery.Options{Store: pgStore, Answer: server.AnswerChatDelivery, Logger: logger})
+		if err != nil {
+			return err
+		}
+		deliveries.Start()
+		defer deliveries.Close()
+	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
 	// pinned to, read once, within the one attempt's time the deployment's own check gets.
 	go func() {

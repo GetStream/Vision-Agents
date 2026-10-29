@@ -35,6 +35,36 @@ type hookOrigin struct {
 	deployment bool
 	// apiKey is the key whose secret signed it.
 	apiKey string
+	// handOver hands what arrived to the node at an address: a hook's signed request replayed
+	// whole (replayed), or a queued delivery over the peer path (handChatDeliveryToPeer). Nil on the
+	// node a peer handed it to, which answers it itself.
+	handOver func(ctx context.Context, address string) (*node.ForwardResponse, error)
+	// queued is a delivery the queue's worker holds a lease on, whose answer runs in line, so
+	// the worker records it once it has ended.
+	queued bool
+}
+
+// answer runs an answer: in line for a queued delivery, and off the request for a hook,
+// because a model call takes seconds and Stream is waiting on the delivery.
+func (o hookOrigin) answer(answer func()) {
+	if o.queued {
+		answer()
+		return
+	}
+	go answer()
+}
+
+// replayed hands a hook to a peer whole, signature and all, because the node answering it
+// verifies the delivery for itself rather than taking this node's word that it came from
+// Stream. A hook a peer handed here goes nowhere further: two nodes each believing the other
+// answers would pass it back and forth.
+func (s *Server) replayed(r *http.Request, body []byte) func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+	if r.Header.Get(node.ForwardedHeader) != "" {
+		return nil
+	}
+	return func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+		return s.forwarder.Ask(ctx, address, r, body)
+	}
 }
 
 // scope is what rows a hook from this origin may act on: its app's, and for the
@@ -251,9 +281,20 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 // hook from the deployment's own app starts work only for a customer still writing there,
 // never for one whose work there is only to be read.
 func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer string) bool {
+	may, _ := s.mayStillWrite(ctx, origin, customer)
+	return may
+}
+
+// mayStillWrite is mayWrite, with the error when it could not tell: an answer from the app
+// that is not settled (streamapp.Settled), such as the deployment's app not known yet, which a
+// later try may get.
+func (s *Server) mayStillWrite(ctx context.Context, origin hookOrigin, customer string) (bool, error) {
 	if !origin.deployment || s.stream == nil || !s.stream.PerApp() {
-		return true
+		return true, nil
 	}
 	_, err := s.stream.ForApp(ctx, customer, origin.app)
-	return err == nil
+	if err != nil && !streamapp.Settled(err) {
+		return false, err
+	}
+	return err == nil, nil
 }
