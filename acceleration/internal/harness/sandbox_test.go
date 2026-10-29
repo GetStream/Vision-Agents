@@ -179,6 +179,45 @@ func (s *HarnessSuite) TestCodeTheSubagentWroteRunsAndItsOutputIsAnsweredWith() 
 	s.Equal("12.63\n", last.Content)
 }
 
+func (s *HarnessSuite) TestCodeAskedForByAnAnswerThatFailedIsNotRun() {
+	// The answer that asked for the code failed, so it is asked again from where it started:
+	// running its code as well would run it once for each attempt.
+	s.box = &stubSandbox{result: sandbox.Result{Output: "12.63\n"}}
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.failure = overloaded
+	s.slow.calls = runCode("call-1", "print(84.20 * 0.15)")
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Done, settled.State, "the second attempt's answer stands")
+	s.Equal("It is 12.63.", settled.Text)
+	s.Empty(s.box.code(), "a failed answer's tool calls are not run")
+	s.Require().Len(s.slow.requests(), 2)
+	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
+}
+
+func (s *HarnessSuite) TestCodeAskedForByAnAnswerThatFailedForGoodIsNotRun() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "12.63\n"}}
+	s.build(true)
+	s.slow.failures = 1
+	s.slow.failure = &llm.ProviderFailure{Err: errors.New("the request was refused")}
+	s.slow.calls = runCode("call-1", "print(84.20 * 0.15)")
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	s.reply("turn-1", `Let me check. <ask skill="think">15% of 84.20</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Failed, settled.State)
+	s.ErrorContains(settled.Err, "the request was refused")
+	s.Empty(s.box.code())
+	s.Len(s.slow.requests(), 1)
+}
+
 func (s *HarnessSuite) TestCodeThatCouldNotBeRunIsDescribedRatherThanHidden() {
 	// The subagent asked for this mid-thought. It can only do something sensible about
 	// code that did not run if it is told that it did not run.
