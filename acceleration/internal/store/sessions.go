@@ -1009,6 +1009,7 @@ func (s *Store) UserEmail(ctx context.Context, customerID, userID string) (strin
 // RecordGuest stores a guest this app handed out, so it can later be claimed.
 func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
 	guest.Kind = UserKindGuest
+	guest.Minted = true
 	return s.RecordUser(ctx, guest)
 }
 

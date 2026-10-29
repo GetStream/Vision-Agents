@@ -87,10 +87,12 @@ func (s *Server) createGuestUser(ctx context.Context, request *createGuestUserRe
 	if s.store != nil && value(body.Id) != "" {
 		held, err := s.store.Guest(ctx, customerID, userID)
 		switch {
-		case err != nil:
-			// Not a guest of this customer. It may be nobody at all, which is fine, or it
-			// may be a real user, which is not something this can tell apart -- so the
-			// name is refused rather than guessed at.
+		case err != nil || (!held.Minted && !s.ownApp(customerID, bound.Identity.StreamApp)):
+			// Not a guest this customer was handed. It may be nobody at all, which is fine,
+			// or a real user, which is not something this can tell apart -- so the name is
+			// refused rather than guessed at. In an app shared with other customers, a guest
+			// only recorded from a token the app signed itself is no proof either: the app
+			// may sign any id. In its own app every id is the customer's anyway.
 			return nil, invalidRequest(
 				"that id is not a guest of this app, so a token cannot be minted for it")
 		case held.ClaimedBy != "":

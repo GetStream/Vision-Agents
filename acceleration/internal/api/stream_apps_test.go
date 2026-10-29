@@ -154,7 +154,11 @@ func (s *StreamAppsSuite) TestAChatTokenNamesTheCallingAppsKey() {
 
 func (s *StreamAppsSuite) TestAChatTokenLeavesAnExistingReaderAlone() {
 	// The reader is a real person in the customer's app; minting them a token must not
-	// write them back as an id and a name.
+	// write them back as an id and a name. Only in an app of its own does a customer name
+	// its readers.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
 	s.own.PutUser(map[string]any{"id": "reader-ada", "name": "Ada Lovelace", "image": "https://example.com/ada.png"})
 
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/chat-token",
@@ -173,6 +177,22 @@ func (s *StreamAppsSuite) TestAGuestIsCreatedInTheCallingApp() {
 	s.True(inOwn, "a guest's token is only good in the app it was created in")
 	_, inDeployment := s.chat.User(guest.Id)
 	s.False(inDeployment)
+}
+
+func (s *StreamAppsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsMintedAgainInItsOwnApp() {
+	// In its own Stream app every id is the customer's, so a guest it signed a token for
+	// itself is one it may have minted again.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
+	seen := s.guestSeenInAToken()
+
+	var guest GuestUser
+	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(seen)}, &guest))
+	s.Equal(seen, guest.Id)
+	_, inOwn := s.own.User(seen)
+	s.True(inOwn)
 }
 
 func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {

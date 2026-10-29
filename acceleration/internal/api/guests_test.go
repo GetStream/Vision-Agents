@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -44,6 +46,18 @@ func (s *GuestsSuite) TestAnIdThatIsNotAGuestOfThisAppIsRefused() {
 	// whether a name belongs to one is not something this can tell apart.
 	status, failure := s.data.createAnonymous().failure(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(s.utils.uuid())})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a guest of this app")
+}
+
+func (s *GuestsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsNotMintedAgain() {
+	// The app signs its guest tokens itself, for any id it likes, so a guest seen in one is
+	// no sign the id is nobody else's.
+	seen := s.guestSeenInAToken()
+
+	status, failure := s.data.createAnonymous().failure(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(seen)})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "not a guest of this app")
@@ -163,6 +177,18 @@ func (s *GuestsSuite) recordGuest() string {
 	s.Require().NoError(s.store.RecordGuest(context.Background(), &store.User{
 		ID: id, CustomerID: s.customerID(), Name: "Guest",
 	}))
+	return id
+}
+
+// guestSeenInAToken is an id the suite's app called as once, with a guest token it signed
+// itself: recorded as its guest, though the router never minted it.
+func (s *RouterSuite) guestSeenInAToken() string {
+	id := "visitor-" + s.utils.uuid()
+	s.signedIn(jwt.MapClaims{"user_id": id, "role": "guest"}, auth.AuthTypeJWT, guest, id).
+		do(http.MethodGet, "/v1/agents/calls", nil, nil)
+	seen, err := s.store.Guest(context.Background(), s.customerID(), id)
+	s.Require().NoError(err, "the call is what records the guest")
+	s.Require().False(seen.Minted)
 	return id
 }
 

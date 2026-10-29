@@ -173,6 +173,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 `/v1/agents/socket` takes a start frame's `sample_rate` only from 8000 to 192000, and 16000 when it is left out or 0, as before. A rate outside that range, a negative one included, is refused before a session is made, with an `error` frame carrying `code` and `error_type` `invalid_request`, and the socket closes with 1008. Before, any positive rate was taken and every frame of the caller's audio was resampled from it (AI-1852).
 
+### Call and chat tokens in a shared Stream app are bound to the customer
+
+In a Stream app the router shares between customers, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint a token only for their default listener or reader, or for one of the customer's own guests; any other `user_id` is refused with `400`. `chat-token` refuses an agent channel the router opened for another customer, and stamps a channel it opens with the calling customer. A customer acting in its own Stream app names any `user_id`, as before (AI-1851).
+
 ### A Flutter app's own tools run against a local proxy router
 
 A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a caller's auth type from the `stream-auth-type` query parameter, which is how a socket can send it when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).
