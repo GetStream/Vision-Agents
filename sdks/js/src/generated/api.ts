@@ -2817,7 +2817,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Receive a message Stream Chat delivers
-         * @description Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+         * @description Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
          */
         readonly post: operations["receiveChatDelivery"];
         readonly delete?: never;
@@ -16786,14 +16786,14 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The delivery is taken, or is not one to act on */
+            /** @description The message is queued, or was already delivered, or is not one to act on */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description The signed body is not a message event naming its app */
+            /** @description The signed body is not a message event naming its app, or is a new message without an id */
             readonly 400: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -16822,7 +16822,7 @@ export interface operations {
                 content?: never;
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description The router does not know its own Stream app yet; Stream retries */
+            /** @description The router does not know its own Stream app yet, or could not queue the message; Stream retries */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;

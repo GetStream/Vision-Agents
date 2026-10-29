@@ -12832,7 +12832,7 @@ type ClientInterface interface {
 
 	// ReceiveChatDelivery Receive a message Stream Chat delivers
 	//
-	// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
 	//
 	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
 	ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -17916,7 +17916,7 @@ func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody,
 
 // ReceiveChatDelivery Receive a message Stream Chat delivers
 //
-// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
 //
 // Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
 func (c *Client) ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -34002,7 +34002,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
 	//
-	// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -63617,7 +63617,7 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 
 // ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
 //
-// Where Stream Chat delivers each message written in an agent channel, which is answered as the message webhook answers it. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
