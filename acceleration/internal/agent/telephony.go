@@ -450,12 +450,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
-	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
-		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
-	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
-		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
@@ -488,8 +484,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 	}
 	if err != nil {
-		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. If it names a step one of your "+
-			"tools does, call that tool and try again; otherwise tell the caller, in your own words.", err))
+		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()

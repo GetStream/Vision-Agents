@@ -27,8 +27,8 @@ func Prices(config Config, logger *slog.Logger) (*pricing.List, error) {
 }
 
 // PriceEntries is the price list the config's price: blocks declare, at the vendors' rates:
-// one entry per provider in every modality, and one more for each service tier a provider
-// names.
+// one entry per provider in every modality, in the provider's region, and one more for each
+// service tier a provider names.
 func PriceEntries(config Config) []pricing.Entry {
 	var entries []pricing.Entry
 	for _, modality := range slices.Sorted(maps.Keys(config)) {
@@ -69,6 +69,8 @@ func entryOf(modality Modality, config ProviderConfig) pricing.Entry {
 		Modality: string(modality),
 		Provider: config.Provider,
 		Model:    config.Model,
+		Region:   regionOf(config),
+		BYOK:     config.BYOK,
 		Free:     price.Free,
 		Local:    config.Local,
 	}
@@ -124,13 +126,24 @@ func atServiceTier(entry pricing.Entry, tier string, factor float64) pricing.Ent
 	return tiered
 }
 
-// ItemOf is what work on a provider of a modality is priced as.
+// ItemOf is what work on a provider of a modality is priced as: in the provider's region, and
+// BYOK when the provider was built with the customer's own key.
 func ItemOf(modality Modality, config ProviderConfig, attributes map[string]string) pricing.Item {
-	return pricing.Item{Modality: string(modality), Provider: config.Provider, Model: config.Model, Attributes: attributes}
+	return pricing.Item{Modality: string(modality), Provider: config.Provider, Model: config.Model,
+		Region: regionOf(config), BYOK: config.BYOK, Attributes: attributes}
 }
 
-// Items is one item, with no attributes, per provider in every modality: what a deployment
-// checks for work it would bill with no price.
+// regionOf is the region a provider's work runs in. A config built in code, as metering builds
+// one for phone, knowledge, memory or sandbox work, names none and runs in the default.
+func regionOf(config ProviderConfig) string {
+	if config.Region == "" {
+		return pricing.DefaultRegion
+	}
+	return config.Region
+}
+
+// Items is one item, with no attributes, per provider in every modality, in its region: what a
+// deployment checks for work it would bill with no price.
 func Items(config Config) []pricing.Item {
 	var items []pricing.Item
 	for _, modality := range slices.Sorted(maps.Keys(config)) {

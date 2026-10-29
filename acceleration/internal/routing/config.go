@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -196,6 +197,9 @@ const (
 	tagValueLimit = 256
 )
 
+// envName is what an environment variable an instance names its key in may be called.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // tagKeyPattern is what a label key may look like.
 var tagKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
 
@@ -266,6 +270,23 @@ type ProviderConfig struct {
 	// Local is a model this deployment runs itself. With no price it is free rather than
 	// unpriced.
 	Local bool `yaml:"local"`
+	// Region is where this instance runs its work, such as pricing.RegionUS, which picks the
+	// entries it is priced by. A parsed config always names one: parsing sets
+	// pricing.DefaultRegion where router.yaml leaves it out. Empty, in a config built in code,
+	// is pricing.DefaultRegion too.
+	Region string `yaml:"region"`
+	// Endpoint is the base URL of this instance's regional API, in place of the vendor's
+	// default host. Every vendor's default host is taken to be in pricing.DefaultRegion, so
+	// an instance anywhere else sets one, unless its factory picks the host for the region
+	// itself (OverrideRegion). Only a factory that honors OverrideBaseURL takes one.
+	Endpoint string `yaml:"endpoint"`
+	// APIKeyEnv names the environment variable holding this instance's key, in place of the
+	// vendor's own variable. It is read once, when the router starts, which fails when it is
+	// unset or empty. Only a factory that honors OverrideAPIKey takes one.
+	APIKeyEnv string `yaml:"api_key_env"`
+	// BYOK is an instance built with the customer's own key, whose vendor bills the customer:
+	// its work is priced by the BYOK entries. It is never read from a file.
+	BYOK bool `yaml:"-"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -280,8 +301,18 @@ func (p ProviderConfig) Permits(policy options.DataPolicy) bool {
 	return policy.SatisfiedBy(p.DataPolicy)
 }
 
-// Name is the registry key, for example "deepgram/flux-general-en".
+// Name is the registry key, for example "deepgram/flux-general-en". It is what a target, a
+// priority list, an allowlist and live health name, so every instance of a model answers to
+// it, whatever its region.
 func (p ProviderConfig) Name() string { return p.Provider + "/" + p.Model }
+
+// instance is what tells two declarations of one model apart: the region each runs in.
+type instance struct{ name, region string }
+
+func instanceOf(p ProviderConfig) instance { return instance{name: p.Name(), region: regionOf(p)} }
+
+// String names the instance in an error: the model, then the region.
+func (i instance) String() string { return i.name + " in " + i.region }
 
 // Multilingual reports whether the model covers more than one language.
 func (p ProviderConfig) Multilingual() bool { return len(p.Languages) > 1 }
@@ -417,7 +448,8 @@ func (c ModalityConfig) Offered() []string {
 	return offered
 }
 
-// Provider returns the declaration for a "provider/model" name.
+// Provider returns the first declaration for a "provider/model" name. A model declared once
+// per region has one per region, which Instances returns.
 func (c ModalityConfig) Provider(name string) (ProviderConfig, bool) {
 	for _, provider := range c.Providers {
 		if provider.Name() == name {
@@ -425,6 +457,18 @@ func (c ModalityConfig) Provider(name string) (ProviderConfig, bool) {
 		}
 	}
 	return ProviderConfig{}, false
+}
+
+// Instances returns every declaration of a "provider/model" name, one per region it runs
+// in, in config order.
+func (c ModalityConfig) Instances(name string) []ProviderConfig {
+	var instances []ProviderConfig
+	for _, provider := range c.Providers {
+		if provider.Name() == name {
+			instances = append(instances, provider)
+		}
+	}
+	return instances
 }
 
 // Declares reports whether a vendor is configured here at all, whichever of their models
@@ -551,15 +595,15 @@ func (c ModalityConfig) liveAdvice(vendor string) string {
 	return "name " + strings.Join(live, " or ")
 }
 
-// Meets reports whether any model here could serve a request asking for that data policy.
-// A policy nothing meets is worth refusing when it is written down, since every request
-// made under it afterwards would be refused anyway.
+// Meets reports whether any model here could serve a request asking for that data policy,
+// in the region it names. A policy nothing meets is worth refusing when it is written down,
+// since every request made under it afterwards would be refused anyway.
 func (c ModalityConfig) Meets(policy options.DataPolicy) bool {
 	if !policy.Asks() {
 		return true
 	}
 	return slices.ContainsFunc(c.Providers, func(provider ProviderConfig) bool {
-		return provider.Permits(policy)
+		return provider.Permits(policy) && (policy.Region == "" || regionOf(provider) == policy.Region)
 	})
 }
 
@@ -587,7 +631,7 @@ func (c ModalityConfig) validate() error {
 		return errors.New("config must declare at least one provider")
 	}
 
-	seen := make(map[string]struct{}, len(c.Providers))
+	seen := make(map[instance]struct{}, len(c.Providers))
 	for _, provider := range c.Providers {
 		if provider.Provider == "" || provider.Model == "" {
 			return errors.New("every provider needs a provider and a model")
@@ -598,6 +642,10 @@ func (c ModalityConfig) validate() error {
 		if provider.Tier != "" && provider.Tier != LowLatency && provider.Tier != HighQuality {
 			return fmt.Errorf("%s declares unknown tier %q", provider.Name(), provider.Tier)
 		}
+		if provider.Region != "" && !pricing.ValidRegion(provider.Region) {
+			return fmt.Errorf("%s declares the region %q: a region is a letter and up to 31 of a-z, 0-9 and hyphens, such as %s",
+				provider.Name(), provider.Region, pricing.RegionUS)
+		}
 		if provider.DataPolicy != (options.DataHandling{}) && !provider.DataPolicy.Valid() {
 			return fmt.Errorf("%s declares a data policy of %q and %q, which a request cannot be compared against",
 				provider.Name(), provider.DataPolicy.TrainsOnData, provider.DataPolicy.Retention)
@@ -607,10 +655,21 @@ func (c ModalityConfig) validate() error {
 				return fmt.Errorf("%s prices service tier %s at %v times its rates, which must be above zero", provider.Name(), tier, factor)
 			}
 		}
-		if _, duplicate := seen[provider.Name()]; duplicate {
-			return fmt.Errorf("%s is declared twice", provider.Name())
+		if provider.Endpoint != "" {
+			endpoint, err := url.Parse(provider.Endpoint)
+			if err != nil || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.Host == "" {
+				return fmt.Errorf("%s declares the endpoint %q: an endpoint is the base URL of the instance's API, such as https://eu.api.example.com/v1",
+					instanceOf(provider), provider.Endpoint)
+			}
 		}
-		seen[provider.Name()] = struct{}{}
+		if provider.APIKeyEnv != "" && !envName.MatchString(provider.APIKeyEnv) {
+			return fmt.Errorf("%s declares api_key_env %q: it names an environment variable, such as ANTHROPIC_EU_API_KEY",
+				instanceOf(provider), provider.APIKeyEnv)
+		}
+		if _, duplicate := seen[instanceOf(provider)]; duplicate {
+			return fmt.Errorf("%s is declared twice", instanceOf(provider))
+		}
+		seen[instanceOf(provider)] = struct{}{}
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {
@@ -675,6 +734,13 @@ func parseConfig(raw []byte) (Config, error) {
 	var config Config
 	if err := yaml.Unmarshal(raw, &config); err != nil {
 		return nil, fmt.Errorf("routing: parse config: %w", err)
+	}
+	for _, section := range config {
+		for i := range section.Providers {
+			if section.Providers[i].Region == "" {
+				section.Providers[i].Region = pricing.DefaultRegion
+			}
+		}
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err

@@ -1,14 +1,18 @@
 package llmrouter
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -206,6 +210,12 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		s.recorder.Release(reserved)
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
 		code := outrun(createErrorCode(ctx), true, hedge)
+		message := err.Error()
+		if s.config.BYOK && code != routing.ErrorCancelled && keyRefused(err) {
+			code = routing.ErrorKeyRefused
+			message = fmt.Sprintf("%s refused the key this app keeps for it in %s, so the deployment's was asked next: %s",
+				s.config.Provider, cmp.Or(s.config.Region, pricing.DefaultRegion), message)
+		}
 		stat := routing.Stat{
 			Owner:        owner,
 			StartedAt:    startedAt,
@@ -215,7 +225,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 			DurationMs:   durationMs,
 			Success:      false,
 			ErrorCode:    code,
-			ErrorMessage: err.Error(),
+			ErrorMessage: message,
 		}
 		label(&stat, params, hedge)
 		s.recorder.Record(s.config, stat)
@@ -608,6 +618,19 @@ func (s *Session) releaseChild(child *Session) {
 	s.mu.Lock()
 	delete(s.children, child)
 	s.mu.Unlock()
+}
+
+// keyRefused reports whether the vendor refused the key a request was made with: 401 for a key
+// it does not know, 403 for one it does not let at the model. Every vendor whose factory takes a
+// key of the instance's own answers through OpenAI's client or Anthropic's.
+func keyRefused(err error) bool {
+	status := 0
+	if refused, ok := errors.AsType[*openai.Error](err); ok {
+		status = refused.StatusCode
+	} else if refused, ok := errors.AsType[*anthropic.Error](err); ok {
+		status = refused.StatusCode
+	}
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
 
 // createErrorCode says why a request ended before the provider answered it: the caller

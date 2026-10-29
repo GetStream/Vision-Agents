@@ -66,9 +66,9 @@ func (s *RuntimeSuite) SetupSuite() {
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
 	perMinute := map[pricing.Meter]pricing.Rate{pricing.Seconds: {USD: 0.06, Per: 60}}
 	s.prices, err = pricing.NewList("runtime", pricing.AllAtCost([]pricing.Entry{
-		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Free: true},
-		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVoice, Rates: perMinute},
-		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVideo, Rates: perMinute},
+		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Region: pricing.DefaultRegion, Free: true},
+		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVoice, Region: pricing.DefaultRegion, Rates: perMinute},
+		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVideo, Region: pricing.DefaultRegion, Rates: perMinute},
 	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
@@ -280,6 +280,10 @@ func (s *RuntimeSuite) TestTheGreetingIsTheSessionsFirstRecordedTurn() {
 	s.manages()
 	created, err := s.opens(Spec{Greeting: "Hi, I'm listening."})
 	s.Require().NoError(err)
+	s.edgesMu.Lock()
+	call := s.edges[0]
+	s.edgesMu.Unlock()
+	call.arrives(visitor)
 
 	var turns []store.AgentResponse
 	s.Require().Eventually(func() bool {

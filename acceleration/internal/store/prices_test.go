@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 func perMillionTokens(usd float64) pricing.Rate { return pricing.Rate{USD: usd, Per: 1_000_000} }
@@ -15,8 +16,13 @@ func perMillionTokens(usd float64) pricing.Rate { return pricing.Rate{USD: usd, 
 // priced is an LLM entry at input usd per million tokens, its vendor's rate and no price, as a
 // price file without a price of its own has it.
 func priced(model string, usd float64) pricing.Entry {
-	return pricing.Entry{Modality: "llm", Provider: "openai", Model: model,
+	return pricing.Entry{Modality: "llm", Provider: "openai", Model: model, Region: pricing.RegionUS,
 		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(usd)}}
+}
+
+// llmItem is the item of an openai model in the us.
+func llmItem(model string, attributes map[string]string) pricing.Item {
+	return pricing.Item{Modality: "llm", Provider: "openai", Model: model, Region: pricing.RegionUS, Attributes: attributes}
 }
 
 // load is what a router with these entries in its files loads, under release v1.
@@ -46,7 +52,7 @@ func entryRow(entry pricing.Entry) PriceEntry {
 		entry = pricing.AtCost(entry)
 	}
 	if entry.SKU == "" {
-		entry.SKU = pricing.BaseSKU(entry.Modality, entry.Provider, entry.Model, entry.When)
+		entry.SKU = pricing.BaseSKU(entry.Modality, entry.Provider, entry.Model, entry.Region, entry.BYOK, entry.When)
 	}
 	return priceEntryOf("", entry)
 }
@@ -65,13 +71,13 @@ func (s *StoreSuite) activeList() (*pricing.List, []PriceEntry) {
 }
 
 func (s *StoreSuite) inputRate(list *pricing.List, model string, attributes map[string]string) float64 {
-	entry, ok := list.Entry(pricing.Item{Modality: "llm", Provider: "openai", Model: model, Attributes: attributes})
+	entry, ok := list.Entry(llmItem(model, attributes))
 	s.Require().True(ok, "%s has no entry", model)
 	return entry.Rates[pricing.InputTokens].USD
 }
 
 func (s *StoreSuite) inputPrice(list *pricing.List, model string, attributes map[string]string) float64 {
-	entry, ok := list.Entry(pricing.Item{Modality: "llm", Provider: "openai", Model: model, Attributes: attributes})
+	entry, ok := list.Entry(llmItem(model, attributes))
 	s.Require().True(ok, "%s has no entry", model)
 	return entry.Prices[pricing.InputTokens].USD
 }
@@ -80,13 +86,13 @@ func (s *StoreSuite) inputPrice(list *pricing.List, model string, attributes map
 func names(entries []pricing.Entry) []string {
 	named := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		named = append(named, entry.Modality+"/"+entry.Provider+"/"+entry.Model+" "+entry.SKU)
+		named = append(named, prices.Name(entry)+" "+entry.SKU)
 	}
 	return named
 }
 
 func (s *StoreSuite) TestTheFirstSyncSeedsEverything() {
-	free := pricing.Entry{Modality: "phone", Provider: "telnyx", Model: "call", Free: true}
+	free := pricing.Entry{Modality: "phone", Provider: "telnyx", Model: "call", Region: pricing.RegionUS, Free: true}
 	files := load(priced("a", 1), priced("b", 2), free)
 
 	change, added, wrote, err := s.store.SyncPrices(s.ctx, files)
@@ -98,17 +104,74 @@ func (s *StoreSuite) TestTheFirstSyncSeedsEverything() {
 	s.Equal("The first price list", change.Reason)
 	s.Equal("own-prices.json, vendor.json, router v1", change.Source)
 	s.Equal("router v1", change.CreatedBy)
-	s.Equal([]string{"llm/openai/a llm-openai-a", "llm/openai/b llm-openai-b", "phone/telnyx/call phone-telnyx-call"}, names(added))
+	s.Equal([]string{"llm/openai/a (us) llm-openai-a-us", "llm/openai/b (us) llm-openai-b-us", "phone/telnyx/call (us) phone-telnyx-call-us"},
+		names(added))
 	list, active := s.activeList()
 	s.Len(active, 3)
 	s.InDelta(2.0, s.inputRate(list, "b", nil), 1e-12, "the vendor's rate is kept")
 	s.InDelta(2.4, s.inputPrice(list, "b", nil), 1e-12, "priced at the rate times the factor")
-	s.False(list.Billable(pricing.Item{Modality: "phone", Provider: "telnyx", Model: "call"}))
-	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a"}, pricing.Quantities{pricing.InputTokens: 1_000_000})
+	s.False(list.Billable(pricing.Item{Modality: "phone", Provider: "telnyx", Model: "call", Region: pricing.RegionUS}))
+	quote := list.Quote(llmItem("a", nil), pricing.Quantities{pricing.InputTokens: 1_000_000})
 	s.Equal(change.Name, quote.Version, "every entry names the change that wrote it")
 	s.EqualValues(1_200_000, quote.CostMicros)
 	s.EqualValues(1_000_000, quote.BaseCostMicros)
-	s.Equal("llm-openai-a", quote.SKU)
+	s.Equal("llm-openai-a-us", quote.SKU)
+}
+
+// TestARegionAndBYOKEntryOfOneModelAreItemsOfTheirOwn: written and read back, each prices only
+// its own region's work and BYOK state's, under its own SKU, and a BYOK one written without a
+// price is priced at a fifth of its rates.
+func (s *StoreSuite) TestARegionAndBYOKEntryOfOneModelAreItemsOfTheirOwn() {
+	eu := priced("a", 1.1)
+	eu.Region = pricing.RegionEU
+	byok := priced("a", 1)
+	byok.BYOK = true
+
+	_, added, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 1), eu, byok))
+
+	s.Require().NoError(err)
+	s.Equal([]string{"llm/openai/a (us) llm-openai-a-us", "llm/openai/a (eu) llm-openai-a-eu", "llm/openai/a (us, byok) llm-openai-a-us-byok"},
+		names(added))
+	list, active := s.activeList()
+	s.Len(active, 3)
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	s.EqualValues(1_200_000, list.Quote(llmItem("a", nil), used).CostMicros)
+	euQuote := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU}, used)
+	s.EqualValues(1_320_000, euQuote.CostMicros)
+	byokQuote := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionUS, BYOK: true}, used)
+	s.EqualValues(200_000, byokQuote.CostMicros)
+	s.Zero(byokQuote.BaseCostMicros)
+	s.True(list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU, BYOK: true}, used).Unpriced,
+		"no entry prices BYOK work in the eu")
+}
+
+// TestALaterSyncAddsARegionTheDatabaseLacks: an eu entry is an item of its own, so a release
+// whose files have one adds it beside the us entry, which keeps its price.
+func (s *StoreSuite) TestALaterSyncAddsARegionTheDatabaseLacks() {
+	_, _, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 1)))
+	s.Require().NoError(err)
+	eu := priced("a", 1.1)
+	eu.Region = pricing.RegionEU
+
+	change, added, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 9), eu))
+
+	s.Require().NoError(err)
+	s.Equal(PriceChangeRelease, change.Kind)
+	s.Equal([]string{"llm/openai/a (eu) llm-openai-a-eu"}, names(added))
+	list, _ := s.activeList()
+	s.InDelta(1.2, s.inputPrice(list, "a", nil), 1e-12)
+}
+
+func (s *StoreSuite) TestAnEntryNamingNoRegionIsRefusedByTheTable() {
+	s.write("20990101000000_no_region", time.Now().Add(time.Hour))
+
+	_, missing := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_list_entries (change, sku, modality, provider, model, free, effective_at)
+VALUES ('20990101000000_no_region', 'llm-openai-a-us', 'llm', 'openai', 'a', true, now())`)
+	_, empty := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_list_entries (change, sku, modality, provider, model, region, free, effective_at)
+VALUES ('20990101000000_no_region', 'llm-openai-a-us', 'llm', 'openai', 'a', '', true, now())`)
+
+	s.ErrorContains(missing, `null value in column "region"`)
+	s.ErrorContains(empty, "price_list_entries_region")
 }
 
 // TestASeedKeepsAFilesOwnPriceAndSKU: an entry the file prices is written at that price, under
@@ -140,7 +203,7 @@ func (s *StoreSuite) TestALaterSyncOnlyAddsNewItems() {
 	s.Equal(PriceChangeRelease, change.Kind)
 	s.Regexp(`^\d{14}_release_v2$`, change.Name)
 	s.Equal("Items new in v2", change.Reason)
-	s.Equal([]string{"llm/openai/b llm-openai-b"}, names(added))
+	s.Equal([]string{"llm/openai/b (us) llm-openai-b-us"}, names(added))
 	list, _ := s.activeList()
 	s.InDelta(1.0, s.inputRate(list, "a", nil), 1e-12, "an item the database has keeps its rate")
 	s.InDelta(1.2, s.inputPrice(list, "a", nil), 1e-12, "and its price")
@@ -173,13 +236,13 @@ func (s *StoreSuite) TestAServiceTierNewInAReleaseIsAddedBesideTheDefault() {
 	s.Require().NoError(err)
 	s.Require().Len(added, 1)
 	s.Equal(flex.When, added[0].When)
-	s.Equal("llm-openai-a-service-tier-flex", added[0].SKU)
+	s.Equal("llm-openai-a-service-tier-flex-us", added[0].SKU)
 }
 
 func (s *StoreSuite) TestASyncNeverTouchesAWithdrawnItem() {
 	seed, _, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 1)))
 	s.Require().NoError(err)
-	withdrawn := PriceEntry{Modality: "llm", Provider: "openai", Model: "a", SKU: "llm-openai-a", Withdrawn: true}
+	withdrawn := PriceEntry{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionUS, SKU: "llm-openai-a-us", Withdrawn: true}
 	s.write("20990101000000_withdraw_a", seed.EffectiveAt, withdrawn)
 
 	_, added, wrote, err := s.store.SyncPrices(s.ctx, load(priced("a", 1)))
@@ -201,7 +264,7 @@ func (s *StoreSuite) TestAnItemOnlyACancelledChangePricedIsAddedAgain() {
 	_, added, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 1), priced("b", 2)))
 
 	s.Require().NoError(err)
-	s.Equal([]string{"llm/openai/b llm-openai-b"}, names(added), "a cancelled change's SKU holds nothing")
+	s.Equal([]string{"llm/openai/b (us) llm-openai-b-us"}, names(added), "a cancelled change's SKU holds nothing")
 }
 
 func (s *StoreSuite) TestTwoSyncsAtOnceWriteOnce() {
@@ -253,7 +316,7 @@ func (s *StoreSuite) TestASyncIsAudited() {
 	s.Equal(AuditCreated, entry.Action)
 	s.Equal(AuditSourceCLI, entry.Source)
 	s.Equal("router v1", entry.ActorID)
-	s.Equal([]AuditChange{{Field: "entries", After: []any{"llm/openai/a"}}}, entry.Changes)
+	s.Equal([]AuditChange{{Field: "entries", After: []any{"llm/openai/a (us)"}}}, entry.Changes)
 }
 
 func (s *StoreSuite) TestAReleaseNameIsSanitized() {
@@ -284,13 +347,14 @@ func (s *StoreSuite) TestAPriceEntryCannotBeChanged() {
 	_, _, _, err := s.store.SyncPrices(s.ctx, load(priced("a", 1)))
 	s.Require().NoError(err)
 
-	for _, update := range []string{"UPDATE price_entries SET free = true",
-		`UPDATE price_entries SET prices = '{"input_tokens": {"usd": 9, "per": 1000000}}'`,
-		"UPDATE price_entries SET price_tiers = '[]'", "UPDATE price_entries SET sku = 'another'"} {
+	for _, update := range []string{"UPDATE price_list_entries SET free = true",
+		`UPDATE price_list_entries SET prices = '{"input_tokens": {"usd": 9, "per": 1000000}}'`,
+		"UPDATE price_list_entries SET price_tiers = '[]'", "UPDATE price_list_entries SET sku = 'another'",
+		"UPDATE price_list_entries SET region = 'eu'", "UPDATE price_list_entries SET byok = true"} {
 		_, err := s.store.DB().ExecContext(s.ctx, update)
 		s.ErrorContains(err, "price_entries rows are never changed or deleted", update)
 	}
-	_, deleted := s.store.DB().ExecContext(s.ctx, "DELETE FROM price_entries")
+	_, deleted := s.store.DB().ExecContext(s.ctx, "DELETE FROM price_list_entries")
 	s.ErrorContains(deleted, "price_entries rows are never changed or deleted")
 }
 
@@ -299,10 +363,10 @@ func (s *StoreSuite) TestAPriceEntryCannotBeChanged() {
 func (s *StoreSuite) TestAnEntryWithoutASKUOrAPriceIsRefused() {
 	s.write("20990101000000_old_router", time.Now().Add(time.Hour))
 
-	_, unnamed := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_entries (change, modality, provider, model, free, effective_at)
-VALUES ('20990101000000_old_router', 'llm', 'openai', 'a', true, now())`)
-	_, unpriced := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_entries (change, sku, modality, provider, model, rates, effective_at)
-VALUES ('20990101000000_old_router', 'llm-openai-a', 'llm', 'openai', 'a', '{"input_tokens": {"usd": 1, "per": 1000000}}', now())`)
+	_, unnamed := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_list_entries (change, modality, provider, model, region, free, effective_at)
+VALUES ('20990101000000_old_router', 'llm', 'openai', 'a', 'us', true, now())`)
+	_, unpriced := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_list_entries (change, sku, modality, provider, model, region, rates, effective_at)
+VALUES ('20990101000000_old_router', 'llm-openai-a-us', 'llm', 'openai', 'a', 'us', '{"input_tokens": {"usd": 1, "per": 1000000}}', now())`)
 
 	s.ErrorContains(unnamed, "price_entries_sku")
 	s.ErrorContains(unpriced, "price_entries_priced")
@@ -312,12 +376,12 @@ func (s *StoreSuite) TestAnEntryTakesItsChangesTime() {
 	tomorrow := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Microsecond)
 	s.write("20990101000000_tomorrow", tomorrow)
 
-	_, err := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_entries (change, sku, modality, provider, model, effective_at)
-VALUES ('20990101000000_tomorrow', 'llm-openai-a', 'llm', 'openai', 'a', now() - interval '1 year')`)
+	_, err := s.store.DB().ExecContext(s.ctx, `INSERT INTO price_list_entries (change, sku, modality, provider, model, region, effective_at)
+VALUES ('20990101000000_tomorrow', 'llm-openai-a-us', 'llm', 'openai', 'a', 'us', now() - interval '1 year')`)
 	s.Require().NoError(err)
 
 	var effectiveAt time.Time
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT effective_at FROM price_entries").Scan(&effectiveAt))
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT effective_at FROM price_list_entries").Scan(&effectiveAt))
 	s.True(tomorrow.Equal(effectiveAt), "%s is not %s", effectiveAt, tomorrow)
 }
 
@@ -424,7 +488,7 @@ func (s *StoreSuite) TestACancelledChangeIsNeverInForce() {
 
 func (s *StoreSuite) TestTheEntryForACountryIsKeptBesideTheDefault() {
 	sms := func(usd float64, when map[string]string) PriceEntry {
-		return entryRow(pricing.Entry{Modality: "phone", Provider: "telnyx", Model: "sms", When: when,
+		return entryRow(pricing.Entry{Modality: "phone", Provider: "telnyx", Model: "sms", Region: pricing.RegionUS, When: when,
 			Rates: map[pricing.Meter]pricing.Rate{pricing.MessageSegments: {USD: usd, Per: 1}}})
 	}
 	s.write("20260101000000_first", time.Now().Add(-2*time.Hour), sms(0.004, nil), sms(0.02, map[string]string{"country": "CA"}))
@@ -433,7 +497,7 @@ func (s *StoreSuite) TestTheEntryForACountryIsKeptBesideTheDefault() {
 	list, active := s.activeList()
 
 	s.Len(active, 2)
-	item := pricing.Item{Modality: "phone", Provider: "telnyx", Model: "sms"}
+	item := pricing.Item{Modality: "phone", Provider: "telnyx", Model: "sms", Region: pricing.RegionUS}
 	s.EqualValues(5_000, list.Quote(item, pricing.Quantities{pricing.MessageSegments: 1}).CostMicros)
 	item.Attributes = map[string]string{"country": "CA"}
 	s.EqualValues(20_000, list.Quote(item, pricing.Quantities{pricing.MessageSegments: 1}).CostMicros)
@@ -454,7 +518,7 @@ func (s *StoreSuite) TestAServiceTierEntryIsKeptBesideTheDefault() {
 }
 
 func (s *StoreSuite) TestTiersRoundTrip() {
-	entry := pricing.Entry{Modality: "llm", Provider: "openai", Model: "long",
+	entry := pricing.Entry{Modality: "llm", Provider: "openai", Model: "long", Region: pricing.RegionUS,
 		Rates: map[pricing.Meter]pricing.Rate{
 			pricing.InputTokens:  perMillionTokens(2),
 			pricing.OutputTokens: perMillionTokens(8),
@@ -475,10 +539,10 @@ func (s *StoreSuite) TestTiersRoundTrip() {
 	s.Equal(active[0].Change, read.Version)
 	read.Version = ""
 	written := pricing.Priced(entry)
-	written.SKU = "llm-openai-long"
+	written.SKU = "llm-openai-long-us"
 	s.Equal(written, read)
 	s.Equal(0.0084, read.Prices[pricing.CallSeconds].USD, "0.007 × 1.2, kept to twelve digits")
-	long := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "long"}, pricing.Quantities{pricing.InputTokens: 300_000})
+	long := list.Quote(llmItem("long", nil), pricing.Quantities{pricing.InputTokens: 300_000})
 	s.EqualValues(1_440_000, long.CostMicros, "a long prompt is charged at its price tier")
 	s.EqualValues(1_200_000, long.BaseCostMicros, "and costed at its tier of rates")
 }

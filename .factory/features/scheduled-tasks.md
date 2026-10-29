@@ -184,7 +184,9 @@ end. A run made by hand is never held.
 - **A call more than 15 minutes late is `missed`, and an unanswered call is not retried
   (S5).** The call is not placed (`scheduledCallGrace`, `scheduled_delivery.go:65`).
   Nobody picking up within the 90 s ring is `not_answered`, final: the call is not placed
-  again (`scheduled_delivery.go:843`). The next channel in `deliver_to` is still tried. The
+  again (`scheduled_delivery.go:843`). So is a call the vendor reported busy, failed or
+  canceled before its session opened, which refuses the session at once
+  (`call_unanswered`, see [telephony](telephony.md)). The next channel in `deliver_to` is still tried. The
   occurrence is retried only when another channel fails with a reason that is not final
   (`scheduled_delivery.go:245`); the phone step then answers `already_called`
   (`scheduled_delivery.go:734`). The call's session is taken on the run before it is

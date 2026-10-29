@@ -22,6 +22,8 @@ final readonly class Session
         public string $userId,
         // The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config...
         public ?string $agent = null,
+        // How the call the router placed for this session ended. Read by a backend only.
+        public ?SessionCallOutcome $callOutcome = null,
         // When the session ended. Absent while it is still running.
         public ?\DateTimeImmutable $closedAt = null,
         // The agent config the session ran under, empty for one that spelled itself out.
@@ -86,6 +88,7 @@ final readonly class Session
             state: Json::enum($data, 'state', SessionState::class),
             userId: Json::string($data, 'user_id'),
             agent: array_key_exists('agent', $data) && $data['agent'] !== null ? Json::string($data, 'agent') : null,
+            callOutcome: array_key_exists('call_outcome', $data) && $data['call_outcome'] !== null ? SessionCallOutcome::fromArray(Json::object($data, 'call_outcome')) : null,
             closedAt: array_key_exists('closed_at', $data) && $data['closed_at'] !== null ? Json::date($data, 'closed_at') : null,
             configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
@@ -133,6 +136,9 @@ final readonly class Session
         $out['user_id'] = $this->userId;
         if ($this->agent !== null) {
             $out['agent'] = $this->agent;
+        }
+        if ($this->callOutcome !== null) {
+            $out['call_outcome'] = $this->callOutcome->toArray();
         }
         if ($this->closedAt !== null) {
             $out['closed_at'] = Json::dateValue($this->closedAt);

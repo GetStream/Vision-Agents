@@ -80,31 +80,41 @@ const proxyListenRetry = 100 * time.Millisecond
 // address over, or this one ends. handOver is that hand-over, for a router that starts draining:
 // it stops taking connections on addr and leaves the tunnels already open, which are the
 // sandboxes' until the router stops. Either may be called more than once, and after the other.
-// Without overlap a held address fails the start, as on any listener, and handOver does nothing:
-// the proxy takes connections until stop.
-func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool, serve func(*http.Server, net.Listener),
-	logger *slog.Logger) (stop func() error, handOver func(), err error) {
+// Without overlap and without fd a held address fails the start, as on any listener, and handOver
+// does nothing: the proxy takes connections until stop.
+//
+// fd, when not zero, is the proxy socket a supervisor handed down (code_sandbox.proxy_listen_fd),
+// served in place of addr: the router before this one and this one accept from the same queue,
+// so there is nothing to wait for. handOver then closes this router's copy of it alone, which
+// stops it accepting while the supervisor's copy keeps the socket listening for the next router.
+func serveSandboxProxy(proxy *egress.Proxy, addr string, fd int, publicURL string, overlap bool,
+	serve func(*http.Server, net.Listener), logger *slog.Logger) (stop func() error, handOver func(), err error) {
 	if proxy == nil {
 		return func() error { return nil }, func() {}, nil
 	}
 	public, valid := config.ProxyURL(publicURL)
 	secure := valid && public.Scheme == "https"
 	// ErrorLog: a failed handshake is the router's log line, as in a tunnel, not the std log's.
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout,
+	// IdleTimeout: a sandbox's connection that sends no next request is closed, as a tunnel's
+	// is; a CONNECT tunnel is hijacked and has its own idle limit in the proxy.
+	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: proxy.IdleTimeout(),
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelInfo)}
 	// mu orders a listen while waiting against the hand-over, so a router done with the
 	// address never takes it.
 	var mu sync.Mutex
 	var serving net.Listener
 	finished := false
+	setting := "code_sandbox.proxy_addr"
+	if fd != 0 {
+		setting = "code_sandbox.proxy_listen_fd"
+	}
 	// start serves on listener; mu is held.
 	start := func(listener net.Listener) {
 		serving = listener
 		if secure {
 			listener = tls.NewListener(listener, proxy.ListenerTLS(public.Hostname()))
 		}
-		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", "code_sandbox.proxy_addr",
-			"tls", secure)
+		logger.Info("serving the sandbox egress proxy", "address", listener.Addr().String(), "setting", setting, "tls", secure)
 		go serve(server, listener)
 	}
 	// retry takes addr unless the router is done with it, and says whether to stop trying.
@@ -121,7 +131,7 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		start(listener)
 		return true
 	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listen(addr, fd, setting)
 	switch {
 	case err == nil:
 		start(listener)
@@ -148,14 +158,21 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		}
 		finished = true
 		if handingOver {
-			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", addr,
-				"setting", "code_sandbox.proxy_addr")
+			// serving is nil while the address is still held by the router before this one.
+			address := addr
+			if serving != nil {
+				address = serving.Addr().String()
+			}
+			logger.Info("stopped taking sandbox egress proxy connections for the router taking over", "address", address,
+				"setting", setting)
 		}
 		// The listener alone: the connections the proxy took are still served, a request
 		// they have yet to send included, which a Shutdown would drop. Serve ends with the
 		// closed listener's error, which no one reads once the router drains. A stop closes
 		// it too, because Serve runs on its own goroutine and the server only closes a
-		// listener Serve has already started on: one it has not keeps the address held.
+		// listener Serve has already started on: one it has not keeps the address held. An
+		// inherited socket's listener is this router's duplicate of it: closing it leaves
+		// the socket, and the connections queued on it, to the supervisor and the next router.
 		if serving != nil {
 			_ = serving.Close()
 		}
@@ -169,18 +186,19 @@ func serveSandboxProxy(proxy *egress.Proxy, addr, publicURL string, overlap bool
 		}
 		return nil
 	}
-	if !overlap {
+	if !overlap && fd == 0 {
 		return stop, func() {}, nil
 	}
 	return stop, func() { finish(true) }, nil
 }
 
-// secretSweeper sweeps the Daytona secrets a crashed router left behind, and is nil where there
+// secretSweeper sweeps the Daytona secrets a crashed router left behind, in the deployment's
+// organization and in each customer's own that accounts gives a key for, and is nil where there
 // are none to sweep: under the proxy broker, whose grants expire in Redis, and without Daytona
 // or a secret prefix, which every secret this router makes is named with. It also needs the
 // node directory, the only thing that says whether a session runs on another router.
 func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
-	logger *slog.Logger) (*daytona.Sweeper, error) {
+	accounts func(context.Context) ([]string, error), logger *slog.Logger) (*daytona.Sweeper, error) {
 	if settings.Broker != config.CodeSandboxBrokerDaytona || settings.SecretPrefix == "" || !daytona.Configured() {
 		return nil, nil
 	}
@@ -190,13 +208,13 @@ func secretSweeper(settings config.CodeSandbox, redis *live.Client, directory *n
 		return nil, nil
 	}
 	return daytona.NewSweeper(daytona.SweepOptions{Prefix: settings.SecretPrefix, Sessions: directory,
-		Slots: concurrency.New(redis.Redis(), nil), Logger: logger})
+		Slots: concurrency.New(redis.Redis(), nil), Accounts: accounts, Logger: logger})
 }
 
 // startSecretSweeper sweeps, until ctx ends, with the sweeper secretSweeper gives, if any.
 func startSecretSweeper(ctx context.Context, settings config.CodeSandbox, redis *live.Client, directory *node.Directory,
-	logger *slog.Logger) error {
-	sweeper, err := secretSweeper(settings, redis, directory, logger)
+	accounts func(context.Context) ([]string, error), logger *slog.Logger) error {
+	sweeper, err := secretSweeper(settings, redis, directory, accounts, logger)
 	if err != nil || sweeper == nil {
 		return err
 	}

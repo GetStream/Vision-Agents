@@ -347,6 +347,12 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        /// <summary>
+        /// Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
         public ResumeHistory? ResumeHistory { get; set; } = default!;
 
@@ -502,6 +508,12 @@ namespace GetStream.VisionAgents.Models
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
+        /// <summary>
+        /// Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
         public ResumeHistory? ResumeHistory { get; set; } = default!;
 
@@ -650,6 +662,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
+
+        /// <summary>
+        /// Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
 
         /// <summary>
         /// How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay.
@@ -1387,6 +1405,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AttachedNumber
     {
+
+        /// <summary>
+        /// The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("route_id")]
         public string RouteId { get; set; } = default!;
@@ -4589,6 +4613,12 @@ namespace GetStream.VisionAgents.Models
         public string? Instructions { get; set; } = default!;
 
         /// <summary>
+        /// How the call to them ended, once it has. The state still says only whether they were rung.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcome")]
+        public string? Outcome { get; set; } = default!;
+
+        /// <summary>
         /// One of `pending`, `calling`, `done`, `failed`.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("state")]
@@ -5576,7 +5606,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+    /// What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class DataPolicy
@@ -5587,6 +5617,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("allow_training")]
         public bool? AllowTraining { get; set; } = default!;
+
+        /// <summary>
+        /// Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
 
         /// <summary>
         /// The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
@@ -5859,7 +5895,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -6448,7 +6484,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under 500 is raised to 500.
+        /// Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("chunk_size")]
         public int? ChunkSize { get; set; } = default!;
@@ -7900,7 +7936,7 @@ namespace GetStream.VisionAgents.Models
         public double? DurationMs { get; set; } = default!;
 
         /// <summary>
-        /// Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health.
+        /// Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;
@@ -8236,6 +8272,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class PhoneNumber
     {
+
+        /// <summary>
+        /// The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("capabilities")]
         public System.Collections.Generic.List<string> Capabilities { get; set; } = new System.Collections.Generic.List<string>();
@@ -8856,7 +8898,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, object>? Budget { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
-        public DataPolicy? DataPolicy { get; set; } = default!;
+        public PolicyDataPolicy? DataPolicy { get; set; } = default!;
 
         /// <summary>
         /// Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
@@ -8899,6 +8941,27 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    /// <summary>
+    /// What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PolicyDataPolicy
+    {
+
+        /// <summary>
+        /// False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("allow_training")]
+        public bool? AllowTraining { get; set; } = default!;
+
+        /// <summary>
+        /// The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("retention")]
+        public string? Retention { get; set; } = default!;
 
     }
 
@@ -8987,11 +9050,17 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports.
+    /// What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Price
     {
+
+        /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
 
         /// <summary>
         /// The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices.
@@ -9040,6 +9109,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices.
@@ -9137,6 +9212,12 @@ namespace GetStream.VisionAgents.Models
     public partial class PriceChangeEntry
     {
 
+        /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("free")]
         public bool? Free { get; set; } = default!;
 
@@ -9169,6 +9250,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("rates")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing.
@@ -9279,6 +9366,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -9327,6 +9420,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
+        /// <summary>
         /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("sku")]
@@ -9366,6 +9465,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// The vendor charges nothing for it. A free entry has no price.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("free")]
@@ -9393,7 +9498,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<PriceTier>? PriceTiers { get; set; } = default!;
 
         /// <summary>
-        /// What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is.
+        /// What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("prices")]
         public System.Collections.Generic.Dictionary<string, PriceRate>? Prices { get; set; } = default!;
@@ -9408,7 +9513,13 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, PriceRate>? Rates { get; set; } = default!;
 
         /// <summary>
-        /// The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
+        /// <summary>
+        /// The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("sku")]
         public string? Sku { get; set; } = default!;
@@ -9444,6 +9555,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9454,6 +9571,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry.
@@ -9561,6 +9684,12 @@ namespace GetStream.VisionAgents.Models
         public PricedEntry? Before { get; set; } = default!;
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// Such as llm, stt, tts, sms or phone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("modality")]
@@ -9580,6 +9709,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("provider")]
         public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// It is priced before the change and billable with no price after.
@@ -9714,7 +9849,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset At { get; set; } = default!;
 
         /// <summary>
-        /// Every item priced now, by modality, provider and model.
+        /// Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("entries")]
         public System.Collections.Generic.List<Price> Entries { get; set; } = new System.Collections.Generic.List<Price>();
@@ -9766,6 +9901,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("realtime")]
         public bool Realtime { get; set; } = default!;
+
+        /// <summary>
+        /// Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
@@ -9883,6 +10024,105 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("requests")]
         public long Requests { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ProviderKey
+    {
+
+        /// <summary>
+        /// When a key for the provider in the region was first put.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// The key's last four characters, so one key can be told from another; empty for a key under 16 characters. The key itself is never returned.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("key_hint")]
+        public string KeyHint { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
+
+        /// <summary>
+        /// When the key now kept was put.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("updated_at")]
+        public System.DateTimeOffset UpdatedAt { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ProviderKeyPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<ProviderKey> Items { get; set; } = new System.Collections.Generic.List<ProviderKey>();
+
+        /// <summary>
+        /// Pass as `cursor` for the next page. Absent on the last one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ProviderKeyRequest
+    {
+
+        /// <summary>
+        /// The key, as the vendor issued it. Stored sealed and never returned.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        public string ApiKey { get; set; } = default!;
+
+        /// <summary>
+        /// The vendor the key is for, as the router names it: a language model vendor whose models take a key of their own here (openai, anthropic, gemini, xai, deepseek where routed), turbopuffer or daytona.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string Provider { get; set; } = default!;
+
+        /// <summary>
+        /// The region whose work the key is used for: only the instances running there are tried on it. Omitted is us.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -11136,6 +11376,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("call_id")]
         public string CallId { get; set; } = default!;
 
+        /// <summary>
+        /// How the call the router placed for this session ended. Read by a backend only.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_outcome")]
+        public SessionCallOutcome? CallOutcome { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("call_type")]
         public string CallType { get; set; } = default!;
 
@@ -11331,6 +11577,42 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// How the call the router placed for a session ended.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionCallOutcome
+    {
+
+        /// <summary>
+        /// When the person picked up: their phone joined the call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("answered_at")]
+        public System.DateTimeOffset? AnsweredAt { get; set; } = default!;
+
+        /// <summary>
+        /// How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("duration_seconds")]
+        public long? DurationSeconds { get; set; } = default!;
+
+        /// <summary>
+        /// How the call ended. Absent while it is ringing or under way.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcome")]
+        public string? Outcome { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -11437,7 +11719,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Filter { get; set; } = default!;
 
         /// <summary>
-        /// Who the memories belong to. Empty means the customer.
+        /// Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string? UserId { get; set; } = default!;
@@ -11776,6 +12058,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string? Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SetNumberAgentRequest
+    {
+
+        /// <summary>
+        /// The name of the agent config that answers the number. Give this or config_id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent")]
+        public string? Agent { get; set; } = default!;
+
+        /// <summary>
+        /// The id of the agent config that answers the number. Give this or agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -13353,6 +13662,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         /// <summary>
+        /// agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string? Region { get; set; } = default!;
+
+        /// <summary>
         /// How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("resume_history")]
@@ -14429,6 +14744,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("byok")]
+        public bool? Byok { get; set; } = default!;
+
+        /// <summary>
         /// When the entry took effect, or takes effect.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("effective_at")]
@@ -14481,6 +14802,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("reason")]
         public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("region")]
+        public string Region { get; set; } = default!;
 
         /// <summary>
         /// The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices.
@@ -14741,7 +15068,7 @@ namespace GetStream.VisionAgents.Models
         public long CostMicros { get; set; } = default!;
 
         /// <summary>
-        /// Why it failed, when it did.
+        /// Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;

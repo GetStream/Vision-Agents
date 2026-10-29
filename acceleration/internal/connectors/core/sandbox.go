@@ -47,6 +47,12 @@ type SandboxRead struct {
 	// read to no request and refuses the POST. Left out of the JSON when false, so a read without
 	// it is stored as it was.
 	GraphQL bool `yaml:"graphql,omitempty" json:"graphql,omitempty"`
+	// SQL makes it a SQL endpoint, where a SELECT and a write are both a POST: the proxy lets a
+	// POST through only when the host's own dry run of its body says the statement is one SELECT.
+	// The one such endpoint the proxy reads is BigQuery's jobs.query
+	// (https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query). Its Method is left
+	// out, as a GraphQL read's is, and it is left out of the JSON when false.
+	SQL bool `yaml:"sql,omitempty" json:"sql,omitempty"`
 }
 
 var (
@@ -89,9 +95,11 @@ func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
 			fail(field+".host", "%q is not one of sandbox.hosts", read.Host)
 		}
 		switch {
-		case read.GraphQL && read.Method != "":
-			fail(field+".method", "%q is set on a GraphQL read, which takes a POST and leaves its method out", read.Method)
-		case !read.GraphQL && !sandboxMethod.MatchString(read.Method):
+		case read.GraphQL && read.SQL:
+			fail(field+".sql", "is set beside graphql: a read is one kind of endpoint")
+		case (read.GraphQL || read.SQL) && read.Method != "":
+			fail(field+".method", "%q is set on a GraphQL or SQL read, which takes a POST and leaves its method out", read.Method)
+		case !read.GraphQL && !read.SQL && !sandboxMethod.MatchString(read.Method):
 			fail(field+".method", "%q is not a method in upper-case letters", read.Method)
 		}
 		// path.Match reports a malformed pattern whatever it is matched against.

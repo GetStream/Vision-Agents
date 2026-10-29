@@ -77,9 +77,13 @@ const (
 	// APIKeyHeader carries the public half of the credential.
 	APIKeyHeader = "X-Api-Key"
 	// AuthTypeHeader names which kind of credential the caller believes it is presenting.
-	// It has no query parameter counterpart on purpose: a browser WebSocket cannot set a
-	// header, so there is no way for one to claim to be a backend.
 	AuthTypeHeader = "Stream-Auth-Type"
+	// AuthTypeParam is the same declaration in the query, for a socket, because a browser
+	// WebSocket cannot set a header; a plain request may send it too. Only Proxy mode
+	// without declared kinds reads it, and only as AuthTypeJWT or AuthTypeAnonymous: there
+	// it can only make a caller weaker than the backend saying nothing makes it, so a
+	// socket still has no way to claim to be a backend.
+	AuthTypeParam = "stream-auth-type"
 	// APIKeyParam and TokenParam carry the same two values on a socket, because a browser
 	// WebSocket cannot set a header.
 	APIKeyParam = "api_key"
@@ -348,6 +352,10 @@ func (p proxied) Authenticate(_ context.Context, r *http.Request) (Principal, er
 	// kinds, because its callers are all backends. To one that does, saying nothing is a
 	// gap, and a gap is filled with the weaker of the two.
 	declared := authTypeOf(r)
+	// Only here, where saying nothing is the strongest answer, can the query only weaken.
+	if declared == "" && !p.declares {
+		declared = endUserParam(r)
+	}
 	named := strings.TrimSpace(r.Header.Get(UserHeader))
 	kind := KindServer
 	if p.declares {
@@ -482,6 +490,15 @@ func (k keyed) Authenticate(ctx context.Context, r *http.Request) (Principal, er
 // before there was anything to declare.
 func authTypeOf(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get(AuthTypeHeader))
+}
+
+// endUserParam reads AuthTypeParam, and only when it names an end user.
+func endUserParam(r *http.Request) string {
+	declared := strings.TrimSpace(r.URL.Query().Get(AuthTypeParam))
+	if strings.EqualFold(declared, AuthTypeJWT) || strings.EqualFold(declared, AuthTypeAnonymous) {
+		return declared
+	}
+	return ""
 }
 
 // user reads the end user a proxy named, from the header or from the socket's query string.

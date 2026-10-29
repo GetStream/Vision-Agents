@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -528,6 +529,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 			CustomerID: a.options.CustomerID,
 			AgentID:    a.options.AgentID,
 			CallID:     a.options.CallID,
+			Region:     a.options.Region,
 			Tags:       a.options.Tags,
 			Target:     a.options.JudgeTarget,
 		}); err != nil {
@@ -616,6 +618,7 @@ func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*s
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
+		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        s.STSTarget,
 		LanguageHints: a.options.LanguageHints,
@@ -639,6 +642,7 @@ func (a *Agent) startLLM(target string) (*llmrouter.Session, error) {
 		Caller:        a.options.Caller,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
+		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        target,
 		LanguageHints: a.options.LanguageHints,
@@ -672,6 +676,7 @@ func (a *Agent) startVoice(s Settings, failed []string) (*ttsrouter.Session, err
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
+		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        s.TTSTarget,
 		LanguageHints: a.options.LanguageHints,
@@ -730,7 +735,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		if current != nil && outstanding {
 			current.Release(cut)
 		}
-		a.turns.interrupt(cut)
+		a.interrupted(cut, stt.Participant{}, interruption{cause: causeVoiceLost})
 		a.emitter.Send(cutShort.cut(Interrupted{TurnID: cut}))
 	}
 	if !replace {
@@ -791,6 +796,7 @@ func (a *Agent) startListener(target string) (*sttrouter.Session, error) {
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
+		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        target,
 		LanguageHints: a.options.LanguageHints,

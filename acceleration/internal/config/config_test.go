@@ -222,6 +222,49 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+func (s *ConfigSuite) TestKnowledgeIsCutByTheIngestLimitsUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(500, config.Knowledge.MinChunk)
+	s.Equal(128, config.Knowledge.MaxHeading)
+
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "800")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "64")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(800, config.Knowledge.MinChunk)
+	s.Equal(64, config.Knowledge.MaxHeading)
+}
+
+func (s *ConfigSuite) TestAHeadingLimitNotUnderTheMinimumChunkIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "500")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "500")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "knowledge.max_heading")
+	s.ErrorContains(err, "knowledge.min_chunk")
+}
+
+func (s *ConfigSuite) TestANegativeKnowledgeLimitIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "-1")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "knowledge.max_heading")
+}
+
+func (s *ConfigSuite) TestKnowledgeLimitsOfZeroAreAccepted() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_MIN_CHUNK", "0")
+	s.T().Setenv("ROUTER_KNOWLEDGE_MAX_HEADING", "0")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Zero(config.Knowledge.MinChunk)
+	s.Zero(config.Knowledge.MaxHeading)
+}
+
 // TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor: the defaults, the
 // variables that set them, and a broker there is none of refused.
 func (s *ConfigSuite) TestTheCodeSandboxBrokerIsDaytonaAndNamesNoEnvironmentUnlessAskedFor() {
@@ -482,6 +525,39 @@ func (s *ConfigSuite) TestTheSandboxProxyIsOffUnlessAskedForAndThenNeedsItsCA() 
 	s.Require().NoError(err)
 	s.Equal(CodeSandbox{Broker: "daytona", ProxyAddr: ":8091", ProxyCACert: "cert", ProxyCAKey: "key",
 		IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, config.CodeSandbox)
+}
+
+// TestTheProxySocketIsInheritedOnlyWhenAskedFor: unset, the proxy listens on its address as on
+// base, which exported no such variable; set, it needs the proxy on and a socket of its own.
+func (s *ConfigSuite) TestTheProxySocketIsInheritedOnlyWhenAskedFor() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Zero(config.CodeSandbox.ProxyListenFD)
+	s.Empty(os.Getenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD"))
+
+	// From a file, so the variable read afterwards is the one Load wrote.
+	s.T().Setenv("ROUTER_LISTEN_FD", "3")
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("code_sandbox:\n  proxy_listen_fd: 4\n"), 0o600))
+	config, _, err = Load(path)
+	s.Require().NoError(err)
+	s.Equal(4, config.CodeSandbox.ProxyListenFD)
+	s.Equal("4", os.Getenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD"))
+
+	for _, refused := range []struct{ fd, proxyAddr, want string }{
+		{"-1", ":8091", "code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is a file descriptor, got -1"},
+		{"4", "", "the proxy is served only with code_sandbox.proxy_addr"},
+		{"3", ":8091", "code_sandbox.proxy_listen_fd and listen_fd are both 3"},
+		{"four", ":8091", "code_sandbox.proxy_listen_fd"},
+	} {
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD", refused.fd)
+		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", refused.proxyAddr)
+		_, _, err = Load("")
+		s.ErrorContains(err, refused.want, "fd %q", refused.fd)
+	}
 }
 
 // TestTheSecretPrefixHoldsNoUnderscore: a router named stg_dev would be swept by one named stg.
@@ -933,6 +1009,59 @@ func (s *ConfigSuite) TestAShardIsReadFromTheEnvironment() {
 	s.Equal("usw:6379", config.Redis.Shard.Addr)
 	s.Equal("us-east4=postgres://use/router,us-west1=postgres://usw/router", os.Getenv("ROUTER_POSTGRES_SHARDS"),
 		"written back the way it is read")
+}
+
+func (s *ConfigSuite) TestKnowledgeAndSandboxRegionsAreReadFromAFile() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte(`
+knowledge:
+  regions:
+    eu: aws-eu-central-1
+code_sandbox:
+  targets:
+    eu: eu
+`), 0o600))
+
+	config, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal(map[string]string{"eu": "aws-eu-central-1"}, config.Knowledge.Regions)
+	s.Equal(map[string]string{"eu": "eu"}, config.CodeSandbox.Targets)
+}
+
+func (s *ConfigSuite) TestKnowledgeAndSandboxRegionsAreReadFromTheEnvironment() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "us=gcp-us-east4, eu=aws-eu-central-1")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_TARGETS", "eu=eu")
+
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Equal(map[string]string{"us": "gcp-us-east4", "eu": "aws-eu-central-1"}, config.Knowledge.Regions)
+	s.Equal(map[string]string{"eu": "eu"}, config.CodeSandbox.Targets)
+	s.Equal("eu=aws-eu-central-1,us=gcp-us-east4", os.Getenv("ROUTER_KNOWLEDGE_REGIONS"), "written back the way it is read")
+}
+
+func (s *ConfigSuite) TestADeploymentThatSaysNothingKeepsKnowledgeAndSandboxesAsBefore() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+
+	s.Empty(config.Knowledge.Regions)
+	s.Empty(config.CodeSandbox.Targets)
+}
+
+func (s *ConfigSuite) TestARegionMappedToNothingIsRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "eu=")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, `knowledge.regions (ROUTER_KNOWLEDGE_REGIONS)`)
+	s.ErrorContains(err, `got eu=""`)
+}
+
+func (s *ConfigSuite) TestATargetForARegionOfAnotherFormIsRefused() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_TARGETS", "EU=eu")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, `code_sandbox.targets (ROUTER_CODE_SANDBOX_TARGETS)`)
 }
 
 func (s *ConfigSuite) TestAShardDatabaseWithoutTheSharedOneIsRefused() {

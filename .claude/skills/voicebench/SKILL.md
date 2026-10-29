@@ -10,6 +10,9 @@ them: world state, tool calls, entities, a judge, turn-taking and reply time. Re
 `benchmark/README.md` for the method; this skill is how to run it on a laptop without the
 failures every first run hits.
 
+Follow the [benchmark rules](../../../AGENTS.md#benchmark-rules) before tuning an agent,
+changing the grader or claiming a win.
+
 Work from `benchmark/` on a checkout of `accelerate`. Runs cost money (ElevenLabs, Deepgram,
 OpenAI, Gemma): start small and say how much you are about to run.
 
@@ -61,7 +64,7 @@ All four should be `200`. What the others mean:
 - **401 from ElevenLabs**: rerun the probe without `-o /dev/null`. `quota_exceeded` is the
   key's character limit, whatever the model: someone with workspace access has to raise it.
   Cached caller lines (`benchmark/cache/tts/`) need no quota, the agent's own voice always does.
-- **400 from Gemma**, or a slow first answer: the Baseten deployment is deactivated or waking.
+- **400 from Gemma**, or a slow first answer: the Gemma deployment is deactivated or waking (Baseten scales to zero).
   Wait until it answers in about a second before placing calls: calls made while it wakes go
   unanswered and score as failures with no tools.
 

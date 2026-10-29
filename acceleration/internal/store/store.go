@@ -1626,6 +1626,7 @@ func releaseNumber(ctx context.Context, db bun.IDB, customerID, e164 string, at 
 	result, err := db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
 		Set("attached_at = NULL").
+		Set("config_id = NULL").
 		Set("sip_trunk_id = NULL").
 		Set("bridge_uri = NULL").
 		Set("bridge_username = NULL").
@@ -1661,7 +1662,11 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
-	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+	update := s.db.NewUpdate().Model((*PhoneNumber)(nil))
+	if attached.ConfigID != "" {
+		update.Set("config_id = ?", attached.ConfigID)
+	}
+	result, err := update.
 		Set("stream_trunk_id = ?", attached.TrunkID).
 		Set("stream_route_id = ?", nullable(attached.RouteID)).
 		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
@@ -1697,6 +1702,8 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
+	// ConfigID is the agent the number keeps answering with. Empty leaves its agent as it is.
+	ConfigID string
 	// BridgeURI and BridgeUsername are the trunk's address, kept whenever a number is attached.
 	// The sealed password is empty for a service with no key to seal it under.
 	BridgeURI                string
@@ -1804,6 +1811,79 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 	return heldNumber(ctx, s.db.NewSelect(), customerID, e164)
+}
+
+// SetNumberAgent makes a config answer an attached number's calls, replacing any it had.
+func (s *Store) SetNumberAgent(ctx context.Context, customerID, e164, configID string) error {
+	if customerID == "" || e164 == "" || configID == "" {
+		return stack.Wrap(errors.New("store: a customer, a number and a config are required"))
+	}
+	// Only an attached number has an agent, and a detach can land between the caller's
+	// read and this write.
+	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("config_id = ?", configID).
+		Where("customer_id = ?", customerID).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Where("attached_at IS NOT NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set number agent: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set number agent: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds attached", e164, customerID)})
+	}
+	return nil
+}
+
+// ClearNumberAgent sends a number's calls back to dispatch. A number with no agent is left
+// as it is.
+func (s *Store) ClearNumberAgent(ctx context.Context, customerID, e164 string) error {
+	if customerID == "" || e164 == "" {
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
+	}
+	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("config_id = NULL").
+		Where("customer_id = ?", customerID).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: clear number agent: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: clear number agent: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
+	}
+	return nil
+}
+
+// NumbersAnsweredBy returns the numbers a config answers, sorted.
+func (s *Store) NumbersAnsweredBy(ctx context.Context, customerID, configID string) ([]string, error) {
+	if customerID == "" || configID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a config are required"))
+	}
+	var numbers []string
+	err := s.db.NewSelect().Model((*PhoneNumber)(nil)).
+		Column("e164").
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("released_at IS NULL").
+		// A router from before agents on numbers detaches without clearing the agent.
+		Where("attached_at IS NOT NULL").
+		Order("e164").
+		Scan(ctx, &numbers)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: numbers answered by: %w", err))
+	}
+	return numbers, nil
 }
 
 // heldNumber is one number a customer holds, read by query.

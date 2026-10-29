@@ -388,3 +388,74 @@ func (s *BandwidthSuite) answer(body string) {
 		_, _ = w.Write([]byte(body))
 	}
 }
+
+func (s *BandwidthSuite) TestACallWithAStatusURLAsksForItsEnd() {
+	s.answer(`{"callId":"c-1","state":"initiated"}`)
+	statusURL := "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+17195551234",
+		To:        "+13035559876",
+		Bridge:    phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+		AnswerURL: "https://router.example.com/v1/phone/answer/tok-1",
+		StatusURL: statusURL,
+	})
+	s.Require().NoError(err)
+
+	var sent map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(s.seen.body), &sent))
+	s.Equal(statusURL, sent["disconnectUrl"])
+	s.Equal(http.MethodPost, sent["disconnectMethod"])
+}
+
+func (s *BandwidthSuite) TestACallWithoutAStatusURLAsksForNothing() {
+	s.answer(`{"callId":"c-1","state":"initiated"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+17195551234",
+		To:        "+13035559876",
+		Bridge:    phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+		AnswerURL: "https://router.example.com/v1/phone/answer/tok-1",
+	})
+	s.Require().NoError(err)
+
+	var sent map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(s.seen.body), &sent))
+	s.NotContains(sent, "disconnectUrl")
+	s.NotContains(sent, "disconnectMethod")
+}
+
+func (s *BandwidthSuite) TestEachFinalStatusIsAnOutcome() {
+	for cause, result := range map[string]phone.CallResult{
+		"hangup":                 phone.CallCompleted,
+		"busy":                   phone.CallBusy,
+		"rejected":               phone.CallBusy,
+		"timeout":                phone.CallNoAnswer,
+		"cancel":                 phone.CallCanceled,
+		"callback-error":         phone.CallFailed,
+		"node-capacity-exceeded": phone.CallFailed,
+	} {
+		status, err := s.provider.ReadStatus("application/json",
+			[]byte(`{"eventType":"disconnect","callId":"c-1","cause":"`+cause+`"}`))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: cause}, status, cause)
+	}
+}
+
+func (s *BandwidthSuite) TestAProgressReportDecidesNothing() {
+	status, err := s.provider.ReadStatus("application/json", []byte(`{"eventType":"answer","callId":"c-1"}`))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "answer"}, status)
+}
+
+func (s *BandwidthSuite) TestAStatusItCannotReadIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"callId":"c-1"}`))
+	s.ErrorContains(err, "eventType")
+
+	_, err = s.provider.ReadStatus("application/json", []byte(`not json`))
+	s.Error(err)
+
+	_, err = s.provider.ReadStatus("application/x-www-form-urlencoded", []byte("eventType=disconnect"))
+	s.Error(err)
+}

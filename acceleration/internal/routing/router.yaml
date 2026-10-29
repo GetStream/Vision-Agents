@@ -648,6 +648,63 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Fish Audio's transcribe-stream-1, their realtime transcriber for voice agents. It
+    # ends a turn when the words read as finished rather than on a silence alone, and
+    # tells the caller's turns from noise and other voices, which are never reported. No
+    # benchmark line: Artificial Analysis have not measured it yet. On the shared fixture
+    # it settled about a second after the last word and got every word.
+    #
+    # The languages are the 29 it labels a transcript with.
+    #
+    # $0.36 an hour, billed for every second the session is open, idle time included.
+    - provider: fish
+      model: transcribe-stream-1
+      description: "Fish Audio's live transcriber: finds the turn's end from the words and ignores sounds that are not the caller."
+      languages:
+        [
+          ar,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fa,
+          fi,
+          fr,
+          hi,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          mk,
+          ms,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sv,
+          th,
+          tl,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # context.terms takes a hundred terms of up to thirty-two characters, and can be
+      # replaced on an open session. silence_timeout_ms is the silence after which a turn
+      # ends whatever its words say, at least three seconds in the mode a call runs in.
+      # The model can also diarize, which nothing here sends.
+      supports: [keyterms, endpointing]
+      # The same account and terms as the Fish voices: content may train their models on
+      # every self-serve tier and is kept for as long as the service has a use for it.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # Microsoft's MAI-Transcribe-2-Streaming, launched 2026-10-01 in public preview, so
     # without an SLA. Reached over the OpenAI Realtime-compatible socket of a Foundry
     # resource, which is AZURE_MAI_ENDPOINT, and the deployment named by
@@ -1687,6 +1744,41 @@ tts:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Fish's hosted S2.1 Pro, which Fish recommend over S2 Pro for production: better
+    # quality, latency and throughput, 83 languages, at the same price. The same terms as
+    # S2 Pro above.
+    - provider: fish
+      model: s2.1-pro
+      description: "Fish's hosted S2.1 Pro, S2 Pro's successor, in 83 languages."
+      languages:
+        [
+          ar,
+          de,
+          en,
+          es,
+          fi,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          nl,
+          pl,
+          pt,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # The same weights on our own Baseten deployment, where the price is the GPU.
     - provider: s2pro
       model: s2-pro
@@ -2355,9 +2447,12 @@ llm:
         retention: unspecified
 
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
-    # The rates below convert Baseten's H100 rate of $0.10833/min at an assumed 1500 output
+    # The rates below convert Baseten's 1x H100 rate of $0.10833/min at an assumed 1500 output
     # tokens per second across the batch, with prefill taken as five times cheaper than
     # decode. They are an estimate of what this deployment costs us, not a published price.
+    # Gemma now runs on Nebius, 1x H200 (AI-1664), so the rates no longer describe the host.
+    # When the host or the GPU changes, recompute them from the new per-minute rate and
+    # update prices/vendor.json to match.
     # Thinking stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: gemma
       model: gemma-4-26B-A4B-it
@@ -2391,15 +2486,37 @@ llm:
       realtime: true
       tier: high-quality
 
+    # GPT-5.6 Terra, which GPT-6.1 Terra below replaces. It stays declared because callers
+    # name it outright, and a name that is no longer declared is an unknown target rather
+    # than a failover.
     - provider: openai
       model: gpt-5.6-terra
-      description: "OpenAI's middle tier: stronger reasoning than Luna, slower, and ten times the price."
+      description: "OpenAI's previous middle tier. GPT-6.1 Terra is stronger and half the price."
       benchmark: { intelligence_index: 21, output_tokens_per_second: 85 }
       context_window: 1000000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
       input_modalities: [image]
+
+    # GPT-6.1 Terra is GPT-5.6 Terra's direct upgrade at half the input price and well under
+    # half the output. Artificial Analysis score it 33 without reasoning, which is what the
+    # provider asks for unless a request names an effort, and 48 at max; its efforts run
+    # from none to max. Cache writes are $1.25 per million, and a prompt over 272k input
+    # tokens is billed at twice the input and cache rates and 1.5 times the output for the
+    # whole request. The same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6.1-terra
+      description: "OpenAI's middle tier, for visual reasoning and writing. Reads images, and can answer without thinking first."
+      benchmark: { intelligence_index: 33, output_tokens_per_second: 91 }
+      context_window: 1050000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no

@@ -35,6 +35,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1036,6 +1037,210 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
 	s.ErrorIs(err, io.EOF)
 }
 
+// blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
+// that is a bare listener: the sandbox's end and the host's.
+func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = listener.Close() })
+	s.answerAt(listener.Addr().String())
+	s.allow("outside.test")
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.IdleTimeout = idle }))
+	s.T().Cleanup(s.proxy.Close)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := listener.Accept()
+		accepted <- conn
+	}()
+	sandbox, err = net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sandbox.Close() })
+	_, err = fmt.Fprintf(sandbox, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(sandbox), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	host = <-accepted
+	s.Require().NotNil(host)
+	s.T().Cleanup(func() { _ = host.Close() })
+	return sandbox, host
+}
+
+// closedWithin is the time conn took to end, the connection closed by its peer and not a read
+// that ran out of time: the wait is bounded by a few seconds, past any idle timeout a test gives.
+func (s *ProxySuite) closedWithin(conn net.Conn, since time.Time) time.Duration {
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, err := io.Copy(io.Discard, conn)
+	if err != nil {
+		var timeout net.Error
+		s.False(errors.As(err, &timeout) && timeout.Timeout(), "the tunnel was not closed in time: %v", err)
+	}
+	return time.Since(since)
+}
+
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout: no byte either way,
+// and both ends are closed, not before the idle timeout.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout() {
+	const idle = 300 * time.Millisecond
+	sandbox, host := s.blindTunnel(idle)
+	opened := time.Now()
+
+	sandboxEnd := s.closedWithin(sandbox, opened)
+	hostEnd := s.closedWithin(host, opened)
+
+	s.GreaterOrEqual(sandboxEnd, idle)
+	s.GreaterOrEqual(hostEnd, idle)
+}
+
+// TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen: past the idle timeout, bytes in one
+// direction or the other keep it, though the other direction is silent; it closes the idle
+// timeout after the last byte. Both at once is the -race probe of the shared deadline.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen() {
+	const idle = 400 * time.Millisecond
+	const every = idle / 4
+	for _, direction := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the sandbox sends", true, false}, {"the host sends", false, true}, {"both send", true, true}} {
+		s.Run(direction.name, func() {
+			sandbox, host := s.blindTunnel(idle)
+			var sent, received atomic.Int64
+			var drained sync.WaitGroup
+			drain := func(conn net.Conn) {
+				drained.Add(1)
+				go func() {
+					defer drained.Done()
+					n, _ := io.Copy(io.Discard, conn)
+					received.Add(n)
+				}()
+			}
+			drain(sandbox)
+			drain(host)
+			var sending sync.WaitGroup
+			var last atomic.Pointer[time.Time]
+			send := func(conn net.Conn) {
+				sending.Add(1)
+				go func() {
+					defer sending.Done()
+					// Three idle timeouts of bytes, each well inside one.
+					for end := time.Now().Add(3 * idle); time.Now().Before(end); time.Sleep(every) {
+						now := time.Now()
+						if _, err := conn.Write([]byte("x")); err != nil {
+							s.Failf("the tunnel closed while it carried bytes", "%v", err)
+							return
+						}
+						sent.Add(1)
+						last.Store(&now)
+					}
+				}()
+			}
+			if direction.sandboxSends {
+				send(sandbox)
+			}
+			if direction.hostSends {
+				send(host)
+			}
+			sending.Wait()
+			s.Require().NotNil(last.Load())
+
+			closed := s.closedWithin(sandbox, *last.Load())
+			drained.Wait()
+
+			s.GreaterOrEqual(closed, idle, "closed before the idle timeout past the last byte")
+			s.Equal(sent.Load(), received.Load(), "a byte was lost")
+		})
+	}
+}
+
+// fillUntilBlocked writes conn small chunks until `stalls` writes in a row time out having accepted
+// no byte at all. One such write can be a proxy copy that has not run yet, which then moves
+// everything on and goes back to a read that the idle timeout ends; a proxy that takes nothing
+// for several stalls has both its buffers and its write full, and its copy is stuck in the write.
+// It returns an error, not a failed test: the callers run it in goroutines.
+func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
+	// stalls: chosen, not measured: three stalls outlast the longest pause of a proxy copy seen
+	// on this machine under a load of 115 (a single stall was passed by a copy that had not run).
+	const stalls = 3
+	chunk := make([]byte, 32<<10)
+	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
+	for written, blocked := 0, 0; written < 1<<30; {
+		if err := conn.SetWriteDeadline(time.Now().Add(stall)); err != nil {
+			return err
+		}
+		n, err := conn.Write(chunk)
+		written += n
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			return fmt.Errorf("the tunnel closed while it was being filled: %w", err)
+		}
+		if n > 0 {
+			blocked = 0
+			continue
+		}
+		if blocked++; blocked == stalls {
+			return nil
+		}
+	}
+	return errors.New("the tunnel took a gigabyte nobody reads")
+}
+
+// TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
+// buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
+// time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
+// The test touches its ends no more once they are full: a byte it sent would count as progress
+// and restart the idle timeout, so the close is read from the open-tunnels gauge. That a tunnel
+// is not closed before the idle timeout is held by
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
+	const (
+		// idle: chosen, not measured: long enough that the fill (stall) and the gauge reads fit
+		// inside it on a loaded machine, short enough that the test waits seconds, not 90 s.
+		idle = 2 * time.Second
+		// stall: how long a write may make no progress before the buffers count as full. Chosen,
+		// not measured: many scheduler turns on a loaded machine (load 115 here), and below idle.
+		stall = 200 * time.Millisecond
+		// margin: what the close may take past the idle timeout. Chosen: the idle timeout again,
+		// for the close and a loaded machine; there is no other timer on a hijacked tunnel.
+		margin = idle
+		// poll: the interval of the gauge reads, as in TestOpenTunnelsAreCountedUntilTheyClose.
+		poll = 20 * time.Millisecond
+	)
+	for _, stalled := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
+		s.Run(stalled.name, func() {
+			before := s.tunnelsOpen()
+			sandbox, host := s.blindTunnel(idle)
+			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
+				// Chosen, not measured: a bound only (Eventually returns when the gauge moves); a tunnel opens
+				// in milliseconds, 5 s covers a loaded machine.
+				5*time.Second, poll, "the tunnel opened")
+			// Both directions at once: a fill that waited for the other would leave a copy idle
+			// with a read pending, and that read's timeout would close the tunnel early.
+			var senders []net.Conn
+			if stalled.sandboxSends {
+				senders = append(senders, sandbox)
+			}
+			if stalled.hostSends {
+				senders = append(senders, host)
+			}
+			filled := make(chan error, len(senders))
+			for _, sender := range senders {
+				go func() { filled <- fillUntilBlocked(sender, stall) }()
+			}
+			for range senders {
+				s.Require().NoError(<-filled)
+			}
+
+			// Every buffer is full and nothing moves from here: the last byte moved no later than
+			// now, so the tunnel is closed by idle after it at the latest.
+			s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before },
+				idle+margin, poll, "the tunnel was not closed in time")
+		})
+	}
+}
+
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
 // wildcard that names no domain, which no broker stores, takes nothing.
 func (s *ProxySuite) TestAHostWithATrailingDotIsTheHostWithout() {
@@ -1351,7 +1556,7 @@ func (s *ProxySuite) TestTheProductionTransportDialsNoInternalAddress() {
 }
 
 // TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12: the certificate names the
-// CONNECT host only, is no CA's, is the router CA's and lives two hours; h2 is not
+// CONNECT host only, is no CA's, is the router CA's and lives at most two and a half hours; h2 is not
 // negotiated, and TLS before 1.2 is refused.
 func (s *ProxySuite) TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12() {
 	// The handshake verifies the leaf against the router's CA alone (tunnel's RootCAs).
@@ -1362,7 +1567,7 @@ func (s *ProxySuite) TestTheSandboxGetsOneHostsCertificateOverHTTP11AndTLS12() {
 	s.Equal([]string{"api.github.test"}, leaf.DNSNames)
 	s.False(leaf.IsCA)
 	s.Equal("router sandbox CA", leaf.Issuer.CommonName)
-	s.LessOrEqual(leaf.NotAfter.Sub(leaf.NotBefore), 2*time.Hour)
+	s.LessOrEqual(leaf.NotAfter.Sub(leaf.NotBefore), 2*time.Hour+halfValidity)
 	for _, version := range []uint16{tls.VersionTLS10, tls.VersionTLS11} {
 		s.Error(s.tunnel(&tls.Config{MinVersion: tls.VersionTLS10, MaxVersion: version}).Handshake(), version)
 	}
@@ -1377,18 +1582,23 @@ func (s *ProxySuite) handshake(config *tls.Config) tls.ConnectionState {
 
 // tunnel is a CONNECT to api.github.test:443, and TLS in it with config.
 func (s *ProxySuite) tunnel(config *tls.Config) *tls.Conn {
+	return s.tunnelTo("api.github.test", config)
+}
+
+// tunnelTo is tunnel to host.
+func (s *ProxySuite) tunnelTo(host string, config *tls.Config) *tls.Conn {
 	conn, err := net.Dial("tcp", s.proxy.Listener.Addr().String())
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = conn.Close() })
 	s.Require().NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
-	_, err = fmt.Fprintf(conn, "CONNECT api.github.test:443 HTTP/1.1\r\nHost: api.github.test:443\r\nProxy-Authorization: %s\r\n\r\n",
-		basic("sbx", s.credential))
+	_, err = fmt.Fprintf(conn, "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: %s\r\n\r\n",
+		host, host, basic("sbx", s.credential))
 	s.Require().NoError(err)
 	// A one-byte reader keeps no byte of the handshake from tls.Client.
 	response, err := http.ReadResponse(bufio.NewReaderSize(conn, 16), nil)
 	s.Require().NoError(err)
 	s.Require().Equal(http.StatusOK, response.StatusCode)
-	config.ServerName, config.RootCAs = "api.github.test", s.trusted
+	config.ServerName, config.RootCAs = host, s.trusted
 	return tls.Client(conn, config)
 }
 
@@ -2184,6 +2394,16 @@ func (h *host) serve(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://outside.test/landing", http.StatusFound)
 		return
 	}
+	// BigQuery's dry run of jobs.query names the statement, SCRIPT for more than one (live probe
+	// 2026-10-27T19:55Z).
+	if strings.HasPrefix(r.URL.Path, "/bigquery/") && strings.Contains(got.Body, `"dryRun":true`) {
+		statement := "SELECT"
+		if strings.Contains(got.Body, ";") {
+			statement = "SCRIPT"
+		}
+		_, _ = io.WriteString(w, `{"statementType":"`+statement+`"}`)
+		return
+	}
 	w.Header().Set("X-Echo-Authorization", got.Authorization)
 	echo, _ := json.Marshal(map[string]string{"authorization": got.Authorization})
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && r.URL.Path != "/plain" {
@@ -2341,4 +2561,285 @@ func (s *ProxySuite) TestTheListenerTLSHoldsTLS12AndHTTP11() {
 
 	s.Equal(uint16(tls.VersionTLS12), config.MinVersion)
 	s.Equal([]string{"http/1.1"}, config.NextProtos)
+}
+
+// leafClock is the time a proxy dates and renews its certificates by, which a test moves.
+type leafClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *leafClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *leafClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// TestAHostKeepsItsCertificateUntilHalfOfItsValidityHasPassed: two tunnels to one host within
+// the window get one certificate, and a tunnel after it gets a new one. A kept certificate is
+// still valid for the client for at least the rest of the half hour, when it is reused.
+func (s *ProxySuite) TestAHostKeepsItsCertificateUntilHalfOfItsValidityHasPassed() {
+	clock := &leafClock{now: time.Now()}
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now }))
+	s.T().Cleanup(s.proxy.Close)
+	// The client reads the clock the proxy reads, so a certificate it dates is judged by it.
+	handshake := func() *x509.Certificate {
+		state := s.handshake(&tls.Config{Time: clock.Now})
+		return state.PeerCertificates[0]
+	}
+
+	first := handshake()
+	clock.advance(29*time.Minute + 59*time.Second)
+	reused := handshake()
+	reusedAt := clock.Now()
+	clock.advance(time.Second)
+	renewed := handshake()
+
+	s.Equal(first.SerialNumber, reused.SerialNumber, "within half of the validity")
+	s.True(reused.NotAfter.After(reusedAt.Add(halfValidity)), "a kept certificate has more than half an hour left: %s", reused.NotAfter)
+	s.NotEqual(first.SerialNumber, renewed.SerialNumber, "half of the validity has passed")
+	// A certificate's times are whole seconds.
+	s.WithinDuration(clock.Now().Add(time.Hour+halfValidity), renewed.NotAfter, time.Second, "the renewed certificate is dated by the clock")
+}
+
+// TestHostsKeepTheirOwnCertificates: a certificate kept for one host is never another host's,
+// whether the host is a tunnel's name or the listener's address.
+func (s *ProxySuite) TestHostsKeepTheirOwnCertificates() {
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test", "uploads.github.test")}})
+
+	api := s.handshake(&tls.Config{}).PeerCertificates[0]
+	uploads := s.tunnelTo("uploads.github.test", &tls.Config{})
+	s.Require().NoError(uploads.Handshake())
+	other := uploads.ConnectionState().PeerCertificates[0]
+	again := s.handshake(&tls.Config{}).PeerCertificates[0]
+
+	s.Equal([]string{"api.github.test"}, api.DNSNames)
+	s.Equal([]string{"uploads.github.test"}, other.DNSNames)
+	s.NotEqual(api.SerialNumber, other.SerialNumber)
+	s.Equal(api.SerialNumber, again.SerialNumber)
+}
+
+// TestTheListenerKeepsItsCertificateForTheAddress: every handshake the listener answers in the
+// window gets one certificate, an IP address's, dated by the clock when none is set. The
+// control for a proxy with no Now is time.Now: the certificate leafValidity either side of it.
+func (s *ProxySuite) TestTheListenerKeepsItsCertificateForTheAddress() {
+	proxy := s.newProxy(s.store)
+	config := proxy.ListenerTLS("127.0.0.1")
+	before := time.Now()
+
+	first := s.listenerCertificate(config, "127.0.0.1", time.Now)
+	second := s.listenerCertificate(config, "127.0.0.1", time.Now)
+
+	s.Equal(first.SerialNumber, second.SerialNumber)
+	s.True(first.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")))
+	s.WithinDuration(before.Add(-time.Hour), first.NotBefore, 5*time.Second)
+	s.WithinDuration(before.Add(time.Hour+halfValidity), first.NotAfter, 5*time.Second)
+}
+
+// listenerCertificate is the certificate config answers a client that connects to address with.
+func (s *ProxySuite) listenerCertificate(config *tls.Config, address string, now func() time.Time) *x509.Certificate {
+	server, client := net.Pipe()
+	s.T().Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	s.Require().NoError(client.SetDeadline(time.Now().Add(5 * time.Second)))
+	s.Require().NoError(server.SetDeadline(time.Now().Add(5 * time.Second)))
+	served := make(chan error, 1)
+	go func() { served <- tls.Server(server, config).Handshake() }()
+	conn := tls.Client(client, &tls.Config{ServerName: address, RootCAs: s.trusted, Time: now})
+	s.Require().NoError(conn.Handshake())
+	s.Require().NoError(<-served)
+	return conn.ConnectionState().PeerCertificates[0]
+}
+
+// maxKeptLeaves is egress's maxLeaves.
+const maxKeptLeaves = 1024
+
+// TestTheKeptCertificatesAreBounded: past the cap a host still gets a certificate, signed for
+// the handshake alone; a certificate half a validity old is dropped to make room.
+func (s *ProxySuite) TestTheKeptCertificatesAreBounded() {
+	clock := &leafClock{now: time.Now()}
+	proxy := s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now })
+	serial := func(address string) string {
+		certificate, err := proxy.ListenerTLS(address).GetCertificate(&tls.ClientHelloInfo{})
+		s.Require().NoError(err)
+		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+		s.Require().NoError(err)
+		return leaf.SerialNumber.String()
+	}
+	address := func(i int) string { return fmt.Sprintf("10.%d.%d.1", i/256, i%256) }
+	const hosts = maxKeptLeaves + 50
+	first := make([]string, hosts)
+	for i := range first {
+		first[i] = serial(address(i))
+	}
+
+	kept := 0
+	for i := range first {
+		if serial(address(i)) == first[i] {
+			kept++
+		}
+	}
+	clock.advance(halfValidity)
+	fresh := serial("192.0.2.1")
+
+	s.Equal(maxKeptLeaves, kept)
+	s.Equal(fresh, serial("192.0.2.1"), "the old certificates made room")
+}
+
+// TestAKeptCertificateVerifiesForAClockAnHourAhead: a certificate served 29 minutes after it
+// was signed is still valid, as a fresh one is, for a sandbox clock 59 minutes ahead.
+func (s *ProxySuite) TestAKeptCertificateVerifiesForAClockAnHourAhead() {
+	// The suite's CA lives an hour, which is less than the clock skew and the age together.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	s.Require().NoError(err)
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "day CA"},
+		NotBefore: time.Now().Add(-24 * time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	s.Require().NoError(err)
+	ca, err := x509.ParseCertificate(der)
+	s.Require().NoError(err)
+	clock := &leafClock{now: time.Now()}
+	proxy, err := egress.New(egress.Options{Store: s.store, Tokens: s.tokens, Now: clock.Now,
+		CACert: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), CAKey: keyPEM(s.T(), key)})
+	s.Require().NoError(err)
+	trusted := x509.NewCertPool()
+	trusted.AddCert(ca)
+	config := proxy.ListenerTLS("127.0.0.1")
+	// handshake is the sandbox's, with a clock 59 minutes ahead of the proxy's.
+	handshake := func() *x509.Certificate {
+		server, client := net.Pipe()
+		s.T().Cleanup(func() { _ = client.Close(); _ = server.Close() })
+		s.Require().NoError(client.SetDeadline(time.Now().Add(5 * time.Second)))
+		s.Require().NoError(server.SetDeadline(time.Now().Add(5 * time.Second)))
+		go func() { _ = tls.Server(server, config).Handshake() }()
+		conn := tls.Client(client, &tls.Config{ServerName: "127.0.0.1", RootCAs: trusted,
+			Time: func() time.Time { return clock.Now().Add(59 * time.Minute) }})
+		s.Require().NoError(conn.Handshake())
+		return conn.ConnectionState().PeerCertificates[0]
+	}
+	first := handshake()
+	clock.advance(29 * time.Minute)
+
+	kept := handshake()
+
+	s.Equal(first.SerialNumber, kept.SerialNumber, "the certificate served is the first one")
+}
+
+// blockingRandom is crypto/rand's reader that holds a read once armed, until released, which
+// is how a test holds a certificate's signing, the first thing it reads randomness for.
+type blockingRandom struct {
+	reader  io.Reader
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingRandom) Read(p []byte) (int, error) {
+	if r.armed.CompareAndSwap(true, false) {
+		close(r.entered)
+		<-r.release
+	}
+	return r.reader.Read(p)
+}
+
+// TestAHostWithACertificateIsServedWhileAnotherHostIsSigned: a handshake for a host with a
+// kept certificate completes while a handshake for a new host is held in its CA signature.
+func (s *ProxySuite) TestAHostWithACertificateIsServedWhileAnotherHostIsSigned() {
+	proxy := s.newProxy(s.store)
+	_, err := proxy.ListenerTLS("10.0.0.1").GetCertificate(&tls.ClientHelloInfo{})
+	s.Require().NoError(err)
+	random := &blockingRandom{reader: rand.Reader, entered: make(chan struct{}), release: make(chan struct{})}
+	original := rand.Reader
+	rand.Reader = random
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(random.release)
+		}
+	}
+	s.T().Cleanup(func() { release(); rand.Reader = original })
+	signed := make(chan error, 1)
+	random.armed.Store(true)
+	go func() {
+		_, err := proxy.ListenerTLS("10.0.0.2").GetCertificate(&tls.ClientHelloInfo{})
+		signed <- err
+	}()
+	<-random.entered
+
+	served := make(chan error, 1)
+	go func() {
+		_, err := proxy.ListenerTLS("10.0.0.1").GetCertificate(&tls.ClientHelloInfo{})
+		served <- err
+	}()
+
+	select {
+	case err := <-served:
+		s.NoError(err)
+	case <-time.After(5 * time.Second):
+		s.Fail("a host with a certificate waits for another host's signature")
+	}
+	release()
+	s.NoError(<-signed)
+}
+
+// halfValidity is half of egress's leafValidity.
+const halfValidity = 30 * time.Minute
+
+// TestConcurrentHandshakesShareTheKeptCertificates is the -race probe: handshakes for the same
+// and for different hosts at once, while the clock passes the renewal point, get one
+// certificate per host and period.
+func (s *ProxySuite) TestConcurrentHandshakesShareTheKeptCertificates() {
+	clock := &leafClock{now: time.Now()}
+	proxy := s.newProxy(s.store, func(options *egress.Options) { options.Now = clock.Now })
+	addresses := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"}
+	serials := func() map[string]map[string]bool {
+		var mu sync.Mutex
+		seen := map[string]map[string]bool{}
+		var wg sync.WaitGroup
+		for range 8 {
+			for _, address := range addresses {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					certificate, err := proxy.ListenerTLS(address).GetCertificate(&tls.ClientHelloInfo{})
+					if !s.NoError(err) {
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					if seen[address] == nil {
+						seen[address] = map[string]bool{}
+					}
+					seen[address][string(certificate.Certificate[0])] = true
+				}()
+			}
+		}
+		wg.Wait()
+		return seen
+	}
+
+	before := serials()
+	clock.advance(halfValidity)
+	after := serials()
+
+	all := map[string]bool{}
+	for _, address := range addresses {
+		s.Len(before[address], 1, address)
+		s.Len(after[address], 1, address)
+		for certificate := range before[address] {
+			s.False(all[certificate], "a certificate is one host's")
+			all[certificate] = true
+		}
+		for certificate := range after[address] {
+			s.False(before[address][certificate], "renewed")
+		}
+	}
+	s.Len(all, len(addresses))
 }

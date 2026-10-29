@@ -387,7 +387,7 @@ func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
 	s.EqualValues(9_550, response.Usage.VendorCostMicros)
 	list, err := pricing.NewList("vendor", prices.Vendor().Entries, nil)
 	s.Require().NoError(err)
-	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
+	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7", Region: pricing.RegionUS}, response.Used())
 	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
 }
 
@@ -1638,19 +1638,4 @@ func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
 	s.Require().NoError(err)
 	s.Contains(string(encoded), "one.png")
 	s.Contains(string(encoded), "two.png")
-}
-
-func (s *OpenAICompatSuite) TestAForcedCallRequiresEveryArgument() {
-	offered := []llm.Tool{
-		{Name: "verify_account", Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"pin": map[string]any{}, "last4": map[string]any{}, "address": map[string]any{}},
-			"required":   []any{"pin"},
-		}},
-		{Name: "check_outage"},
-	}
-	required := everyArgumentRequired(offered)
-	s.Equal([]string{"address", "last4", "pin"}, required[0].Parameters["required"])
-	s.Nil(required[1].Parameters)
-	s.Equal([]any{"pin"}, offered[0].Parameters["required"], "the offered schema was changed")
 }

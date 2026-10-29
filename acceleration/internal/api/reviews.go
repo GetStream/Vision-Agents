@@ -27,8 +27,8 @@ const (
 	analysedCalls = 100
 	// analysisTarget is a quality tier rather than a fast one, as the review itself is:
 	// somebody is waiting, but for a judgement, not for a turn.
-	analysisTarget = "multilingual-high-accuracy"
-	analysisTokens = 3000
+	analysisTarget   = "multilingual-high-accuracy"
+	analysisTokens   = 3000
 	analysisDeadline = 2 * time.Minute
 	// maxCauses keeps the answer to what a person would act on. The instructions ask for
 	// as many.
@@ -212,9 +212,9 @@ type analyzeReviewsResponse struct {
 
 // AnalyzeReviewsRequest is the window the reviews are read from.
 type AnalyzeReviewsRequest struct {
-	From time.Time `json:"from" doc:"Only calls that started at or after this, inclusive."`
-	To   time.Time `json:"to" doc:"Only calls that started before this, exclusive."`
-	Target *string `json:"target,omitempty" doc:"The model that analyses, a \"provider/model\" name or a shortcut. Left out, multilingual-high-accuracy."`
+	From   time.Time `json:"from" doc:"Only calls that started at or after this, inclusive."`
+	To     time.Time `json:"to" doc:"Only calls that started before this, exclusive."`
+	Target *string   `json:"target,omitempty" doc:"The model that analyses, a \"provider/model\" name or a shortcut. Left out, multilingual-high-accuracy."`
 }
 
 // ReviewAnalysis is what caused the calls the agents handled badly.

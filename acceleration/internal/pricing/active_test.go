@@ -98,7 +98,7 @@ func (s *PricingSuite) TestActiveFollowsTheSourceAndKeepsTheLastListWhenItFails(
 
 func (s *PricingSuite) TestAnUnpricedItemIsLoggedOnceAcrossReads() {
 	active := s.active(&answers{queued: []answer{{entries: []Entry{versioned("c1")}}}}, time.Hour, false)
-	item := Item{Modality: "runtime", Provider: "stream", Model: "voice"}
+	item := Item{Modality: "runtime", Provider: "stream", Model: "voice", Region: RegionUS}
 
 	active.Quote(item, Quantities{Seconds: 60})
 	s.Require().NoError(active.Reload(context.Background()))
@@ -183,12 +183,13 @@ func (s *PricingSuite) TestThePriceIsSummedOnceBeforeRounding() {
 }
 
 func (s *PricingSuite) TestFreeAndLocalStayFree() {
-	free := Entry{Modality: "phone", Provider: "telnyx", Model: "call", Free: true}
-	local := Entry{Modality: "llm", Provider: "gemma", Model: "gemma", Local: true}
+	free := Entry{Modality: "phone", Provider: "telnyx", Model: "call", Region: RegionUS, Free: true}
+	local := Entry{Modality: "llm", Provider: "gemma", Model: "gemma", Region: RegionUS, Local: true}
 	list, err := NewList("test", []Entry{free, local}, nil)
 	s.Require().NoError(err)
 
-	for _, item := range []Item{{Modality: "phone", Provider: "telnyx", Model: "call"}, {Modality: "llm", Provider: "gemma", Model: "gemma"}} {
+	for _, item := range []Item{{Modality: "phone", Provider: "telnyx", Model: "call", Region: RegionUS},
+		{Modality: "llm", Provider: "gemma", Model: "gemma", Region: RegionUS}} {
 		quote := list.Quote(item, Quantities{CallSeconds: 60, InputTokens: 1_000})
 		s.Zero(quote.CostMicros)
 		s.Zero(quote.BaseCostMicros)

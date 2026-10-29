@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,17 +42,24 @@ const (
 	// handshakeTimeout bounds a sandbox's TLS handshake and each request's headers in a
 	// tunnel: http.DefaultTransport's TLSHandshakeTimeout (net/http/transport.go).
 	handshakeTimeout = 10 * time.Second
-	// idleTimeout closes a tunnel no request has used for it: http.DefaultTransport's
-	// IdleConnTimeout (net/http/transport.go).
+	// idleTimeout closes a tunnel no request has used for it, and a tunnel to an allowed domain
+	// that has carried no byte for it: http.DefaultTransport's IdleConnTimeout
+	// (net/http/transport.go).
 	idleTimeout = 90 * time.Second
 	// headerTimeout ends a request whose host sends no response header in time: nginx's
 	// proxy_read_timeout default
 	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
 	headerTimeout = 60 * time.Second
-	// leafValidity is how long a host's certificate is valid. A client checks it only in the
-	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
-	// off by that much.
+	// leafValidity is how long a host's certificate is valid for the handshake it is minted
+	// for; an hour each side leaves room for a sandbox clock that is off by that much. A kept
+	// certificate is served up to leafValidity/2 later, so it is dated leafValidity/2 longer
+	// (sign), and a client's clock may still be off by an hour.
 	leafValidity = time.Hour
+	// maxLeaves caps the certificates kept. A wildcard grant lets a sandbox name any host under
+	// a domain, so the hosts are not bounded by the grants. A DER certificate here is under
+	// 1 KiB (P-256 key and CA signature), so the cap holds under 1 MiB. Past it a host's
+	// certificate is signed for the handshake alone, as it was before the cache.
+	maxLeaves = 1024
 	// authenticate is the challenge a 407 must carry (RFC 9110 section 15.5.8), for the
 	// Basic credential a proxy URL's userinfo sends (RFC 7617).
 	authenticate = `Basic realm="sandbox egress"`
@@ -73,9 +81,12 @@ type Options struct {
 	// public addresses only.
 	Dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	Logger *slog.Logger
-	// HandshakeTimeout, IdleTimeout and HeaderTimeout replace handshakeTimeout, idleTimeout
-	// and headerTimeout when set, for tests.
-	HandshakeTimeout, IdleTimeout, HeaderTimeout time.Duration
+	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
+	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
+	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
+	// Now replaces time.Now when set, for tests: it dates a certificate and tells when a kept
+	// one is renewed.
+	Now func() time.Time
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -89,7 +100,24 @@ type Proxy struct {
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	logger    *slog.Logger
 
-	handshakeTimeout, idleTimeout time.Duration
+	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
+
+	now func() time.Time
+	// leaves holds each host's certificate until it is half of leafValidity old, so a handshake
+	// costs no CA signature (P-256 about 66 us, RSA-4096 about 4.5 ms) once a host has one.
+	leaves leaves
+}
+
+type leaves struct {
+	mu     sync.Mutex
+	byHost map[string]keptLeaf
+}
+
+type keptLeaf struct {
+	certificate tls.Certificate
+	// renewAt is when the certificate is signed anew: leafValidity/2 after it was dated, so a
+	// client still has half of leafValidity left on it.
+	renewAt time.Time
 }
 
 func New(options Options) (*Proxy, error) {
@@ -114,9 +142,14 @@ func New(options Options) (*Proxy, error) {
 	if dial == nil {
 		dial = publicegress.DialPublic
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
-		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout)}, nil
+		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -206,14 +239,62 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	tunnelsOpen.Inc()
 	defer tunnelsOpen.Dec()
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
-	sandbox := &readFirst{Conn: conn, first: bytes.NewReader(early)}
-	// Either side ending ends the tunnel: closing both stops the other copy.
+	idle := &idleTunnel{timeout: p.idleTimeout, ends: [2]net.Conn{conn, upstream}}
+	idle.touch()
+	sandbox := idle.watch(conn)
+	remote := idle.watch(upstream)
+	// Either side ending, or the tunnel going idle, ends it: closing both stops the other copy.
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, sandbox); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
+	go func() {
+		_, _ = io.Copy(remote, &readFirst{Conn: sandbox, first: bytes.NewReader(early)})
+		done <- struct{}{}
+	}()
+	go func() { _, _ = io.Copy(sandbox, remote); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
 	_ = upstream.Close()
+}
+
+// IdleTimeout is how long a connection to the proxy may sit with no request before the server
+// closes it: the one a tunnel is given.
+func (p *Proxy) IdleTimeout() time.Duration {
+	return p.idleTimeout
+}
+
+// idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end sends moves
+// the deadline of both, so a tunnel with a transfer in one direction and silence in the other
+// lives on, and a copy stuck writing to a peer that reads nothing fails at the deadline too.
+type idleTunnel struct {
+	timeout time.Duration
+	ends    [2]net.Conn
+}
+
+// touch gives both ends timeout from now to send a byte.
+func (i *idleTunnel) touch() {
+	deadline := time.Now().Add(i.timeout)
+	for _, end := range i.ends {
+		_ = end.SetDeadline(deadline)
+	}
+}
+
+// watch is conn with each read a touch. Only Read and Write are on it, so io.Copy cannot hand
+// the bytes to the kernel and skip the touch.
+func (i *idleTunnel) watch(conn net.Conn) net.Conn {
+	return &watched{Conn: conn, tunnel: i}
+}
+
+// watched is a tunnel end whose reads keep the tunnel's deadline.
+type watched struct {
+	net.Conn
+	tunnel *idleTunnel
+}
+
+func (c *watched) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.tunnel.touch()
+	}
+	return n, err
 }
 
 // tunnel is one CONNECT: the sandbox's credential, the host it asked for and the host's label
@@ -258,8 +339,9 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 }
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
-// GraphQL read, with queries alone). It reads the grants again for each, so after Delete no
-// request goes out on a tunnel the credential opened.
+// GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
+// says). It reads the grants again for each, and after a dry run, so after Delete no request
+// goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -291,7 +373,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		reads, graphQL := record.reads(host, r.Method, r.URL)
+		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
 		if name := overrider(r.Header); name != "" {
 			reads, logger = false, logger.With("why", "a method override header: "+name)
 		}
@@ -301,15 +383,21 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
+		var query map[string]json.RawMessage
+		var why error
+		if sql && reads {
+			if query, why = onlyOneQuery(r); why != nil {
+				reads, logger = false, logger.With("why", why.Error())
+			}
+		}
 		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
-		// the trailer is checked after every body read (GraphQL's is the only one now).
+		// the trailer is checked after every body read (GraphQL's and a SQL read's), before the
+		// dry run.
 		if name := overrider(r.Trailer); name != "" {
 			reads, logger = false, logger.With("why", "a method override trailer: "+name)
 		}
 		if !reads {
-			logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
-			refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, fmt.Sprintf("egress: %s %s%s refused: "+
-				"code in the sandbox only reads through a connector; write with the connector's tools", r.Method, host, r.URL.EscapedPath()))
+			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
 			return
 		}
 		forward := &httputil.ReverseProxy{
@@ -325,6 +413,9 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		}
 		grant, form, placed := record.placed(host, r.Header.Get("Authorization"))
 		if !placed {
+			if err := p.selectsOrRefuse(w, r, t, logger, query, r.Header.Get("Authorization"), nil); err != nil {
+				return
+			}
 			sent, done := counted(w, t.label, r.Method, decisionGrantedNoToken)
 			defer done()
 			forward.ServeHTTP(sent, r)
@@ -342,8 +433,6 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
 			return
 		}
-		sent, done := counted(w, t.label, r.Method, decisionToken)
-		defer done()
 		pairs := echoes(token, grant.Placeholder)
 		if form.basic {
 			pairs = append(pairs, form.credential(token), form.credential(grant.Placeholder))
@@ -351,6 +440,11 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// An echo of the whole Authorization value in base64 holds the token at another
 		// alignment than the token's own base64.
 		pairs = append(pairs, wholeInBase64(form.scheme+" "+form.credential(token), form.scheme+" "+form.credential(grant.Placeholder))...)
+		if err := p.selectsOrRefuse(w, r, t, logger, query, form.scheme+" "+form.credential(token), pairs); err != nil {
+			return
+		}
+		sent, done := counted(w, t.label, r.Method, decisionToken)
+		defer done()
 		forward.Rewrite = func(pr *httputil.ProxyRequest) {
 			p.toHost(pr, t)
 			pr.Out.Header.Set("Authorization", form.scheme+" "+form.credential(token))
@@ -391,6 +485,62 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		forward.ServeHTTP(finalOnly{sent}, r)
 	}
 }
+
+// sqlHint is how code in the sandbox reads a host with a SQL read, which a refusal there tells the
+// model: google-cloud-bigquery's client.query_and_wait sends jobs.query, and its client.query
+// sends jobs.insert (POST .../jobs), which no read lists (_job_helpers.py, 3.41.0).
+const sqlHint = "code in the sandbox reads BigQuery with one SELECT per request, sent as POST /bigquery/v2/projects/<project>/queries " +
+	"(jobs.query, such as client.query_and_wait in Python); client.query() sends jobs.insert, which is refused, and so are scripts, " +
+	"DML, DDL and EXPORT DATA; write with the connector's tools"
+
+// refuseWrite answers a request that is no read 403, saying how code in the sandbox reads the
+// host: on a host with a SQL read, with why, when a check of the body said it, and what BigQuery
+// said when it refused the dry run.
+func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger, sqlHost bool, why error) {
+	logger.Warn("the sandbox egress proxy refused a request that may write", "method", loggedMethod(r.Method))
+	refused := fmt.Sprintf("egress: %s %s%s refused", r.Method, t.host, r.URL.EscapedPath())
+	var dry refusedDryRun
+	switch {
+	case sqlHost && errors.As(why, &dry) && dry.said != "":
+		refused += " (" + why.Error() + ": " + dry.said + "): " + sqlHint
+	case sqlHost && why != nil:
+		refused += " (" + why.Error() + "): " + sqlHint
+	case sqlHost:
+		refused += ": " + sqlHint
+	default:
+		refused += ": code in the sandbox only reads through a connector; write with the connector's tools"
+	}
+	refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, refused)
+}
+
+// selectsOrRefuse asks the host's dry run whether the request to a SQL read, query, is one
+// SELECT, and answers 403 when it is not, BigQuery's words in it with the token's echoes in pairs
+// replaced. No query, the request of any other read, passes. The grants are read again after
+// the dry run, which can take dryRunTimeout: a grant that ended meanwhile sends nothing on.
+func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel, logger *slog.Logger,
+	query map[string]json.RawMessage, authorization string, pairs []string) error {
+	if query == nil {
+		return nil
+	}
+	if err := p.selects(r.Context(), r, t, query, authorization, pairs); err != nil {
+		p.refuseWrite(w, r, t, logger.With("why", err.Error()), true, err)
+		return err
+	}
+	record, _, err := p.lookup(r.Context(), t.credential)
+	if err != nil {
+		p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
+		refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
+		return err
+	}
+	if !record.granted(t.host) {
+		refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
+		return errGrantEnded
+	}
+	return nil
+}
+
+// errGrantEnded is a grant that ended during a request's dry run.
+var errGrantEnded = errors.New("egress: the grant ended during the dry run")
 
 // methodOverrides are the headers in which a client names the method a host should run in place
 // of the request's own, in net/http's canonical form. Google runs a GET with
@@ -587,8 +737,8 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 
 // ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
 // address: the sandbox's proxy credential then never crosses the network in the clear. Each
-// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
-// tunnel does, since one is valid for leafValidity alone.
+// handshake gets the certificate kept for address (Proxy.leaf), signed by the CA the sandbox
+// trusts, as each tunnel does.
 func (p *Proxy) ListenerTLS(address string) *tls.Config {
 	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
 	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
@@ -599,21 +749,62 @@ func (p *Proxy) ListenerTLS(address string) *tls.Config {
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
+// The same one is returned until it is half of leafValidity old. The lock is not held while the
+// CA signs, so a flood of new hosts never holds up a host that has a certificate; two
+// handshakes for one host may both sign, and the first certificate stored is the one both return.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
+	now := p.now()
+	if certificate, ok := p.kept(host, now); ok {
+		return certificate, nil
+	}
+	certificate, err := p.sign(host, now)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
+		return kept.certificate, nil
+	}
+	if len(p.leaves.byHost) >= maxLeaves {
+		for name, kept := range p.leaves.byHost {
+			if !now.Before(kept.renewAt) {
+				delete(p.leaves.byHost, name)
+			}
+		}
+	}
+	if len(p.leaves.byHost) < maxLeaves {
+		p.leaves.byHost[host] = keptLeaf{certificate: certificate, renewAt: now.Add(leafValidity / 2)}
+	}
+	return certificate, nil
+}
+
+// kept is host's kept certificate, when it is not due for renewal at now.
+func (p *Proxy) kept(host string, now time.Time) (tls.Certificate, bool) {
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	kept, ok := p.leaves.byHost[host]
+	return kept.certificate, ok && now.Before(kept.renewAt)
+}
+
+// sign makes host's certificate, dated now.
+func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, stack.Wrap(err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    now.Add(-leafValidity),
-		NotAfter:     now.Add(leafValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// A kept certificate is served up to leafValidity/2 after it is dated, so it is valid
+		// that much longer: a client sees leafValidity left on it, as on a certificate signed
+		// for its handshake.
+		NotAfter:    now.Add(leafValidity + leafValidity/2),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if address := net.ParseIP(host); address != nil {
 		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280

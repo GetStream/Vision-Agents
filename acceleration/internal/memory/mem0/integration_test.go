@@ -5,6 +5,7 @@ package mem0
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -20,10 +21,17 @@ import (
 // memories, since it does that on its own side rather than while the call waits.
 const extractionGrace = 30 * time.Second
 
+// extractionBound is how long mem0 may take to finish a conversation it was handed. It starts
+// one its worker lost again ten minutes after queueing it: of 775 adds read back from mem0's
+// events on 2026-10-28, four started 10m00s late and were done within 10m10s (AI-2162).
+const extractionBound = 12 * time.Minute
+
 type Mem0IntegrationSuite struct {
 	suite.Suite
 	store *Store
 	scope memory.Scope
+	// log is the store's log, which names the event each conversation was queued as.
+	log queueLog
 }
 
 func TestMem0IntegrationSuite(t *testing.T) {
@@ -41,7 +49,7 @@ func (s *Mem0IntegrationSuite) SetupSuite() {
 		s.T().Skip(apiKeyEnvVar + " not set")
 	}
 
-	store, err := New(Options{})
+	store, err := New(Options{Logger: slog.New(slog.NewJSONHandler(&s.log.Buffer, &slog.HandlerOptions{Level: slog.LevelDebug}))})
 	s.Require().NoError(err)
 	s.store = store
 
@@ -56,7 +64,7 @@ func (s *Mem0IntegrationSuite) SetupSuite() {
 }
 
 func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), extractionBound+2*time.Minute)
 	defer cancel()
 
 	err := s.remember(ctx, s.scope, []llm.Message{
@@ -64,6 +72,7 @@ func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
 		{Role: llm.Assistant, Content: "Noted, no peanuts."},
 	})
 	s.Require().NoError(err)
+	s.extracted(ctx)
 
 	// Extraction is asynchronous, so this polls rather than asserting straight away.
 	deadline := time.Now().Add(extractionGrace)
@@ -102,7 +111,7 @@ func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
 }
 
 func (s *Mem0IntegrationSuite) TestForgettingASessionKeepsTheOthersAndTruncatingKeepsNone() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), extractionBound+3*time.Minute)
 	defer cancel()
 
 	user := s.scope
@@ -116,6 +125,7 @@ func (s *Mem0IntegrationSuite) TestForgettingASessionKeepsTheOthersAndTruncating
 	s.Require().NoError(s.remember(ctx, second, []llm.Message{
 		{Role: llm.User, Content: "My dog is called Rex."}, {Role: llm.Assistant, Content: "Noted."},
 	}))
+	s.extracted(ctx)
 	recalled := s.recallsAtLeast(ctx, user, 2)
 
 	_, err := s.store.ForgetRun(ctx, user.AppID, first.RunID)
@@ -167,6 +177,17 @@ func (s *Mem0IntegrationSuite) recallsAtLeast(ctx context.Context, scope memory.
 	}
 	s.Require().GreaterOrEqual(len(recalled), n, "mem0 never produced the memories")
 	return recalled
+}
+
+// extracted waits until mem0 has finished every conversation handed to it since the last
+// wait: the log lines before that belong to tests that have waited for theirs already.
+func (s *Mem0IntegrationSuite) extracted(ctx context.Context) {
+	events := s.log.unread()
+	wait := extractionWait{
+		client: s.store.client, baseURL: s.store.baseURL, apiKey: s.store.apiKey,
+		bound: extractionBound, every: 2 * time.Second,
+	}
+	s.Require().NoError(wait.until(ctx, events))
 }
 
 func (s *Mem0IntegrationSuite) TestAnotherUsersMemoriesAreNotRecalled() {

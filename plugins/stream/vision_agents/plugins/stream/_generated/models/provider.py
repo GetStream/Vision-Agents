@@ -28,6 +28,9 @@ class Provider:
         model (str):  Example: eleven_flash_v2_5.
         provider (str):  Example: elevenlabs.
         realtime (bool):
+        region (str): Where this instance of the model runs its work: us or eu for now. A model the deployment runs in
+            more than one region is listed once per region, and a request is served by the instance in the region its data
+            policy names (us when none does). Health is the model's, shared by its instances. Example: us.
         tier (Tier): What the model optimises for.
         benchmark (ProviderBenchmark | Unset): What Artificial Analysis measured for this model, refreshed by hand
             rather than live. A field is absent when the model was not measured on it.
@@ -49,6 +52,7 @@ class Provider:
     model: str
     provider: str
     realtime: bool
+    region: str
     tier: Tier
     benchmark: ProviderBenchmark | Unset = UNSET
     description: str | Unset = UNSET
@@ -67,6 +71,8 @@ class Provider:
         provider = self.provider
 
         realtime = self.realtime
+
+        region = self.region
 
         tier = self.tier.value
 
@@ -95,6 +101,7 @@ class Provider:
                 "model": model,
                 "provider": provider,
                 "realtime": realtime,
+                "region": region,
                 "tier": tier,
             }
         )
@@ -128,6 +135,8 @@ class Provider:
 
         realtime = d.pop("realtime")
 
+        region = d.pop("region")
+
         tier = Tier(d.pop("tier"))
 
         _benchmark = d.pop("benchmark", UNSET)
@@ -156,6 +165,7 @@ class Provider:
             model=model,
             provider=provider,
             realtime=realtime,
+            region=region,
             tier=tier,
             benchmark=benchmark,
             description=description,
