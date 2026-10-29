@@ -237,9 +237,21 @@ final class VoiceSession {
     if (!identical(this.call, call)) {
       return;
     }
-    _sampler ??= CameraSampler(() async {
+    _sampler ??= CameraSampler(() {
+      // Only while the call is sending video: a camera turned off some other way, by Stream
+      // Video's own controls or the app's, has no frame to give.
       final local = call.state.value.localParticipant;
-      return local == null ? null : (await call.takeScreenshot(local))?.asUint8List();
+      if (local == null || !local.isVideoEnabled) {
+        return null;
+      }
+      final track = call.getTrack(local.trackIdPrefix, video.SfuTrackType.video);
+      if (track == null) {
+        return null;
+      }
+      return (
+        track: track.mediaTrack.id,
+        take: () async => (await track.captureScreenshot())?.asUint8List(),
+      );
     }, _frames);
     session.cameraFrames = _frames;
   }

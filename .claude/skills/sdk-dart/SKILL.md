@@ -181,7 +181,12 @@ are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
   JS does. `VoiceSession` sets it while the camera is on. Stream Video 1.6 has no Dart hook on
   outgoing frames, so it takes a screenshot of the call's own track every 0.5 s: full size, a JPEG
   q100 on Android and a PNG on iOS, encoded natively on the thread that delivers frames; a picture
-  not there within 2 s is given up on, since a stopped or replaced track never gives one. Only the
+  not there within 2 s is given up on, since a stopped or replaced track never gives one. Giving
+  up does not cancel the native capture (its sink stays on the track until a frame comes), so a
+  track that owes a picture is asked for nothing more until it gives it, and nothing is asked
+  while the local participant's video is off; otherwise a stalled camera (the app in the
+  background) gathers one native sink every 2.5 s, each encoding the next frame. The cost of
+  sampling is still there while the camera is on, whether or not the agent asks. Only the
   frames an answer sends are scaled to 1024 px and made JPEG q70 (`package:image` in `compute`):
   several full-size pictures pass the router's 5 MiB socket frame limit, which closes the socket.
   A socket that names its `tools` must name `get_video_frames` too, or the router sends the call

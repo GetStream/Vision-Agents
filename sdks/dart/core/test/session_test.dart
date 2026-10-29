@@ -631,6 +631,21 @@ void main() {
         await chat.close();
       });
 
+      test('takes a moment past what a date holds as now, rather than failing', () async {
+        final chat = await agents.chat();
+        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), DateTime.now());
+        final socket = await router.socket();
+
+        socket.send(
+          '{"type":"tool_call","id":"task-1-capture","name":"get_video_frames",'
+          r'"arguments":"{\"at_ms\":1e20,\"limit\":1}","run":true}',
+        );
+
+        final output = (await socket.next())['output']! as List<Object?>;
+        expect((output.first! as Map)['text'], contains('"frame_id":"camera-1"'));
+        await chat.close();
+      });
+
       test('says the camera showed nothing recent, as an answer rather than a failure', () async {
         final chat = await agents.chat();
         chat.cameraFrames = CameraFrames()

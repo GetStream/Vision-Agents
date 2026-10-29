@@ -368,7 +368,8 @@ final class AgentSession {
   void _show(CameraFrames frames, ToolCall call) {
     final arguments = call.argumentValues;
     final at = switch (arguments['at_ms']) {
-      final num ms => DateTime.fromMillisecondsSinceEpoch(ms.toInt()),
+      // Past what a DateTime holds is not a moment the router could have meant.
+      final num ms when ms.abs() <= 8.64e15 => DateTime.fromMillisecondsSinceEpoch(ms.toInt()),
       _ => DateTime.now(),
     };
     final limit = switch (arguments['limit']) {
