@@ -302,9 +302,13 @@ signs the header, so it cannot promote a request on its own, and a server token 
 a browser that sends the client header is used by a browser and treated as one. Stream's own
 convention is the same one, so a token minted by a Stream server SDK already fits.
 
-The auth type has no query parameter, unlike the key and the token. A browser WebSocket
-cannot set a header, so there is nothing for one to say, which is what stops a browser
-opening a dispatch socket and answering somebody else's callers.
+A browser WebSocket cannot set a header, so a socket in `proxy` mode, with no proxy that
+declares kinds, may name its auth type in the `stream-auth-type` query parameter instead. It
+is read only as `jwt` or `anonymous`, only when the header is absent, and only in that mode,
+where saying nothing already makes a caller a backend: the parameter can only make a socket
+weaker, never a backend. It is what lets a device's socket be the device that created its
+session, so the router asks it to run that device's tools. A plain request may send it too,
+and is read the same way.
 
 The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
 specific answer gives nothing away, and one told "unauthenticated" would go looking for a

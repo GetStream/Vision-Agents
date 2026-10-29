@@ -165,6 +165,14 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A Flutter app's own tools run against a local proxy router
+
+A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a caller's auth type from the `stream-auth-type` query parameter, which is how a socket can send it when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).
+
+### The Dart SDK's session socket connects to the hosted router
+
+A Dart socket opened with a key now sends its token as `authorization` too, with `stream-auth-type=jwt`, which is how Stream's proxy reads a socket's credential. Before, the hosted router refused the handshake with `401 stream-auth-type missing or invalid`, so `chat()`, `attach` and `VoiceSession` all failed there, on every platform. A router in `api_key` mode reads `token` as before and ignores both (#1426).
+
 ### Every agent knows the date and the hour
 
 Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
