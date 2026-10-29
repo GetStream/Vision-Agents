@@ -169,45 +169,51 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
 	verdict := make(chan error, 1)
 	verdict <- nil
-	stream := s.stream(func(w *ResponseWriter) {
-		w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
-	}).Screen(verdict)
+	stream := s.stream(asksToLookUpAnOrder).Screen(verdict)
 
 	s.drain(stream)
 
 	s.Equal([]ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}, stream.Response().ToolCalls)
 }
 
-func (s *LLMSuite) TestAFailedResponseSettlesWithNoCalls() {
-	call := func(w *ResponseWriter) { w.FunctionCall(0, "call-1", "transfer_funds", `{"to":"savings"}`, "") }
-	cases := map[string]*Stream{
-		"the provider's stream broke": NewStream(StreamOptions{ResponseID: "r1"},
-			&scripted{chunks: []chunk{call}, err: errUnauthorized}),
-		"the provider reported a failure": s.stream(call, func(w *ResponseWriter) {
-			w.Fail(errUnauthorized, "stream", false)
-		}),
-	}
-	for name, stream := range cases {
-		s.drain(stream)
-
-		s.Equal(StatusFailed, stream.Response().Status, name)
-		s.Empty(stream.Response().ToolCalls, name)
-	}
+// asksToLookUpAnOrder is a provider writing a whole call.
+func asksToLookUpAnOrder(w *ResponseWriter) {
+	w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
 }
 
-func (s *LLMSuite) TestAResponseCutShortKeepsTheCallsItCompleted() {
-	call := func(w *ResponseWriter) { w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "") }
-	cases := map[string]chunk{
-		"incomplete": func(w *ResponseWriter) { w.Incomplete("max_output_tokens") },
-		"cancelled":  func(w *ResponseWriter) { w.Cancelled() },
-	}
-	for name, ending := range cases {
-		stream := s.stream(call, ending)
+func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"},
+		&scripted{chunks: []chunk{asksToLookUpAnOrder}, err: errUnauthorized})
 
-		s.drain(stream)
+	s.drain(stream)
 
-		s.Len(stream.Response().ToolCalls, 1, name)
-	}
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAResponseItsProviderFailedSettlesWithNoCalls() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Fail(errUnauthorized, "stream", false) })
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAnIncompleteResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Incomplete("max_output_tokens") })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
+}
+
+func (s *LLMSuite) TestACancelledResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Cancelled() })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
 }
 
 func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {

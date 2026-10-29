@@ -239,6 +239,10 @@ type stubLLM struct {
 	// happily but that answers nothing, which is what a rejected key looks like.
 	refuses error
 
+	// screen, if set, judges each request's input beside its response, as the router's
+	// prompt injection policy does: an error refuses the response once it has been written.
+	screen func(input []llm.Message) error
+
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned. A second response for
 	// the same id, as a reply started before its ruling and the one asked in its place,
@@ -279,7 +283,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
 	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
-	hold, completion, refuses, breaks := s.holdCreate, s.holdCompletion, s.refuses, s.breaks
+	hold, completion, refuses, breaks, screen := s.holdCreate, s.holdCompletion, s.refuses, s.breaks, s.screen
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -329,7 +333,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// A response with nothing queued stays in flight until the test writes it, which is
 	// what lets a reply be caught mid-sentence.
 	if len(reply) == 0 && len(calls) == 0 {
-		return script.Stream(), nil
+		return screened(script.Stream(), screen, params.Input), nil
 	}
 
 	for _, delta := range thinking {
@@ -343,7 +347,19 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	script.Usage(llm.Usage{InputTokens: 12, OutputTokens: 8})
 	script.Done()
-	return script.Stream(), nil
+	// Judged once the response is written, so a refusal fails one that already asked for
+	// its calls, which is the screen arriving after a quick model.
+	return screened(script.Stream(), screen, params.Input), nil
+}
+
+// screened has screen judge input beside stream, when there is a screen.
+func screened(stream *llm.Stream, screen func([]llm.Message) error, input []llm.Message) *llm.Stream {
+	if screen == nil {
+		return stream
+	}
+	verdict := make(chan error, 1)
+	verdict <- screen(input)
+	return stream.Screen(verdict)
 }
 
 func (s *stubLLM) compose(params llm.ResponseParams) (*llm.Stream, error) {
