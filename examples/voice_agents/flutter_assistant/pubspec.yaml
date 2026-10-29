@@ -15,6 +15,9 @@ dependencies:
   flutter_image_compress: ^2.5.1
   # The timezone get_local_context names, such as Europe/Amsterdam.
   flutter_timezone: ^5.1.1
+  # A connector's sign-in: a web authentication sheet on iOS, an Auth Tab or a Custom Tab on
+  # Android, handed back to the app by its own scheme.
+  flutter_web_auth_2: ^5.1.0
   # Where get_location says the person is: a reading, and the address at it.
   geocoding: ^5.0.0
   geolocator: ^14.1.2
@@ -28,7 +31,7 @@ dependencies:
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: b92690920b181197cc668b2c9c2241b0c7d07842
+      ref: e7a0d2a254a5cf9d7bc2a07321a8ebd20523e354
       path: packages/stream_chat_flutter_ai
   # The channel a written conversation is kept in; the version vision_agents_chat pins.
   stream_chat: 10.4.0

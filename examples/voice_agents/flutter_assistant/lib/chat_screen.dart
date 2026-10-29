@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show File;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:vision_agents_core/vision_agents_core.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
+import 'sign_in.dart';
 import 'voice_screen.dart';
 
 /// One conversation: the messages, the composer, and the way into voice mode.
@@ -21,7 +23,8 @@ class ChatScreen extends StatefulWidget {
   /// The conversation to carry on, or null for a new one.
   final String? sessionId;
 
-  /// Says which session a new conversation became, once it is first written or talked to.
+  /// Called with the session a new conversation became, once it is first written or talked
+  /// to.
   final ValueChanged<String> onStarted;
 
   @override
@@ -59,33 +62,42 @@ class _ChatScreenState extends State<ChatScreen> {
   var _announced = false;
 
   /// A new conversation's session, opened while the person wrote their first message and not
-  /// used yet. Leaving without using it deletes it, so it is not left in the list.
+  /// used yet.
+  ///
+  /// Leaving without using it deletes it, so it is not left in the list.
   String? _unused;
 
   /// How tall the composer floating over the bottom of the conversation is, which the
   /// conversation keeps its latest message clear of.
   var _barHeight = 0.0;
 
-  final _composer = ChatComposerController(
-    chatOptions: const [_thinkHarder],
-    maxAttachments: 10,
-  );
+  final _composer = ChatComposerController(chatOptions: const [_thinkHarder], maxAttachments: 10);
 
-  /// Answers the questions of the tools that ask first, as the person signed in here.
+  /// The answers to the tools that ask first, and to the sign-ins the agent's connectors wait
+  /// for, as the person signed in here.
+  ///
+  /// A sign-in opens in the browser, which the router hands back to this app once the provider
+  /// has answered; Not now ends the tool call without it.
   late final _approver = AIToolApprover(
     identity: const AIClientIdentity(userId: Assistant.userId),
     decide: (call, decision) async {
-      final chat = _chat;
-      if (chat == null) throw StateError('the conversation is not open');
-      chat.session.decide(
-        call.id,
-        allowed: decision == AIToolApprovalDecision.allowed,
-      );
+      final chat = _openChat();
+      // The session drops an answer to a call it is not waiting on, such as one asked before
+      // the app was last closed, which would leave the card saying it was sent.
+      if (!chat.session.approvals.value.any((request) => request.id == call.id)) {
+        throw StateError('This question is no longer waiting for an answer.');
+      }
+      chat.session.decide(call.id, allowed: decision == AIToolApprovalDecision.allowed);
     },
+    authorizer: AIToolAuthorizer(
+      connect: (call, url) => SignIn.open(url),
+      decline: (call) async => _openChat().session.declineLogin(call.id),
+    ),
   );
 
-  /// Stream's components, with what the person can do under each finished reply. Made once,
-  /// since new builders rebuild every component that reads them.
+  /// Stream's components, with what the person can do under each finished reply.
+  ///
+  /// Made once, since new builders rebuild every component that reads them.
   late final _components = AIComponentBuilders(replyActions: _replyActions);
 
   @override
@@ -107,7 +119,18 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  /// Closes the conversation, and deletes a session that was opened but never used.
+  /// The conversation's chat, for answering what it asks.
+  ///
+  /// Throws a [StateError] while the conversation is not open.
+  AgentChat _openChat() {
+    final chat = _chat;
+    if (chat == null) {
+      throw StateError('The conversation is not open yet. Try again in a moment.');
+    }
+    return chat;
+  }
+
+  /// Closes [chat], and deletes [unused], a session that was opened but never used.
   static Future<void> _leave(AgentChat? chat, String? unused) async {
     await chat?.close();
     chat?.dispose();
@@ -119,15 +142,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// Opening a session takes seconds, so a new conversation's opens as its first message is
-  /// written rather than once it is sent.
+  /// Opens a new conversation's session as its first message is written rather than once it
+  /// is sent, since opening one takes seconds.
   void _draftChanged() {
-    if (widget.sessionId != null ||
-        _chat != null ||
-        _opening != null ||
-        _composer.text.isEmpty) {
-      return;
-    }
+    if (widget.sessionId != null) return;
+    if (_chat != null || _opening != null) return;
+    // After a failed open the next one waits for the question to be sent, rather than each
+    // keystroke opening, failing and deleting another session.
+    if (_failure != null) return;
+    if (_composer.text.isEmpty) return;
     _open().then((chat) {
       if (chat != null && !_announced) _unused = chat.session.id;
     });
@@ -197,11 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _send(
-    String text, {
-    List<XFile> photos = const [],
-    bool thinkHarder = false,
-  }) async {
+  Future<void> _send(String text, {List<XFile> photos = const [], bool thinkHarder = false}) async {
     final asked = _Asked(text, photos);
     setState(() => _asking = asked);
     final chat = await _open();
@@ -238,8 +257,9 @@ class _ChatScreenState extends State<ChatScreen> {
     widget.onStarted(chat.session.id);
   }
 
-  /// What the person can do under a finished reply: copy it and rate it. Asking for a reply
-  /// again needs the router to replace one, which it does not yet.
+  /// What the person can do under a finished reply: copy it, share it and rate it.
+  ///
+  /// Asking for a reply again needs the router to replace one, which it does not yet.
   Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
     final chat = _chat!;
     // Read here, from the chat, so the thumbs change as soon as the rating does.
@@ -280,16 +300,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 messages: chat?.listMessages ?? const [],
                 pendingMessage: _asking?.pending,
                 // A question on its way is thought about before the session says anything.
-                isThinking:
-                    workingOn == null &&
-                    ((chat?.isThinking ?? false) || _asking != null),
+                isThinking: workingOn == null && ((chat?.isThinking ?? false) || _asking != null),
                 approver: chat == null ? null : _approver,
                 loadOlderMessages: chat != null && chat.hasOlderMessages
                     ? chat.loadOlderMessages
                     : null,
-                footer: workingOn == null
-                    ? null
-                    : AITypingIndicatorView(text: workingOn),
+                footer: workingOn == null ? null : AITypingIndicatorView(text: workingOn),
                 emptyContent: Padding(
                   padding: EdgeInsets.only(bottom: _barHeight),
                   child: const _Welcome(),
@@ -331,11 +347,7 @@ class _ChatScreenState extends State<ChatScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            surface.withValues(alpha: 0),
-            surface.withValues(alpha: 0.85),
-            surface,
-          ],
+          colors: [surface.withValues(alpha: 0), surface.withValues(alpha: 0.85), surface],
           stops: const [0, 0.4, 1],
         ),
       ),
@@ -344,26 +356,17 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isWelcoming)
-              AISuggestionsView(
-                suggestions: _starters,
-                onSuggestionSelected: _send,
-              ),
+            if (isWelcoming) AISuggestionsView(suggestions: _starters, onSuggestionSelected: _send),
             if (failure != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _Frosted(
                   shape: const StadiumBorder(),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     child: Text(
                       failure,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.error,
-                      ),
+                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
                     ),
                   ),
                 ),
@@ -372,20 +375,15 @@ class _ChatScreenState extends State<ChatScreen> {
             // frosted rather than filled.
             ComposerTheme(
               data: ComposerThemeData(
-                fillColor: theme.colorScheme.surfaceContainerHigh.withValues(
-                  alpha: 0.6,
-                ),
+                fillColor: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6),
                 borderColor: Colors.transparent,
               ),
               child: ChatComposer(
                 controller: _composer,
                 factory: _Composer(onTalk: _talk),
                 enableSpeechToText: true,
-                onSendPressed: (text, option, photos) => _send(
-                  text,
-                  photos: photos,
-                  thinkHarder: option?.id == _thinkHarder.id,
-                ),
+                onSendPressed: (text, option, photos) =>
+                    _send(text, photos: photos, thinkHarder: option?.id == _thinkHarder.id),
                 onStopPressed: chat?.stop,
               ),
             ),
@@ -402,10 +400,17 @@ class _Asked {
     : pending = AIPendingMessage(
         text: text,
         attachments: [
+          // From the file, shrunk, since the components load a URL attachment from the network.
           for (final photo in photos)
-            AIMessageAttachment.image(Uri.file(photo.path)),
+            AIMessageAttachment.memoryImage(
+              ResizeImage(FileImage(File(photo.path)), width: _thumbnailWidth),
+            ),
         ],
       );
+
+  /// How wide a photo is decoded for the question, in pixels: enough for its tile, rather than
+  /// the whole of a camera's photo.
+  static const _thumbnailWidth = 540;
 
   /// Its row in the list, which Stream's copy of it takes over.
   final AIPendingMessage pending;
@@ -425,28 +430,25 @@ class _Composer extends ChatComposerFactory {
   @override
   Widget? buildLeading(BuildContext context, ChatComposerLeadingProps props) {
     final button = super.buildLeading(context, props);
-    return button == null
-        ? null
-        : _Frosted(shape: const CircleBorder(), child: button);
+    return button == null ? null : _Frosted(shape: const CircleBorder(), child: button);
   }
 
   @override
-  Widget buildInput(BuildContext context, ChatComposerInputProps props) =>
-      _Frosted(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: super.buildInput(context, props),
-      );
+  Widget buildInput(BuildContext context, ChatComposerInputProps props) => _Frosted(
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    child: super.buildInput(context, props),
+  );
 
   @override
-  Widget? buildTrailing(BuildContext context, ChatComposerTrailingProps props) =>
-      IconButton.filled(
-        tooltip: 'Talk to Juno',
-        onPressed: onTalk,
-        icon: const Icon(Icons.graphic_eq),
-      );
+  Widget? buildTrailing(BuildContext context, ChatComposerTrailingProps props) => IconButton.filled(
+    tooltip: 'Talk to Juno',
+    onPressed: onTalk,
+    icon: const Icon(Icons.graphic_eq),
+  );
 }
 
-/// Lets the conversation show through, blurred, where something floats over it.
+/// A frosted glass that lets the conversation show through, blurred, where something floats
+/// over it.
 class _Frosted extends StatelessWidget {
   const _Frosted({required this.shape, required this.child});
 
@@ -456,10 +458,7 @@ class _Frosted extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ClipPath(
     clipper: ShapeBorderClipper(shape: shape),
-    child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-      child: child,
-    ),
+    child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16), child: child),
   );
 }
 
@@ -479,16 +478,12 @@ class _Welcome extends StatelessWidget {
           Icon(Icons.auto_awesome, size: 44, color: theme.colorScheme.primary),
           Text(
             _greeting,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
             textAlign: TextAlign.center,
           ),
           Text(
             'Ask me anything, show me a photo, or tap the waveform to talk.',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],
@@ -496,26 +491,23 @@ class _Welcome extends StatelessWidget {
     );
   }
 
-  String get _greeting {
-    final hour = DateTime.now().hour;
-    final part = hour < 12
-        ? 'morning'
-        : hour < 18
-        ? 'afternoon'
-        : 'evening';
-    return 'Good $part, ${Assistant.userName}';
+  String get _greeting => 'Good ${_partOfDay(DateTime.now().hour)}, ${Assistant.userName}';
+
+  static String _partOfDay(int hour) {
+    if (hour < 12) return 'morning';
+    if (hour < 18) return 'afternoon';
+    return 'evening';
   }
 }
 
-/// Reports its child's height whenever it changes.
+/// A box that reports its child's height whenever it changes.
 class _Measured extends SingleChildRenderObjectWidget {
   const _Measured({required this.onHeight, required super.child});
 
   final ValueChanged<double> onHeight;
 
   @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderMeasured(onHeight);
+  RenderObject createRenderObject(BuildContext context) => _RenderMeasured(onHeight);
 
   @override
   void updateRenderObject(BuildContext context, _RenderMeasured renderObject) =>
