@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A dispatch worker's capacity is at most 1024
+
+`GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).
+
 ### The session socket takes only a bounded sample rate
 
 `/v1/agents/socket` takes a start frame's `sample_rate` only from 8000 to 192000, and 16000 when it is left out or 0, as before. A rate outside that range, a negative one included, is refused before a session is made, with an `error` frame carrying `code` and `error_type` `invalid_request`, and the socket closes with 1008. Before, any positive rate was taken and every frame of the caller's audio was resampled from it (AI-1852).

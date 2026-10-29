@@ -19570,6 +19570,7 @@ paths:
           name: capacity
           schema:
             default: 4
+            maximum: 1024
             minimum: 1
             type: integer
         - description: How much work this worker is still running from before it reconnected, which the router counts against its capacity until each piece is reported `done`. Sending this at all, even as 0, is what says the worker reports `done`; one that leaves it out is held only to the depth of its queue.
