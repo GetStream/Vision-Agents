@@ -131,19 +131,18 @@ func (s *TelnyxChannelSuite) TestTheConnectionsAccountIsItsNumber() {
 	s.Equal(s.line, s.connection.AccountID)
 }
 
-// The production path end to end: the person's SMS lands in the number's thread channel;
-// Stream Chat's message.new reaches the message hook; the Router's session answers there; the
-// bridge sends the reply to the person from the customer's number with its API key.
+// The production path end to end: the person's SMS lands in the number's thread channel; the
+// inbound worker hands it to the agent; the Router's session answers there; the bridge sends
+// the reply to the person from the customer's number with its API key.
 func (s *TelnyxChannelSuite) TestAnSMSIsAnsweredFromTheCustomersNumber() {
 	person := "+13125550001"
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Hi, is my order ready?"), time.Now()))
 	channel := s.threadChannel(person)
 	stored := s.written(channel, 1)
 	s.Equal("Hi, is my order ready?", stored[0]["text"])
-	s.Empty(stored[0]["custom"], "without source, so the message hook takes it as written to the agent")
+	s.Equal(map[string]any{channelbridge.BridgedField: true}, stored[0]["custom"],
+		"without source, so the conversation takes it as the person's; bridged, so the hook leaves it to the worker")
 	s.writtenByTheInboundWorker(channel)
-
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 
 	sent := s.took(1)[0]
 	s.Equal(telnyxMessage{from: s.line, to: person, text: "Noted."}, sent.withoutAuthorization())
@@ -304,7 +303,7 @@ func (s *TelnyxChannelSuite) TestAKeywordIsAnsweredOnceWhenItsRowIsTakenAgain() 
 	// it saw runs out.
 	next, err := channelbridge.New(s.channelBridgeOptions(slog.New(slog.DiscardHandler)))
 	s.Require().NoError(err)
-	next.Start()
+	next.Start(s.router.AnswerQueued)
 	s.T().Cleanup(next.Close)
 
 	s.settled()
@@ -315,15 +314,22 @@ func (s *TelnyxChannelSuite) TestAKeywordIsAnsweredOnceWhenItsRowIsTakenAgain() 
 // CTIA 5.1.3: «No further messages should be sent following the confirmation message», so a
 // reply the agent was writing when the person texted STOP is not sent.
 func (s *TelnyxChannelSuite) TestAReplyFinishedAfterStopIsNotSent() {
+	s.config.LLM = "holding/holding-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.holding.holds()
+	s.T().Cleanup(s.holding.answers)
+	asked := len(s.holding.replies())
 	person := "+13125550001"
 	s.deliver(s.received(s.line, person, "Hi"), time.Now())
 	channel := s.threadChannel(person)
-	s.written(channel, 1)
+	s.Require().Eventually(func() bool { return len(s.holding.replies()) > asked }, settleFor, 10*time.Millisecond,
+		"the agent never started its reply")
 	s.deliver(s.received(s.line, person, "STOP"), time.Now())
 	s.took(1)
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.holding.answers()
 
+	s.answeredAfter(channel, 0)
 	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	s.Equal(telnyxStopped, s.telnyx().sent()[0].text)
 }

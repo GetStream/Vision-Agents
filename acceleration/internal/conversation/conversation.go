@@ -196,6 +196,9 @@ type Service struct {
 	finished atomic.Pointer[func(FinishedReply)]
 	// retireAfter is how long a released conversation is held before it is let go.
 	retireAfter time.Duration
+	// flushing counts the conversations writing to Stream right now (flush), finished replies
+	// handed on included (Writing).
+	flushing atomic.Int32
 }
 
 // known is how the service finds a conversation it holds: by its customer and its channel
@@ -645,6 +648,30 @@ func (s *Service) Recall(ctx context.Context, customer, agentID, cid string) ([]
 
 func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
 	return s.history(ctx, customer, agentID, cid, before, caller, s.pending(customer, cid))
+}
+
+// Writing is whether a held conversation has accepted something it has not yet written to
+// Stream, or is writing it: a finished reply is handed on (OnFinishedReply) only once it is
+// written. A test waits until it is false, so no reply of one test leaves during the next.
+// Pending is read before flushing: a write taken off Pending is counted until its reply was
+// handed on. A parked conversation (flush) writes nothing until parkedRetry, so its held
+// writes do not count.
+func (s *Service) Writing() bool {
+	s.mu.Lock()
+	all := make([]*Conversation, 0, len(s.all))
+	for _, c := range s.all {
+		all = append(all, c)
+	}
+	s.mu.Unlock()
+	for _, c := range all {
+		c.mu.Lock()
+		pending := len(c.data.Pending) > 0 && !time.Now().Before(c.parkedUntil)
+		c.mu.Unlock()
+		if pending {
+			return true
+		}
+	}
+	return s.flushing.Load() > 0
 }
 
 // pending is what a held conversation has accepted but not yet written to Stream.
@@ -1902,6 +1929,8 @@ func sameSnapshot(a, b Message) bool {
 	return string(x) == string(y)
 }
 func (c *Conversation) flush() bool {
+	c.service.flushing.Add(1)
+	defer c.service.flushing.Add(-1)
 	for {
 		c.mu.Lock()
 		if len(c.data.Pending) == 0 {

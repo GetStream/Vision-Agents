@@ -76,9 +76,10 @@ func (s *TelnyxChannelSuite) TestALineTwoConfigsBindIsAnsweredByTheOldest() {
 	s.Equal("Noted.", s.took(1)[0].text)
 }
 
-// A text written into a thread whose line no config binds any more by the time the hook
-// reads it is answered by nobody.
+// A text written into a thread whose line no config binds any more by the time the agent is
+// handed it is answered by nobody.
 func (s *TelnyxChannelSuite) TestAThreadWhoseLineNoConfigBindsAnyMoreIsNotAnswered() {
+	handOver := s.holdHandOffs()
 	person := "+13125550001"
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, person, "Hi, is my order ready?"), time.Now()))
 	channel := s.threadChannel(person)
@@ -86,7 +87,7 @@ func (s *TelnyxChannelSuite) TestAThreadWhoseLineNoConfigBindsAnyMoreIsNotAnswer
 	s.config.Connectors = nil
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	handOver()
 
 	s.Never(func() bool { return s.repliesIn(channel) > 0 }, dropped, 20*time.Millisecond)
 	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "no agent config binds its line") },

@@ -57,7 +57,19 @@ type messageEvent struct {
 		// answered (photos). Read by photos, one at a time, so an attachment of a shape
 		// nothing here expects costs only itself, not the message's text.
 		Attachments json.RawMessage `json:"attachments"`
+		// Bridged is channelbridge.BridgedField, which the channel bridge sets on a message it
+		// wrote and hands to the agent itself (bridged). Raw, so a value of another type,
+		// which anyone writing in the app can set, costs only itself.
+		Bridged json.RawMessage `json:"stream_agents_bridged"`
 	} `json:"message"`
+}
+
+// bridged is whether the channel bridge wrote the message: its custom field
+// channelbridge.BridgedField is JSON true. Any other value, or none, is a message somebody
+// else wrote.
+func (e messageEvent) bridged() bool {
+	var bridged bool
+	return json.Unmarshal(e.Message.Bridged, &bridged) == nil && bridged
 }
 
 // messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
@@ -195,6 +207,11 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return false
 	}
 	if linked {
+		// The worker that wrote it hands it to the agent (AnswerQueued): settled here.
+		if event.bridged() {
+			s.logger.Info("leaving a message the channel bridge wrote to its worker", "channel", thread.ChannelID, "message", event.Message.ID)
+			return true
+		}
 		origin.answer(func() { s.answerThread(origin, thread, event) })
 		return true
 	}

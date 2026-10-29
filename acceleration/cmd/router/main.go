@@ -1335,6 +1335,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
 	// stays absent, and the events endpoint takes no events without it.
+	var bridge *channelbridge.Bridge
 	if connectorResolver != nil {
 		options.ConnectorResolver = connectorResolver
 		options.ConnectorTransports = connectorTransports
@@ -1346,8 +1347,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them. Its texts pass the gate
 		// internal/channels' do.
-		// Every router runs the worker that writes the queued inbound messages; a message is
-		// taken by one router at a time.
 		bridgeOptions := channelbridge.Options{
 			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
 			Resolver: connectorResolver, Gate: dlcGate, Logger: logger,
@@ -1355,11 +1354,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if forwarder != nil {
 			bridgeOptions.Unanswered = forwarder.ForwardUnanswered
 		}
-		bridge, err := channelbridge.New(bridgeOptions)
+		bridge, err = channelbridge.New(bridgeOptions)
 		if err != nil {
 			return err
 		}
-		bridge.Start()
 		defer bridge.Close()
 		options.ChannelBridge = bridge
 		if sessions != nil {
@@ -1462,6 +1460,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	server, err := api.NewServer(options)
 	if err != nil {
 		return err
+	}
+	// Every router runs the worker that writes the queued inbound messages and hands each to
+	// the agent; a message is taken by one router at a time. The hand-off is the server's
+	// (AnswerQueued), and the server is built with the bridge (options.ChannelBridge), so the
+	// worker is handed it here, once both exist, not in channelbridge.Options.
+	if bridge != nil {
+		bridge.Start(server.AnswerQueued)
 	}
 	// Every router runs the scheduled-task worker: whichever of them claims
 	// an occurrence delivers it, in the conversation its task belongs to. It

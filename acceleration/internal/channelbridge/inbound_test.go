@@ -300,7 +300,7 @@ func (s *InboundSuite) TestAMessageThatNeverGetsThroughIsGivenUpAndItsDeliveryFo
 	s.Require().Eventually(func() bool { return s.row(thread, "m-2").State == store.ChannelInboundFailed }, 5*time.Second, 10*time.Millisecond)
 	s.Equal(store.ChannelInboundFailed, s.row(thread, "m-1").State)
 	s.Equal(3, s.row(thread, "m-1").Attempts, "the first attempt and the two waits")
-	s.Equal(2, strings.Count(s.logs.String(), "level=WARN msg=\"gave up an inbound message"))
+	s.Equal(2, strings.Count(s.logs.String(), "level=WARN msg=\"gave up an inbound message: it was never written into its thread channel or handed to the agent, so no agent answers it\""))
 	var deliveries []store.EventDelivery
 	s.Require().NoError(s.store.DB().NewSelect().Model(&deliveries).Where("destination_id = ?", destination).Scan(s.ctx))
 	s.Require().Len(deliveries, 1)
@@ -664,11 +664,177 @@ func (s *InboundSuite) TestTheWorkerDeletesAWrittenMessagesRowAfterADay() {
 	s.Equal(1, s.rows(thread), "the day-old row is gone, the fresh one kept")
 }
 
+// The worker hands the agent the message as Stream Chat answered the write, with the bridge's
+// mark on it, and the message is done once the agent took it.
+func (s *InboundSuite) TestAWrittenMessageIsHandedToTheAgentAsStreamChatStoredIt() {
+	thread := s.thread("fake_line")
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
+		ChannelID: thread.ChannelID, ProviderMessageID: "m-1", CustomerID: thread.CustomerID, ConnectorID: thread.ConnectorID,
+		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: "config-1", ConfigName: "Support",
+		AuthorID: "U0000ALICE", Text: "what is this?", Media: []core.Media{{URL: "https://cdn.example/a.jpg", MIMEType: "image/jpeg"}},
+		Raw: []byte(`{}`), NextAttemptAt: time.Now(),
+	}, nil)
+	s.Require().NoError(err)
+	s.Require().True(queued)
+	handed := s.handedTo(nil)
+
+	message := s.handed(handed)
+
+	s.Equal(thread.ChannelID+"-m-1", message.ID)
+	s.Equal("what is this?", message.Text)
+	s.Equal(AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE"), message.Author)
+	s.Require().Len(message.Attachments, 1)
+	s.Equal("https://cdn.example/a.jpg", *message.Attachments[0].ImageUrl)
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	stored := s.chat.Stored(thread.ChannelID)
+	s.Require().Len(stored, 1)
+	s.Equal(true, stored[0]["custom"].(map[string]any)[BridgedField], "the message hook leaves it to the worker")
+	s.Contains(s.logs.String(), `msg="an inbound message is written into its thread channel" connector=fake_line customer=`+s.customer+" channel="+thread.ChannelID)
+	s.Contains(s.logs.String(), `msg="an inbound message is handed to the agent" connector=fake_line customer=`+s.customer+" channel="+thread.ChannelID)
+	s.Contains(s.logs.String(), `msg="an inbound message is done" connector=fake_line customer=`+s.customer+" channel="+thread.ChannelID)
+}
+
+// An attempt that wrote the message and stopped before the agent took it leaves it queued; the
+// next attempt is refused as already written, which carries no message, so the message is
+// rebuilt from its row as it was written.
+func (s *InboundSuite) TestAMessageStreamChatAlreadyHoldsIsHandedToTheAgentFromItsRow() {
+	thread := s.thread("fake_line")
+	id := inboundMessageID(thread.ChannelID, "m-1")
+	s.writeAhead(thread, id, "hello")
+	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
+		ChannelID: thread.ChannelID, ProviderMessageID: "m-1", CustomerID: thread.CustomerID, ConnectorID: thread.ConnectorID,
+		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: "config-1", ConfigName: "Support",
+		AuthorID: "U0000ALICE", Text: "hello", Media: []core.Media{{URL: "https://cdn.example/a.jpg", MIMEType: "image/jpeg"}},
+		Raw: []byte(`{}`), NextAttemptAt: time.Now(),
+	}, nil)
+	s.Require().NoError(err)
+	s.Require().True(queued)
+	handed := s.handedTo(nil)
+
+	message := s.handed(handed)
+
+	s.Equal(id, message.ID)
+	s.Equal("hello", message.Text)
+	s.Equal(AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE"), message.Author)
+	s.Require().Len(message.Attachments, 1, "the photo goes with it, so a photo alone is still answered")
+	s.Equal("https://cdn.example/a.jpg", *message.Attachments[0].ImageUrl)
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(0, s.row(thread, "m-1").Attempts)
+}
+
+// Stream Chat bounces a message it does not keep, as a moderation block does: its answer has
+// type error, and Stream Chat sends no message.new for it, so the agent is not handed it
+// either. The message is done.
+func (s *InboundSuite) TestAMessageStreamChatBouncesIsNotHandedToTheAgent() {
+	thread := s.thread("fake_line")
+	id := inboundMessageID(thread.ChannelID, "m-1")
+	s.queue(thread, "m-1", "hello", nil)
+	s.answerWith("/"+thread.ChannelID+"/message", http.StatusCreated,
+		`{"message":{"id":"`+id+`","type":"error","text":"Message was blocked by moderation policies","user":{"id":"`+
+			AuthorUserID(s.customer, "fake_line", "T0000TEAM", "U0000ALICE")+`"}},"duration":"1ms"}`)
+	handed := s.handedTo(nil)
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Empty(handed, "the agent is handed nothing")
+	s.Contains(s.logs.String(), `msg="an inbound message Stream Chat bounced is not handed to the agent" connector=fake_line customer=`+
+		s.customer+" channel="+thread.ChannelID)
+}
+
+// The agent's claim of the turn failing is the attempt failing: the message stays queued, and
+// the next attempt, refused by Stream Chat as written, hands it over again, then it is done.
+func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain() {
+	thread := s.thread("fake_line")
+	s.queue(thread, "m-1", "hello", nil)
+	var calls atomic.Int32
+	handed := make(chan Written, 4)
+	s.newBridge(&Options{InboundRetries: []time.Duration{10 * time.Millisecond, time.Hour}}).Start(
+		func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+			handed <- message
+			if calls.Add(1) == 1 {
+				return nil, errors.New("the claim failed")
+			}
+			return func() {}, nil
+		})
+
+	first, second := s.handed(handed), s.handed(handed)
+
+	s.Equal(first.ID, second.ID)
+	s.Equal(first.Text, second.Text)
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(1, s.row(thread, "m-1").Attempts)
+	s.Len(s.chat.Stored(thread.ChannelID), 1)
+	s.Contains(s.logs.String(), `msg="an inbound message was not written into its thread channel or not handed to the agent, and is tried again"`)
+}
+
+// A message whose turn was claimed before, by an attempt whose router stopped before it
+// recorded it, is done with no turn to run.
+func (s *InboundSuite) TestAMessageWhoseTurnWasClaimedBeforeIsDone() {
+	thread := s.thread("fake_line")
+	s.queue(thread, "m-1", "hello", nil)
+	s.newBridge(nil).Start(func(context.Context, store.ChannelThread, Written) (func(), error) { return nil, nil })
+
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+}
+
+// A turn waits for the reply, up to minutes, off the worker's slot: the thread's next message
+// is written and handed over meanwhile, and Close returns while both turns still run.
+func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() {
+	thread := s.thread("fake_line")
+	s.queue(thread, "m-1", "hello", nil)
+	s.queue(thread, "m-2", "and more", nil)
+	release := make(chan struct{})
+	var running atomic.Int32
+	bridge := s.newBridge(nil)
+	bridge.Start(func(context.Context, store.ChannelThread, Written) (func(), error) {
+		return func() {
+			running.Add(1)
+			<-release
+			running.Add(-1)
+		}, nil
+	})
+	s.Require().Eventually(func() bool { return s.row(thread, "m-2").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond,
+		"the second message is written while the first one's turn runs")
+	s.Require().Eventually(func() bool { return running.Load() == 2 }, 5*time.Second, 10*time.Millisecond)
+
+	closed := make(chan struct{})
+	go func() {
+		bridge.Close()
+		close(closed)
+	}()
+
+	s.Require().Eventually(func() bool { return isClosed(closed) }, time.Second, 10*time.Millisecond, "Close waits for no turn")
+	s.Equal(int32(2), running.Load(), "the turns still run")
+	close(release)
+	s.Require().Eventually(func() bool { return running.Load() == 0 }, 5*time.Second, 10*time.Millisecond)
+}
+
+// handedTo starts a bridge whose worker hands each message to a turn that does nothing, and
+// returns what it hands over. options are as bridge takes them.
+func (s *InboundSuite) handedTo(options *Options) <-chan Written {
+	handed := make(chan Written, 4)
+	s.newBridge(options).Start(func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+		handed <- message
+		return func() {}, nil
+	})
+	return handed
+}
+
+// handed waits for the next message a worker hands over.
+func (s *InboundSuite) handed(handed <-chan Written) Written {
+	select {
+	case message := <-handed:
+		return message
+	case <-time.After(5 * time.Second):
+		s.FailNow("the worker handed nothing to the agent")
+		return Written{}
+	}
+}
+
 // bridge is a started Bridge over the suite's store and Stream Chat, closed with the test.
 // options, when not nil, set the inbound retries and the forward of what it gives up.
 func (s *InboundSuite) bridge(options *Options) *Bridge {
 	bridge := s.newBridge(options)
-	bridge.Start()
+	bridge.Start(nil)
 	return bridge
 }
 
@@ -879,7 +1045,7 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 			s.Require().NoError(err)
 			s.Require().Equal("U0000BOB", stored.ChatPerson, "the thread arrives with a stored person")
 
-			admitted, err := s.newBridge(nil).admit(s.ctx, stored, s.row(thread, "m1"))
+			admitted, err := s.newBridge(nil).admit(s.ctx, &stored, s.row(thread, "m1"))
 			s.Require().NoError(err)
 			s.True(admitted)
 

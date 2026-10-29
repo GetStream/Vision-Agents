@@ -277,6 +277,60 @@ func (s *ProviderAppMessageHookSuite) TestACardWrittenAfterTheIdlePeriodLandsInT
 	s.Zero(s.asked(suiteStreamKey, http.MethodPut, "/chat/messages/"+card))
 }
 
+// A thread of a provider app pinned to the customer's own Stream app is that app's: the
+// session a backend opened on it there answers the message the worker hands over, and the
+// router opens none of its own (AnswerQueued's origin is the thread's customer and app).
+func (s *ProviderAppMessageHookSuite) TestAThreadOfThePinnedAppIsAnsweredByTheSessionOpenedOnItThere() {
+	ctx := context.Background()
+	s.Require().Equal(http.StatusCreated, s.operatorApp())
+	workspace := s.slack.TeamID
+	token := s.slack.InstallBot()
+	bot := s.connectedBot(workspace, token)
+	config := store.AgentConfig{
+		CustomerID: s.customerID(), Name: "slack-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "noted/noted-model",
+		Connectors: []store.ConnectorBinding{{
+			Name: "slack", ConnectorID: "slack_bot",
+			Connection: store.ConnectionBinding{Type: "fixed", ConnectionID: bot.ConnectionID},
+		}},
+	}
+	s.Require().NoError(s.store.CreateAgentConfig(ctx, &config))
+	handOver := s.holdHandOffs()
+	status, _ := s.slack.Deliver(s.server.URL+providerAppEventsPath+"slack_bot/"+s.environment["SLACK_BOT_MCP_APP_ID"],
+		s.environment["SLACK_BOT_MCP_SIGNING_SECRET"], s.slackMessage(workspace, "U0000ALICE", "Can you check the build?"), 0)
+	s.Require().Equal(http.StatusOK, status)
+	var channel string
+	var pin int64
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(ctx, "SELECT channel_id, stream_app_pk FROM channel_threads WHERE customer_id = ?", s.customerID()).Scan(&channel, &pin) == nil
+	}, settleFor, 10*time.Millisecond)
+	s.Require().Equal(s.appID(), pin, "the thread is pinned to the provider app's app")
+	// The backend opens its session on the channel the worker made, which the row is linked
+	// before: one opened earlier asks Stream for a channel that is not there yet.
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(channel)) == 1 }, settleFor, 10*time.Millisecond,
+		"the worker never wrote the message")
+	opened := s.serverClient.createSession(CreateSessionRequest{Agent: &config.Name, AgentId: &channel})
+	s.Require().Eventually(func() bool {
+		_, err := s.store.StoredSession(ctx, s.customerID(), opened.Id)
+		return err == nil
+	}, settleFor, 20*time.Millisecond, "the session's row was never stored")
+
+	handOver()
+
+	// The suite's Slack keeps every test's posts: the reply is the one made with this
+	// test's bot token.
+	s.Require().Eventually(func() bool {
+		for _, post := range s.slack.Posts() {
+			if post.Token == token {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the person got no reply")
+	var sessions int
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM agent_sessions WHERE customer_id = ?", s.customerID()).Scan(&sessions))
+	s.Equal(1, sessions, "the backend's session answered; the router opened none")
+}
+
 // connectedBot is the app's slack_bot connection of a workspace, made through the API and then
 // given the bot token as an install leaves it, as SlackChannelSuite makes it.
 func (s *ProviderAppMessageHookSuite) connectedBot(team, token string) core.ConnectionRef {

@@ -56,14 +56,15 @@ func (s *SlackChannelSuite) TestTheThreadIsAnsweredByTheRouterNotByADevicesSessi
 	s.Empty(s.chat.Stored(own), "nothing of the thread reaches the device's conversation")
 }
 
-// TestTheBackendsSessionOnAThreadChannelAnswersTheThread: the hook finds the session the
-// backend opened on the thread channel by its conversation, and it answers there; the
-// Router opens none of its own, which would take the backend's over.
+// TestTheBackendsSessionOnAThreadChannelAnswersTheThread: the turn the inbound worker hands
+// over finds the session the backend opened on the thread channel by its conversation, and it
+// answers there; the Router opens none of its own, which would take the backend's over.
 func (s *SlackChannelSuite) TestTheBackendsSessionOnAThreadChannelAnswersTheThread() {
+	handOver := s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	handOver()
 
 	s.Equal("Noted.", s.posted(1)[0].Text)
 	s.Nil(s.serverClient.getSession(held.Id).ClosedAt, "the backend's session answered and is still running")
@@ -139,15 +140,15 @@ func (s *SlackChannelSuite) TestADevicesCallIsBarredFromAChannelWhoseThreadLinkC
 // the thread's message to a session under the channel's agent id when it cannot tell whether
 // the channel holds a thread.
 func (s *SlackChannelSuite) TestAMessageInAChannelWhoseThreadLinkCannotBeReadIsAnsweredNowhere() {
-	said := "is the build green? " + s.utils.uuid()
-	channel := s.messaged("U0000ALICE", said, "1759740000.000100", "")
+	said := "and the deploy? " + s.utils.uuid()
+	channel := s.answeredThread()
 	s.unreadableLink(channel)
 	s.client.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel, StartVoice: pointerTo(true)})
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	s.sentInThread(channel, said)
 
 	s.Never(func() bool { return s.told(said) }, dropped, 20*time.Millisecond, "no session was told the thread's message")
-	s.Empty(s.slack.Posts())
+	s.Len(s.slack.Posts(), 1, "the reply to the first message alone")
 }
 
 // TestABackendsCallNamingAThreadChannelWritesItsTranscriptIntoItsOwnConversation: the
@@ -301,6 +302,7 @@ func (s *SlackChannelSuite) TestASessionIsNotNamedAfterAThreadChannel() {
 // TestABackendOpensAThreadChannelAgainByItsAgentID: the one way in, after a session on it
 // ended.
 func (s *SlackChannelSuite) TestABackendOpensAThreadChannelAgainByItsAgentID() {
+	s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.serverClient.stopSession(held.Id)
@@ -339,8 +341,10 @@ func (s *SlackChannelSuite) TestWithNoThreadLinkedABackendsAgentIDIsAnsweredAsBe
 }
 
 // heldOnThread is the id of a session the backend opened on a thread channel, once its row
-// is stored, as a worker opens one (Dispatch.Conversation).
+// is stored, as a worker opens one (Dispatch.Conversation), before the agent was handed the
+// thread's first message, once it answered it.
 func (s *SlackChannelSuite) heldOnThread() string {
+	handOver := s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.Require().Equal("agent:"+channel, value(held.ConversationId))
@@ -348,6 +352,8 @@ func (s *SlackChannelSuite) heldOnThread() string {
 		_, err := s.store.StoredSession(context.Background(), s.customerID(), held.Id)
 		return err == nil
 	}, settleFor, 20*time.Millisecond, "the session's row was never stored")
+	handOver()
+	s.posted(1)
 	return held.Id
 }
 
@@ -406,6 +412,7 @@ func (s *SlackChannelSuite) TestAThreadTheMessageHookOpensIsSharedAndOffersNoCal
 		Connection: store.ConnectionBinding{Type: "session"},
 	})
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	data, foundChannel := s.chat.Channel(channel)
 	s.Require().True(foundChannel)
@@ -451,6 +458,7 @@ func (s *SlackChannelSuite) TestAHookStartedReplyIsMarkedHookChat() {
 	organization := s.RouterSuite.app.organization.ID
 	s.Require().NoError(s.store.JoinOrganization(context.Background(), s.customerID(), organization))
 	s.Require().NoError(s.store.SetOrganizationTier(context.Background(), organization, "tier-a", time.Now()))
+	s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	data, foundChannel := s.chat.Channel(channel)
 	s.Require().True(foundChannel)
