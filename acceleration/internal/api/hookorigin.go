@@ -42,6 +42,9 @@ type hookOrigin struct {
 	// queued is a delivery the queue's worker holds a lease on, whose answer runs in line, so
 	// the worker records it once it has ended.
 	queued bool
+	// queuedMessage is a queued delivery's Stream message id, here or on the peer it was handed
+	// to, whose answer settles its row first (answerOnce). Empty for a hook.
+	queuedMessage string
 }
 
 // answer runs an answer: in line for a queued delivery, and off the request for a hook,

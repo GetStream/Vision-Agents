@@ -148,36 +148,37 @@ func (s *Store) NextChatDeliveryAt(ctx context.Context) (next time.Time, found b
 // It, RetryChatDelivery and FailChatDelivery change the row only while the claim's lease is
 // the row's: a worker whose lease ran out while it answered, and whose message another worker
 // took since, changes nothing, so it cannot finish or reschedule the other's attempt. changed
-// is false then.
+// is false then. A row the answer settled as it started (StartChatDeliveryAnswer) keeps its
+// lease and when it left the queue, so it is still this claim's to finish.
 func (s *Store) FinishChatDelivery(ctx context.Context, claimed ChatDelivery, at time.Time) (changed bool, err error) {
-	return s.leaveChatDelivery(ctx, claimed, ChatDeliveryDone, claimed.Attempts, at)
+	return updateClaimedChatDelivery(ctx, claimed, []string{ChatDeliveryQueued, ChatDeliveryDone},
+		s.db.NewUpdate().Model((*ChatDelivery)(nil)).
+			Set("state = ?", ChatDeliveryDone).
+			Set("attempts = ?", claimed.Attempts).
+			Set("finished_at = COALESCE(finished_at, ?)", at.UTC()))
 }
 
 // FailChatDelivery records that a claimed message's last attempt failed and it is given up,
 // at at.
 func (s *Store) FailChatDelivery(ctx context.Context, claimed ChatDelivery, at time.Time) (changed bool, err error) {
-	return s.leaveChatDelivery(ctx, claimed, ChatDeliveryFailed, claimed.Attempts+1, at)
-}
-
-func (s *Store) leaveChatDelivery(ctx context.Context, claimed ChatDelivery, state string, attempts int, at time.Time) (bool, error) {
-	return updateClaimedChatDelivery(ctx, claimed, s.db.NewUpdate().Model((*ChatDelivery)(nil)).
-		Set("state = ?", state).
-		Set("attempts = ?", attempts).
+	return updateClaimedChatDelivery(ctx, claimed, []string{ChatDeliveryQueued}, s.db.NewUpdate().Model((*ChatDelivery)(nil)).
+		Set("state = ?", ChatDeliveryFailed).
+		Set("attempts = ?", claimed.Attempts+1).
 		Set("finished_at = ?", at.UTC()))
 }
 
 // RetryChatDelivery records a failed attempt of a claimed message and when the next one is
 // due.
 func (s *Store) RetryChatDelivery(ctx context.Context, claimed ChatDelivery, next time.Time) (changed bool, err error) {
-	return updateClaimedChatDelivery(ctx, claimed, s.db.NewUpdate().Model((*ChatDelivery)(nil)).
+	return updateClaimedChatDelivery(ctx, claimed, []string{ChatDeliveryQueued}, s.db.NewUpdate().Model((*ChatDelivery)(nil)).
 		Set("attempts = ?", claimed.Attempts+1).
 		Set("next_attempt_at = ?", next.UTC()))
 }
 
-func updateClaimedChatDelivery(ctx context.Context, claimed ChatDelivery, update *bun.UpdateQuery) (bool, error) {
+func updateClaimedChatDelivery(ctx context.Context, claimed ChatDelivery, states []string, update *bun.UpdateQuery) (bool, error) {
 	result, err := update.
 		Where("seq = ?", claimed.Seq).
-		Where("state = ?", ChatDeliveryQueued).
+		Where("state IN (?)", bun.In(states)).
 		Where("next_attempt_at = ?", claimed.NextAttemptAt.UTC()).
 		Exec(ctx)
 	if err != nil {
@@ -188,6 +189,40 @@ func updateClaimedChatDelivery(ctx context.Context, claimed ChatDelivery, update
 		return false, stack.Wrap(fmt.Errorf("store: update chat delivery: %w", err))
 	}
 	return affected == 1, nil
+}
+
+// StartChatDeliveryAnswer settles a queued message as its answer starts, at at, so no later try
+// of it, on any router, answers it again: a peer that answered and whose reply was lost, an
+// attempt Close cut short after the peer took it, or a router that stopped before it recorded
+// the answer. started is false when the message's answer already started, it was given up, or
+// nothing is queued under streamApp and messageID: there is nothing to answer then. The lease
+// is left as it is, for the worker holding it to finish the row (FinishChatDelivery).
+func (s *Store) StartChatDeliveryAnswer(ctx context.Context, streamApp int64, messageID string, at time.Time) (started bool, err error) {
+	result, err := s.db.NewRaw(`
+UPDATE chat_deliveries SET state = 'done', finished_at = ?
+WHERE stream_app = ? AND message_id = ? AND state = 'queued'`,
+		at.UTC(), streamApp, messageID).Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: start chat delivery answer: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: start chat delivery answer: %w", err))
+	}
+	return affected == 1, nil
+}
+
+// ReleaseChatDeliveryAnswer queues again a message whose answer started (StartChatDeliveryAnswer)
+// and that nothing then took, such as a dispatch worker that was not connected, so a later try
+// answers it. The lease is left as it is, for the worker holding it to retry the row.
+func (s *Store) ReleaseChatDeliveryAnswer(ctx context.Context, streamApp int64, messageID string) error {
+	if _, err := s.db.NewRaw(`
+UPDATE chat_deliveries SET state = 'queued', finished_at = NULL
+WHERE stream_app = ? AND message_id = ? AND state = 'done'`,
+		streamApp, messageID).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: release chat delivery answer: %w", err))
+	}
+	return nil
 }
 
 // PruneChatDeliveries deletes the rows of answered messages finished a day before now, and of

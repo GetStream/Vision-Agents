@@ -32,6 +32,10 @@ const chatDeliveryPeerPath = "/internal/chat-deliveries/answer"
 // where it happened, and the worker tries again.
 var errChatDeliveryUnsettled = errors.New("api: nothing took the queued chat delivery")
 
+// chatDeliveryReleaseTimeout bounds queueing a delivery again that nothing took: one update by
+// key. The chat delivery worker's recordTimeout, which bounds its own row writes.
+const chatDeliveryReleaseTimeout = 10 * time.Second
+
 // chatDelivery is what Stream Chat delivers: the message.new event the webhook carries, and
 // the app it was written in. The app is read from the signed body and never from a header,
 // so nobody can name another app on a delivery Stream signed.
@@ -124,6 +128,7 @@ func (s *Server) chatDeliveryOrigin(w http.ResponseWriter, app int64) (hookOrigi
 type queuedChatDelivery struct {
 	Seq        int64  `json:"seq"`
 	StreamApp  int64  `json:"stream_app"`
+	MessageID  string `json:"message_id"`
 	CustomerID string `json:"customer_id"`
 	Deployment bool   `json:"deployment"`
 	APIKey     string `json:"api_key"`
@@ -132,17 +137,19 @@ type queuedChatDelivery struct {
 
 // origin is where the delivery came from, as the endpoint verified it.
 func (q queuedChatDelivery) origin() hookOrigin {
-	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey}
+	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey,
+		queuedMessage: q.MessageID}
 }
 
 // AnswerChatDelivery answers a delivery the endpoint queued, as it would have answered it on
 // the request, and returns once the answer has ended: the worker's lease holds the delivery
-// until then (chatdelivery.Lease). The endpoint already checked it is an addressed new
-// message, first delivered and fresh, so none of that is checked again: a retry ten minutes
-// on would read as stale.
+// until then (chatdelivery.Lease). An answer from a session or a dispatch worker, here or on a
+// peer, settles the row as it starts (answerOnce), so a try after that answers nothing. The
+// endpoint already checked it is an addressed new message, first delivered and fresh, so none
+// of that is checked again: a retry ten minutes on would read as stale.
 func (s *Server) AnswerChatDelivery(ctx context.Context, delivery store.ChatDelivery) error {
-	queued := queuedChatDelivery{Seq: delivery.Seq, StreamApp: delivery.StreamApp, CustomerID: delivery.CustomerID,
-		Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
+	queued := queuedChatDelivery{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
+		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
 	var event chatDelivery
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
 		return stack.Wrap(fmt.Errorf("api: read queued chat delivery: %w", err))
@@ -194,4 +201,41 @@ func (s *Server) answerChatDeliveryForPeer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// answerOnce settles a queued delivery's row as its answer starts, so a try of it after that, on
+// this router or another, answers nothing (store.StartChatDeliveryAnswer). answer is false when
+// the message is not to be answered now, and settled then says whether that holds: its answer
+// already started, or the row could not be written and a later try may. A hook is never tried
+// again, so it settles nothing.
+func (s *Server) answerOnce(ctx context.Context, origin hookOrigin, event messageEvent) (answer, settled bool) {
+	if origin.queuedMessage == "" {
+		return true, true
+	}
+	started, err := s.store.StartChatDeliveryAnswer(ctx, origin.app, origin.queuedMessage, time.Now())
+	if err != nil {
+		s.logger.Error("could not settle a queued chat delivery before answering it",
+			"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app, "error", err)
+		return false, false
+	}
+	if !started {
+		s.logger.Info("not answering a queued chat delivery whose answer already started",
+			"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
+	}
+	return started, true
+}
+
+// unanswered queues again a delivery answerOnce settled and nothing then took, so a later try
+// answers it. Written past a cancelled ctx: Close cancels the worker's, and a row left settled
+// is a message nobody answers.
+func (s *Server) unanswered(ctx context.Context, origin hookOrigin) {
+	if origin.queuedMessage == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), chatDeliveryReleaseTimeout)
+	defer cancel()
+	if err := s.store.ReleaseChatDeliveryAnswer(ctx, origin.app, origin.queuedMessage); err != nil {
+		s.logger.Error("a queued chat delivery nothing took could not be queued again, and is left unanswered",
+			"message", origin.queuedMessage, "stream_app", origin.app, "error", err)
+	}
 }

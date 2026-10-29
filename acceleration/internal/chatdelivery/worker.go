@@ -233,6 +233,6 @@ func (w *Worker) attempt(delivery store.ChatDelivery) {
 	case err != nil:
 		log.Error("could not record a queued chat delivery's attempt", "error", err)
 	case !changed:
-		log.Warn("a queued chat delivery's lease ran out before its attempt was recorded")
+		log.Warn("a queued chat delivery's lease ran out before its attempt was recorded, or its answer started on another try")
 	}
 }

@@ -208,6 +208,9 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			if found.Spec().PersistConversation {
 				return true
 			}
+			if answer, settled := s.answerOnce(ctx, origin, event); !answer {
+				return settled
+			}
 			if found.Spec().DispatchText {
 				_, err := s.dispatchText(ctx, found, dispatch.Message{
 					ChannelType: event.ChannelType,
@@ -221,6 +224,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				if err != nil {
 					s.logger.Error("nobody could answer an arriving message",
 						"channel", event.ChannelID, "session", found.ID(), "error", err)
+					s.unanswered(ctx, origin)
 				}
 				return err == nil
 			}
@@ -277,12 +281,16 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		At:          time.Now().UTC(),
 	}
 
+	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
+		return settled
+	}
 	worker, err := s.dispatch.AssignMessage(customerID, message)
 	if err != nil {
 		// Somebody has written to an agent that nothing is going to answer, which is the
 		// most useful error this service can report.
 		s.logger.Error("nobody could answer an arriving message",
 			"channel", event.ChannelID, "customer", customerID, "error", err)
+		s.unanswered(ctx, origin)
 		return false
 	}
 	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)

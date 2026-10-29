@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -506,4 +507,169 @@ func (s *StoreSuite) TestPruningKeepsAnAnsweredChatMessageADayAndAGivenUpOneThir
 	}
 	s.Require().NoError(rows.Err())
 	s.Equal([]string{"done-new", "failed-new", "queued"}, kept, "a queued row is never pruned, however old")
+}
+
+// A message's answer starts once: the row leaves the queue as it starts, so no later try, nor
+// a later claim, answers it again, and the worker holding the lease still finishes it.
+func (s *StoreSuite) TestAChatMessagesAnswerStartsOnce() {
+	s.queuedChat("msg-one")
+	claimed := s.claimedChat(s.base, "msg-one")
+
+	started, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base.Add(time.Second))
+	s.Require().NoError(err)
+	again, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base.Add(2*time.Second))
+	s.Require().NoError(err)
+
+	s.True(started)
+	s.False(again, "an answer that started is not started again")
+	s.Empty(s.claimChats(s.base.Add(time.Hour)), "a message whose answer started is not claimed again")
+	finished, err := s.store.FinishChatDelivery(s.ctx, claimed, s.base.Add(5*time.Second))
+	s.Require().NoError(err)
+	s.True(finished, "the worker holding the lease records its attempt")
+	state, attempts, finishedAt := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryDone, state)
+	s.Zero(attempts)
+	s.Require().NotNil(finishedAt)
+	s.True(finishedAt.Equal(s.base.Add(time.Second)), "it left the queue as its answer started: %s", finishedAt)
+}
+
+// The message is named by its app and its id together: either alone is another message.
+func (s *StoreSuite) TestAChatAnswerStartsOnlyForItsOwnAppAndMessage() {
+	s.queuedChat("msg-one")
+
+	otherApp, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257546, "msg-one", s.base)
+	s.Require().NoError(err)
+	otherMessage, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-two", s.base)
+	s.Require().NoError(err)
+
+	s.False(otherApp)
+	s.False(otherMessage)
+	state, _, finishedAt := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryQueued, state)
+	s.Nil(finishedAt)
+}
+
+func (s *StoreSuite) TestAGivenUpChatMessagesAnswerDoesNotStart() {
+	s.queuedChat("msg-one")
+	_, err := s.store.FailChatDelivery(s.ctx, s.claimedChat(s.base, "msg-one"), s.base)
+	s.Require().NoError(err)
+
+	started, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base)
+
+	s.Require().NoError(err)
+	s.False(started)
+	state, _, _ := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryFailed, state)
+}
+
+// A worker whose try failed after the answer started elsewhere, such as a peer whose reply was
+// lost, neither retries nor gives up the message: it was answered.
+func (s *StoreSuite) TestAChatMessageWhoseAnswerStartedIsNotRetriedOrGivenUp() {
+	s.queuedChat("msg-one")
+	claimed := s.claimedChat(s.base, "msg-one")
+	_, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base)
+	s.Require().NoError(err)
+
+	retried, err := s.store.RetryChatDelivery(s.ctx, claimed, s.base.Add(time.Second))
+	s.Require().NoError(err)
+	failed, err := s.store.FailChatDelivery(s.ctx, claimed, s.base.Add(time.Second))
+	s.Require().NoError(err)
+
+	s.False(retried)
+	s.False(failed)
+	state, attempts, _ := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryDone, state)
+	s.Zero(attempts)
+}
+
+// A worker whose lease ran out does not finish the attempt of the worker that took the message
+// since, even once that one's answer started.
+func (s *StoreSuite) TestAStartedChatMessageIsNotFinishedByAWorkerWhoseLeaseWasTakenOver() {
+	s.queuedChat("msg-one")
+	stale := s.claimedChat(s.base, "msg-one")
+	current := s.claimedChat(s.base.Add(chatLease), "msg-one")
+	_, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base.Add(chatLease))
+	s.Require().NoError(err)
+
+	staleFinished, err := s.store.FinishChatDelivery(s.ctx, stale, s.base.Add(chatLease))
+	s.Require().NoError(err)
+	currentFinished, err := s.store.FinishChatDelivery(s.ctx, current, s.base.Add(chatLease))
+	s.Require().NoError(err)
+
+	s.False(staleFinished)
+	s.True(currentFinished)
+}
+
+// A message whose answer started and that nothing then took is queued again under the same
+// lease: the worker holding it retries it, and the next try starts its answer.
+func (s *StoreSuite) TestAReleasedChatAnswerIsRetriedAndStartsAgain() {
+	s.queuedChat("msg-one")
+	claimed := s.claimedChat(s.base, "msg-one")
+	_, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.ReleaseChatDeliveryAnswer(s.ctx, 1257545, "msg-one"))
+
+	state, _, finishedAt := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryQueued, state)
+	s.Nil(finishedAt)
+	retried, err := s.store.RetryChatDelivery(s.ctx, claimed, s.base.Add(time.Second))
+	s.Require().NoError(err)
+	s.True(retried)
+	s.claimedChat(s.base.Add(time.Second), "msg-one")
+	started, err := s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base.Add(time.Second))
+	s.Require().NoError(err)
+	s.True(started)
+}
+
+// Only an answer that started is given back: a message given up, or of another app, stays as
+// it is.
+func (s *StoreSuite) TestReleasingAChatAnswerLeavesAGivenUpMessageAndAnotherAppsAlone() {
+	s.queuedChat("msg-one")
+	_, err := s.store.FailChatDelivery(s.ctx, s.claimedChat(s.base, "msg-one"), s.base)
+	s.Require().NoError(err)
+	s.queuedChat("msg-two")
+	_, err = s.store.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-two", s.base)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.ReleaseChatDeliveryAnswer(s.ctx, 1257545, "msg-one"))
+	s.Require().NoError(s.store.ReleaseChatDeliveryAnswer(s.ctx, 1257546, "msg-two"))
+	s.Require().NoError(s.store.ReleaseChatDeliveryAnswer(s.ctx, 1257545, "msg-three"))
+
+	failed, _, _ := s.chatRow("msg-one")
+	s.Equal(ChatDeliveryFailed, failed)
+	started, _, _ := s.chatRow("msg-two")
+	s.Equal(ChatDeliveryDone, started)
+}
+
+// Routers starting one message's answer at the same moment start it once between them.
+func (s *StoreSuite) TestRoutersStartingAChatAnswerAtOnceStartItOnce() {
+	s.queuedChat("msg-one")
+	routerA, err := Open(s.dsn)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(routerA.Close()) })
+
+	var started atomic.Int32
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := range 20 {
+		router := []*Store{s.store, routerA}[i%2]
+		wg.Go(func() {
+			ok, err := router.StartChatDeliveryAnswer(s.ctx, 1257545, "msg-one", s.base)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if ok {
+				started.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(1), started.Load())
 }
