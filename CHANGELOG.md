@@ -12,9 +12,16 @@ A message in a `thread-` channel with an image attachment (`type: image`, `image
 
 A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
-### A Python agent tells the date and the hour in its callers' timezone
+### Every SDK tells the agent its callers' timezone
 
-`Agent(timezone=...)` sets the IANA zone, such as `Europe/Lisbon`, an agent's calls are in, and `join`, `answer`, `outbound_call` and `chat` each take a `timezone` for the person on that call, over the agent's. It is sent as the session's `timezone`, so the agent tells the date and the hour in it and a time the caller gives is theirs. With neither, the backend decides from the user's stored zone. A pipeline that runs locally refuses one, since nothing there would tell the model. `SessionOptions.timezone` in `plugins/stream` does the same for a session opened directly, as Go, Swift and Kotlin already do.
+A session can name the zone of the person on it, so the agent tells the date and the hour in that zone and a time the person gives is theirs. One agent serves callers in many zones, so the zone is named per session or call, over an optional agent-wide default:
+
+- **Python:** `Agent(timezone=...)`, and a `timezone` on `join`, `answer`, `outbound_call` and `chat` that wins over it. `SessionOptions.timezone` in `plugins/stream`. A pipeline that runs locally refuses one, since nothing there would tell the model.
+- **Go:** `agents.Options.Timezone`, under `SessionOptions.Timezone`.
+- **JavaScript:** `AgentOptions.timezone`, under a call's `timezone` (`CallOptions`). In a browser, `sessions.create` sends the device's zone when the app names none; `timezone: ""` sends none.
+- **Swift and Kotlin:** `SessionOptions.timezone` is now the device's zone unless the app sets one; `nil` (`null`) sends none.
+
+A device's zone is only sent when it is an IANA name, such as `Europe/Lisbon` or `UTC`: an offset such as `GMT+05:30` is left out rather than have the session refused. A zone the app names is sent as it is. With none, the router falls back on the user's stored zone, then the agent config's `scheduling.default_timezone`. Dart is unchanged: its standard library has no IANA zone name, so the app passes one, for example from `flutter_timezone`.
 
 ### A Node.js tool's parameters can be a Zod schema
 
