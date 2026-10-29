@@ -1193,6 +1193,8 @@ func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
 // TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
 	const (
+		// idle: chosen, not measured: long enough that the fill (stall) and the gauge reads fit
+		// inside it on a loaded machine, short enough that the test waits seconds, not 90 s.
 		idle = 2 * time.Second
 		// stall: how long a write may make no progress before the buffers count as full. Chosen,
 		// not measured: many scheduler turns on a loaded machine (load 115 here), and below idle.
@@ -1211,6 +1213,8 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 			before := s.tunnelsOpen()
 			sandbox, host := s.blindTunnel(idle)
 			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
+				// Chosen, not measured: a bound only (Eventually returns when the gauge moves); a tunnel opens
+				// in milliseconds, 5 s covers a loaded machine.
 				5*time.Second, poll, "the tunnel opened")
 			// Both directions at once: a fill that waited for the other would leave a copy idle
 			// with a read pending, and that read's timeout would close the tunnel early.

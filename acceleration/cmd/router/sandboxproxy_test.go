@@ -517,7 +517,7 @@ func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 	address := freeAddress(t)
-	stop, _, err := serveSandboxProxy(proxy, address, "", false, func(server *http.Server, listener net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -552,7 +552,7 @@ func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing
 	require.NoError(t, err)
 	served := make(chan *http.Server, 1)
 
-	stop, _, err := serveSandboxProxy(proxy, freeAddress(t), "", false, func(server *http.Server, _ net.Listener) {
+	stop, _, err := serveSandboxProxy(proxy, freeAddress(t), 0, "", false, func(server *http.Server, _ net.Listener) {
 		served <- server
 	}, slog.New(slog.DiscardHandler))
 
