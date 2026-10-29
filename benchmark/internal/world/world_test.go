@@ -64,7 +64,7 @@ func TestCreateReservationRequiresAllergen(t *testing.T) {
 	}
 }
 
-func TestPlaceholderReservationNameDoesNotConsumeTable(t *testing.T) {
+func TestBlankReservationNameDoesNotConsumeTable(t *testing.T) {
 	srv := New(nil)
 	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestPlaceholderReservationNameDoesNotConsumeTable(t *testing.T) {
 	})
 
 	args := map[string]any{
-		"time": "19:30", "party_size": 2, "allergen": "none", "name": " Unknown ",
+		"time": "19:30", "party_size": 2, "allergen": "none", "name": "  ",
 	}
 	resp := postToolRaw(t, srv.Addr, "create_reservation", args)
 	if resp["error"] != "guest name is required" {
@@ -88,17 +88,17 @@ func TestPlaceholderReservationNameDoesNotConsumeTable(t *testing.T) {
 
 	snapshot := srv.Snapshot()
 	if snapshot.State["reservation"] != nil {
-		t.Fatalf("placeholder created a reservation: %v", snapshot.State["reservation"])
+		t.Fatalf("blank name created a reservation: %v", snapshot.State["reservation"])
 	}
 	slots := snapshot.State["slots"].([]any)
 	if !truthy(slots[0].(map[string]any)["available"]) {
-		t.Fatal("placeholder reservation consumed the table")
+		t.Fatal("blank-name reservation consumed the table")
 	}
 
-	args["name"] = "Alvarez"
+	args["name"] = "Unknown"
 	postTool(t, srv.Addr, "create_reservation", args)
-	if got := srv.Snapshot().State["reservation"].(map[string]any)["name"]; got != "Alvarez" {
-		t.Fatalf("reservation name = %v, want Alvarez", got)
+	if got := srv.Snapshot().State["reservation"].(map[string]any)["name"]; got != "Unknown" {
+		t.Fatalf("reservation name = %v, want the name as given", got)
 	}
 }
 

@@ -54,7 +54,7 @@ func registerRestaurant(s *Server) {
 			return nil, fmt.Errorf("allergen is required")
 		}
 		name := strings.TrimSpace(strArg(args, "name"))
-		if name == "" || strings.EqualFold(name, "unknown") {
+		if name == "" {
 			return nil, fmt.Errorf("guest name is required")
 		}
 		var chosen map[string]any
