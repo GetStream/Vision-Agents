@@ -1037,6 +1037,210 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
 	s.ErrorIs(err, io.EOF)
 }
 
+// blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
+// that is a bare listener: the sandbox's end and the host's.
+func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = listener.Close() })
+	s.answerAt(listener.Addr().String())
+	s.allow("outside.test")
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.IdleTimeout = idle }))
+	s.T().Cleanup(s.proxy.Close)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := listener.Accept()
+		accepted <- conn
+	}()
+	sandbox, err = net.Dial("tcp", s.proxy.Listener.Addr().String())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = sandbox.Close() })
+	_, err = fmt.Fprintf(sandbox, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
+		basic("sbx", s.credential))
+	s.Require().NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(sandbox), nil)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	host = <-accepted
+	s.Require().NotNil(host)
+	s.T().Cleanup(func() { _ = host.Close() })
+	return sandbox, host
+}
+
+// closedWithin is the time conn took to end, the connection closed by its peer and not a read
+// that ran out of time: the wait is bounded by a few seconds, past any idle timeout a test gives.
+func (s *ProxySuite) closedWithin(conn net.Conn, since time.Time) time.Duration {
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, err := io.Copy(io.Discard, conn)
+	if err != nil {
+		var timeout net.Error
+		s.False(errors.As(err, &timeout) && timeout.Timeout(), "the tunnel was not closed in time: %v", err)
+	}
+	return time.Since(since)
+}
+
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout: no byte either way,
+// and both ends are closed, not before the idle timeout.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout() {
+	const idle = 300 * time.Millisecond
+	sandbox, host := s.blindTunnel(idle)
+	opened := time.Now()
+
+	sandboxEnd := s.closedWithin(sandbox, opened)
+	hostEnd := s.closedWithin(host, opened)
+
+	s.GreaterOrEqual(sandboxEnd, idle)
+	s.GreaterOrEqual(hostEnd, idle)
+}
+
+// TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen: past the idle timeout, bytes in one
+// direction or the other keep it, though the other direction is silent; it closes the idle
+// timeout after the last byte. Both at once is the -race probe of the shared deadline.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen() {
+	const idle = 400 * time.Millisecond
+	const every = idle / 4
+	for _, direction := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the sandbox sends", true, false}, {"the host sends", false, true}, {"both send", true, true}} {
+		s.Run(direction.name, func() {
+			sandbox, host := s.blindTunnel(idle)
+			var sent, received atomic.Int64
+			var drained sync.WaitGroup
+			drain := func(conn net.Conn) {
+				drained.Add(1)
+				go func() {
+					defer drained.Done()
+					n, _ := io.Copy(io.Discard, conn)
+					received.Add(n)
+				}()
+			}
+			drain(sandbox)
+			drain(host)
+			var sending sync.WaitGroup
+			var last atomic.Pointer[time.Time]
+			send := func(conn net.Conn) {
+				sending.Add(1)
+				go func() {
+					defer sending.Done()
+					// Three idle timeouts of bytes, each well inside one.
+					for end := time.Now().Add(3 * idle); time.Now().Before(end); time.Sleep(every) {
+						now := time.Now()
+						if _, err := conn.Write([]byte("x")); err != nil {
+							s.Failf("the tunnel closed while it carried bytes", "%v", err)
+							return
+						}
+						sent.Add(1)
+						last.Store(&now)
+					}
+				}()
+			}
+			if direction.sandboxSends {
+				send(sandbox)
+			}
+			if direction.hostSends {
+				send(host)
+			}
+			sending.Wait()
+			s.Require().NotNil(last.Load())
+
+			closed := s.closedWithin(sandbox, *last.Load())
+			drained.Wait()
+
+			s.GreaterOrEqual(closed, idle, "closed before the idle timeout past the last byte")
+			s.Equal(sent.Load(), received.Load(), "a byte was lost")
+		})
+	}
+}
+
+// fillUntilBlocked writes conn small chunks until `stalls` writes in a row time out having accepted
+// no byte at all. One such write can be a proxy copy that has not run yet, which then moves
+// everything on and goes back to a read that the idle timeout ends; a proxy that takes nothing
+// for several stalls has both its buffers and its write full, and its copy is stuck in the write.
+// It returns an error, not a failed test: the callers run it in goroutines.
+func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
+	// stalls: chosen, not measured: three stalls outlast the longest pause of a proxy copy seen
+	// on this machine under a load of 115 (a single stall was passed by a copy that had not run).
+	const stalls = 3
+	chunk := make([]byte, 32<<10)
+	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
+	for written, blocked := 0, 0; written < 1<<30; {
+		if err := conn.SetWriteDeadline(time.Now().Add(stall)); err != nil {
+			return err
+		}
+		n, err := conn.Write(chunk)
+		written += n
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+			return fmt.Errorf("the tunnel closed while it was being filled: %w", err)
+		}
+		if n > 0 {
+			blocked = 0
+			continue
+		}
+		if blocked++; blocked == stalls {
+			return nil
+		}
+	}
+	return errors.New("the tunnel took a gigabyte nobody reads")
+}
+
+// TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
+// buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
+// time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
+// The test touches its ends no more once they are full: a byte it sent would count as progress
+// and restart the idle timeout, so the close is read from the open-tunnels gauge. That a tunnel
+// is not closed before the idle timeout is held by
+// TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
+func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
+	const (
+		// idle: chosen, not measured: long enough that the fill (stall) and the gauge reads fit
+		// inside it on a loaded machine, short enough that the test waits seconds, not 90 s.
+		idle = 2 * time.Second
+		// stall: how long a write may make no progress before the buffers count as full. Chosen,
+		// not measured: many scheduler turns on a loaded machine (load 115 here), and below idle.
+		stall = 200 * time.Millisecond
+		// margin: what the close may take past the idle timeout. Chosen: the idle timeout again,
+		// for the close and a loaded machine; there is no other timer on a hijacked tunnel.
+		margin = idle
+		// poll: the interval of the gauge reads, as in TestOpenTunnelsAreCountedUntilTheyClose.
+		poll = 20 * time.Millisecond
+	)
+	for _, stalled := range []struct {
+		name                    string
+		sandboxSends, hostSends bool
+	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
+		s.Run(stalled.name, func() {
+			before := s.tunnelsOpen()
+			sandbox, host := s.blindTunnel(idle)
+			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
+				// Chosen, not measured: a bound only (Eventually returns when the gauge moves); a tunnel opens
+				// in milliseconds, 5 s covers a loaded machine.
+				5*time.Second, poll, "the tunnel opened")
+			// Both directions at once: a fill that waited for the other would leave a copy idle
+			// with a read pending, and that read's timeout would close the tunnel early.
+			var senders []net.Conn
+			if stalled.sandboxSends {
+				senders = append(senders, sandbox)
+			}
+			if stalled.hostSends {
+				senders = append(senders, host)
+			}
+			filled := make(chan error, len(senders))
+			for _, sender := range senders {
+				go func() { filled <- fillUntilBlocked(sender, stall) }()
+			}
+			for range senders {
+				s.Require().NoError(<-filled)
+			}
+
+			// Every buffer is full and nothing moves from here: the last byte moved no later than
+			// now, so the tunnel is closed by idle after it at the latest.
+			s.Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before },
+				idle+margin, poll, "the tunnel was not closed in time")
+		})
+	}
+}
+
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
 // wildcard that names no domain, which no broker stores, takes nothing.
 func (s *ProxySuite) TestAHostWithATrailingDotIsTheHostWithout() {

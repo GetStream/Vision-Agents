@@ -507,6 +507,60 @@ func servesProxy(address string) bool {
 	return response.StatusCode == http.StatusMethodNotAllowed
 }
 
+// TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout is the router proxy's keep-alive limit: a
+// sandbox connection that sends no next request is closed, where base held it open for ever.
+// The wait is bounded by 5 s, past the 200 ms timeout and short of the 10 s header timeout.
+func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
+	const idle = 200 * time.Millisecond
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: idle,
+		Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	address := freeAddress(t)
+	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
+		_ = server.Serve(listener)
+	}, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+	require.Eventually(t, func() bool { return servesProxy(address) }, 5*time.Second, 10*time.Millisecond)
+	conn, err := net.Dial("tcp", address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	reader := bufio.NewReader(conn)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: proxy\r\n\r\n")
+	require.NoError(t, err)
+	response, err := http.ReadResponse(reader, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
+	_, err = io.Copy(io.Discard, response.Body)
+	require.NoError(t, err)
+	answered := time.Now()
+
+	_, err = reader.ReadByte()
+
+	require.ErrorIs(t, err, io.EOF, "the idle connection was not closed")
+	require.GreaterOrEqual(t, time.Since(answered), idle)
+}
+
+// TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault: a router that sets nothing
+// gives the server the proxy's own default, the 90 s of egress/proxy.go:47 on base 131c510ab,
+// which a tunnel to a grant already had.
+func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing.T) {
+	caCert, caKey := newCA(t)
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
+	require.NoError(t, err)
+	served := make(chan *http.Server, 1)
+
+	stop, _, err := serveSandboxProxy(proxy, freeAddress(t), 0, "", false, func(server *http.Server, _ net.Listener) {
+		served <- server
+	}, slog.New(slog.DiscardHandler))
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stop() })
+	require.Equal(t, 90*time.Second, (<-served).IdleTimeout)
+}
+
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
 // is waited for. 192.0.2.1 is TEST-NET-1 (RFC 5737), on no interface of this host.
 func TestAnAddressThatCannotBeListenedOnStillFailsTheStart(t *testing.T) {
