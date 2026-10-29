@@ -497,7 +497,7 @@ func (s *InworldSocketSuite) TestAnIdleEOFFailsWhenTheVoiceCannotReconnect() {
 	s.ErrorContains(failure.Err, "reopen after websocket: close 1006")
 }
 
-func (s *InworldSocketSuite) TestAnIdleEOFOnAReopenedSocketThatCarriedNothingFails() {
+func (s *InworldSocketSuite) TestAReopenedSocketThatDropsAtOnceFailsTheSession() {
 	fake := newFakeInworld()
 	defer fake.close()
 	provider, conn := s.connect(fake, Options{})
@@ -523,6 +523,29 @@ func (s *InworldSocketSuite) TestAnIdleEOFOnAReopenedSocketThatCarriedNothingFai
 	s.True(events[len(events)-1].(tts.Error).Fatal, "a voice that cannot keep a socket open fails the session")
 	s.Never(func() bool { return accepted.Load() > 1 }, 300*time.Millisecond, 10*time.Millisecond,
 		"one reconnect per idle spell, not one for every socket the server drops")
+}
+
+func (s *InworldSocketSuite) TestAReopenedSocketThatDropsAfterAnIdleSpellIsReopenedAgain() {
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{reconnect: 50 * time.Millisecond})
+	reopened := func() {
+		events := s.collect(provider, func(event tts.Event) bool {
+			_, connected := event.(tts.Connected)
+			_, failed := event.(tts.Error)
+			return connected || failed
+		})
+		s.Require().IsType(tts.Connected{}, events[len(events)-1])
+	}
+	reopened()
+
+	for range 2 {
+		s.Require().NoError(conn.Close())
+		reopened()
+		conn = fake.accept()
+		s.Require().NotNil(conn)
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (s *InworldSocketSuite) TestAnEOFWhileTheAudioTailIsPendingRemainsAFailure() {
