@@ -1251,6 +1251,13 @@ func (a *Agent) record() []llm.Message {
 	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
 }
 
+// told returns the instructions the operator gave the agent, as they stand now.
+func (a *Agent) told() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.prompt
+}
+
 // Finish waits for the agent to stop talking, so a caller can hang up without cutting off
 // the last sentence. Work still running counts as talking: the caller was told an answer
 // was coming. It returns the context's error if the wait outlasts it.
