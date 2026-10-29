@@ -89,21 +89,6 @@ func (s *FlowSuite) TestACallerWhoSaidTheyWouldGiveEverythingIsWaitedOn() {
 	s.Contains(flowInstructions, "Once the caller has said they will give everything at once, choose wait at each pause")
 }
 
-func (s *FlowSuite) TestACallerGivingAThoughtInPartsIsSaidToBe() {
-	// Big Bench Audio reads a question out a clause at a time. Each clause was ruled a
-	// complete thought, answered, and talked over: 42 of 84 answers in one run.
-	s.Contains(flowInstructions, "when you are told the caller is giving one thought in parts: choose wait")
-	s.Contains(flowInstructions, "respond once they ask something, correct or change something, or plainly finish")
-
-	s.Require().NoError(s.flow.Decide(FlowTurn{
-		ID: "candidate-1", Participant: "Alex", Text: "Delphina says Andre lies.", InParts: true,
-	}))
-	s.Contains(s.waitAsked(1)[0].Input[0].Content, "so they are giving one thought in parts")
-
-	s.NotContains(flowQuestion(FlowTurn{Participant: "Alex", Text: "Delphina says Andre lies."}), "in parts",
-		"nothing says so of a caller who has not")
-}
-
 func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 	s.Require().NoError(s.flow.Decide(FlowTurn{
 		ID:           "candidate-1",

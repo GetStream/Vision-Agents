@@ -121,15 +121,6 @@ func (s *JudgeSuite) TestACompleteThoughtForTheAgentIsAnswered() {
 	s.Equal("A table for four at seven, please.", s.states[0]["heard"])
 }
 
-func (s *JudgeSuite) TestTheJudgeIsToldACallerWentOnUnanswered() {
-	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "listing": 0.9})
-
-	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Delphina says Andre lies.", Ended: true, InParts: true})
-
-	s.Equal(Wait, got.Disposition)
-	s.Equal(true, s.states[0]["went_on_unanswered"])
-}
-
 func (s *JudgeSuite) TestARequestTheTranscriberHasNotEndedWaitsForTheEnd() {
 	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9})
 	said := FlowTurn{ID: "t1", Participant: "caller", Text: "A table for four this Saturday at seven thirty"}

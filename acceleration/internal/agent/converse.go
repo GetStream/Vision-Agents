@@ -212,10 +212,6 @@ type converse struct {
 	delegated map[string]string
 	// waiting is the unfinished words each participant is being given longer to finish.
 	waiting map[string]unfinished
-	// wentOn is when each participant last went on talking before hearing any of the reply
-	// to what they had said, until a turn of theirs is answered. The flow controller is
-	// told, because the next part that sounds complete may be no more the end than the last.
-	wentOn map[string]time.Time
 	// overlaps names the participant each provisional ask still with the controller is
 	// about, so a ruling can find what was asked.
 	overlaps map[string]string
@@ -326,7 +322,6 @@ func newConverse(
 		candidates:   map[string]candidate{},
 		delegated:    map[string]string{},
 		waiting:      map[string]unfinished{},
-		wentOn:       map[string]time.Time{},
 		overlaps:     map[string]string{},
 		overlapping:  map[string]overlapState{},
 		reported:     map[ActionKind]judged{},
@@ -490,9 +485,6 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
 		return Action{}, false
 	}
-	c.mu.Lock()
-	c.wentOn[transcript.Participant.ID] = time.Now()
-	c.mu.Unlock()
 	return c.decide(Action{
 		Kind:         ActInterrupt,
 		Reason:       "the caller said more before hearing any of the reply, so it answers words they have moved on from",
@@ -748,10 +740,6 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		Language:    ready.Language,
 		LineID:      line,
 	})
-
-	c.mu.Lock()
-	delete(c.wentOn, ready.Participant.ID)
-	c.mu.Unlock()
 
 	answer := Action{
 		Kind:        ActAnswer,
@@ -1174,25 +1162,6 @@ func settlement(result harness.Result) string {
 	return "the subagent could not answer " + result.Skill
 }
 
-// inPartsSpan bounds how long a thought given in parts holds the floor for the caller.
-const inPartsSpan = 2 * time.Minute
-
-// patient reports whether an unfinished thought is still worth waiting on.
-//
-// The controller is asked about the same words every retry for as long as the caller says
-// nothing more, and it answers the same way every time, so waiting is a loop that only the
-// caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
-// misheard, and at that point asking them is better than listening to silence.
-// inParts reports whether the participant is giving a thought in parts: they went on
-// talking before hearing any of the reply to what they had said, and have not been
-// answered since. It lapses after inPartsSpan.
-func (c *converse) inParts(participant string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	since, ok := c.wentOn[participant]
-	return ok && time.Since(since) <= inPartsSpan
-}
-
 // waitedOn says the same words were waited on before.
 func (c *converse) waitedOn(ready candidate) bool {
 	c.mu.Lock()
@@ -1201,6 +1170,12 @@ func (c *converse) waitedOn(ready candidate) bool {
 	return known && sameWords(waiting.text, ready.Text)
 }
 
+// patient reports whether an unfinished thought is still worth waiting on.
+//
+// The controller is asked about the same words every retry for as long as the caller says
+// nothing more, and it answers the same way every time, so waiting is a loop that only the
+// caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
+// misheard, and at that point asking them is better than listening to silence.
 func (c *converse) patient(ready candidate) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
