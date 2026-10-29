@@ -154,7 +154,7 @@ func (s *StoreSuite) TestAChatInboundQueuedInACallersTransactionIsQueuedOnlyWith
 
 // deliveryKey is a key no other test recorded: hook deliveries outlive a test.
 func (s *StoreSuite) deliveryKey() string {
-	return fmt.Sprintf("1257545:message:msg-%d", time.Now().UnixNano())
+	return fmt.Sprintf("4242:message:msg-%d", time.Now().UnixNano())
 }
 
 // The message webhook recorded the message first: it answers it, and the delivery queues nothing.
