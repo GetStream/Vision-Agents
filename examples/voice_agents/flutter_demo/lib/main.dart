@@ -23,7 +23,7 @@ class FlutterDemoApp extends StatelessWidget {
   }
 }
 
-/// Talks to the agent, in writing or out loud.
+/// The app's home: a Chat tab to write to the agent and a Voice tab to talk to it.
 ///
 /// There is no agent picker. Reading the configs is server-side only, so a device cannot ask
 /// which agents exist; it is told which one it talks to, the way a real app would be, in

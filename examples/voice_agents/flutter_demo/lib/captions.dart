@@ -25,13 +25,13 @@ class Caption {
 /// person said appears once it has been transcribed.
 class Captions {
   /// About how fast the agent speaks, in characters a second.
-  static const _pace = 15.0;
+  static const pace = 15.0;
 
   /// How long a caption stays up once nothing new is being said.
-  static const _linger = Duration(milliseconds: 2500);
+  static const linger = Duration(milliseconds: 2500);
 
   /// How long the agent has to be quiet, with its reply written, for the reply to be over.
-  static const _finished = Duration(milliseconds: 1500);
+  static const finished = Duration(milliseconds: 1500);
 
   Caption? _caption;
   bool _isVisible = false;
@@ -67,9 +67,9 @@ class Captions {
       final isOver =
           _spoken > Duration.zero &&
           !agentIsAnswering &&
-          (lastAudible == null || now - lastAudible > _finished);
+          (lastAudible == null || now - lastAudible > finished);
       final paced =
-          (_spoken.inMicroseconds / Duration.microsecondsPerSecond * _pace)
+          (_spoken.inMicroseconds / Duration.microsecondsPerSecond * pace)
               .floor();
       final count = isOver
           ? turn.text.length
@@ -87,7 +87,7 @@ class Captions {
     final lastChange = _lastChange;
     _isVisible =
         _caption != null &&
-        (agentIsAudible || (lastChange != null && now - lastChange < _linger));
+        (agentIsAudible || (lastChange != null && now - lastChange < linger));
   }
 
   /// The sentence being said once the first [count] characters of [text] have been: whole
@@ -106,6 +106,39 @@ class Captions {
     }
     return said.substring(start).trim();
   }
+
+  /// The end of [text] that fits in [maxLines] laid out by [painter]: the words before it are
+  /// cut, behind an ellipsis, so the newest words always show.
+  static String fitEnd(
+    String text, {
+    required TextPainter painter,
+    required double width,
+    required int maxLines,
+  }) {
+    final words = text.split(' ');
+    String from(int word) =>
+        word == 0 ? text : '…${words.skip(word).join(' ')}';
+    bool fits(int word) {
+      painter
+        ..text = TextSpan(text: from(word), style: painter.text?.style)
+        ..maxLines = maxLines
+        ..layout(maxWidth: width);
+      return !painter.didExceedMaxLines;
+    }
+
+    // The fewest words cut that fit, found by halving: cutting more never stops it fitting.
+    var low = 0;
+    var high = words.length - 1;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      if (fits(middle)) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    return from(low);
+  }
 }
 
 /// A caption, white on a dark band at the bottom of the screen like a film's. What the person
@@ -119,6 +152,8 @@ class CaptionView extends StatelessWidget {
 
   final Caption? caption;
   final bool isVisible;
+
+  static const _maxLines = 2;
 
   @override
   Widget build(BuildContext context) {
@@ -140,18 +175,38 @@ class CaptionView extends StatelessWidget {
               color: Colors.black.withValues(alpha: 0.7),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Text(
-              caption?.text ?? '',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: style?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w500,
-                fontStyle: caption?.isPerson ?? false
-                    ? FontStyle.italic
-                    : FontStyle.normal,
-              ),
+            // The newest words are what is being said, so a caption too long for two lines
+            // loses its start rather than its end.
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final textStyle = style?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                  fontStyle: caption?.isPerson ?? false
+                      ? FontStyle.italic
+                      : FontStyle.normal,
+                );
+                final painter = TextPainter(
+                  text: TextSpan(style: textStyle),
+                  textAlign: TextAlign.center,
+                  textDirection: Directionality.of(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                );
+                final text = Captions.fitEnd(
+                  caption?.text ?? '',
+                  painter: painter,
+                  width: constraints.maxWidth,
+                  maxLines: _maxLines,
+                );
+                painter.dispose();
+                return Text(
+                  text,
+                  maxLines: _maxLines,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: textStyle,
+                );
+              },
             ),
           ),
         ),

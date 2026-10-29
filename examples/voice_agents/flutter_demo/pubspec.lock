@@ -862,7 +862,7 @@ packages:
     source: hosted
     version: "0.3.2"
   share_plus:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: share_plus
       sha256: db40767f130189d53f3ae8a6393c217ff4a492da1baff718a9873679c0c00224

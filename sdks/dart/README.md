@@ -80,7 +80,7 @@ draws its first frame before the stream's first event, with no data.
 
 A conversation kept in Stream Chat is shown with Stream Chat's AI components:
 `AIConversationView` over the channel's messages, `AIMessagePart.parseAll` for each reply's steps,
-`LiveReasoning` for the whole of its thinking and an `AIToolApprover` that answers with
+`LiveReasoning` from `vision_agents_chat` for the whole of its thinking and an `AIToolApprover` that answers with
 `session.decide`. A call is shown with `AIVoiceGlowView` or `AIVoiceWaveView`, and `AgentVideoView`
 and `VoiceCallView` in `vision_agents_rtc` render its video.
 

@@ -15,8 +15,6 @@ dependencies:
   # The microphone, asked for before a call on Android. iOS asks by itself when the call
   # first uses it.
   permission_handler: ^12.0.3
-  # The share sheet a reply's share button opens.
-  share_plus: ^13.3.1
   # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
   # From main, pinned, until they are released.
   stream_chat_flutter_ai:

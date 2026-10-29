@@ -4,12 +4,13 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 import 'package:vision_agents_rtc/vision_agents_rtc.dart';
 
+import 'agent_chat.dart';
 import 'captions.dart';
 import 'demo.dart';
+import 'talking.dart';
 
 /// How the agent is shown on a call.
 enum VoiceStyle {
@@ -44,31 +45,30 @@ class _VoiceViewState extends State<VoiceView> {
   bool _starting = false;
   final _subscriptions = <StreamSubscription<Object?>>[];
 
-  // The call's participants, whose audio levels say who is talking.
-  video.CallParticipantState? _agent;
-  video.CallParticipantState? _person;
-
-  /// How long after the agent was last heard the microphone is still ignored, so what is left
-  /// of its voice after echo cancellation never reads as the person.
-  static const _echoTail = Duration(milliseconds: 300);
-
-  /// How long the person has to keep talking to count, so room noise does not.
-  static const _onset = Duration(milliseconds: 120);
-
-  /// Who is talking and how loud, or null while nobody is. This comes from the audio rather
-  /// than the session: a reply is written before it is spoken and is done before the agent
-  /// stops talking, and the person is transcribed only after they have started.
-  ({bool isPerson, double level})? _heard;
+  // Who is talking and how loud, or null while nobody is. This comes from the audio rather
+  // than the session: a reply is written before it is spoken and is done before the agent
+  // stops talking, and the person is transcribed only after they have started.
+  Heard? _heard;
+  var _whoIsTalking = WhoIsTalking();
   var _captions = Captions();
   Timer? _meter;
   final _clock = Stopwatch()..start();
   var _lastTick = Duration.zero;
-  Duration? _agentLastHeard;
-  Duration? _personSince;
+
+  // Stream's blue, which the glow takes while the agent is talking or nobody is.
+  static const _agentColors = [Color(0xFF005FFF)];
+
+  // The colors the glow takes while the person is talking.
+  static const _personColors = [Color(0xFFFF2626)];
+
+  // How often who is talking is read and the captions move on: thirty times a second.
+  static const _meterInterval = Duration(milliseconds: 33);
 
   @override
   void dispose() {
-    unawaited(_leave());
+    final voice = _voice;
+    _reset();
+    unawaited(voice?.leave());
     super.dispose();
   }
 
@@ -102,37 +102,31 @@ class _VoiceViewState extends State<VoiceView> {
       }
       _voice = voice;
       _subscriptions
-        ..add(voice.session.conversation.stream.listen(_conversationChanged))
+        ..add(voice.session.conversation.stream.listen(_handleConversation))
+        // A tool asked first, or its question was answered: the approval card comes or goes.
         ..add(voice.session.approvals.stream.listen((_) => setState(() {})))
-        ..add(voice.state.stream.listen(_voiceChanged));
+        ..add(voice.state.stream.listen(_handleVoiceState));
       await voice.join();
     } on Object catch (error) {
+      // A join that throws rather than failing leaves no call to hang up: let go of the
+      // session, so the failure shows and the person can try again.
+      await _leave();
       if (mounted) setState(() => _failure = '$error');
     } finally {
       if (mounted) setState(() => _starting = false);
     }
   }
 
-  StreamSubscription<video.CallState>? _participants;
-
-  void _voiceChanged(VoiceState state) {
-    final call = state.call;
-    if (call != null && _participants == null) {
-      _participants = call.state.valueStream.listen((callState) {
-        _person = callState.callParticipants
-            .where((p) => p.isLocal)
-            .firstOrNull;
-        _agent = callState.callParticipants
-            .where((p) => !p.isLocal)
-            .firstOrNull;
-      });
+  void _handleVoiceState(VoiceState state) {
+    if (state.call != null && _meter == null) {
       _lastTick = _clock.elapsed;
-      _meter = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
+      _meter = Timer.periodic(_meterInterval, (_) => _tick());
     }
+    // Joined, muted or failed: the controls follow.
     setState(() {});
   }
 
-  /// Reads who is talking, and moves the captions on, thirty times a second.
+  // Reads who is talking, and moves the captions on.
   void _tick() {
     final voice = _voice;
     if (voice == null) return;
@@ -140,24 +134,19 @@ class _VoiceViewState extends State<VoiceView> {
     final elapsed = now - _lastTick;
     _lastTick = now;
 
-    final agent = _agent;
-    final person = _person;
+    final participants = voice.call?.state.value.callParticipants ?? const [];
+    final person = participants.where((p) => p.isLocal).firstOrNull;
+    final agent = participants
+        .where((p) => !p.isLocal && p.isAudioEnabled)
+        .firstOrNull;
     final agentIsAudible = agent?.isSpeaking ?? false;
-    _personSince = person?.isSpeaking ?? false ? _personSince ?? now : null;
-    final personSince = _personSince;
-    final agentLastHeard = _agentLastHeard;
-    // The agent first: while its voice plays, the microphone hears it too.
-    final ({bool isPerson, double level})? heard;
-    if (agentIsAudible) {
-      _agentLastHeard = now;
-      heard = (isPerson: false, level: agent!.audioLevel);
-    } else if (personSince != null &&
-        now - personSince >= _onset &&
-        (agentLastHeard == null || now - agentLastHeard > _echoTail)) {
-      heard = (isPerson: true, level: person!.audioLevel);
-    } else {
-      heard = null;
-    }
+    final heard = _whoIsTalking.hear(
+      agentIsSpeaking: agentIsAudible,
+      agentLevel: agent?.audioLevel ?? 0.0,
+      personIsSpeaking: person?.isSpeaking ?? false,
+      personLevel: person?.audioLevel ?? 0.0,
+      now: now,
+    );
 
     final caption = _captions.caption;
     final captionIsVisible = _captions.isVisible;
@@ -178,35 +167,36 @@ class _VoiceViewState extends State<VoiceView> {
     }
   }
 
-  void _conversationChanged(Conversation conversation) {
+  void _handleConversation(Conversation conversation) {
     // The agent leaving is the call being over, so let go of it and offer to start another
     // rather than leaving dead controls on screen.
     if (conversation.state is Ended) {
       unawaited(_leave());
       return;
     }
+    // What the agent is doing changed, which the status under the glow says.
     setState(() {});
   }
 
   Future<void> _leave() async {
     final voice = _voice;
+    _reset();
+    if (mounted) setState(() {});
+    await voice?.leave();
+  }
+
+  // Forgets the call and everything read from it.
+  void _reset() {
     _voice = null;
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
     _subscriptions.clear();
-    unawaited(_participants?.cancel());
-    _participants = null;
     _meter?.cancel();
     _meter = null;
-    _agent = null;
-    _person = null;
     _heard = null;
+    _whoIsTalking = WhoIsTalking();
     _captions = Captions();
-    _agentLastHeard = null;
-    _personSince = null;
-    if (mounted) setState(() {});
-    await voice?.leave();
   }
 
   bool get _inCall => _voice?.state.value.call != null;
@@ -224,31 +214,21 @@ class _VoiceViewState extends State<VoiceView> {
     if (!_inCall) {
       return (state: AIVoiceAgentState.connecting, status: 'Connecting');
     }
-    switch (_heard?.isPerson) {
-      case true:
-        return (state: AIVoiceAgentState.listening, status: 'Listening');
-      case false:
-        return (state: AIVoiceAgentState.speaking, status: 'Speaking');
-      case null:
-        break;
+    if (_heard case (:final isPerson, level: _)) {
+      return isPerson
+          ? (state: AIVoiceAgentState.listening, status: 'Listening')
+          : (state: AIVoiceAgentState.speaking, status: 'Speaking');
     }
     return switch (voice.session.state) {
       Listening() => (state: AIVoiceAgentState.listening, status: 'Listening'),
       Responding() => (state: AIVoiceAgentState.thinking, status: 'Thinking'),
       Working(:final skills) => (
         state: AIVoiceAgentState.thinking,
-        status:
-            'Working on ${skills.map((s) => s.replaceAll('_', ' ')).join(' and ')}',
+        status: describeWork(skills) ?? 'Thinking',
       ),
       _ => (state: AIVoiceAgentState.idle, status: 'Ready'),
     };
   }
-
-  /// Stream's blue, which the glow takes while the agent is talking or nobody is.
-  static const _agentColors = [Color(0xFF005FFF)];
-
-  /// The colors the glow takes while the person is talking.
-  static const _personColors = [Color(0xFFFF2626)];
 
   @override
   Widget build(BuildContext context) {
@@ -405,8 +385,8 @@ class _ApprovalCard extends StatefulWidget {
 class _ApprovalCardState extends State<_ApprovalCard> {
   AIToolApprovalState _state = const AIToolApprovalIdle();
 
-  /// Sending lasts until the call leaves the session's approvals, which takes the card away.
-  void _answer(AIToolApprovalDecision decision) {
+  // Sending lasts until the call leaves the session's approvals, which takes the card away.
+  void _handleAnswer(AIToolApprovalDecision decision) {
     setState(() => _state = AIToolApprovalSending(decision));
     try {
       widget.session.decide(
@@ -433,7 +413,7 @@ class _ApprovalCardState extends State<_ApprovalCard> {
         declineTitle: request.approval.declineTitle,
       ),
       state: _state,
-      onAnswer: _answer,
+      onAnswer: _handleAnswer,
     );
   }
 }

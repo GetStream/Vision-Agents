@@ -65,7 +65,9 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   - The agent is Stream's voice glow (`AIVoiceGlowView`). It moves with the agent's voice in
     Stream's blue and with yours in red. Who is talking comes from the call's audio levels:
     the agent first, and you only after a moment of talking and once the agent's echo has died
-    away.
+    away. Stream Video for Flutter has no per-frame audio level, so these are the levels the
+    SFU reports, coarser than the iOS demo's meter: the glow follows the voices a little
+    behind them.
   - Underneath it, a word says what the agent is doing: "Listening", "Thinking", "Working on
     refund decision", "Speaking".
   - The button at the top right picks the glow or Stream's voice wave (`AIVoiceWaveView`).

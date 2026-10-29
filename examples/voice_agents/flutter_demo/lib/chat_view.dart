@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
@@ -90,11 +89,11 @@ class _AgentConversationState extends State<_AgentConversation> {
 
   final _composer = ChatComposerController();
 
-  /// Answers the questions of the tools that ask first, as the person signed in here.
-  ///
-  /// The router addresses a question to the person whose message the call answers, and
-  /// Stream's components show it only to them. The answer goes back over the session's
-  /// socket, which is also what runs the tool once it is allowed.
+  // Answers the questions of the tools that ask first, as the person signed in here.
+  //
+  // The router addresses a question to the person whose message the call answers, and
+  // Stream's components show it only to them. The answer goes back over the session's
+  // socket, which is also what runs the tool once it is allowed.
   late final _approver = AIToolApprover(
     identity: const AIClientIdentity(userId: Demo.userId),
     decide: (call, decision) async => widget.chat.session.decide(
@@ -103,9 +102,9 @@ class _AgentConversationState extends State<_AgentConversation> {
     ),
   );
 
-  /// Stream's components, with what the person can do under each finished reply: copy it,
-  /// share it and rate it, and the composer without its attachment button. Made once, since
-  /// new builders rebuild every component that reads them.
+  // Stream's components, with what the person can do under each finished reply: copy it,
+  // share it and rate it, and the composer without its attachment button. Made once, since
+  // new builders rebuild every component that reads them.
   late final _components = AIComponentBuilders(
     replyActions: _replyActions,
     composer: const _Composer(),
@@ -125,8 +124,9 @@ class _AgentConversationState extends State<_AgentConversation> {
     super.dispose();
   }
 
-  /// What the person can do under a finished reply: copy it, share it and rate it. Asking for
-  /// a reply again needs the router to replace one, which it does not yet.
+  // What the person can do under a finished reply: copy it, share it (the components open
+  // the share sheet themselves) and rate it. Asking for a reply again needs the router to
+  // replace one, which it does not yet.
   Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
     final chat = widget.chat;
     // Read here, from the chat, so the thumbs change as soon as the rating does.
@@ -136,9 +136,6 @@ class _AgentConversationState extends State<_AgentConversation> {
         text: props.text,
         actions: AIReplyActions(
           rating: chat.ratings[props.message.id],
-          onShare: (text, origin) => SharePlus.instance.share(
-            ShareParams(text: text, sharePositionOrigin: origin),
-          ),
           onRate: (rating) => chat.rate(props.message.id, rating),
         ),
       ),
@@ -147,6 +144,7 @@ class _AgentConversationState extends State<_AgentConversation> {
 
   void _changed() {
     _composer.isGenerating = widget.chat.isAnswering;
+    // The conversation moved on: new messages, thinking, a failure or a rating.
     setState(() {});
   }
 
@@ -210,8 +208,8 @@ class _AgentConversationState extends State<_AgentConversation> {
   }
 }
 
-/// The composer without its attachment button: a question goes to the agent as text, and
-/// dictating one stays.
+// The composer without its attachment button: a question goes to the agent as text, and
+// dictating one stays.
 class _Composer extends ChatComposerFactory {
   const _Composer();
 

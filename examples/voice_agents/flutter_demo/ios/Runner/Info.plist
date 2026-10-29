@@ -6,8 +6,6 @@
 	<string>The agent hears you on a call, and you can dictate a question in the chat.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>A question you dictate in the chat is turned into text.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>The agent can see through the camera on a call.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- The router and the backend run on your Mac, over plain HTTP. -->
@@ -70,8 +68,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

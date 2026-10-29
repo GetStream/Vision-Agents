@@ -11,17 +11,21 @@ import 'package:vision_agents_core/vision_agents_core.dart';
 /// front of a real deployment the router is reached by the key and the same token, and nothing
 /// else here would change.
 abstract final class Demo {
-  /// The iOS simulator reaches the Mac's localhost, and the Android emulator reaches it as
-  /// 10.0.2.2. On a device, pass your Mac's address on the network with
-  /// `--dart-define=ROUTER_URL=http://192.168.1.20:8080`.
+  /// The router's base URL, from `--dart-define=ROUTER_URL`.
+  ///
+  /// It defaults to port 8080 on the Mac running the simulator or emulator: the iOS simulator
+  /// reaches the Mac as localhost and the Android emulator as 10.0.2.2. On a device, pass the
+  /// Mac's address on the network, such as `http://192.168.1.20:8080`.
   static final routerUrl = Uri.parse(
     const String.fromEnvironment('ROUTER_URL').isNotEmpty
         ? const String.fromEnvironment('ROUTER_URL')
         : 'http://$_localhost:8080',
   );
 
-  /// swift_demo's backend, `go run ./backend`, which signs the Stream token this device
-  /// connects with. A device holds no secret to sign one with.
+  /// The base URL of swift_demo's backend, `go run ./backend`, from `--dart-define=BACKEND_URL`.
+  ///
+  /// It signs the Stream token this device connects with, since a device holds no secret to
+  /// sign one with.
   static final backendUrl = Uri.parse(
     const String.fromEnvironment('BACKEND_URL').isNotEmpty
         ? const String.fromEnvironment('BACKEND_URL')
@@ -30,8 +34,9 @@ abstract final class Demo {
 
   static String get _localhost => Platform.isAndroid ? '10.0.2.2' : 'localhost';
 
-  /// Whichever customer id you started the router with. `compose.yaml` builds the dashboard
-  /// with `examples`, and a config belongs to one customer.
+  /// The customer id the router was started with.
+  ///
+  /// `compose.yaml` builds the dashboard with `examples`, and a config belongs to one customer.
   static const customerId = 'examples';
 
   /// The `STREAM_API_KEY` the router runs with, passed as
@@ -41,7 +46,7 @@ abstract final class Demo {
   /// The agent swift_demo's `go run ./configure` stored, by the name in its `agent.yaml`.
   static const agentName = 'swift_demo';
 
-  /// Who this device is. A call waiting for approval is addressed to them.
+  /// The user this device talks as, to whom a call waiting for approval is addressed.
   static const userId = 'demo-caller';
 
   static final agents = VisionAgents(
@@ -52,16 +57,19 @@ abstract final class Demo {
     token: _streamToken,
   );
 
-  /// Asks the backend for a Stream user token, which the chat and the call connect with.
+  // Asks the backend for a Stream user token, which the chat and the call connect with.
   static Future<String> _streamToken() async {
+    final url = backendUrl.resolve('/stream-token');
     final response = await http.post(
-      backendUrl.resolve('/stream-token'),
+      url,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'user_id': userId}),
     );
     if (response.statusCode != 200) {
-      throw StateError(
-        'the backend would not mint a Stream token (${response.statusCode})',
+      throw http.ClientException(
+        'the backend would not mint a Stream token (${response.statusCode}): is '
+        '`go run ./backend` in swift_demo running?',
+        url,
       );
     }
     return (jsonDecode(response.body) as Map<String, Object?>)['token']!
@@ -71,8 +79,8 @@ abstract final class Demo {
   /// The tools the agent may call, which run on this phone.
   static final tools = [_lookupOrder, _issueRefund];
 
-  /// Orders the agent can look up. Their data never leaves the phone: the agent asks, and
-  /// only sees the answer.
+  // Orders the agent can look up. Their data never leaves the phone: the agent asks, and
+  // only sees the answer.
   static const _orders = {
     'A-1042':
         '2 Larkspur wool throws, 78.00, paid by card ending 4242, delivered on 14 August, unopened',
@@ -98,8 +106,8 @@ abstract final class Demo {
     },
   );
 
-  /// Refunds an order, once the person says it may. The call waits in the session's
-  /// `approvals` until they answer: on the reply's step in Chat, or on the card in Voice.
+  // Refunds an order, once the person says it may. The call waits in the session's
+  // `approvals` until they answer: on the reply's step in Chat, or on the card in Voice.
   static final _issueRefund = AgentTool(
     name: 'issue_refund',
     description:
@@ -110,7 +118,7 @@ abstract final class Demo {
         'order_id': 'the order number, such as A-1042',
         'amount': 'how much to refund, such as 78.00',
         'reason':
-            'why the caller is owed it, in a few words they would recognise',
+            'why the caller is owed it, in a few words they would recognize',
       },
       required: ['order_id', 'amount', 'reason'],
     ),
