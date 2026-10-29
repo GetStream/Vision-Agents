@@ -19,7 +19,7 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 | `sdks/kotlin/` | Client-side SDK for Android: one module, `core`; its views are Stream Chat's AI components |
 | `sdks/dart/` | Client-side SDK for Flutter: a core, chat and rtc package; its views are Stream Chat's AI components (`stream_chat_flutter_ai`) |
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
-| `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
+| `sdks/go/` | The Go SDK. `go.work` ties the Go modules together |
 | `performance_benchmark/` | Load benchmark: ramps real WebRTC callers against the router's mock models until it breaks |
 
 ## SDK changes
@@ -117,9 +117,8 @@ npm test        # typecheck, then the suite against a real http and ws server
 
 ## Benchmark
 
-To run Voicebench (`benchmark/`) locally or read why a run failed, read the `voicebench` skill
-(`.claude/skills/voicebench/SKILL.md`) first: the keys and services a run needs, which command
-answers which question, and how to read the report.
+Voicebench lives in its own repository, [GetStream/voice-ai-bench](https://github.com/GetStream/voice-ai-bench):
+it builds the router from a commit of this one and runs its scenarios against it.
 
 To find how many cascaded voice agents one router holds at once, or to measure a performance
 change, read the `performance_benchmark` skill (`.claude/skills/performance_benchmark/SKILL.md`):
@@ -129,6 +128,32 @@ providers, so it bills nothing and measures only the router.
 To make the router hold more agents for less, read the `loop_performance_bench` skill
 (`.claude/skills/loop_performance_bench/SKILL.md`): ten rounds of profiling, cutting API, SQL and
 Redis round trips, deploying to the benchmark cluster and recording agents held and $/voice-minute.
+
+### Benchmark rules
+
+A win must be one a real user gets. For Voicebench, the load benchmark and any measured claim:
+
+- Run the same code, prompts and config in and out of a benchmark. Never branch on scenario
+  names, fixture IDs, call metadata, known transcripts, seeds, eval flags or the runner's
+  environment.
+- Keep expected answers and tool calls, future caller turns, judge criteria and hidden world
+  state out of runtime code and prompts. The agent learns facts the way it would on a real call.
+- No fixes rehearsed for known cases: hardcoded phrases, entities, tool arguments, pauses or
+  thresholds. A rule needs a reason that holds outside the benchmark.
+- Fixtures, seeds, cached caller audio and `mock/*` providers are fine in test setup. Shared
+  code must not exploit them, such as the mocks' fixed text, tone or timing.
+- Skip no required work (auth, validation, persistence, accounting, cancellation, cleanup). A
+  filler is not an answer, and dropped or queued work is not a latency win.
+- Don't weaken assertions, tolerances, timeouts, workloads or judge prompts, drop hard cases,
+  hide failed runs, call a candidate's failure infra noise, or retry until green. Fix a real
+  evaluator bug in its own change and rerun both sides.
+- Compare like with like: same task information, models, tools, resources, caches, warmup and
+  retries, or say what differs.
+- Fix the metric, workload and failure handling before comparing. Validate on cases you did
+  not tune on; a case you tuned against is no longer held out. A microbenchmark win alone is
+  not an end-to-end win.
+- Report base and candidate commits, commands, runs, variance, failures and regressions, with
+  raw results (no secrets or caller data). Say when a result is inconclusive.
 
 ## Connectors
 
@@ -167,6 +192,14 @@ slots, merge order and how not to burn tokens.
 - ALWAYS test behavior, not calling a path.
 - Use pytest.fixture for test setup, not helper methods
 - NEVER observe method calls in tests; assert on outputs and state.
+- Every new test catches a defect you can name. If a plausible broken implementation still
+  passes, fix the test or drop it. "No crash", non-empty or a 200 rarely qualifies.
+- A regression test fails before the fix; if you could not check that, say why.
+- Don't assert what the test set up itself, compute the expected value with the code's own
+  algorithm, or regenerate goldens from it unchecked.
+- Test a fix for one transcript with varied phrasing, not just its literal words.
+- Never weaken or delete a meaningful test to get green.
+- Wait for async state with a deadline, not a sleep.
 
 ## Python rules
 
@@ -224,7 +257,12 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 - Don't add error handling, logging, validation, comments, abstractions, config options, or "future-proofing" I didn't
   ask for.
 - Match the style and abstraction level of surrounding code. Don't introduce new patterns or helpers unless asked.
-- Fix root causes, not symptoms. No try/except to swallow bugs.
+- Fix root causes, not symptoms. No try/except, silent defaults, fake success or sleeps to hide bugs.
+- Reuse the code that already owns a behavior; no parallel implementations.
+- Background work, queues, retries and caches need an owner, a bound and a shutdown. Caches need
+  invalidation and tenant isolation.
+- Remove debug output, dead code and abandoned experiments before delivery.
+- Never invent results or say a check passed that you did not run.
 - Change only what I asked for. Don't refactor adjacent code — ask first.
 - Do not remove valid comments when editing/refactoring code.
 

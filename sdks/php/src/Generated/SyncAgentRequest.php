@@ -57,6 +57,8 @@ final readonly class SyncAgentRequest
         // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is serv...
+        public ?string $region = null,
         // How a conversation is handed back to the model when a session carries it on. A setting left out keeps what...
         public ?ResumeHistory $resumeHistory = null,
         public AgentRole|string|null $role = null,
@@ -112,6 +114,7 @@ final readonly class SyncAgentRequest
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::enum($data, 'sandbox', Sandbox::class) : null,
@@ -194,6 +197,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
+        }
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
         }
         if ($this->resumeHistory !== null) {
             $out['resume_history'] = $this->resumeHistory->toArray();

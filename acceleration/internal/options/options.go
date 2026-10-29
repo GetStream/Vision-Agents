@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -195,11 +196,19 @@ type DataPolicy struct {
 	AllowTraining *bool `json:"allow_training,omitempty"`
 	// Retention is the longest a provider may keep this audio. Empty asks nothing.
 	Retention Retention `json:"retention,omitempty"`
+	// Region is where a direct call's work must be done, such as pricing.RegionEU: only an
+	// instance running there serves it. Empty asks nothing, which is the region the work is
+	// otherwise done in, an agent's or pricing.DefaultRegion.
+	Region string `json:"region,omitempty"`
 }
+
+// ErrRegionConflict says a request names two different regions, the one its work is done in
+// and the one its data policy asks for, so nowhere meets both.
+var ErrRegionConflict = errors.New("options: the request names two different regions")
 
 // Asks reports whether this policy requires anything at all.
 func (p DataPolicy) Asks() bool {
-	return p.AllowTraining != nil || p.Retention != ""
+	return p.AllowTraining != nil || p.Retention != "" || p.Region != ""
 }
 
 // Valid reports whether this policy is one a provider could be measured against.
@@ -207,11 +216,27 @@ func (p DataPolicy) Valid() bool {
 	if p.Retention == RetentionUnspecified || p.Retention == RetentionUnknown {
 		return false
 	}
+	if p.Region != "" && !pricing.ValidRegion(p.Region) {
+		return false
+	}
 	return p.Retention.Valid()
 }
 
+// Validate says what makes this policy one a provider could not be measured against.
+func (p DataPolicy) Validate() error {
+	if p.Region != "" && !pricing.ValidRegion(p.Region) {
+		return stack.Wrap(fmt.Errorf("options: region is a letter and up to 31 of a-z, 0-9 and hyphens, such as %s, not %q",
+			pricing.RegionEU, p.Region))
+	}
+	if !p.Valid() {
+		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", p.Retention))
+	}
+	return nil
+}
+
 // Stricter returns what a provider has to meet to satisfy both policies: training
-// forbidden if either forbids it, and the shorter of the two retentions.
+// forbidden if either forbids it, and the shorter of the two retentions. The region is p's:
+// other is a policy's floor, and a policy never says where work is done.
 func (p DataPolicy) Stricter(other DataPolicy) DataPolicy {
 	merged := p
 	if other.AllowTraining != nil && (merged.AllowTraining == nil || !*other.AllowTraining) {
@@ -354,6 +379,7 @@ func (o STT) Merge(over STT) STT {
 	overwrite(&merged.Mode, over.Mode)
 	overwritePointer(&merged.DataPolicy.AllowTraining, over.DataPolicy.AllowTraining)
 	overwrite((*string)(&merged.DataPolicy.Retention), string(over.DataPolicy.Retention))
+	overwrite(&merged.DataPolicy.Region, over.DataPolicy.Region)
 	// Per provider rather than wholesale, so a call can change one vendor's setting
 	// without restating what the config said about the others.
 	if len(over.Overwrites) > 0 {
@@ -384,8 +410,8 @@ func (o STT) Validate() error {
 			return stack.Wrap(errors.New("options: smart mode has no word timings, since it rewrites what was said"))
 		}
 	}
-	if !o.DataPolicy.Valid() {
-		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
+	if err := o.DataPolicy.Validate(); err != nil {
+		return err
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
@@ -486,6 +512,7 @@ func (o TTS) Merge(over TTS) TTS {
 	overwriteSlice(&merged.ChunkSchedule, over.ChunkSchedule)
 	overwritePointer(&merged.DataPolicy.AllowTraining, over.DataPolicy.AllowTraining)
 	overwrite((*string)(&merged.DataPolicy.Retention), string(over.DataPolicy.Retention))
+	overwrite(&merged.DataPolicy.Region, over.DataPolicy.Region)
 	// Per provider rather than wholesale, so a call can change one vendor's setting
 	// without restating what the config said about the others.
 	if len(over.Overwrites) > 0 {
@@ -498,8 +525,8 @@ func (o TTS) Merge(over TTS) TTS {
 
 // Validate reports the first thing about these options a voice could not be asked for.
 func (o TTS) Validate() error {
-	if !o.DataPolicy.Valid() {
-		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
+	if err := o.DataPolicy.Validate(); err != nil {
+		return err
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {
@@ -736,6 +763,7 @@ func (o STS) Merge(over STS) STS {
 	overwritePointer(&merged.Images, over.Images)
 	overwritePointer(&merged.DataPolicy.AllowTraining, over.DataPolicy.AllowTraining)
 	overwrite((*string)(&merged.DataPolicy.Retention), string(over.DataPolicy.Retention))
+	overwrite(&merged.DataPolicy.Region, over.DataPolicy.Region)
 	// Per provider rather than wholesale, so a call can change one vendor's setting
 	// without restating what the config said about the others.
 	if len(over.Overwrites) > 0 {
@@ -767,8 +795,8 @@ func (o STS) Validate() error {
 	if o.PrefixPaddingMs != nil && *o.PrefixPaddingMs < 0 {
 		return stack.Wrap(fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs))
 	}
-	if !o.DataPolicy.Valid() {
-		return stack.Wrap(fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention))
+	if err := o.DataPolicy.Validate(); err != nil {
+		return err
 	}
 	for provider, block := range o.Overwrites {
 		if provider == "" {

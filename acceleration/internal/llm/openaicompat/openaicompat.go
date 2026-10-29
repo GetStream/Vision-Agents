@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -117,9 +116,6 @@ type Options struct {
 	// think. It needs a vLLM-style server that takes continue_final_message. It is asked
 	// per request, and empty is none.
 	Prefill func(llm.ResponseParams) string
-	// ForcedCallsFillEveryArgument sends a request that must call with every argument of
-	// every tool required, for a model that otherwise writes only the required ones.
-	ForcedCallsFillEveryArgument bool
 	// Headers are sent with every request, for an endpoint that needs more than the key.
 	Headers map[string]string
 	// Timeout bounds one response.
@@ -506,8 +502,11 @@ func (p *puller) finish(w *llm.ResponseWriter) {
 		p.answer(w, answer)
 	}
 	if p.toolText != nil {
-		answer, unfinished := p.toolText.Flush()
-		w.OutputText(answer)
+		answer, calls, unfinished := p.toolText.Flush()
+		w.OutputText(p.speakable(answer))
+		for _, call := range calls {
+			p.textCall(w, call)
+		}
 		if unfinished != "" {
 			p.textCall(w, unfinished)
 		}
@@ -582,11 +581,7 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		},
 	}
 	if len(request.Tools) > 0 {
-		offered := request.Tools
-		if request.ToolChoice == "required" && l.options.ForcedCallsFillEveryArgument {
-			offered = everyArgumentRequired(offered)
-		}
-		params.Tools = tools(offered)
+		params.Tools = tools(request.Tools)
 	}
 	if request.ToolChoice != "" {
 		params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
@@ -615,31 +610,6 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		params.Temperature = param.NewOpt(*request.Temperature)
 	}
 	return params
-}
-
-// everyArgumentRequired returns the tools with every property of their schemas required.
-// Made to call, Qwen on vLLM writes only the arguments a schema requires, so verify_account
-// went out with the PIN alone although the caller had given the last four and the address
-// too; left to choose, it writes them all.
-func everyArgumentRequired(offered []llm.Tool) []llm.Tool {
-	rendered := make([]llm.Tool, 0, len(offered))
-	for _, tool := range offered {
-		properties, _ := tool.Parameters["properties"].(map[string]any)
-		if len(properties) == 0 {
-			rendered = append(rendered, tool)
-			continue
-		}
-		names := make([]string, 0, len(properties))
-		for name := range properties {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		schema := maps.Clone(tool.Parameters)
-		schema["required"] = names
-		tool.Parameters = schema
-		rendered = append(rendered, tool)
-	}
-	return rendered
 }
 
 // tools renders the tools a request offers. A tool with no parameters is sent without a

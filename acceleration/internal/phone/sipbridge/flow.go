@@ -59,7 +59,7 @@ func flowA(ctx context.Context, cfg Config, customer, stream leg) (MediaAddrs, e
 	log.Info("ringing the customer without an offer")
 	offer, err := customer.Invite(ringCtx, nil)
 	if err != nil {
-		return MediaAddrs{}, stack.Wrap(fmt.Errorf("customer leg: %w", err))
+		return MediaAddrs{}, stack.Wrap(fmt.Errorf("customer leg: %w", unanswered(ringCtx, err)))
 	}
 	log.Info("customer answered", media(customerSide, offer)...)
 
@@ -151,7 +151,7 @@ func flowB(ctx context.Context, cfg Config, customer, stream leg) (MediaAddrs, e
 	customerAnswer, err := customer.Invite(ringCtx, customerSDP.build(toCustomer))
 	if err != nil {
 		hangUp(ctx, log, nil, stream)
-		return MediaAddrs{}, stack.Wrap(fmt.Errorf("customer leg: %w", err))
+		return MediaAddrs{}, stack.Wrap(fmt.Errorf("customer leg: %w", unanswered(ringCtx, err)))
 	}
 	if err := customer.Ack(ctx, nil); err != nil {
 		hangUp(ctx, log, customer, stream)

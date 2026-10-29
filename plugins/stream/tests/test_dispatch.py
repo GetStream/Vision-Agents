@@ -92,6 +92,7 @@ class Router:
                     "id": "config-7",
                     "name": "chat_desk",
                     "mode": "text",
+                    "region": "us",
                     "created_at": "2026-01-01T00:00:00Z",
                     "updated_at": "2026-01-01T00:00:00Z",
                 }

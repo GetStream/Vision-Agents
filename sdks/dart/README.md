@@ -236,8 +236,10 @@ ever fails.
 | Claiming a guest's history for a signed-in user | `claimGuestUser`, which is server-side only |
 | Changing a session's models | `updateSession` with them, which only a backend may send |
 
-Every request and socket handshake sends `Stream-Auth-Type: jwt`, which declares this caller a
-device, even against a local router with no proxy in front.
+Every request sends `Stream-Auth-Type: jwt`, and every socket sends it as the
+`stream-auth-type=jwt` query parameter, since a browser socket cannot set a header. It declares
+this caller a device, even against a local router with no proxy in front. A socket opened with a
+key also sends its token as `authorization`, which is how Stream's proxy reads it.
 
 ## Regenerating the client
 

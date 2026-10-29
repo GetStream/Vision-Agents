@@ -280,6 +280,10 @@ func (s *RuntimeSuite) TestTheGreetingIsTheSessionsFirstRecordedTurn() {
 	s.manages()
 	created, err := s.opens(Spec{Greeting: "Hi, I'm listening."})
 	s.Require().NoError(err)
+	s.edgesMu.Lock()
+	call := s.edges[0]
+	s.edgesMu.Unlock()
+	call.arrives(visitor)
 
 	var turns []store.AgentResponse
 	s.Require().Eventually(func() bool {

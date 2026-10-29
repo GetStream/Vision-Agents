@@ -117,6 +117,8 @@ type Action struct {
 	LatencyMs float64
 	// Unheard says none of the interrupted reply has gone out, and it is only abandoned so.
 	Unheard bool
+	// Interruption is why an interrupt abandons the reply, for the agent to report.
+	Interruption interruption
 	// LineID is the caller's line a turn queued, held or answered was heard as, so a
 	// watcher can say of that line that it waits for the agent to finish.
 	LineID string
@@ -191,8 +193,8 @@ type converse struct {
 	patience time.Duration
 	// undecidedFor is how long words that have held still, or a turn kept queued once the
 	// agent was quiet, keep a turn nobody asked for waiting, after which their ruling is
-	// taken as lost. See undecidedWithin and Undecided. A field rather than a constant only so tests can shorten
-	// it, as the harness's flow deadline is.
+	// taken as lost. See undecidedWithin and Undecided. A field rather than a constant only
+	// so tests can shorten it, as the harness's flow deadline is.
 	undecidedFor time.Duration
 	// record keeps the trail after the process holding it is gone. Nil when the
 	// deployment has nowhere to put it, in which case the decisions are still logged and
@@ -403,7 +405,7 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 // bounded: only while the agent holds the floor, at most overlapAsks per utterance, and only
 // once the words have grown by overlapReaskWords since the last ask. An ask still in flight
 // is replaced rather than waited on, so "okay" does not occupy the controller while the
-// caller has already said "wait, make it six".
+// caller has already said "wait, make it seven".
 func (c *converse) overlap(transcript stt.Transcript, saying string, state floor) []Action {
 	if state.Quiet || state.Speaking == "" || transcript.Final() {
 		return nil
@@ -492,12 +494,13 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 	c.wentOn[transcript.Participant.ID] = time.Now()
 	c.mu.Unlock()
 	return c.decide(Action{
-		Kind:        ActInterrupt,
-		Reason:      "the caller said more before hearing any of the reply, so it answers words they have moved on from",
-		Participant: transcript.Participant,
-		TurnID:      state.Unheard.turnID,
-		Text:        saying,
-		Unheard:     true,
+		Kind:         ActInterrupt,
+		Reason:       "the caller said more before hearing any of the reply, so it answers words they have moved on from",
+		Participant:  transcript.Participant,
+		TurnID:       state.Unheard.turnID,
+		Text:         saying,
+		Unheard:      true,
+		Interruption: interruption{cause: causeUnheard, words: saying},
 	}), true
 }
 
@@ -796,6 +799,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 				Participant: ready.Participant,
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
+				Interruption: interruption{cause: causeSettled, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+					words: ready.Text},
 			}),
 			c.decide(answering),
 		}
@@ -906,6 +911,8 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 		Participant: seen.participant,
 		TurnID:      seen.turnID,
 		LatencyMs:   ruling.TookMs,
+		Interruption: interruption{cause: causeTalking, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+			words: seen.text},
 	})}
 }
 
@@ -1239,13 +1246,13 @@ func revisesQueued(held, ready candidate) bool {
 // forgetQueuedAnsweredOver drops the turn the same participant has queued once a newer turn of
 // theirs is answered, and returns its words for that answer to take in. Answered on its own
 // after it, the older turn undoes the newer: a caller's correction is answered, then their
-// first request again, and the agent goes back to asking about it. Another
-// participant's queued turn is still theirs to be answered.
+// first request again, and the agent goes back to asking about it. Another participant's
+// queued turn is still theirs to be answered.
 //
 // Only words the newer turn does not say are taken in. A revision that kept less of the run
-// ("okay wait" after "okay wait make it six") owes the rest of it; any other revision says it
-// all and is left to forgetQueuedRevisedByLocked. A newer utterance that opens with the queued
-// words says them already.
+// ("okay wait" after "okay wait make it seven") owes the rest of it; any other revision says
+// it all and is left to forgetQueuedRevisedByLocked. A newer utterance that opens with the
+// queued words says them already.
 func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 	c.mu.Lock()
 	held := c.queued
@@ -1291,8 +1298,8 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 // grown past it. A caller who paused mid-sentence while the agent talked had the first part
 // queued; the rest goes to the controller with it once it settles. Answering the queued part
 // when the agent stops answers half a sentence and cuts into the rest of the caller's long
-// turn. Words that only start the same way are a new turn
-// and leave it queued. The caller holds the lock.
+// turn. Words that only start the same way are a new turn and leave it queued. The caller
+// holds the lock.
 func (c *converse) forgetQueuedGrownLocked(participant stt.Participant, utterance int64, saying string) (released string, grown bool) {
 	held := c.queued
 	if held == nil || held.candidate.Participant.ID != participant.ID {

@@ -97,7 +97,7 @@ type UsageEvent struct {
 	CostMicros      int64             `json:"cost_micros" doc:"What the organization is charged for the work, in millionths of a dollar."`
 	Billable        bool              `json:"billable" doc:"Whether cost_micros counts against the organization's credit and limits."`
 	Success         bool              `json:"success" doc:"Whether the work succeeded."`
-	ErrorCode       string            `json:"error_code,omitempty" doc:"Why it failed, when it did."`
+	ErrorCode       string            `json:"error_code,omitempty" doc:"Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK)."`
 	Tags            map[string]string `json:"tags,omitempty" doc:"The cost labels the request carried."`
 }
 

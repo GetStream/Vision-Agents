@@ -35,6 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -79,6 +80,9 @@ type Options struct {
 	Text bool
 	// Instructions is the system prompt, sent with every turn.
 	Instructions string
+	// Timezone is the end user's IANA zone, which every turn's clock line tells the day and
+	// the hour in beside UTC. Empty when it is not known.
+	Timezone string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
 	// Attribution is who beside the customer every request the agent makes is billed to and
@@ -99,6 +103,9 @@ type Options struct {
 	ConfigID string
 	// CallID is the call being served, recorded alongside each request.
 	CallID string
+	// Region is where every request the agent makes is served, its knowledge looked up and
+	// its sandbox run: its config's. Empty is pricing.DefaultRegion.
+	Region string
 	// Tags are the customer's own cost labels, carried onto every request the agent
 	// makes so a conversation's whole spend can be attributed at once.
 	Tags routing.Tags
@@ -354,6 +361,8 @@ type Agent struct {
 	// and lives here rather than in the options because a caller may change what the
 	// agent is part way through a call.
 	prompt string
+	// zone is Options.Timezone loaded, nil when the user's zone is not known.
+	zone *time.Location
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
@@ -375,7 +384,7 @@ type Agent struct {
 	// and a session opened for it would stay open until the agent closes. Each holds when
 	// the first such frame was dropped, zero until one is (see departedGrace).
 	departed map[string]time.Time
-	// now is the clock departedGrace is measured on.
+	// now is the clock departedGrace is measured on and the clock line is read from.
 	now func() time.Time
 	// hearings tally what each participant has been heard to say, kept for the whole call
 	// so a line at its end covers those who left.
@@ -412,6 +421,10 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// toldInterrupts is every turn whose abandoning was logged and counted. Two paths can
+	// abandon the same reply (a model stopping and Agent.Interrupt, a refused line and
+	// Agent.Interrupt), and the reason is told once. Like abandoned it lives as long as the call.
+	toldInterrupts map[string]struct{}
 	// leftNoted is the reply whose audio for a left call was last logged, so a reply logs
 	// it once rather than once per chunk. Only the speech-to-speech consumer touches it.
 	leftNoted string
@@ -579,6 +592,14 @@ func New(options Options) (*Agent, error) {
 	if err := options.Tags.Validate(); err != nil {
 		return nil, err
 	}
+	var zone *time.Location
+	if options.Timezone != "" {
+		loaded, err := scheduling.LoadZone(options.Timezone)
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("agent: timezone: %w", err))
+		}
+		zone = loaded
+	}
 	// Memories belong to the customer unless the caller named someone more specific, and
 	// are always kept under the customer as the app id, so no caller can reach another
 	// customer's and a customer's can be deleted without knowing how its callers labelled
@@ -617,6 +638,7 @@ func New(options Options) (*Agent, error) {
 		Caller:      options.Caller,
 		AgentID:     options.AgentID,
 		CallID:      options.CallID,
+		Region:      options.Region,
 		Tags:        options.Tags,
 	}
 
@@ -628,6 +650,7 @@ func New(options Options) (*Agent, error) {
 		logger:           logger,
 		emitter:          emitter,
 		prompt:           options.Instructions,
+		zone:             zone,
 		listeners:        map[string]*sttrouter.Session{},
 		departed:         map[string]time.Time{},
 		now:              time.Now,
@@ -635,6 +658,7 @@ func New(options Options) (*Agent, error) {
 		voices:           map[string]string{},
 		speakers:         map[string]nameTag{},
 		abandoned:        map[string]struct{}{},
+		toldInterrupts:   map[string]struct{}{},
 		heard:            map[string]*utterance{},
 		finished:         map[string]struct{}{},
 		streams:          map[string]*llm.Stream{},
@@ -1103,7 +1127,7 @@ func (a *Agent) sayFor(text, purpose string) error {
 			a.saying = ""
 		}
 		a.mu.Unlock()
-		a.turns.interrupt(turnID)
+		a.interrupted(turnID, stt.Participant{}, interruption{cause: causeVoiceRefused})
 		a.emitter.Send(Interrupted{TurnID: turnID})
 		return err
 	}
@@ -1168,7 +1192,7 @@ func (a *Agent) Interrupt() {
 	a.toolReply = false
 	a.mu.Unlock()
 	a.abandon(turnID)
-	a.interrupt(participant)
+	a.interrupt(participant, interruption{cause: causeAPI})
 }
 
 // Events carries what happened in the conversation. It is closed by Close.
@@ -1225,6 +1249,13 @@ func (a *Agent) record() []llm.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
+}
+
+// told returns the instructions the operator gave the agent, as they stand now.
+func (a *Agent) told() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.prompt
 }
 
 // Finish waits for the agent to stop talking, so a caller can hang up without cutting off
@@ -1697,14 +1728,14 @@ func (a *Agent) perform(action Action) {
 
 	case ActInterrupt:
 		if action.Unheard {
-			a.dropUnheard(action.Participant, action.TurnID)
+			a.dropUnheard(action.Participant, action.TurnID, action.Interruption)
 			return
 		}
 		// Work the interrupted reply handed over goes on: talking over the agent is not
 		// taking back what was asked, and the model drops it when the caller did.
 		a.dropSpeculations()
 		a.stopTools()
-		a.interrupt(action.Participant)
+		a.interrupt(action.Participant, action.Interruption)
 
 	case ActShorten:
 		a.shorten()
@@ -2318,9 +2349,15 @@ func composedKind(purpose string) string {
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
-// it whatever it already knew about the person it is talking to.
-func (a *Agent) instructions() string {
-	parts := make([]string, 0, 3)
+// it whatever it already knew about the person it is talking to, and the clock last. The
+// clock is the one part that moves on during a session, and a provider caches a prompt by
+// its prefix.
+func (a *Agent) instructions() string { return a.instructionsFor(len(a.speakers)) }
+
+// instructionsFor is instructions for a conversation of that many people, which a reply
+// written before its turn is counted asks for ahead of the count.
+func (a *Agent) instructionsFor(people int) string {
+	parts := make([]string, 0, 4)
 	if a.recalled != "" {
 		parts = append(parts, a.recalled)
 	}
@@ -2335,11 +2372,12 @@ func (a *Agent) instructions() string {
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
 	}
-	if len(a.speakers) > 1 && a.writers {
+	if people > 1 && a.writers {
 		parts = append(parts, severalWriters)
-	} else if len(a.speakers) > 1 {
+	} else if people > 1 {
 		parts = append(parts, severalSpeakers)
 	}
+	parts = append(parts, clockLine(a.now(), a.zone))
 	return strings.Join(parts, "\n\n")
 }
 
@@ -2966,7 +3004,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
 				"kind", a.turns.originOf(turnOf(typed.SynthesisID)).kind,
 				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
-				"interrupted", typed.Interrupted,
+				// The voice stopping its synthesis early, not the turn: a reply abandoned after
+				// its last sentence was synthesised is turn_abandoned with this false.
+				"synthesis_cut", typed.Interrupted,
+				"turn_abandoned", a.abandonedTurn(turnOf(typed.SynthesisID)),
 			}, queue.finished(typed.SynthesisID)...)...)
 			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
@@ -3412,7 +3453,7 @@ func missedNote(said string) string {
 
 // dropUnheard abandons the reply to a caller's turn the same caller said more over, while
 // none of it has gone out: after that it is them talking over the agent, the controller's call.
-func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
+func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why interruption) {
 	sent := a.turns.sentToVoice(turnID)
 	var stale unheardReply
 	if !a.abandonReply(participant, func(speaking string) bool {
@@ -3422,7 +3463,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 		stale, a.unheard = a.unheard, unheardReply{}
 		a.missed = stale
 		return true
-	}) {
+	}, why) {
 		return
 	}
 	// The caller took the floor as surely as by talking over the reply, so its tools stop the same way.
@@ -3434,13 +3475,14 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string) {
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.
-func (a *Agent) interrupt(participant stt.Participant) {
-	a.abandonReply(participant, nil)
+func (a *Agent) interrupt(participant stt.Participant, why interruption) {
+	a.abandonReply(participant, nil, why)
 }
 
 // abandonReply abandons the reply being spoken, and reports whether there was one. still,
-// when set, is asked under the lock whether it is still the reply to abandon.
-func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool) bool {
+// when set, is asked under the lock whether it is still the reply to abandon. why is
+// reported with it.
+func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool, why interruption) bool {
 	a.mu.Lock()
 	turnID := a.speakingTurn
 	if turnID == "" {
@@ -3460,6 +3502,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.interrupting = true
 	a.speakingTurn = ""
 	a.generating = false
+	why.reply = a.saying
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
@@ -3501,7 +3544,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		}
 	}
 
-	a.turns.interrupt(turnID)
+	a.interrupted(turnID, participant, why)
 	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
 	a.interrupting = false
@@ -3717,7 +3760,7 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 	return func(ctx context.Context) (*llmrouter.Session, error) {
 		return a.options.LLM.Start(routing.WithAttribution(ctx, a.options.Attribution), llmrouter.Request{
 			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
-			AgentID: a.options.AgentID, CallID: a.options.CallID,
+			AgentID: a.options.AgentID, CallID: a.options.CallID, Region: a.options.Region,
 			Tags: a.options.Tags, Target: target,
 			LanguageHints: a.options.LanguageHints, InputModalities: modalities,
 		})

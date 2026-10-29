@@ -11,7 +11,10 @@ conversation — the Go SDK opens a session, the router joins the call and runs 
 loop, and a caller in the benchmark joins the same call over WebRTC and talks to it. The
 three models are the router's own `mock/*` providers, so a run reaches no vendor and bills
 nothing. **What a run measures is the router**: its audio path, turn taking, sockets and
-database. It says nothing about model quality; that is Voicebench (`voicebench` skill).
+database. It says nothing about model quality; that is Voicebench, in
+[GetStream/voice-ai-bench](https://github.com/GetStream/voice-ai-bench).
+
+Follow the [benchmark rules](../../../AGENTS.md#benchmark-rules).
 
 ## 1. What a run needs
 
@@ -29,9 +32,8 @@ curl -sS "$ROUTER/api/v1/models?capability=stt" | grep -c mock/mock-stt
 The benchmark release carries `router.mockProviders: true` in `shards/us-east1-acceleration/accelerate-benchmark.yaml`
 in the private infra repo. Locally, `ROUTER_MOCK_PROVIDERS=true` in the root `.env`.
 
-**Native audio.** The callers speak Opus over WebRTC: `brew install pkg-config opus opusfile libsoxr`,
-and every command needs `CGO_ENABLED=1` and `-tags webrtc`. Without the tag it builds and
-then refuses to place a call.
+**The webrtc tag.** The callers speak Opus over WebRTC, so every command needs `-tags webrtc`.
+Without the tag it builds and then refuses to place a call.
 
 **`kubectl` on the router's cluster**, for `-namespace` to report pod CPU and restarts. Without
 it the run still works and the report just has no pod column.
@@ -42,7 +44,7 @@ From `performance_benchmark/`. The benchmark release is the default target and t
 nobody else's traffic is on it, and a run saturates it for its duration.
 
 ```bash
-CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench run \
+go run -tags webrtc ./cmd/perfbench run \
   -target benchmark -label before -start 1 -factor 2 -max 64 -hold 90s -out out/before
 ```
 
@@ -123,7 +125,7 @@ Two runs, same target, same ramp, same machine, back to back, and the router reb
 redeployed between them (`deploy` skill). Then:
 
 ```bash
-CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench compare out/before out/after
+go run -tags webrtc ./cmd/perfbench compare out/before out/after
 ```
 
 It prints the held ceiling before and after and, for every step both runs reached, reply p50

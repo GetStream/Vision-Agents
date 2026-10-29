@@ -4,7 +4,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/performance_benchmark/internal/rtc/audio"
 )
 
 const (

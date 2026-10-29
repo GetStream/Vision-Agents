@@ -13,6 +13,7 @@
 package routing
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -57,6 +59,7 @@ type Inspector interface {
 	Config() ModalityConfig
 	Providers(ctx context.Context) []Candidate
 	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
+	InRegion(ctx context.Context, target, region string) (bool, error)
 }
 
 // ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
@@ -126,6 +129,15 @@ type Endpoint struct {
 // have a model called prod. So a target naming one is resolved for the customer asking.
 type ModelResolver interface {
 	CustomModel(ctx context.Context, customerID, name string) (ProviderConfig, Endpoint, error)
+}
+
+// CustomerKeys are the keys customers keep with the router for their own accounts at a vendor,
+// one per vendor and region (BYOK). Work routed on one is billed to the customer by the vendor,
+// and priced at its BYOK entry.
+type CustomerKeys interface {
+	// CustomerKey is the customer's key for the provider in region, and false when they keep
+	// none there. Its error never holds the key.
+	CustomerKey(ctx context.Context, customerID, provider, region string) (string, bool, error)
 }
 
 // ErrModelNotAllowed says the customer's policies allow none of the models a request could
@@ -217,6 +229,9 @@ type Options[P Provider] struct {
 	// Models resolves custom/<name>. Nil leaves a deployment with no models of a
 	// customer's own.
 	Models ModelResolver
+	// Keys are the customers' own keys, which each candidate whose factory honors
+	// OverrideAPIKey is asked on first. Nil routes on the deployment's keys alone.
+	Keys CustomerKeys
 	// Gate enforces the customer's policies. Nil enforces nothing.
 	Gate Gate
 	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
@@ -239,7 +254,12 @@ type Router[P Provider] struct {
 	voices   VoiceResolver
 	models   ModelResolver
 	gate     Gate
-	logger   *slog.Logger
+	// keys are the instances' own keys, read from the variables their api_key_env names when
+	// the router was made.
+	keys map[instance]string
+	// customerKeys are the keys customers keep for their own accounts. Nil is none.
+	customerKeys CustomerKeys
+	logger       *slog.Logger
 }
 
 // Caller is the end user a request was made on behalf of, and where they made it from. It
@@ -310,6 +330,10 @@ type Request struct {
 	AgentID string
 	// CallID is the call the work happens in. Empty outside a conversation.
 	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none, and
+	// the region DataPolicy asks for, else pricing.DefaultRegion, holds. Only instances in it
+	// serve the request.
+	Region string
 	// Tags are the customer's own cost labels, recorded on every row the session writes.
 	Tags Tags
 	// Spent adds up what the session's rows cost for the request or socket that opened it. A
@@ -343,6 +367,10 @@ type Request struct {
 	// refused it named here: health would only sort them last, and is written after the
 	// reopen has already read it.
 	Exclude []string
+	// BYOK keeps only the instances built with the customer's own keys (true), or only the
+	// deployment's (false). Nil walks both, each model's on the customer's key first. A model's
+	// two instances share its name, so a caller that saw one fail asks for the other this way.
+	BYOK *bool
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
 	// Tools are what a modality that converses may call. They are here rather than in an
@@ -365,7 +393,8 @@ type Request struct {
 	Search options.Search
 }
 
-// Owner returns who the request is billed to and how it is labelled.
+// Owner returns who the request is billed to and how it is labelled, and the region its work
+// is done in.
 func (r Request) Owner() Owner {
 	return Owner{
 		CustomerID:  r.CustomerID,
@@ -373,9 +402,21 @@ func (r Request) Owner() Owner {
 		Caller:      r.Caller,
 		AgentID:     r.AgentID,
 		CallID:      r.CallID,
+		Region:      cmp.Or(r.Region, r.DataPolicy.Region),
 		Tags:        r.Tags,
 		Spent:       r.Spent,
 	}
+}
+
+// workRegion is the region the request's work is done in: Region, else the one its data policy
+// asks for, empty when neither names one. The two naming different regions is
+// options.ErrRegionConflict, a refusal: no instance runs in both.
+func (r Request) workRegion() (string, error) {
+	if r.Region != "" && r.DataPolicy.Region != "" && r.Region != r.DataPolicy.Region {
+		return "", Refused(stack.Wrap(fmt.Errorf("routing: the work is done in %s and its data policy asks for %s: %w",
+			r.Region, r.DataPolicy.Region, options.ErrRegionConflict)))
+	}
+	return cmp.Or(r.Region, r.DataPolicy.Region), nil
 }
 
 // Candidate is one option for serving a request, in preference order.
@@ -384,6 +425,8 @@ type Candidate struct {
 	Health live.Health
 	// endpoint is where a customer's own model is served, and empty for the catalogue's.
 	endpoint Endpoint
+	// key is the customer's own key a BYOK instance is built with, and empty for every other.
+	key string
 }
 
 // New validates the options and returns a Router.
@@ -396,6 +439,10 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 	}
 	if options.Registry == nil {
 		return nil, errors.New("routing: registry is required")
+	}
+	keys, err := instanceKeys(options.Modality, options.Config, options.Registry)
+	if err != nil {
+		return nil, err
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -420,8 +467,43 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		voices:   options.Voices,
 		models:   options.Models,
 		gate:     options.Gate,
+		keys:     keys,
 		logger:   logger,
+
+		customerKeys: options.Keys,
 	}, nil
+}
+
+// instanceKeys refuses an instance its factory cannot build as declared, and reads the key of
+// each instance that names one. An endpoint or a key the factory would not take would be
+// dropped in silence, and an instance outside the default region with neither an endpoint
+// nor a factory that picks the region's host would send its work to the vendor's default
+// host, which is taken to be in the default region: refusing to start is what keeps a request
+// in the region it asked for. A provider with no factory takes no override at all.
+func instanceKeys[P Provider](modality Modality, config ModalityConfig, registry *Registry[P]) (map[instance]string, error) {
+	keys := map[instance]string{}
+	for _, provider := range config.Providers {
+		named := instanceOf(provider)
+		if provider.Endpoint != "" && !registry.Honors(provider.Provider, OverrideBaseURL) {
+			return nil, fmt.Errorf("routing: %s: %s sets an endpoint, which the %s factory does not take", modality, named, provider.Provider)
+		}
+		if regionOf(provider) != pricing.DefaultRegion && provider.Endpoint == "" && !registry.Honors(provider.Provider, OverrideRegion) {
+			return nil, fmt.Errorf("routing: %s: %s sets no endpoint, and %s's default host is taken to be in %s: set the instance's regional endpoint",
+				modality, named, provider.Provider, pricing.DefaultRegion)
+		}
+		if provider.APIKeyEnv == "" {
+			continue
+		}
+		if !registry.Honors(provider.Provider, OverrideAPIKey) {
+			return nil, fmt.Errorf("routing: %s: %s sets api_key_env, which the %s factory does not take", modality, named, provider.Provider)
+		}
+		key := os.Getenv(provider.APIKeyEnv)
+		if key == "" {
+			return nil, fmt.Errorf("routing: %s: %s names its key in %s, which is not set", modality, named, provider.APIKeyEnv)
+		}
+		keys[named] = key
+	}
+	return keys, nil
 }
 
 // Modality is what this router serves.
@@ -445,6 +527,13 @@ func (r *Router[P]) Quote(config ProviderConfig, used pricing.Quantities) pricin
 // candidate with no factory is one Select passes over, as is one Ready refuses.
 func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
 
+// TakesCustomerKey reports whether work on the provider can be routed on a key the customer keeps
+// for their own account at it: its factory builds with an instance's own key. A provider with no
+// factory takes none, and neither does a customer's own model, which keeps its key itself.
+func (r *Router[P]) TakesCustomerKey(provider string) bool {
+	return provider != CustomProvider && r.registry.Honors(provider, OverrideAPIKey)
+}
+
 // Logger returns the router's logger.
 func (r *Router[P]) Logger() *slog.Logger { return r.logger }
 
@@ -462,18 +551,23 @@ func (r *Router[P]) Providers(ctx context.Context) []Candidate {
 
 // Resolve returns the candidates for a target, best first.
 //
-// A concrete "provider/model" resolves to itself. A capability shortcut resolves to every
-// provider that meets its requirements, ranked by availability, then error rate, then
-// average latency. Providers with no recent history keep their config order rather than
-// jumping the queue on an unmeasured zero latency. A shortcut that names a preferred model
-// puts that one first instead, for as long as it is available.
+// A concrete "provider/model" resolves to itself, once per region it is declared in. A
+// capability shortcut resolves to every provider that meets its requirements, ranked by
+// availability, then error rate, then average latency. Providers with no recent history keep
+// their config order rather than jumping the queue on an unmeasured zero latency. A shortcut
+// that names a preferred model puts that one first instead, for as long as it is available.
+// Which region serves a request is Walk's to say, so every region's instances are here.
 func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
 	if target == "" {
 		return nil, stack.Wrap(errors.New("routing: target is required"))
 	}
 
-	if provider, ok := r.config.Provider(target); ok {
-		return []Candidate{{Config: provider, Health: r.health(ctx, provider)}}, nil
+	if instances := r.config.Instances(target); len(instances) > 0 {
+		candidates := make([]Candidate, 0, len(instances))
+		for _, provider := range instances {
+			candidates = append(candidates, Candidate{Config: provider, Health: r.health(ctx, provider)})
+		}
+		return candidates, nil
 	}
 
 	alias, ok := r.config.Aliases[target]
@@ -500,6 +594,24 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	rank(candidates)
 	prefer(candidates, alias.Prefer)
 	return candidates, nil
+}
+
+// InRegion reports whether a request naming target could be served in region, empty being
+// pricing.DefaultRegion: whether one of the instances it resolves to runs there, as a
+// provider/model, a capability shortcut or a vendor's name in a priority list resolves. A
+// customer's own model runs in pricing.DefaultRegion alone. A target that resolves to nothing
+// in any region is the resolution's error.
+func (r *Router[P]) InRegion(ctx context.Context, target, region string) (bool, error) {
+	region = cmp.Or(region, pricing.DefaultRegion)
+	if _, own := CustomName(target); own {
+		return region == pricing.DefaultRegion, nil
+	}
+	candidates, err := r.resolveEntry(ctx, "", target, nil)
+	if err != nil {
+		return false, err
+	}
+	_, err = regional(candidates, region)
+	return err == nil, nil
 }
 
 // Select builds and starts the best provider that will have it, falling back to the next
@@ -540,6 +652,10 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if err := request.Tags.Validate(); err != nil {
 		return ProviderConfig{}, err
 	}
+	region, err := request.workRegion()
+	if err != nil {
+		return ProviderConfig{}, err
+	}
 
 	admission, err := r.Admit(ctx, request.Owner())
 	if err != nil {
@@ -564,6 +680,10 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		return ProviderConfig{}, err
 	}
 	candidates, err = permitted(candidates, request.DataPolicy)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = regional(candidates, region)
 	if err != nil {
 		return ProviderConfig{}, err
 	}
@@ -614,10 +734,13 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 		}
 		// A model this deployment has no config for fails the same way for every caller, so
 		// it is passed over the way a missing factory is, with no stat to mark it down: its
-		// health is every customer's, and it was never tried.
-		if err := r.registry.Ready(candidate.Config.Provider, candidate.Config.Model); err != nil {
-			failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
-			continue
+		// health is every customer's, and it was never tried. An instance on the customer's
+		// own key is built with that key, which says nothing of whether the deployment's is set.
+		if !candidate.Config.BYOK {
+			if err := r.ready(candidate.Config); err != nil {
+				failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+				continue
+			}
 		}
 
 		provider, err := r.startCandidate(ctx, request, candidate)
@@ -676,13 +799,96 @@ func (r *Router[P]) Admit(ctx context.Context, owner Owner) (Admission, error) {
 }
 
 // Candidates is where a request may go, best first: a priority list where one was given,
-// and the ranked resolution of a single target otherwise. A modality that fails over after
-// it has started walks this, so it falls back in the order the caller wrote.
+// and the ranked resolution of a single target otherwise, each candidate the customer keeps a
+// key for preceded by their own instance of it (owned). A modality that fails over after it
+// has started walks this, so it falls back in the order the caller wrote.
 func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidate, error) {
+	var candidates []Candidate
+	var err error
 	if len(request.Providers) == 0 {
-		return r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
+		candidates, err = r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
+	} else {
+		candidates, err = r.resolveChain(ctx, request)
 	}
-	return r.resolveChain(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return r.owned(ctx, request, candidates)
+}
+
+// owned puts the customer's own instance of each candidate in the work's region whose vendor
+// they keep a key for there immediately before it: a copy of its config, at the deployment's
+// endpoint, built with their key and priced at its BYOK entry. The order between models stays
+// the caller's or the ranking's, and each model is asked on the customer's key first; when that
+// fails the walk moves on to the deployment's instance as it would to any next candidate.
+//
+// Only a vendor whose factory honors OverrideAPIKey is asked on a customer's key. A key is
+// looked up once per vendor, for the work's region alone, since an instance in another never
+// serves the request; one that cannot be read or opened leaves the deployment's instance to
+// serve, logged. request.BYOK keeps one kind of instance.
+func (r *Router[P]) owned(ctx context.Context, request Request, candidates []Candidate) ([]Candidate, error) {
+	if r.customerKeys != nil {
+		region := cmp.Or(request.Owner().Region, pricing.DefaultRegion)
+		keys := map[string]string{}
+		withOwn := make([]Candidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			config := candidate.Config
+			if !config.BYOK && regionOf(config) == region && r.TakesCustomerKey(config.Provider) {
+				key, looked := keys[config.Provider]
+				if !looked {
+					key = r.customerKey(ctx, request.CustomerID, config.Provider, region)
+					keys[config.Provider] = key
+				}
+				if key != "" {
+					withOwn = append(withOwn, r.ownInstance(ctx, candidate, key))
+				}
+			}
+			withOwn = append(withOwn, candidate)
+		}
+		candidates = withOwn
+	}
+	if request.BYOK == nil {
+		return candidates, nil
+	}
+	kept := slices.DeleteFunc(candidates, func(candidate Candidate) bool { return candidate.Config.BYOK != *request.BYOK })
+	if len(kept) == 0 {
+		whose := "the deployment's own key"
+		if *request.BYOK {
+			whose = "a key of the customer's own"
+		}
+		return nil, stack.Wrap(fmt.Errorf("routing: no candidate for %q is built with %s", request.Target, whose))
+	}
+	return kept, nil
+}
+
+// ownInstance is the customer's instance of a candidate, built with their key. Its health is the
+// vendor's, read and never written: what the customer's key does is theirs, and is kept out of
+// what every customer is routed by (Recorder.Record).
+func (r *Router[P]) ownInstance(ctx context.Context, candidate Candidate, key string) Candidate {
+	config := candidate.Config
+	config.BYOK = true
+	health := candidate.Health
+	// The deployment's instance reads as unavailable when it cannot be built, which the
+	// customer's key can be.
+	if r.ready(candidate.Config) != nil {
+		health = r.vendorHealth(ctx, candidate.Config)
+	}
+	return Candidate{Config: config, Health: health, key: key}
+}
+
+// customerKey is the customer's key for provider in region, and empty when they keep none there
+// or it cannot be read, which is logged without the key.
+func (r *Router[P]) customerKey(ctx context.Context, customerID, provider, region string) string {
+	key, ok, err := r.customerKeys.CustomerKey(ctx, customerID, provider, region)
+	if err != nil {
+		r.logger.Error("could not read a customer's own key, so the deployment's serves",
+			"modality", r.modality, "customer_id", customerID, "provider", provider, "region", region, "error", err)
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	return key
 }
 
 // resolveFor is Resolve, plus the customer's own models, which only a request can name
@@ -730,9 +936,10 @@ func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candid
 				continue
 			}
 			// First position wins, so naming a vendor and then a shortcut they are in
-			// keeps them where the caller put them.
+			// keeps them where the caller put them. A model's instances in other regions
+			// are other candidates.
 			if slices.ContainsFunc(chain, func(held Candidate) bool {
-				return held.Config.Name() == candidate.Config.Name()
+				return instanceOf(held.Config) == instanceOf(candidate.Config)
 			}) {
 				continue
 			}
@@ -797,23 +1004,15 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		voice = overwritten
 	}
 
-	spec := Spec{
-		Model:           candidate.Config.Model,
-		Thinking:        candidate.Config.Thinking,
-		ReasoningEffort: candidate.Config.ReasoningEffort,
-		LanguageHints:   request.LanguageHints,
-		Voice:           voice,
-		Keyterms:        request.Keyterms,
-		Tools:           request.Tools,
-		STT:             request.STT,
-		TTS:             request.TTS,
-		STS:             request.STS,
-		Search:          request.Search,
-		DataPolicy:      request.DataPolicy,
-		Overwrites:      r.overwrites(request, candidate.Config.Provider),
-		Endpoint:        candidate.endpoint,
-		Logger:          r.logger,
-	}
+	spec := r.instanceSpec(candidate)
+	spec.LanguageHints = request.LanguageHints
+	spec.Voice = voice
+	spec.Keyterms = request.Keyterms
+	spec.Tools = request.Tools
+	spec.STT, spec.TTS, spec.STS, spec.Search = request.STT, request.TTS, request.STS, request.Search
+	spec.DataPolicy = request.DataPolicy
+	spec.Overwrites = r.overwrites(request, candidate.Config.Provider)
+	spec.Endpoint = candidate.endpoint
 
 	provider, err := r.registry.Build(candidate.Config.Provider, spec)
 	// A setting the model cannot take says nothing about the model, and its health is
@@ -967,13 +1166,50 @@ func (r *Router[P]) voice(ctx context.Context, request Request, provider string)
 	return r.voices.ResolveVoice(ctx, request.CustomerID, provider, request.Voice)
 }
 
+// instanceSpec is what every build of this instance is given, whatever the request: the
+// model's own settings, and where the instance is and the key it takes, the customer's own for
+// an instance built with theirs.
+func (r *Router[P]) instanceSpec(candidate Candidate) Spec {
+	config := candidate.Config
+	key := r.keys[instanceOf(config)]
+	if config.BYOK {
+		key = candidate.key
+	}
+	return Spec{
+		Model:           config.Model,
+		Thinking:        config.Thinking,
+		ReasoningEffort: config.ReasoningEffort,
+		BaseURL:         config.Endpoint,
+		APIKey:          key,
+		BYOK:            config.BYOK,
+		Region:          regionOf(config),
+		Logger:          r.logger,
+	}
+}
+
+// ready is Registry.Ready for one of the deployment's instances, built as its requests are.
+func (r *Router[P]) ready(config ProviderConfig) error {
+	return r.registry.ReadyAs(config.Provider, r.instanceSpec(Candidate{Config: config}))
+}
+
 // health reads live health, treating a Redis failure as "no information" so a broken
 // stats path cannot take routing down with it. A model this deployment cannot build, for a
 // key or an endpoint it was never given, is unavailable whatever its history says.
+//
+// Health is kept per provider and model, not per instance: a model's instance in one region
+// shares the errors and latency of its twin in another, which is the vendor's health more
+// than the host's, and a request is only ever served in one region anyway. Work on a
+// customer's own key is kept out of it.
 func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.Health {
-	if r.registry.Ready(provider.Provider, provider.Model) != nil {
+	if r.ready(provider) != nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model}
 	}
+	return r.vendorHealth(ctx, provider)
+}
+
+// vendorHealth is the provider and model's live health, whether or not this deployment can build
+// it.
+func (r *Router[P]) vendorHealth(ctx context.Context, provider ProviderConfig) live.Health {
 	if r.live == nil {
 		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
 	}
@@ -1116,6 +1352,25 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 		strings.Join(unmet, " and ")))
 }
 
+// regional narrows candidates to the instances running in the region the work is done in,
+// pricing.DefaultRegion when it names none. None there is a refusal naming the region: a
+// request is never served in another one, whatever else is available.
+func regional(candidates []Candidate, region string) ([]Candidate, error) {
+	if region == "" {
+		region = pricing.DefaultRegion
+	}
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if regionOf(candidate.Config) == region {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: no candidate in region %s can serve this request", region)))
+	}
+	return kept, nil
+}
+
 // seeing narrows candidates to the ones that accept every extra input kind the request
 // named. A request carrying an image that is answered by a text-only model has been
 // answered wrongly in a way nothing about the transcript would show.
@@ -1200,8 +1455,8 @@ func rank(candidates []Candidate) {
 	})
 }
 
-// prefer moves the alias's pinned model to the front, leaving the rest in ranked order
-// behind it.
+// prefer moves the alias's pinned model to the front, every region's instance of it, leaving
+// the rest in ranked order behind it: the region is chosen after, and the pin holds in each.
 //
 // Only while it is available: a pin says which model this deployment wants, not that a
 // request should fail with it. Once it is back the ranking stops mattering again, which is
@@ -1210,15 +1465,10 @@ func prefer(candidates []Candidate, name string) {
 	if name == "" {
 		return
 	}
-	at := slices.IndexFunc(candidates, func(candidate Candidate) bool {
-		return candidate.Config.Name() == name && candidate.Health.Available
+	sort.SliceStable(candidates, func(i, j int) bool {
+		pinned := func(candidate Candidate) bool { return candidate.Config.Name() == name && candidate.Health.Available }
+		return pinned(candidates[i]) && !pinned(candidates[j])
 	})
-	if at <= 0 {
-		return
-	}
-	pinned := candidates[at]
-	copy(candidates[1:at+1], candidates[:at])
-	candidates[0] = pinned
 }
 
 // latencyRank keeps unmeasured providers from winning on a latency of zero.

@@ -397,8 +397,8 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	h.mu.Unlock()
 
 	// A reply to a tool result is given a little thinking. The caller was told to wait
-	// while the tool ran, so it costs them nothing they notice, and at no effort Luna
-	// answers a free table with "may I book it?" instead of booking it.
+	// while the tool ran, so it costs them nothing they notice, and without it a model can
+	// ask the caller to confirm a step the result already lets it take.
 	var reasoning llm.ReasoningParams
 	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
 		reasoning.Effort = toolReplyEffort
@@ -494,6 +494,13 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 // it never made.
 const resumption = "Carry on with the caller from what is in your instructions. Say only " +
 	"what a tool or your colleague actually returned."
+
+// Notes are the fixed sentences the harness writes into a turn of its own accord, rather than
+// passing on from the caller, a tool or the operator: resumption and cutOffNote. A value taken
+// from one of them was not given by anyone.
+func Notes() []string {
+	return []string{resumption, cutOffNote}
+}
 
 // answerable returns a history with something at the end of it to reply to.
 //

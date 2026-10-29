@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -312,6 +314,78 @@ func (s *UsageCommandsSuite) TestTwoDeploymentsLeaveEachOthersSandboxesAlone() {
 	s.Empty(gaps["box-unlabelled"], "a router without the setting is never touched")
 	_, held := server.Sandbox("box-unlabelled")
 	s.True(held)
+}
+
+// customerDaytonaKey is the key app-1 keeps for its own Daytona organization.
+const customerDaytonaKey = "dtn_customer_0123456789abcdef"
+
+// customersOwn are the labels of a sandbox of ourDeployment's shard made on app's own key.
+func customersOwn(app, session string) map[string]string {
+	labels := ourLabels(app, session)
+	labels[metered.LabelAccount] = metered.SandboxAccountCustomer
+	return labels
+}
+
+func (s *UsageCommandsSuite) TestASandboxMadeOnACustomersKeyIsLookedAfterInTheirOrganizationAndItsGapsBilledAtTheBYOKFee() {
+	server := daytonatest.Start(s.T())
+	now := time.Now().UTC()
+	old := now.Add(-20 * time.Minute)
+	s.session("session-ours", "app-1", now.Add(-15*time.Minute))
+	s.session("session-theirs", "app-1", now.Add(-15*time.Minute))
+	server.Holds(daytonatest.Box{ID: "box-ours", Labels: ourLabels("app-1", "session-ours"), CreatedAt: old})
+	server.Holds(daytonatest.Box{ID: "box-theirs", Labels: customersOwn("app-1", "session-theirs"), CreatedAt: old})
+	server.Bills([]byte(`[{"sandboxId": "box-theirs", "totalCPUSeconds": 600, "totalRAMGBSeconds": 600, "totalDiskGBSeconds": 1800}]`))
+	server.Periods("box-theirs", []byte(`[{"startAt": "2026-10-21T10:00:00Z", "endAt": "2026-10-21T10:10:00Z", "cpu": 1, "ramGB": 1, "diskGB": 3}]`))
+
+	ours, _, stop := s.sandboxJob(server, slog.New(slog.DiscardHandler), now)
+	s.Require().NoError(ours.sweep(s.ctx))
+	stop()
+	s.Equal([]string{"box-ours"}, server.Deleted(), "a sandbox made on a customer's key is never the deployment organization's")
+
+	fleet, err := daytona.NewFleet(daytona.FleetOptions{APIKey: customerDaytonaKey, APIURL: server.APIURL(), Customer: true})
+	s.Require().NoError(err)
+	theirs, out, stopTheirs := s.sandboxJob(server, slog.New(slog.DiscardHandler), now)
+	theirs.fleet, theirs.byok = fleet, true
+	s.Require().NoError(theirs.reconcile(s.ctx, sandboxDay))
+	s.Require().NoError(theirs.sweep(s.ctx))
+	stopTheirs()
+
+	s.Equal([]string{"box-ours", "box-theirs"}, server.Deleted())
+	s.Equal(customerDaytonaKey, server.Keys()[len(server.Keys())-1], "deleted on the customer's key")
+	s.Contains(out.String(), "a customer's organization: sandboxes: 1 orphans deleted")
+	gaps := s.reconciled()["box-theirs"]
+	s.Require().Len(gaps, 1)
+	s.True(strings.HasSuffix(gaps[0].SKU, "-us-byok"), gaps[0].SKU)
+	s.Zero(gaps[0].BaseCostMicros, "Daytona bills the customer")
+	s.Equal("app-1", gaps[0].CustomerID)
+}
+
+func (s *UsageCommandsSuite) TestTheSandboxJobLooksAfterEachCustomersOrganizationOnTheKeyTheyKeep() {
+	server := daytonatest.Start(s.T())
+	s.T().Setenv("DAYTONA_API_KEY", "key-1")
+	s.T().Setenv("DAYTONA_API_URL", server.APIURL())
+	s.settings.CodeSandbox.Deployment = ourDeployment
+	s.settings.Auth.KEK = "usage commands suite"
+	secrets, err := newSecretSealer(s.ctx, s.settings)
+	s.Require().NoError(err)
+	sealed, err := providerkeys.Seal(secrets, "app-1", providerkeys.Daytona, pricing.RegionUS, customerDaytonaKey)
+	s.Require().NoError(err)
+	_, _, err = s.store.PutProviderKey(s.ctx, &sealed)
+	s.Require().NoError(err)
+	now := time.Now().UTC()
+	s.session("session-ours", "app-1", now.Add(-15*time.Minute))
+	s.session("session-theirs", "app-1", now.Add(-15*time.Minute))
+	server.Holds(daytonatest.Box{ID: "box-ours", Labels: ourLabels("app-1", "session-ours"), CreatedAt: now.Add(-20 * time.Minute)})
+	server.Holds(daytonatest.Box{ID: "box-theirs", Labels: customersOwn("app-1", "session-theirs"), CreatedAt: now.Add(-20 * time.Minute)})
+
+	var out bytes.Buffer
+	s.Require().NoError(runUsageSandboxes(s.ctx, nil, s.settings, &out))
+
+	s.Equal("sandboxes: 1 orphans deleted, 0 kept for open sessions, 0 too new to judge, 0 could not be deleted\n"+
+		"a customer's organization: sandboxes: 1 orphans deleted, 0 kept for open sessions, 0 too new to judge, 0 could not be deleted\n",
+		out.String())
+	s.Equal([]string{"box-ours", "box-theirs"}, server.Deleted())
+	s.Contains(server.Keys(), customerDaytonaKey)
 }
 
 func (s *UsageCommandsSuite) TestTheSandboxJobRefusesToRunWithoutADeployment() {

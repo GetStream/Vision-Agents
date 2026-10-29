@@ -79,7 +79,7 @@ jobs:
             acceleration/go.sum
             sdks/go/go.sum
             tui/go.sum
-            benchmark/go.sum
+            performance_benchmark/go.sum
 
       # The spec is rendered from the server's Go operations and the clients are generated
       # from the spec, so any of them left behind has already drifted from the others.
@@ -127,15 +127,15 @@ jobs:
         run: go test -race ./...
         working-directory: tui
 
-      # Without the webrtc tag Voicebench builds its transports as stubs, so its scoring,
-      # reporting and world server are tested here without live calls or native libraries.
-      - name: Vet Voicebench
+      # Without the webrtc tag the load benchmark builds its transport as a stub, so its
+      # ramp, report and audio checks are tested here without live calls.
+      - name: Vet the load benchmark
         run: go vet ./...
-        working-directory: benchmark
+        working-directory: performance_benchmark
 
-      - name: Test Voicebench
+      - name: Test the load benchmark
         run: go test ./...
-        working-directory: benchmark
+        working-directory: performance_benchmark
 
   js:
     runs-on: ubuntu-latest

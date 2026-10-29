@@ -29,11 +29,11 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	}, Registry: llmrouter.DefaultRegistry(), Logger: logger})
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
-	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, logger)
+	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 	t.Cleanup(func() { require.NoError(t, manager.Shutdown()) })
-	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, logger)
+	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.Nil(t, missing)
 }
@@ -51,7 +51,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	settings.CodeSandbox.Broker, settings.CodeSandbox.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://203.0.113.7:8091"
 	settings.CodeSandbox.ProxyCACert = "cert"
 
-	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, logger)
+	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.ErrorContains(t, err, "redis.addr")
 
 	address := os.Getenv("ROUTER_REDIS_ADDR")
@@ -62,7 +62,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
 	manager, err := buildSessions(settings, &api.Streams{LLM: model}, nil, nil, liveClient, nil, nil, nil, nil, nil, nil, nil, nil,
-		session.Connectors{}, nil, nil, logger)
+		session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 	t.Cleanup(func() { require.NoError(t, manager.Shutdown()) })

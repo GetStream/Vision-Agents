@@ -152,8 +152,13 @@ type Settings struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	Mode        string `yaml:"mode"`
-	STT         string `yaml:"stt"`
-	TTS         string `yaml:"tts"`
+	// Region is where the agent's work is done: us or eu for now. Every model it names needs an
+	// instance there, and its knowledge base and sandbox are kept there; the router refuses a
+	// sync naming one that has none. Empty sends none, which leaves the stored region, and a
+	// new agent is in us.
+	Region string `yaml:"region"`
+	STT    string `yaml:"stt"`
+	TTS    string `yaml:"tts"`
 	// STS is nil when the declaration says nothing, and empty when it turns it off.
 	STS *string `yaml:"sts"`
 	// Voice is the voice the agent speaks in: a provider's own voice id, or one of your voices by

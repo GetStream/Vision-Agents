@@ -20,6 +20,8 @@ final readonly class Contact
         // Why they could not be rung, when they could not be.
         public ?string $error = null,
         public ?string $instructions = null,
+        // How the call to them ended, once it has. The state still says only whether they were rung.
+        public CallOutcome|string|null $outcome = null,
         public ?string $vendorCallId = null,
     ) {
     }
@@ -37,6 +39,7 @@ final readonly class Contact
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
+            outcome: array_key_exists('outcome', $data) && $data['outcome'] !== null ? Json::enum($data, 'outcome', CallOutcome::class) : null,
             vendorCallId: array_key_exists('vendor_call_id', $data) && $data['vendor_call_id'] !== null ? Json::string($data, 'vendor_call_id') : null,
         );
     }
@@ -61,6 +64,9 @@ final readonly class Contact
         }
         if ($this->instructions !== null) {
             $out['instructions'] = $this->instructions;
+        }
+        if ($this->outcome !== null) {
+            $out['outcome'] = Json::enumValue($this->outcome);
         }
         if ($this->vendorCallId !== null) {
             $out['vendor_call_id'] = $this->vendorCallId;

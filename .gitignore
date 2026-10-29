@@ -104,11 +104,6 @@ plugins/*/example/uv.lock
 /examples/voice_agents/swift_demo/backend/backend
 /examples/voice_agents/swift_demo/configure/configure
 
-/benchmark/voicebench
-/benchmark/out/
-/benchmark/cache/
-/benchmark/baselines/
-
 /performance_benchmark/out/
 
 /acceleration/internal/harness/testdata/flowbench-out/

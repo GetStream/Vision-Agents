@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -188,6 +189,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	if KindFrom(ctx) != auth.KindServer || s.store == nil || value(rendered.Incognito) {
 		return &getSessionResponse{Body: rendered}, nil
 	}
+	rendered.CallOutcome = s.callOutcome(ctx, request.Id)
 	call, err := s.store.Call(ctx, OwnerFrom(ctx).CustomerID, request.Id)
 	if err != nil {
 		s.logger.Warn("could not read the call a session is recorded under", "session", request.Id, "error", err)
@@ -204,6 +206,31 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	s.attachUsage(ctx, OwnerFrom(ctx).CustomerID, call, &record)
 	rendered.Usage = record.Usage
 	return &getSessionResponse{Body: rendered}, nil
+}
+
+// callOutcome is how the call placed for a session ended, nil when none was placed.
+func (s *Server) callOutcome(ctx context.Context, sessionID string) *SessionCallOutcome {
+	if s.phone == nil {
+		return nil
+	}
+	call, err := s.phone.Outcomes().Read(ctx, OwnerFrom(ctx).CustomerID, sessionID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		s.logger.Warn("could not read how a session's placed call ended", "session", sessionID, "error", err)
+		return nil
+	}
+	shown := &SessionCallOutcome{AnsweredAt: call.AnsweredAt}
+	if call.Outcome != "" {
+		decided := CallOutcome(call.Outcome)
+		shown.Outcome = &decided
+	}
+	if duration, ok := call.Duration(); ok {
+		seconds := int(duration.Round(time.Second) / time.Second)
+		shown.DurationSeconds = &seconds
+	}
+	return shown
 }
 
 // saySession speaks a piece of text without going through the model.

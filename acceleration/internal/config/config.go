@@ -132,6 +132,11 @@ type Knowledge struct {
 	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
 	// section and in every passage's source.
 	MaxHeading int `koanf:"max_heading"`
+	// Regions maps each region knowledge is kept in, such as eu, to the turbopuffer region
+	// serving it, such as aws-eu-central-1. The default region, us, is always served: left
+	// out here, at TURBOPUFFER_REGION, then gcp-us-central1, as before. A customer whose
+	// policies name a region mapped to none has its knowledge refused.
+	Regions map[string]string `koanf:"regions"`
 }
 
 // LimitsMode is how much of credit, the spend hard limit and the customers' spend limits the
@@ -408,6 +413,11 @@ type CodeSandbox struct {
 	// ProxyAddr is where the router serves the sandbox egress proxy (internal/sandbox/egress),
 	// such as :8091; empty serves none.
 	ProxyAddr string `koanf:"proxy_addr"`
+	// ProxyListenFD is a listening socket this process inherited, served in place of
+	// ProxyAddr, as ListenFD is for Addr: a supervisor that keeps it open across processes
+	// passes it, so no sandbox's CONNECT is refused while one router hands over to the next.
+	// Zero means listen on ProxyAddr, which must still be set to serve the proxy at all.
+	ProxyListenFD int `koanf:"proxy_listen_fd"`
 	// ProxyCACert and ProxyCAKey are the PEM certificate and private key of the CA the proxy
 	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
 	ProxyCACert string `koanf:"proxy_ca_cert"`
@@ -430,6 +440,11 @@ type CodeSandbox struct {
 	// touches only sandboxes carrying it. Empty labels nothing, and the job leaves the
 	// sandboxes alone.
 	Deployment string `koanf:"deployment"`
+	// Targets maps each region sandboxes run in, such as eu, to the Daytona target they are
+	// made on, such as eu. The default region, us, is always served: left out here, on
+	// DAYTONA_TARGET, then Daytona's own default, as before. A session whose customer's
+	// policies name a region mapped to none is refused its sandbox.
+	Targets map[string]string `koanf:"targets"`
 }
 
 // sandboxDeployment is what code_sandbox.deployment may hold: a Daytona label value.
@@ -531,12 +546,14 @@ var variables = map[string]string{
 	"code_sandbox.broker":           "ROUTER_CODE_SANDBOX_BROKER",
 	"code_sandbox.secret_prefix":    "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
 	"code_sandbox.proxy_addr":       "ROUTER_CODE_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_listen_fd":  "ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD",
 	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
 	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
 	"code_sandbox.idle_stop":        "ROUTER_CODE_SANDBOX_IDLE_STOP",
 	"code_sandbox.stopped_delete":   "ROUTER_CODE_SANDBOX_STOPPED_DELETE",
 	"code_sandbox.deployment":       "ROUTER_CODE_SANDBOX_DEPLOYMENT",
+	"code_sandbox.targets":          "ROUTER_CODE_SANDBOX_TARGETS",
 
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
@@ -551,6 +568,7 @@ var variables = map[string]string{
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
+	"knowledge.regions":     "ROUTER_KNOWLEDGE_REGIONS",
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
@@ -558,7 +576,11 @@ var lists = map[string]bool{"trusted_proxies": true}
 
 // pairs are the settings written as a comma-separated variable of name=value and as a
 // mapping in YAML.
-var pairs = map[string]bool{"postgres.shards": true}
+var pairs = map[string]bool{"postgres.shards": true, "knowledge.regions": true, "code_sandbox.targets": true}
+
+// providerRegion is what a turbopuffer region or a Daytona target may be called: part of a
+// host name, or a value Daytona takes.
+var providerRegion = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Defaults are what a deployment gets for saying nothing at all.
 func Defaults() Config {
@@ -777,6 +799,9 @@ func (c Config) validate() error {
 		return errors.New("config: code_sandbox.broker is proxy, so this router serves the proxy: set " +
 			"code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR)")
 	}
+	if err := c.validateProxyListenFD(); err != nil {
+		return err
+	}
 	if strings.Contains(c.CodeSandbox.ProxyCACert, "PRIVATE KEY") {
 		return errors.New("config: code_sandbox.proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_CA_CERT) holds a private key, " +
 			"which every sandbox would be given: keep the certificate there and the key in proxy_ca_key")
@@ -816,6 +841,19 @@ func (c Config) validate() error {
 	for meter, rate := range c.Knowledge.StreamCost {
 		if rate.Per <= 0 || rate.USD < 0 || rate.Minimum < 0 {
 			return fmt.Errorf("config: knowledge.stream_cost.%s is usd per a positive number of units, got %+v", meter, rate)
+		}
+	}
+	for _, regions := range []struct {
+		setting, example string
+		mapped           map[string]string
+	}{
+		{"knowledge.regions (ROUTER_KNOWLEDGE_REGIONS)", "the turbopuffer region serving it, such as eu=aws-eu-central-1", c.Knowledge.Regions},
+		{"code_sandbox.targets (ROUTER_CODE_SANDBOX_TARGETS)", "the Daytona target serving it, such as eu=eu", c.CodeSandbox.Targets},
+	} {
+		for _, region := range slices.Sorted(maps.Keys(regions.mapped)) {
+			if !pricing.ValidRegion(region) || !providerRegion.MatchString(regions.mapped[region]) {
+				return fmt.Errorf("config: %s maps a region to %s, got %s=%q", regions.setting, regions.example, region, regions.mapped[region])
+			}
 		}
 	}
 	switch c.Limits.Mode {
@@ -866,6 +904,24 @@ func ProxyURL(raw string) (*url.URL, bool) {
 	}
 	port, err := strconv.Atoi(parsed.Port())
 	return parsed, err == nil && port >= 1 && port <= 65535
+}
+
+// validateProxyListenFD refuses an inherited proxy socket the router would not serve: one
+// without the proxy on, a descriptor that cannot be one, or the public listener's own.
+func (c Config) validateProxyListenFD() error {
+	fd := c.CodeSandbox.ProxyListenFD
+	switch {
+	case fd == 0:
+		return nil
+	case fd < 0:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is a file descriptor, got %d", fd)
+	case c.CodeSandbox.ProxyAddr == "":
+		return errors.New("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is the proxy's socket, " +
+			"and the proxy is served only with code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR) set")
+	case fd == c.ListenFD:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd and listen_fd are both %d: the proxy and the API need a socket each", fd)
+	}
+	return nil
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader
@@ -985,12 +1041,14 @@ func (c Config) export() error {
 		"code_sandbox.broker":           c.CodeSandbox.Broker,
 		"code_sandbox.secret_prefix":    c.CodeSandbox.SecretPrefix,
 		"code_sandbox.proxy_addr":       c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_listen_fd":  listenFD(c.CodeSandbox.ProxyListenFD),
 		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
 		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
 		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,
 		"code_sandbox.idle_stop":        c.CodeSandbox.IdleStop.String(),
 		"code_sandbox.stopped_delete":   c.CodeSandbox.StoppedDelete.String(),
 		"code_sandbox.deployment":       c.CodeSandbox.Deployment,
+		"code_sandbox.targets":          joinPairs(c.CodeSandbox.Targets),
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
@@ -1008,6 +1066,7 @@ func (c Config) export() error {
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),
+		"knowledge.regions":     joinPairs(c.Knowledge.Regions),
 	}
 	for key, value := range values {
 		if value == "" {
