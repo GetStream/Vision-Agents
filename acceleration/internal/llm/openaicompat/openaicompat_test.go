@@ -739,6 +739,73 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 	}
 }
 
+func (s *OpenAICompatSuite) TestAToolNamedInASentenceIsSpokenNotMade() {
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "send_note"}, {Name: "check_stock"}}
+	cases := map[string]struct {
+		frames []string
+		spoken string
+		made   []string
+	}{
+		"bare call followed by words": {
+			frames: []string{"You can use send_note(to=\"ana\", text=\"hi\")", " to message her."},
+			spoken: "You can use send_note(to=\"ana\", text=\"hi\") to message her.",
+		},
+		"call followed by a space, then words": {
+			frames: []string{"I would call send_note{to: \"ana\"} if you want."},
+			spoken: "I would call send_note{to: \"ana\"} if you want.",
+		},
+		"bare call followed by the start of another name": {
+			frames: []string{"Try send_note(to=\"ana\") or check"},
+			spoken: "Try send_note(to=\"ana\") or check",
+		},
+		"bare call that ends the answer": {
+			frames: []string{"Sending it now. send_note(to=", "\"ana\")"},
+			spoken: "Sending it now. ",
+			made:   []string{"send_note"},
+		},
+		"bare call followed by its closing marker": {
+			frames: []string{"Sending it now. send_note(to=\"ana\") <tool_", "call|>"},
+			spoken: "Sending it now. ",
+			made:   []string{"send_note"},
+		},
+		"bare calls one after another": {
+			frames: []string{"One moment. check_stock{} ", "send_note{to: \"ana\"}"},
+			spoken: "One moment.  ",
+			made:   []string{"check_stock", "send_note"},
+		},
+		"marked call followed by words": {
+			frames: []string{"<|tool_call>call:send_note{to:<|\"|>ana<|\"|>}<tool_call|> Sent."},
+			spoken: " Sent.",
+			made:   []string{"send_note"},
+		},
+		"call: prefix followed by words": {
+			frames: []string{"call:send_note{to: \"ana\"} Sent."},
+			spoken: " Sent.",
+			made:   []string{"send_note"},
+		},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			s.frames = nil
+			for _, frame := range tc.frames {
+				s.frames = append(s.frames, textFrame(frame))
+			}
+			s.frames = append(s.frames, usageFrame(20, 0, 30, 0, "stop"))
+			provider := s.provider(Options{ToolCallText: true})
+
+			response, _ := s.ask(provider, params)
+
+			s.Equal(tc.spoken, response.OutputText)
+			var made []string
+			for _, call := range response.ToolCalls {
+				made = append(made, call.Name)
+			}
+			s.Equal(tc.made, made)
+		})
+	}
+}
+
 func (s *OpenAICompatSuite) TestABraceFormToolCallPreservesSingleQuotedIdentityArguments() {
 	// Brace-form identity values in single quotes should decode as exact strings, without
 	// quote marks, before they reach the verification tool.
