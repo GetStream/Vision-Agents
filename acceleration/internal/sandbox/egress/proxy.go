@@ -42,17 +42,24 @@ const (
 	// handshakeTimeout bounds a sandbox's TLS handshake and each request's headers in a
 	// tunnel: http.DefaultTransport's TLSHandshakeTimeout (net/http/transport.go).
 	handshakeTimeout = 10 * time.Second
-	// idleTimeout closes a tunnel no request has used for it: http.DefaultTransport's
-	// IdleConnTimeout (net/http/transport.go).
+	// idleTimeout closes a tunnel no request has used for it, and a tunnel to an allowed domain
+	// that has carried no byte for it: http.DefaultTransport's IdleConnTimeout
+	// (net/http/transport.go).
 	idleTimeout = 90 * time.Second
 	// headerTimeout ends a request whose host sends no response header in time: nginx's
 	// proxy_read_timeout default
 	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
 	headerTimeout = 60 * time.Second
-	// leafValidity is how long a host's certificate is valid. A client checks it only in the
-	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
-	// off by that much.
+	// leafValidity is how long a host's certificate is valid for the handshake it is minted
+	// for; an hour each side leaves room for a sandbox clock that is off by that much. A kept
+	// certificate is served up to leafValidity/2 later, so it is dated leafValidity/2 longer
+	// (sign), and a client's clock may still be off by an hour.
 	leafValidity = time.Hour
+	// maxLeaves caps the certificates kept. A wildcard grant lets a sandbox name any host under
+	// a domain, so the hosts are not bounded by the grants. A DER certificate here is under
+	// 1 KiB (P-256 key and CA signature), so the cap holds under 1 MiB. Past it a host's
+	// certificate is signed for the handshake alone, as it was before the cache.
+	maxLeaves = 1024
 	// authenticate is the challenge a 407 must carry (RFC 9110 section 15.5.8), for the
 	// Basic credential a proxy URL's userinfo sends (RFC 7617).
 	authenticate = `Basic realm="sandbox egress"`
@@ -77,6 +84,9 @@ type Options struct {
 	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
 	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
 	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
+	// Now replaces time.Now when set, for tests: it dates a certificate and tells when a kept
+	// one is renewed.
+	Now func() time.Time
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -91,6 +101,23 @@ type Proxy struct {
 	logger    *slog.Logger
 
 	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
+
+	now func() time.Time
+	// leaves holds each host's certificate until it is half of leafValidity old, so a handshake
+	// costs no CA signature (P-256 about 66 us, RSA-4096 about 4.5 ms) once a host has one.
+	leaves leaves
+}
+
+type leaves struct {
+	mu     sync.Mutex
+	byHost map[string]keptLeaf
+}
+
+type keptLeaf struct {
+	certificate tls.Certificate
+	// renewAt is when the certificate is signed anew: leafValidity/2 after it was dated, so a
+	// client still has half of leafValidity left on it.
+	renewAt time.Time
 }
 
 func New(options Options) (*Proxy, error) {
@@ -115,10 +142,14 @@ func New(options Options) (*Proxy, error) {
 	if dial == nil {
 		dial = publicegress.DialPublic
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
 		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
-		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout)}, nil
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -208,14 +239,62 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	tunnelsOpen.Inc()
 	defer tunnelsOpen.Dec()
 	early, _ := buffered.Reader.Peek(buffered.Reader.Buffered())
-	sandbox := &readFirst{Conn: conn, first: bytes.NewReader(early)}
-	// Either side ending ends the tunnel: closing both stops the other copy.
+	idle := &idleTunnel{timeout: p.idleTimeout, ends: [2]net.Conn{conn, upstream}}
+	idle.touch()
+	sandbox := idle.watch(conn)
+	remote := idle.watch(upstream)
+	// Either side ending, or the tunnel going idle, ends it: closing both stops the other copy.
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, sandbox); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
+	go func() {
+		_, _ = io.Copy(remote, &readFirst{Conn: sandbox, first: bytes.NewReader(early)})
+		done <- struct{}{}
+	}()
+	go func() { _, _ = io.Copy(sandbox, remote); done <- struct{}{} }()
 	<-done
 	_ = conn.Close()
 	_ = upstream.Close()
+}
+
+// IdleTimeout is how long a connection to the proxy may sit with no request before the server
+// closes it: the one a tunnel is given.
+func (p *Proxy) IdleTimeout() time.Duration {
+	return p.idleTimeout
+}
+
+// idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end sends moves
+// the deadline of both, so a tunnel with a transfer in one direction and silence in the other
+// lives on, and a copy stuck writing to a peer that reads nothing fails at the deadline too.
+type idleTunnel struct {
+	timeout time.Duration
+	ends    [2]net.Conn
+}
+
+// touch gives both ends timeout from now to send a byte.
+func (i *idleTunnel) touch() {
+	deadline := time.Now().Add(i.timeout)
+	for _, end := range i.ends {
+		_ = end.SetDeadline(deadline)
+	}
+}
+
+// watch is conn with each read a touch. Only Read and Write are on it, so io.Copy cannot hand
+// the bytes to the kernel and skip the touch.
+func (i *idleTunnel) watch(conn net.Conn) net.Conn {
+	return &watched{Conn: conn, tunnel: i}
+}
+
+// watched is a tunnel end whose reads keep the tunnel's deadline.
+type watched struct {
+	net.Conn
+	tunnel *idleTunnel
+}
+
+func (c *watched) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.tunnel.touch()
+	}
+	return n, err
 }
 
 // tunnel is one CONNECT: the sandbox's credential, the host it asked for and the host's label
@@ -658,8 +737,8 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 
 // ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
 // address: the sandbox's proxy credential then never crosses the network in the clear. Each
-// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
-// tunnel does, since one is valid for leafValidity alone.
+// handshake gets the certificate kept for address (Proxy.leaf), signed by the CA the sandbox
+// trusts, as each tunnel does.
 func (p *Proxy) ListenerTLS(address string) *tls.Config {
 	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
 	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
@@ -670,21 +749,62 @@ func (p *Proxy) ListenerTLS(address string) *tls.Config {
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
+// The same one is returned until it is half of leafValidity old. The lock is not held while the
+// CA signs, so a flood of new hosts never holds up a host that has a certificate; two
+// handshakes for one host may both sign, and the first certificate stored is the one both return.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
+	now := p.now()
+	if certificate, ok := p.kept(host, now); ok {
+		return certificate, nil
+	}
+	certificate, err := p.sign(host, now)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
+		return kept.certificate, nil
+	}
+	if len(p.leaves.byHost) >= maxLeaves {
+		for name, kept := range p.leaves.byHost {
+			if !now.Before(kept.renewAt) {
+				delete(p.leaves.byHost, name)
+			}
+		}
+	}
+	if len(p.leaves.byHost) < maxLeaves {
+		p.leaves.byHost[host] = keptLeaf{certificate: certificate, renewAt: now.Add(leafValidity / 2)}
+	}
+	return certificate, nil
+}
+
+// kept is host's kept certificate, when it is not due for renewal at now.
+func (p *Proxy) kept(host string, now time.Time) (tls.Certificate, bool) {
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	kept, ok := p.leaves.byHost[host]
+	return kept.certificate, ok && now.Before(kept.renewAt)
+}
+
+// sign makes host's certificate, dated now.
+func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, stack.Wrap(err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    now.Add(-leafValidity),
-		NotAfter:     now.Add(leafValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// A kept certificate is served up to leafValidity/2 after it is dated, so it is valid
+		// that much longer: a client sees leafValidity left on it, as on a certificate signed
+		// for its handshake.
+		NotAfter:    now.Add(leafValidity + leafValidity/2),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if address := net.ParseIP(host); address != nil {
 		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280

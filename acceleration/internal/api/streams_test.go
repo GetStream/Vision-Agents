@@ -663,13 +663,13 @@ func (s *StreamsSuite) TestAToolsUpdateIsSpokenByTheModelWhileItsCallIsOpen() {
 	s.calling(conversation, model, "c1")
 
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+		"type": "tool_update", "tool_call_id": "c1", "text": "Looking for a room"}))
 
 	update := told(s, model.updates)
 	s.Equal("c1", update.CallID)
-	s.Equal("Checking the book", update.Status)
+	s.Equal("Looking for a room", update.Status)
 	s.False(update.Verbatim)
-	s.Contains(update.Guidance, "Checking the book")
+	s.Contains(update.Guidance, "Looking for a room")
 	s.Equal("Be brief.", update.Instructions)
 }
 
@@ -692,11 +692,11 @@ func (s *StreamsSuite) TestAnUpdateWaitsForTheReplyInFlight() {
 	s.calling(conversation, model, "c1")
 
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+		"type": "tool_update", "tool_call_id": "c1", "text": "Looking for a room"}))
 	s.untold(model.updates, "an update must not talk over the reply in flight")
 
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
-	s.Equal("Checking the book", told(s, model.updates).Status)
+	s.Equal("Looking for a room", told(s, model.updates).Status)
 }
 
 func (s *StreamsSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
@@ -706,11 +706,11 @@ func (s *StreamsSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
 	s.Equal("speech_started", s.nextConversationFrame(conversation)["type"])
 
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+		"type": "tool_update", "tool_call_id": "c1", "text": "Looking for a room"}))
 	s.untold(model.updates, "an update must not talk over the caller")
 
 	model.emitter.Send(sts.SpeechStopped{})
-	s.Equal("Checking the book", told(s, model.updates).Status)
+	s.Equal("Looking for a room", told(s, model.updates).Status)
 }
 
 func (s *StreamsSuite) TestANewerUpdateReplacesOneNotYetSaid() {
@@ -719,7 +719,7 @@ func (s *StreamsSuite) TestANewerUpdateReplacesOneNotYetSaid() {
 	s.Equal("response_started", s.nextConversationFrame(conversation)["type"])
 	s.calling(conversation, model, "c1")
 
-	for _, text := range []string{"Checking the book", "Nearly there"} {
+	for _, text := range []string{"Looking for a room", "Nearly there"} {
 		s.Require().NoError(conversation.WriteJSON(frame{
 			"type": "tool_update", "tool_call_id": "c1", "text": text}))
 	}
@@ -739,10 +739,10 @@ func (s *StreamsSuite) TestTheResultDropsAnUpdateNotYetSaid() {
 	s.calling(conversation, model, "c1")
 
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "c1", "text": "Checking the book"}))
+		"type": "tool_update", "tool_call_id": "c1", "text": "Looking for a room"}))
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_result", "tool_call_id": "c1", "output": "a table at 7:30"}))
-	s.Equal("c1=a table at 7:30", told(s, model.answers))
+		"type": "tool_result", "tool_call_id": "c1", "output": "a room at 18:45"}))
+	s.Equal("c1=a room at 18:45", told(s, model.answers))
 	model.emitter.Send(sts.ResponseComplete{ResponseID: "r1", Generation: 1})
 
 	s.untold(model.updates, "the result says more than the update did")
@@ -752,7 +752,7 @@ func (s *StreamsSuite) TestAnUpdateForACallThatIsNotOpenIsDropped() {
 	conversation, model := s.converse(frame{"target": "stub/stub-sts"})
 
 	s.Require().NoError(conversation.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "gone", "text": "Checking the book"}))
+		"type": "tool_update", "tool_call_id": "gone", "text": "Looking for a room"}))
 
 	s.untold(model.updates, "nothing is waiting on a call the model never made")
 }
@@ -1007,7 +1007,7 @@ func told[T any](s *StreamsSuite, sent <-chan T) T {
 
 // calling has the model make a call, and waits for the socket to pass it on.
 func (s *StreamsSuite) calling(connection *websocket.Conn, model *stubConversation, id string) {
-	model.emitter.Send(sts.ToolCall{CallID: id, Name: "check_availability", Arguments: "{}"})
+	model.emitter.Send(sts.ToolCall{CallID: id, Name: "find_room", Arguments: "{}"})
 	made := s.nextConversationFrame(connection)
 	s.Require().Equal("tool_call", made["type"])
 	s.Require().Equal(id, made["id"])

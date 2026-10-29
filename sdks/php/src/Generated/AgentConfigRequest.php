@@ -43,6 +43,8 @@ final readonly class AgentConfigRequest
         // Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from t...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its...
+        public ?string $region = null,
         // How a conversation is handed back to the model when a session under this agent carries it on: reopened, res...
         public ?ResumeHistory $resumeHistory = null,
         // How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay.
@@ -100,6 +102,7 @@ final readonly class AgentConfigRequest
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
@@ -173,6 +176,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
+        }
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
         }
         if ($this->resumeHistory !== null) {
             $out['resume_history'] = $this->resumeHistory->toArray();

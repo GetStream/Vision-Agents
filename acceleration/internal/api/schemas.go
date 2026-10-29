@@ -347,10 +347,11 @@ func (e DataChangeOp) Valid() bool {
 type DataPolicy struct {
 	AllowTraining *bool   `json:"allow_training,omitempty" doc:"False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no."`
 	Retention     *string `json:"retention,omitempty" doc:"The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing." example:"none"`
+	Region        *string `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region."`
 }
 
 func (*DataPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not."
+	schema.Description = "What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not."
 	return schema
 }
 
@@ -709,6 +710,7 @@ type Provider struct {
 	Price       *ProviderPrice     `json:"price,omitempty"`
 	Provider    string             `json:"provider" example:"elevenlabs"`
 	Realtime    bool               `json:"realtime"`
+	Region      string             `json:"region" example:"us" doc:"Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances."`
 	Supports    []string           `json:"supports,omitempty" nullable:"false" example:"[\"keyterms\",\"diarize\"]" doc:"The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none."`
 	Tier        Tier               `json:"tier"`
 	UsageShare  *float64           `json:"usage_share,omitempty" doc:"This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics."`
@@ -791,6 +793,7 @@ type Session struct {
 	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
 	AgentId          string                  `json:"agent_id"`
 	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
+	CallOutcome      *SessionCallOutcome     `json:"call_outcome,omitempty" doc:"How the call the router placed for this session ended. Read by a backend only."`
 	CallType         string                  `json:"call_type"`
 	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
 	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
@@ -914,6 +917,41 @@ type SessionPhone struct {
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
+}
+
+// SessionCallOutcome is how the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
+	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has."`
+}
+
+func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the call the router placed for a session ended."
+	return schema
+}
+
+// CallOutcome is how a placed call ended.
+type CallOutcome string
+
+const (
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
+		"completed: the person answered and the call ended.\n"+
+		"busy: the line was busy or the person declined.\n"+
+		"no_answer: it rang and nobody answered.\n"+
+		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
+		"canceled: the vendor says the call was hung up before an answer.\n"+
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
 }
 
 // SessionRespondCommand is the SessionRespondCommand schema.

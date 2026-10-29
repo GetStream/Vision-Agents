@@ -2,6 +2,7 @@ package sipbridge
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -108,7 +109,8 @@ func TestDialRefusesATrunkAtAPrivateAddressBeforeCallingStream(t *testing.T) {
 	}
 }
 
-// sipServer answers INVITE with 200 and contact as its Contact, and records each request.
+// sipServer answers INVITE with its status and contact as its Contact, and records each
+// request. A provisional status is all it sends: the phone rings until the INVITE is cancelled.
 type sipServer struct {
 	addr string
 	mu   sync.Mutex
@@ -131,7 +133,11 @@ func (s *sipServer) methods() []sip.RequestMethod {
 	return methods
 }
 
-func startSIPServer(t *testing.T, contactHost string) *sipServer {
+var reasons = map[int]string{
+	sip.StatusBusyHere: "Busy Here", sip.StatusTemporarilyUnavailable: "Temporarily Unavailable",
+}
+
+func startSIPServer(t *testing.T, contactHost string, status int) *sipServer {
 	t.Helper()
 	ua, err := sipgo.NewUA()
 	require.NoError(t, err)
@@ -149,6 +155,15 @@ func startSIPServer(t *testing.T, contactHost string) *sipServer {
 
 	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
 		s.record(req)
+		if status < sip.StatusOK {
+			_ = tx.Respond(sip.NewResponseFromRequest(req, status, "Ringing", nil))
+			<-tx.Done()
+			return
+		}
+		if status != sip.StatusOK {
+			_ = tx.Respond(sip.NewResponseFromRequest(req, status, reasons[status], nil))
+			return
+		}
 		res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", []byte("v=0 theirs\r\n"))
 		res.To().Params.Add("tag", "servertag")
 		res.AppendHeader(&sip.ContactHeader{Address: sip.Uri{User: "peer", Host: contactHost, Port: port, UriParams: sip.NewParams()}})
@@ -191,7 +206,7 @@ func guardedLeg(t *testing.T, server *sipServer) *sipLeg {
 }
 
 func TestAGuardedLegCompletesACall(t *testing.T) {
-	server := startSIPServer(t, "")
+	server := startSIPServer(t, "", sip.StatusOK)
 	l := guardedLeg(t, server)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -213,7 +228,7 @@ func TestAGuardedLegCompletesACall(t *testing.T) {
 }
 
 func TestAGuardedLegRefusesAnAnswerThatPointsToAPrivateAddress(t *testing.T) {
-	server := startSIPServer(t, "10.0.0.1")
+	server := startSIPServer(t, "10.0.0.1", sip.StatusOK)
 	l := guardedLeg(t, server)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -223,4 +238,54 @@ func TestAGuardedLegRefusesAnAnswerThatPointsToAPrivateAddress(t *testing.T) {
 
 	require.ErrorContains(t, l.Ack(ctx, nil), "10.0.0.1 is not a public address")
 	require.Equal(t, []sip.RequestMethod{sip.INVITE}, server.methods())
+}
+
+func unansweredBy(t *testing.T, status int, ringTimeout time.Duration) *Unanswered {
+	t.Helper()
+	customer := guardedLeg(t, startSIPServer(t, "", status))
+	stream := &fakeLeg{}
+	cfg := flowConfig()
+	cfg.Call.RingTimeout = ringTimeout
+
+	_, err := flowA(t.Context(), cfg, customer, stream)
+
+	u, ok := errors.AsType[*Unanswered](err)
+	require.True(t, ok, "%v", err)
+	require.Empty(t, stream.calls(), "stream is never invited")
+	return u
+}
+
+func TestABusyCustomerIsUnansweredWith486(t *testing.T) {
+	u := unansweredBy(t, sip.StatusBusyHere, 5*time.Second)
+
+	require.Equal(t, 486, u.Code)
+	require.Equal(t, "Busy Here", u.Reason)
+}
+
+func TestATemporarilyUnavailableCustomerIsUnansweredWith480(t *testing.T) {
+	u := unansweredBy(t, sip.StatusTemporarilyUnavailable, 5*time.Second)
+
+	require.Equal(t, 480, u.Code)
+}
+
+func TestACustomerThatOnlyRingsIsUnansweredAtTheRingTimeout(t *testing.T) {
+	u := unansweredBy(t, sip.StatusRinging, 200*time.Millisecond)
+
+	require.Equal(t, 0, u.Code)
+}
+
+func TestACustomerRingingWhenTheCallIsCancelledIsNotUnanswered(t *testing.T) {
+	customer := guardedLeg(t, startSIPServer(t, "", sip.StatusRinging))
+	stream := &fakeLeg{}
+	cfg := flowConfig()
+	cfg.Call.RingTimeout = 5 * time.Second
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	_, err := flowA(ctx, cfg, customer, stream)
+
+	_, isUnanswered := errors.AsType[*Unanswered](err)
+	require.False(t, isUnanswered, "%v", err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, stream.calls())
 }

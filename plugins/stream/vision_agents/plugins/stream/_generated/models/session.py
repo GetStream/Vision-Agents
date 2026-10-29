@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.call_usage import CallUsage
     from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_call_outcome import SessionCallOutcome
     from ..models.session_custom import SessionCustom
     from ..models.session_video import SessionVideo
 
@@ -39,6 +40,7 @@ class Session:
         user_id (str):
         agent (str | Unset): The name the agent was addressed as. Recorded on the session as well as the config id, so
             renaming a config does not rewrite what older sessions were opened against.
+        call_outcome (SessionCallOutcome | Unset): How the call the router placed for a session ended.
         closed_at (datetime.datetime | Unset): When the session ended. Absent while it is still running.
         config_id (str | Unset): The agent config the session ran under, empty for one that spelled itself out.
         context_truncated (bool | Unset): Older history was omitted from the model context.
@@ -93,6 +95,7 @@ class Session:
     state: SessionState
     user_id: str
     agent: str | Unset = UNSET
+    call_outcome: SessionCallOutcome | Unset = UNSET
     closed_at: datetime.datetime | Unset = UNSET
     config_id: str | Unset = UNSET
     context_truncated: bool | Unset = UNSET
@@ -139,6 +142,10 @@ class Session:
         user_id = self.user_id
 
         agent = self.agent
+
+        call_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.call_outcome, Unset):
+            call_outcome = self.call_outcome.to_dict()
 
         closed_at: str | Unset = UNSET
         if not isinstance(self.closed_at, Unset):
@@ -222,6 +229,8 @@ class Session:
         )
         if agent is not UNSET:
             field_dict["agent"] = agent
+        if call_outcome is not UNSET:
+            field_dict["call_outcome"] = call_outcome
         if closed_at is not UNSET:
             field_dict["closed_at"] = closed_at
         if config_id is not UNSET:
@@ -281,6 +290,7 @@ class Session:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.call_usage import CallUsage
         from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_call_outcome import SessionCallOutcome
         from ..models.session_custom import SessionCustom
         from ..models.session_video import SessionVideo
 
@@ -302,6 +312,13 @@ class Session:
         user_id = d.pop("user_id")
 
         agent = d.pop("agent", UNSET)
+
+        _call_outcome = d.pop("call_outcome", UNSET)
+        call_outcome: SessionCallOutcome | Unset
+        if isinstance(_call_outcome, Unset):
+            call_outcome = UNSET
+        else:
+            call_outcome = SessionCallOutcome.from_dict(_call_outcome)
 
         _closed_at = d.pop("closed_at", UNSET)
         closed_at: datetime.datetime | Unset
@@ -400,6 +417,7 @@ class Session:
             state=state,
             user_id=user_id,
             agent=agent,
+            call_outcome=call_outcome,
             closed_at=closed_at,
             config_id=config_id,
             context_truncated=context_truncated,

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -157,6 +159,11 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.regionComplaint(ctx, config, nil); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.CreateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -249,6 +256,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.Role == nil {
 		config.Role = existing.Role
 	}
+	// Kept for the same reason: a client that does not know the region must not move the
+	// agent's work out of it by saving.
+	if request.Body.Region == nil {
+		config.Region = existing.Region
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -291,6 +303,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok, err := s.regionComplaint(ctx, config, &existing); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
@@ -318,6 +335,13 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, errUnknownConfig
+	}
+	answering, err := s.store.NumbersAnsweredBy(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(answering) > 0 {
+		return nil, configAnswersNumbers(answering)
 	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
@@ -514,6 +538,17 @@ var errAgentRoleTaken = APIError{
 	Message: "another agent already has this role",
 }
 
+// configAnswersNumbers is a delete of a config that phone numbers still answer with: deleting
+// it would leave their callers reaching no agent.
+func configAnswersNumbers(numbers []string) APIError {
+	if len(numbers) == 1 {
+		return conflict(fmt.Sprintf("The number %s answers with this agent: remove the agent from it with "+
+			"DELETE /v1/phone/numbers/{e164}/agent, or detach the number.", numbers[0]))
+	}
+	return conflict(fmt.Sprintf("The numbers %s answer with this agent: remove the agent from each with "+
+		"DELETE /v1/phone/numbers/{e164}/agent, or detach them.", strings.Join(numbers, ", ")))
+}
+
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
 // channel connection, such as a Slack bot's, as fixed: one agent answers each message that
 // comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
@@ -585,6 +620,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	}
 	if _, ok := modeOf(request.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
+	if complaint, ok := agentRegionComplaint(request.Region); !ok {
+		return complaint, false
 	}
 	if len(keytermsOf(request.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
@@ -1814,6 +1852,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Name:               strings.TrimSpace(request.Name),
 		Role:               string(value(request.Role)),
 		Mode:               mode,
+		Region:             value(request.Region),
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
 		STS:                value(request.Sts),
@@ -1906,6 +1945,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		Id:        config.ID,
 		Name:      config.Name,
 		Mode:      AgentMode(config.Mode),
+		Region:    cmp.Or(config.Region, pricing.DefaultRegion),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
 	}
@@ -2085,14 +2125,16 @@ func (s *Server) registerConfigs(api huma.API) {
 		Path:        "/v1/agents/configs/{id}",
 		Summary:     "Delete an agent config",
 		Description: "Calls that already ran under it keep naming it, so the config stops being usable rather " +
-			"than stops having existed.\n" +
+			"than stops having existed. A config that a phone number answers with is refused with a 409 " +
+			"naming the numbers.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The config is gone"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict},
 	}, s.deleteAgentConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "listSkills",
@@ -2211,6 +2253,7 @@ type AgentConfigRequest struct {
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
+	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
@@ -2250,6 +2293,7 @@ type AgentConfig struct {
 	Llm                *string                  `json:"llm,omitempty"`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
+	Region             string                   `json:"region" example:"us" doc:"Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`

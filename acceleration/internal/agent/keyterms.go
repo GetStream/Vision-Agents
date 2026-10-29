@@ -11,11 +11,10 @@ import (
 )
 
 // learnTerms tells the transcriber to expect the names the caller has said and the agent has
-// just said back. A name heard right once can be misheard the next time: the transcriber
-// heard "Moss" in a caller's first line, the agent said "for Moss", and the caller's "Yes,
-// Moss, two people" came back as "Yes. Most two people", after which the agent kept asking
-// for a name. Only a name both sides have said is learned, so a name the agent got wrong is
-// never reinforced.
+// just said back. A transcriber that heard a name right once can still hear it as a common
+// word the next time, so a name confirmed in the conversation is given to it as a keyterm.
+// Only a name both sides have said is learned, so a name the agent got wrong is never
+// reinforced.
 func (a *Agent) learnTerms(said string, history []llm.Message) {
 	names := confirmedNames(said, history)
 	if len(names) == 0 {

@@ -90,11 +90,10 @@ jobs:
           # AI-2037
           - package: internal/connectors/resolver
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
-          # AI-2038
-          - package: internal/sandbox/egress
-            skip: '^TestTunnelSuite$/^TestACheckWhoseForwarderLostThePortFindsTheWinnerUp$'
     # acceleration/internal/config/testing.yaml wins over the environment and names these two
     # host ports, so the services listen there and no ROUTER_* variable is set.
+    # Postgres keeps its data in memory: the suites truncate their tables before every test,
+    # and on disk each TRUNCATE waits on fsync.
     services:
       postgres:
         image: postgres:16-alpine
@@ -103,6 +102,7 @@ jobs:
         ports:
           - 55432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 3s
@@ -126,7 +126,6 @@ jobs:
             acceleration/go.sum
             sdks/go/go.sum
             tui/go.sum
-            benchmark/go.sum
 
       - name: Test ${{ matrix.package }}
         run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}

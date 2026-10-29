@@ -10,6 +10,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -613,6 +614,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		}
 		server.forwarder = node.NewForwarder(logger, credential)
 	}
+	if server.phone != nil {
+		server.phone.OnUnanswered(server.endUnanswered)
+	}
 	return server, nil
 }
 
@@ -667,12 +671,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
+	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
@@ -1435,6 +1441,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
 			Realtime:    candidate.Config.Realtime,
+			Region:      cmp.Or(candidate.Config.Region, pricing.DefaultRegion),
 			Supports:    supportsOf(candidate.Config.Terms),
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),

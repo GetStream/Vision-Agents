@@ -490,6 +490,11 @@ directory, the same one the Python SDK takes for a directory without simulations
 directory only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 
+`region: eu` (or `us`) in `agent.yaml` is where the agent's work is done: every model it runs,
+its knowledge base and its sandbox are there and nowhere else. Left out, the stored region
+stays, and a new agent is in `us`. The router refuses a sync naming a model with no instance in
+the region, naming each, and one whose knowledge base is already kept in another region.
+
 ## When the router says no
 
 A request or a socket the router refuses comes back as a `*stream.RouterError`, whichever of
