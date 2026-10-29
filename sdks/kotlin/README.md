@@ -37,6 +37,10 @@ chat.responses.create("What are your opening hours?")
 // The Stream Chat channel the conversation is kept in.
 val channel: ChannelClient = chat.chat(context)
 
+// Its messages, as Stream Chat's state keeps them, live and after a reconnect. Hold the flow
+// while the conversation is shown; ChatClient's loadOlderMessages(cid, 30) pages back into it.
+val state: StateFlow<ChannelState?> = chat.channelState(context, viewModelScope)
+
 // Out loud. The agent joins a call and so does this device.
 val voice = VoiceSession.start(context, agents, options = SessionOptions(agent = "docs"))
 voice.join()

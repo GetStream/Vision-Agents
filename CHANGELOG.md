@@ -63,6 +63,14 @@ new conversation's session names `io.getstream.visionagents.androidassistant:/co
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
 
+### Kotlin sessions read their channel as Stream Chat keeps it
+
+`AgentSession.channelState(context, scope)` in the Kotlin SDK watches the conversation's Stream
+Chat channel on the client `chat(context)` opens and answers Stream Chat's
+`StateFlow<ChannelState?>`: its messages, oldest first, kept live by the client and watched again
+after a reconnect while the flow is held. `ChatClient.loadOlderMessages(cid, limit)` pages back
+into it. An incognito session, or a client connected as somebody else, is refused as by `chat`.
+
 ### Kotlin apps manage the user's scheduled tasks
 
 `agents.scheduledTasks` in the Kotlin SDK lists, reads, changes, pauses, resumes and deletes the

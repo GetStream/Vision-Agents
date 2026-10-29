@@ -1,5 +1,6 @@
 package io.getstream.visionagents.android.core
 
+import android.content.ContextWrapper
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -476,6 +477,18 @@ class AgentSessionTest {
         assertEquals("""{"title":"Hours"}""", request.body)
         assertEquals("Hours", updated.title)
         assertEquals("Hours", chat.session.title)
+        chat.close()
+    }
+
+    @Test
+    fun `a session that keeps no transcript has no channel to open or watch`() = runBlocking {
+        val chat = agents.chat()
+        val context = ContextWrapper(null)
+
+        val opening = assertFailsWith<AgentsException.Configuration> { chat.chat(context) }
+        val watching = assertFailsWith<AgentsException.Configuration> { chat.channelState(context, this) }
+        assertEquals(opening.message, watching.message)
+        assertTrue(opening.message.orEmpty().contains("keeps no transcript"))
         chat.close()
     }
 
