@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -77,7 +78,9 @@ func newWebhook(policy Policy, deps Deps) (Guardrail, error) {
 
 	client := deps.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: checkTimeout}
+		// The URL is the customer's, so the request may reach only a public address,
+		// checked at each dial and redirect.
+		client = egress.NewClient(checkTimeout, nil)
 	}
 	return &webhook{
 		policy: policy,
