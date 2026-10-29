@@ -94,6 +94,30 @@ func (s *AgentSuite) TestAToolARefusedReplyWroteAsATagDoesNotRun() {
 	s.Zero(countOfCalls(s.history()), "the refused reply's call is on the history")
 }
 
+func (s *AgentSuite) TestAToolAReplyThatFailedWroteAsATagDoesNotRun() {
+	book := s.booksVisits()
+	s.join(false)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "Please move visit v7 to Wednesday at 2pm.")
+	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the model was never asked")
+	script := s.model.opened(s.model.turns()[0].ID)
+	script.OutputText(`One moment. <call tool="move_visit" visit_id="v7" new_day="Wednesday" new_slot="2pm"/>`)
+	script.Fail(errors.New("stream reset"), "stream")
+	s.askedTurn(1)
+	s.model.mu.Lock()
+	s.model.reply = []string{"I am here."}
+	s.model.mu.Unlock()
+	s.says(participant, "Are you still there?")
+	s.askedTurn(2)
+
+	moved, _ := book.state()
+	s.Equal(appointment{date: "Monday", time: "9am"}, moved, "the failed reply moved the visit")
+	s.Zero(countOfCalls(s.history()), "the failed reply's call is on the history")
+}
+
 func (s *AgentSuite) TestAToolAnAllowedReplyAskedForRuns() {
 	book := s.booksVisits()
 	s.join(false)
