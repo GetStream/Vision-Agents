@@ -310,6 +310,7 @@ func dataPolicyOf(sent *DataPolicy) options.DataPolicy {
 	return options.DataPolicy{
 		AllowTraining: sent.AllowTraining,
 		Retention:     options.Retention(value(sent.Retention)),
+		Region:        value(sent.Region),
 	}
 }
 
@@ -320,6 +321,7 @@ func dataPolicyFor(held options.DataPolicy) *DataPolicy {
 	return &DataPolicy{
 		AllowTraining: held.AllowTraining,
 		Retention:     optional(string(held.Retention)),
+		Region:        optional(held.Region),
 	}
 }
 

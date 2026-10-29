@@ -17,7 +17,7 @@ Flash, Gemma 4 and OpenAI, with the usual router and stats on top, and a `llm-fa
 | [deepseek](../../acceleration/internal/llm/deepseek)         | Baseten's shared Model APIs, so no deployment    |
 | [openai](../../acceleration/internal/llm/openai)             | OpenAI                                           |
 | [gemini](../../acceleration/internal/llm/gemini)             | Google AI Studio                                 |
-| [gemma](../../acceleration/internal/llm/gemma)               | A dedicated Baseten vLLM deployment              |
+| [gemma](../../acceleration/internal/llm/gemma)               | A dedicated vLLM deployment (Nebius or Baseten) |
 
 All four speak OpenAI-compatible chat completions, so they share one implementation in
 [openaicompat](../../acceleration/internal/llm/openaicompat) and differ only in base URL,
@@ -71,7 +71,7 @@ a second; every Gemini 3 model thinks, so the provider pins it to minimal.
 
 ## Not done
 
-**Gemma is not deployed.** [deploy/gemma-4](../../acceleration/deploy/gemma-4) is written and
-validated but needs its own deployment, because Gemma is not on Baseten's shared Model APIs.
+**Gemma needs its own deployment.** [deploy/gemma-4](../../acceleration/deploy/gemma-4) holds the
+recipe for Nebius and Baseten, because Gemma is not on Baseten's shared Model APIs.
 With `GEMMA_BASE_URL` unset the provider fails to build and routing moves on, so a shortcut
 still resolves.

@@ -93,8 +93,10 @@ A caller says it is server-side twice. `Stream-Auth-Type: server` is the declara
 token carrying `server: true` with no `user_id` is the proof. Both are required because
 each fails closed in a different direction: nothing signs the header, and a server token
 pasted into a browser that sends the client header is treated as the browser it is. The
-header deliberately has no query parameter counterpart, which is what stops a browser
-opening a dispatch socket and answering somebody else's callers.
+header's query parameter counterpart, `stream-auth-type`, is read only in `proxy` mode
+without declared kinds and only as `jwt` or `anonymous`, so it can never name a backend,
+which is what stops a browser opening a dispatch socket and answering somebody else's
+callers.
 
 ## A server-side caller may name a user
 

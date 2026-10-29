@@ -374,7 +374,7 @@ func documentHandWritten(api huma.API) {
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device. This is the clearest case of why: a worker is offered other people's " +
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +
-			"type has no query parameter, so a browser cannot open one at all.",
+			"type's query parameter never names a backend, so it cannot make a browser's socket one.",
 		Parameters: []*huma.Param{
 			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Default: 4}},
 			{Name: "active", In: "query", Description: "How much work this worker is still running from before it reconnected, which the router " +
@@ -794,6 +794,25 @@ func documentHandWritten(api huma.API) {
 			"404": {Description: "Deliveries are not configured, or the app is not served here"},
 			"413": {Description: "The delivery is too large"},
 			"503": {Description: "The router does not know its own Stream app yet, or could not queue the message; Stream retries"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveCallStatus",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/status/{token}",
+		Summary:     "Receive a placed call's status",
+		Description: "Where the vendor that placed a call posts how it ended. Unauthenticated " +
+			"because the vendor is not a customer: the token made when the call was placed is the " +
+			"only proof, and it names that one call.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The status is recorded"},
+			"400": {Description: "The status could not be read"},
+			"404": {Description: "No placed call is waiting for its status at this token"},
+			"413": {Description: "The status is over 64 KiB"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

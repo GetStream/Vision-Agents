@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +30,11 @@ const (
 // itemLabels name the item a metering counter counts, and the item an alert is about.
 var itemLabels = []string{"modality", "provider", "model"}
 
+// pricedItemLabels are itemLabels with the item's region and whether it is BYOK: an item is
+// priced in each region and BYOK state apart, so it can be unpriced in one and priced in the
+// others.
+var pricedItemLabels = append(slices.Clone(itemLabels), "region", "byok")
+
 var (
 	usageMissing = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -42,8 +49,8 @@ var (
 	usageUnpriced = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_unpriced_total",
-		Help:      "Billable work that succeeded with no price, written at nothing until the item is priced",
-	}, itemLabels)
+		Help:      "Billable work that succeeded with no price, written at nothing until the item is priced in that region and BYOK state",
+	}, pricedItemLabels)
 	usageMismatch = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_mismatch_total",
@@ -64,7 +71,7 @@ func MeteringAlerts(limit time.Duration) []alerts.Condition {
 	return []alerts.Condition{
 		{Name: "missing", Level: alerts.Warn, Items: per(usageMissing, nil)},
 		{Name: "estimated", Level: alerts.Warn, Items: per(usageEstimated, map[string]string{"reason": estimatedMissing})},
-		{Name: "unpriced", Level: alerts.Warn, Items: per(usageUnpriced, nil)},
+		{Name: "unpriced", Level: alerts.Warn, Items: alerts.IncreasedPer(usageUnpriced, limit, pricedItemLabels, nil)},
 		{Name: "mismatch", Level: alerts.Warn, Items: per(usageMismatch, nil)},
 	}
 }
@@ -91,7 +98,7 @@ func (r *Recorder) watch(config ProviderConfig, entry Stat, request store.Reques
 	switch {
 	case quoted && quote.Unpriced:
 		// The list logs it as billable work with no price.
-		usageUnpriced.WithLabelValues(item[:]...).Inc()
+		usageUnpriced.WithLabelValues(item[0], item[1], item[2], regionOf(config), strconv.FormatBool(config.BYOK)).Inc()
 	case entry.Attributes[AttributeUsageEstimated] == "true":
 		reason := estimatedMissing
 		switch request.ErrorCode {

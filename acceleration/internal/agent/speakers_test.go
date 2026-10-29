@@ -30,12 +30,12 @@ func (s *AgentSuite) TestOnePersonsTurnsReachTheModelAsTheySaidThem() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
 	second := s.model.requests()[1]
-	s.Equal("be brief", second.Instructions)
+	s.Equal("be brief", withoutClock(second.Instructions))
 	s.Require().Len(second.Input, 3)
 	s.Equal(llm.Message{Role: llm.User, Content: "hello"}, second.Input[0])
 	s.Equal("Hello there. How are you?", second.Input[1].Content)
 	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, second.Input[2])
-	s.True(strings.HasSuffix(s.flow.requests()[1].Instructions, "The agent has been told:\nbe brief"))
+	s.True(strings.HasSuffix(withoutClock(s.flow.requests()[1].Instructions), "The agent has been told:\nbe brief"))
 }
 
 func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
@@ -56,8 +56,8 @@ func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 3 }, "alice was never answered again")
 
 	requests := s.model.requests()
-	s.Equal("be brief", requests[0].Instructions, "one person so far, so nothing is said about several")
-	s.Equal("be brief\n\n"+severalSpeakers, requests[1].Instructions)
+	s.Equal("be brief", withoutClock(requests[0].Instructions), "one person so far, so nothing is said about several")
+	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(requests[1].Instructions))
 	third := requests[2].Input
 	s.Require().Len(third, 5)
 	s.Equal("hello", third[0].Content, "a turn from before the second person spoke stays as it was")
@@ -88,7 +88,7 @@ func (s *AgentSuite) TestTypedWordsAreTheCallersAndNeverCountAsASecondPerson() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the typed words were never answered")
 	second := s.model.requests()[1]
-	s.Equal("be brief", second.Instructions)
+	s.Equal("be brief", withoutClock(second.Instructions))
 	s.Equal("typed words", second.Input[2].Content)
 }
 
@@ -109,7 +109,7 @@ func (s *AgentSuite) TestAWrittenAsideReadsTheNamesToo() {
 	s.Require().NoError(err)
 
 	asked := s.model.requests()[2]
-	s.Equal("be brief\n\n"+severalSpeakers, asked.Instructions)
+	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(asked.Instructions))
 	s.Equal("Bob: hi there", asked.Input[2].Content)
 	s.Equal("what did bob say", asked.Input[4].Content)
 }
@@ -137,7 +137,7 @@ func (s *AgentSuite) TestASpeculativeReplyToASecondPersonIsWrittenWithTheirName(
 
 	requests := s.model.requests()
 	s.Len(requests, 2, "the reply started early is the one spoken")
-	s.Equal("be brief\n\n"+severalSpeakers, requests[1].Instructions,
+	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(requests[1].Instructions),
 		"the early reply is told what the answered turn is told")
 	s.Equal("Bob: hi there", requests[1].Input[2].Content)
 	s.Equal("Bob", s.agent.History()[2].Speaker)
@@ -164,7 +164,7 @@ func (s *AgentSuite) TestADroppedSpeculationDoesNotCountItsSpeaker() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "alice was never answered")
 
 	answered := s.model.requests()[len(s.model.requests())-1]
-	s.Equal("be brief", answered.Instructions)
+	s.Equal("be brief", withoutClock(answered.Instructions))
 	s.Equal([]llm.Message{{Role: llm.User, Content: "hello"}}, answered.Input)
 }
 
@@ -199,7 +199,7 @@ func (s *AgentSuite) TestAPersonWhoRejoinsIsStillOnePerson() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the rejoined turn was never answered")
 
 	second := s.model.requests()[1]
-	s.Equal("be brief", second.Instructions)
+	s.Equal("be brief", withoutClock(second.Instructions))
 	s.Equal(llm.Message{Role: llm.User, Content: "I am back"}, second.Input[len(second.Input)-1])
 }
 
@@ -255,7 +255,7 @@ func (s *AgentSuite) TestASpeculativeReplyAfterTwoPeopleSpokeIsToldAboutThemOnce
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 3 }, "alice was never answered again")
 
 	third := s.model.requests()[2]
-	s.Equal("be brief\n\n"+severalSpeakers, third.Instructions)
+	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(third.Instructions))
 	s.Equal("Alice: and me", third.Input[len(third.Input)-1].Content)
 }
 
@@ -279,7 +279,7 @@ func (s *AgentSuite) TestASpeculativeReplyWithOnePersonIsUnchanged() {
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "alice was never answered again")
 
 	second := s.model.requests()[1]
-	s.Equal("be brief", second.Instructions)
+	s.Equal("be brief", withoutClock(second.Instructions))
 	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, second.Input[len(second.Input)-1])
 }
 
@@ -339,7 +339,7 @@ func (s *AgentSuite) TestTheNamesOfThePeopleHeardCarryOnToTheAgentThatTakesOver(
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "alice was never answered after the switch")
 
 	asked := s.model.requests()[0]
-	s.Equal("be brief\n\n"+severalSpeakers, asked.Instructions)
+	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(asked.Instructions))
 	s.Require().Len(asked.Input, 5)
 	s.Equal("hello", asked.Input[0].Content)
 	s.Equal("Bob: hi there", asked.Input[2].Content)

@@ -10,4 +10,4 @@ await chat.responses.create('What are your opening hours?');
 chat.conversation.stream.listen((conversation) => print(conversation.turns.last.text));
 ```
 
-See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart) for the rest.
+See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.

@@ -345,6 +345,8 @@ async def _declare_settings(
     """
     if settings.mode:
         body.mode = AgentMode(settings.mode)
+    if settings.region:
+        body.region = settings.region
     if settings.stt:
         body.stt = settings.stt
     if settings.tts:

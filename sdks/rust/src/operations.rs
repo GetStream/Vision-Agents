@@ -1468,6 +1468,58 @@ impl Client {
         )
         .await
     }
+    /// The keys the calling customer keeps for their own accounts at the vendors
+    ///
+    /// `GET /v1/agents/provider-keys` (`listProviderKeys`).
+    pub async fn list_provider_keys(
+        &self,
+        query: &ListProviderKeysQuery,
+    ) -> Result<types::ProviderKeyPage> {
+        self.send(
+            Method::GET,
+            "/v1/agents/provider-keys",
+            Some(query),
+            None::<&()>,
+            "listProviderKeys",
+        )
+        .await
+    }
+    /// Keep a key for the customer's own account at a vendor
+    ///
+    /// `PUT /v1/agents/provider-keys` (`putProviderKey`).
+    pub async fn put_provider_key(
+        &self,
+        body: &types::ProviderKeyRequest,
+    ) -> Result<types::ProviderKey> {
+        self.send(
+            Method::PUT,
+            "/v1/agents/provider-keys",
+            None::<&()>,
+            Some(body),
+            "putProviderKey",
+        )
+        .await
+    }
+    /// Forget a key the customer keeps for a vendor
+    ///
+    /// `DELETE /v1/agents/provider-keys/{provider}` (`deleteProviderKey`).
+    pub async fn delete_provider_key(
+        &self,
+        provider: &str,
+        query: &DeleteProviderKeyQuery,
+    ) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/provider-keys/{provider}",
+                provider = segment(provider)
+            ),
+            Some(query),
+            None::<&()>,
+            "deleteProviderKey",
+        )
+        .await
+    }
     /// Run an agent on one input and wait for its answer
     ///
     /// `POST /v1/agents/runs` (`createRun`).
@@ -3113,6 +3165,36 @@ impl Client {
         )
         .await
     }
+    /// Have an agent answer a number's calls
+    ///
+    /// `PUT /v1/phone/numbers/{e164}/agent` (`setPhoneNumberAgent`).
+    pub async fn set_phone_number_agent(
+        &self,
+        e164: &str,
+        body: &types::SetNumberAgentRequest,
+    ) -> Result<types::PhoneNumber> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/phone/numbers/{e164}/agent", e164 = segment(e164)),
+            None::<&()>,
+            Some(body),
+            "setPhoneNumberAgent",
+        )
+        .await
+    }
+    /// Send a number's calls back to dispatch
+    ///
+    /// `DELETE /v1/phone/numbers/{e164}/agent` (`removePhoneNumberAgent`).
+    pub async fn remove_phone_number_agent(&self, e164: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/phone/numbers/{e164}/agent", e164 = segment(e164)),
+            None::<&()>,
+            None::<&()>,
+            "removePhoneNumberAgent",
+        )
+        .await
+    }
     /// Point a number at a Stream call
     ///
     /// `POST /v1/phone/numbers/{e164}/attach` (`attachPhoneNumber`).
@@ -3211,6 +3293,19 @@ impl Client {
             None::<&()>,
             body,
             "setSandboxRecipients",
+        )
+        .await
+    }
+    /// Receive a placed call's status
+    ///
+    /// `POST /v1/phone/status/{token}` (`receiveCallStatus`).
+    pub async fn receive_call_status(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/status/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveCallStatus",
         )
         .await
     }
@@ -4284,6 +4379,23 @@ pub struct PluginOAuthCallbackQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+/// The query string `listProviderKeys` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListProviderKeysQuery {
+    /// Up to 200. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `deleteProviderKey` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteProviderKeyQuery {
+    /// The region the key is kept for. Omitted is us.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+}
 /// The query string `listScheduledTasks` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListScheduledTasksQuery {
@@ -4574,6 +4686,9 @@ pub struct GetPricesQuery {
     /// Only this modality's items, such as llm, stt, tts, sms or phone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modality: Option<String>,
+    /// Only this region's items, such as us or eu.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
 }
 /// The query string `listLimits` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

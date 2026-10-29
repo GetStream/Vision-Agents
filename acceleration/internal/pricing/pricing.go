@@ -95,12 +95,17 @@ var (
 	outputSplit = []Meter{OutputTextTokens, OutputAudioTokens}
 )
 
-// Item is what is priced: a model of a provider in a modality, and the attributes of the
-// work that can choose between its entries, such as a service tier or a country.
+// Item is what is priced: a model of a provider in a modality, in the region the work ran in
+// and with or without the customer's own key, and the attributes of the work that can choose
+// between its entries, such as a service tier or a country.
 type Item struct {
-	Modality   string
-	Provider   string
-	Model      string
+	Modality string
+	Provider string
+	Model    string
+	// Region and BYOK are matched exactly: an item is priced only by an entry of its own region
+	// and BYOK state, never by another's.
+	Region     string
+	BYOK       bool
 	Attributes map[string]string
 }
 
@@ -184,10 +189,15 @@ type Tier struct {
 // without any is the item's default. Free and Local say why an entry with no price is not
 // billed: the vendor charges nothing, or the deployment runs the model itself.
 type Entry struct {
-	Modality string            `json:"modality"`
-	Provider string            `json:"provider"`
-	Model    string            `json:"model"`
-	When     map[string]string `json:"when,omitempty"`
+	Modality string `json:"modality"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	// Region is where the work it prices runs, such as RegionUS. Every entry names one.
+	Region string `json:"region"`
+	// BYOK prices work done with the customer's own key, which their vendor bills them for:
+	// the price is a fee, BYOKFeeBps of the vendor's rates unless the entry sets its own.
+	BYOK bool              `json:"byok,omitempty"`
+	When map[string]string `json:"when,omitempty"`
 	// SKU names the item for as long as it is priced, whatever its price: it is kept across
 	// every change of the item's price, and only ever names one item in force.
 	SKU   string `json:"sku,omitempty"`
@@ -222,7 +232,8 @@ type Quote struct {
 	// OutputCostMicros is the share of CostMicros the generated tokens cost.
 	OutputCostMicros int64
 	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on a row
-	// is CostMicros - BaseCostMicros.
+	// is CostMicros - BaseCostMicros. It is 0 on a BYOK quote: the vendor bills the customer,
+	// so the work costs the operator nothing and CostMicros, the BYOK price, is all margin.
 	BaseCostMicros int64
 	// SKU is the priced item's; empty for work no entry matched.
 	SKU      string
@@ -275,7 +286,8 @@ func (e Entry) Quote(used Quantities) Quote {
 }
 
 // quote charges used at this entry's prices, and works out its cost at the vendor's rates
-// beside it. A long prompt picks the same tier from both, since their thresholds are one.
+// beside it, which is nothing for a BYOK entry. A long prompt picks the same tier from both,
+// since their thresholds are one.
 func (e Entry) quote(used Quantities) Quote {
 	if !e.priced() {
 		billable := !e.Free && !e.Local
@@ -287,7 +299,10 @@ func (e Entry) quote(used Quantities) Quote {
 		prompt += used[meter]
 	}
 	micros, outputMicros, rated := costAt(tierOf(e.Prices, e.PriceTiers, prompt), used)
-	base, _, _ := costAt(tierOf(e.Rates, e.Tiers, prompt), used)
+	var base float64
+	if !e.BYOK {
+		base, _, _ = costAt(tierOf(e.Rates, e.Tiers, prompt), used)
+	}
 	cost := roundHalfUp(micros)
 	return Quote{
 		CostMicros:       cost,

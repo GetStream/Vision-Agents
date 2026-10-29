@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"net/http"
@@ -12,11 +13,13 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/credentialstores/pgsealed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // revokeFailed is the line revokeAtProvider logs when the provider did not revoke (AI-1544).
@@ -178,6 +181,137 @@ func (s *AuthorizationsSuite) TestACallerThatHangsUpStillEndsTheGrantAtTheProvid
 	s.Require().Eventually(func() bool { return errors.As(s.renew(stored, manifest), &refused) }, 5*time.Second, 20*time.Millisecond)
 	s.Equal(core.OutcomeInvalidGrant, refused.Outcome.Kind)
 	s.Empty(s.logged.lines(revokeFailed, id))
+}
+
+// A caller that hangs up once the delete committed still leaves the delete's "grant revoked"
+// audit row (AI-2163): nothing could write it later. The test holds one of the connection's
+// MCP event subscriptions locked, so the delete waits in mcpEvents.Stop, after its commit and
+// before its audit row, and hangs up there, as net/http does when the caller goes.
+func (s *AuthorizationsSuite) TestACallerThatHangsUpAfterTheDeleteStillLeavesItsAuditRow() {
+	id := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	s.connect(id)
+	ctx := context.Background()
+	_, err := s.store.AddConnectionEventSubscription(ctx, &store.ConnectionEventSubscription{
+		CustomerID: s.customerID(), ConnectionID: id, ConfigID: "cfg_" + s.utils.uuid(), Binding: "crm",
+		Event: "issue_created", Key: "issue_created", Token: s.utils.uuid(), SecretSealed: []byte("synthetic"),
+		KEKVersion: 1, Status: store.ConnectionEventActive,
+	})
+	s.Require().NoError(err)
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	var holder int
+	s.Require().NoError(hold.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder))
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM connection_event_subscriptions WHERE connection_id = ? FOR UPDATE", id)
+	s.Require().NoError(err)
+
+	request, hangUp := context.WithCancel(context.WithValue(context.WithValue(ctx,
+		customerContextKey{}, s.customerID()), serverSideContextKey{}, true))
+	defer hangUp()
+	answered := make(chan error, 1)
+	go func() {
+		_, err := s.router.deleteConnection(request, &deleteConnectionRequest{ID: id})
+		answered <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", holder).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the delete never reached its MCP event subscriptions")
+	hangUp()
+	s.Require().NoError(hold.Rollback())
+	s.Require().NoError(<-answered)
+
+	events, err := s.store.ConnectorAuditEvents(ctx, s.customerID(), store.AuditFilter{ConnectionID: id})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(events)
+	s.Equal(store.AuditGrantRevoked, events[0].Action)
+	s.Equal(store.AuditReasonDeleted, events[0].Reason)
+}
+
+// The client a consent's credentials name is kept although its caller hung up once the
+// consent committed (AI-2163): only the next consent would write it again.
+func (s *AuthorizationsSuite) TestTheClientOfAConsentWhoseCallerHungUpIsKept() {
+	consented := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	s.connect(consented)
+	stored, _ := s.held(consented)
+	ctx := context.Background()
+	recorded, err := s.store.ConnectorConnectionClients(ctx, []string{consented})
+	s.Require().NoError(err)
+	s.Require().Contains(recorded, consented, "the consent records its client")
+	pending := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+
+	gone, hangUp := context.WithCancel(ctx)
+	hangUp()
+	s.router.recordClient(gone, pending, stored)
+
+	clients, err := s.store.ConnectorConnectionClients(ctx, []string{pending})
+	s.Require().NoError(err)
+	s.Require().Contains(clients, pending)
+	s.Equal(recorded[consented].ClientID, clients[pending].ClientID)
+}
+
+// A detached write gives up at auditWriteTimeout when the pool has no free connection
+// (AI-2163): database/sql waits for one without a limit. The test holds every connection of
+// the suite's pool, runs the four detached writes at once and reads, per write, how long it
+// took to return.
+func (s *AuthorizationsSuite) TestADetachedWriteGivesUpWhenThePoolIsFull() {
+	ctx := context.Background()
+	consented := s.revokingConnection(s.provider.URL+fakeprovider.PathRevoke, optInRevoke)
+	s.connect(consented)
+	stored, _ := s.held(consented)
+	var held []*sql.Conn
+	defer func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+	for range suiteConnections {
+		conn, err := s.store.DB().DB.Conn(ctx)
+		s.Require().NoError(err)
+		held = append(held, conn)
+	}
+	gone, hangUp := context.WithCancel(context.WithValue(ctx, customerContextKey{}, s.customerID()))
+	hangUp()
+	connection := store.ConnectorConnection{CustomerID: s.customerID(), ID: "conn_" + s.utils.uuid(), ConnectorID: "x", OwnerType: "app"}
+	writes := map[string]func(){
+		"audit": func() {
+			s.router.audit(gone, auditRecord{ResourceType: store.AuditAgentConfig, ResourceID: "cfg_x", ResourceName: "x",
+				Action: store.AuditDeleted, Changes: []store.AuditChange{{Field: "llm", Before: "a"}}})
+		},
+		"grant": func() {
+			s.router.auditGrant(gone, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+				store.AuditGrantRevoked, store.AuditReasonDeleted, 0, "", core.CredentialChange{})
+		},
+		"client": func() { s.router.recordClient(gone, connection.ID, stored) },
+		"proxy":  func() { s.router.auditProxyCall(gone, connection, "example.com", nil, 1) },
+	}
+	took := make(map[string]time.Duration, len(writes))
+	var mu sync.Mutex
+	var group sync.WaitGroup
+	start := time.Now()
+	for name, write := range writes {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			write()
+			mu.Lock()
+			took[name] = time.Since(start)
+			mu.Unlock()
+		}()
+	}
+	// Past the bound, free the pool: a write with no bound returns now, too late.
+	release := time.AfterFunc(auditWriteTimeout+time.Second, func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	})
+	defer release.Stop()
+	group.Wait()
+	for name := range writes {
+		s.Less(took[name], auditWriteTimeout+time.Second, "the %s write waits on a full pool past its bound", name)
+	}
 }
 
 // A connection that never finished a consent holds no grant, so its delete asks nothing of the

@@ -81,7 +81,7 @@ func (s *MeteredSuite) SetupTest() {
 func (s *MeteredSuite) priced(modality routing.Modality, provider, model string, attributes map[string]string,
 	used pricing.Quantities,
 ) int64 {
-	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Attributes: attributes}
+	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Region: pricing.DefaultRegion, Attributes: attributes}
 	return pricingtest.Micros(s.T(), s.prices, item, used)
 }
 
@@ -224,7 +224,7 @@ func (s *MeteredSuite) TestAnHourOfStorageIsBilledOnceHoweverOftenItIsSampled() 
 	hour := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
 
 	for _, at := range []time.Time{hour.Add(17 * time.Minute), hour.Add(48 * time.Minute), hour.Add(time.Hour)} {
-		stored, err := base.Storage(s.ctx, s.owner, namespace, at)
+		stored, err := base.Storage(s.ctx, s.owner, pricing.DefaultRegion, namespace, at)
 		s.Require().NoError(err)
 		s.EqualValues(2_000_000_000, stored.ByteHours)
 	}
@@ -247,7 +247,7 @@ func (s *MeteredSuite) TestAnEmptyKnowledgeBaseWritesNoStorageRow() {
 	namespace := knowledge.Scoped(s.owner.CustomerID, "docs")
 	server.Holds(namespace, 0)
 
-	stored, err := base.Storage(s.ctx, s.owner, namespace, time.Now())
+	stored, err := base.Storage(s.ctx, s.owner, pricing.DefaultRegion, namespace, time.Now())
 
 	s.Require().NoError(err)
 	s.Zero(stored.ByteHours)

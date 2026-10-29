@@ -271,7 +271,12 @@ func (w *Workers) ask(ctx context.Context, address string, request workRequest, 
 		w.mu.Unlock()
 	}()
 
-	if err := w.bus.Publish(ctx, w.directory.requestsFor(address), request); err != nil {
+	if err := ctx.Err(); err != nil {
+		return workReply{}, fmt.Errorf("stopped: %w", err)
+	}
+	// Published past the caller giving up: a cancel can end the publish after Redis took it,
+	// and a request the other node is running then needs the stop sent below.
+	if err := w.bus.Publish(context.WithoutCancel(ctx), w.directory.requestsFor(address), request); err != nil {
 		return workReply{}, fmt.Errorf("could not reach the node with the worker: %w", err)
 	}
 	deadline, cancel := context.WithTimeout(ctx, timeout)

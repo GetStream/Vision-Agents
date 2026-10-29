@@ -631,7 +631,7 @@ export type paths = {
         readonly post?: never;
         /**
          * Delete an agent config
-         * @description Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+         * @description Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["deleteAgentConfig"];
@@ -1750,6 +1750,53 @@ export type paths = {
          */
         readonly post: operations["receivePluginEvent"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/provider-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The keys the calling customer keeps for their own accounts at the vendors
+         * @description Each key's provider, region, last four characters and when it was put. A key itself is never returned.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listProviderKeys"];
+        /**
+         * Keep a key for the customer's own account at a vendor
+         * @description Bring your own key (BYOK). The key replaces the one kept for the provider in the region, and is stored sealed and never returned. From the next request, each model of that provider in that region is tried on the customer's key first, immediately before the deployment's own instance of it, which is asked next when the customer's fails, as any next candidate is. Work on the customer's key is billed to them by the vendor, and by the router at its BYOK price, a fee of 20% of what the work costs at the vendor's rates. A turbopuffer key keeps the knowledge bases the customer first writes from then on in their own turbopuffer account, and a daytona key makes their sandboxes in their own Daytona organization. A provider whose work is never routed on a customer's key is refused with provider_takes_no_key, naming the ones that are. Only a key is taken, never an endpoint: the deployment's own is used.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly put: operations["putProviderKey"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/provider-keys/{provider}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Forget a key the customer keeps for a vendor
+         * @description Work is routed on the deployment's own keys from the next request. A knowledge base kept in the customer's own turbopuffer account is refused until a key for its region is put back: it is never read from the deployment's account.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteProviderKey"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2993,7 +3040,7 @@ export type paths = {
          *     The socket opens with a `ready` frame naming the worker, and a `call` or `message` frame arrives for each piece of work handed to it, each carrying the `work_id` that names it. The worker answers `done` with that `work_id`, and an `error` when it could not be done, which is what frees its room for the next piece. It also sends `load` so an operator can see what each worker is under, and `ping` to time the round trip itself.
          *     Work goes to whichever of a customer's workers is holding the least of what it said it can hold, so a worker that never reports `done` is one the router cannot tell is busy.
          *     A `message` written to a running session whose agent sets `dispatch.text` carries that `session_id`, and a `request_id` when it was sent as a durable command. The model has not answered it: the worker does, by creating a response on that session with a server-side credential and the same `request_id` and text.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type's query parameter never names a backend, so it cannot make a browser's socket one.
          */
         readonly get: operations["dispatchCalls"];
         readonly put?: never;
@@ -3189,6 +3236,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/numbers/{e164}/agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Have an agent answer a number's calls
+         * @description Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+         */
+        readonly put: operations["setPhoneNumberAgent"];
+        readonly post?: never;
+        /**
+         * Send a number's calls back to dispatch
+         * @description The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+         */
+        readonly delete: operations["removePhoneNumberAgent"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/numbers/{e164}/attach": {
         readonly parameters: {
             readonly query?: never;
@@ -3321,6 +3392,26 @@ export type paths = {
          */
         readonly put: operations["setSandboxRecipients"];
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/status/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a placed call's status
+         * @description Where the vendor that placed a call posts how it ended. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+         */
+        readonly post: operations["receiveCallStatus"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3632,7 +3723,7 @@ export type paths = {
         };
         /**
          * Read the price list
-         * @description Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
+         * @description Every item this router prices, at the rates a customer is charged, which are what every answer's X-Stream-Cost-Micros is worked out from: a rate is USD for every per units of its meter, and a long prompt is priced whole at its tier's rates. Each item is priced in its `region`, and work done with the customer's own key at its `byok` price, a fee on top of what the vendor bills the customer; neither falls back to another region's price or the other `byok` state's. Then what the changes scheduled later will set, soonest first, with their reason, an item they withdraw included. The list is the one in memory, so reading it costs no query; a change made on another router shows within 30 seconds. Prices are the same for everyone, so any caller may read them.
          */
         readonly get: operations["getPrices"];
         readonly put?: never;
@@ -4307,6 +4398,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
+             * @example us
+             */
+            readonly region: string;
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             /** @description Absent when calls are reviewed by Stream's default guide. */
             readonly review?: components["schemas"]["AgentReview"];
@@ -4364,6 +4460,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
+             * @example eu
+             */
+            readonly region?: string;
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             readonly review?: components["schemas"]["AgentReview"];
             readonly role?: components["schemas"]["AgentRole"];
@@ -4421,6 +4522,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
+             * @example eu
+             */
+            readonly region?: string;
             /** @description How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay. */
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             /** @description How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay. */
@@ -4660,6 +4766,8 @@ export type components = {
             readonly stream: components["schemas"]["StreamSettings"];
         };
         readonly AttachedNumber: {
+            /** @description The agent config that answers the number's calls. Present, no call is dispatched to a worker. */
+            readonly agent_config_id?: string;
             readonly route_id: string;
             /** @description Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com. */
             readonly sip_uri: string;
@@ -4733,10 +4841,10 @@ export type components = {
             readonly limit?: number;
         };
         /**
-         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id.
+         * @description What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
          * @enum {string}
          */
-        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit";
+        readonly AuditResourceType: "agent_config" | "skill" | "knowledge" | "knowledge_url" | "router_config" | "plugin" | "policy" | "price_list" | "end_user" | "limit" | "provider_key";
         /**
          * @description Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
          * @enum {string}
@@ -4961,6 +5069,17 @@ export type components = {
             /** @description The exchange it was about, which lines it up against that turn's timings. */
             readonly turn_id?: string;
         };
+        /**
+         * @description How a placed call ended.
+         *     completed: the person answered and the call ended.
+         *     busy: the line was busy or the person declined.
+         *     no_answer: it rang and nobody answered.
+         *     failed: the vendor could not place it, for a bad number or a carrier fault.
+         *     canceled: the vendor says the call was hung up before an answer.
+         *     unknown: the vendor reports nothing about how it ended, and the phone never joined.
+         * @enum {string}
+         */
+        readonly CallOutcome: "completed" | "busy" | "no_answer" | "failed" | "canceled" | "unknown";
         readonly CallToken: {
             /** @description The Stream app the call is in, which the browser SDK joins against. */
             readonly api_key: string;
@@ -5846,6 +5965,8 @@ export type components = {
             readonly error?: string;
             readonly id: string;
             readonly instructions?: string;
+            /** @description How the call to them ended, once it has. The state still says only whether they were rung. */
+            readonly outcome?: components["schemas"]["CallOutcome"];
             /** @enum {string} */
             readonly state: "pending" | "calling" | "done" | "failed";
             readonly to_number: string;
@@ -6224,10 +6345,15 @@ export type components = {
                 readonly [key: string]: number;
             };
         };
-        /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
+        /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
         readonly DataPolicy: {
             /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
             readonly allow_training?: boolean;
+            /**
+             * @description Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region.
+             * @example eu
+             */
+            readonly region?: string;
             /**
              * @description The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
              * @example none
@@ -6361,7 +6487,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -7188,7 +7314,7 @@ export type components = {
              * @description Request to completed response or failed create.
              */
             readonly duration_ms?: number;
-            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. Any other code, timeout included, is a failure and counts against the provider's health. */
+            /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key. */
             readonly error_code?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
@@ -7317,6 +7443,8 @@ export type components = {
          */
         readonly PhoneCapability: "voice" | "sms" | "mms" | "fax" | "emergency" | "hd_voice" | "international_sms" | "local_calling";
         readonly PhoneNumber: {
+            /** @description The agent config that answers the number's calls. Absent, its calls are dispatched to a worker. */
+            readonly agent_config_id?: string;
             readonly capabilities: readonly components["schemas"]["PhoneCapability"][];
             readonly country: string;
             readonly e164: string;
@@ -7533,7 +7661,7 @@ export type components = {
             readonly budget?: {
                 readonly [key: string]: unknown;
             };
-            readonly data_policy?: components["schemas"]["DataPolicy"];
+            readonly data_policy?: components["schemas"]["PolicyDataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
             readonly quota?: components["schemas"]["Quota"];
@@ -7555,6 +7683,16 @@ export type components = {
              * @example 30d
              */
             readonly tool_output_retention?: string;
+        };
+        /** @description What an organization or an app requires of what happens to what its requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have. */
+        readonly PolicyDataPolicy: {
+            /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
+            readonly allow_training?: boolean;
+            /**
+             * @description The longest a provider may keep what it is sent - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+             * @example none
+             */
+            readonly retention?: string;
         };
         /**
          * @description Whose policy: an organization's, an app's, or one end user's.
@@ -7580,8 +7718,10 @@ export type components = {
             /** @description Who is carrying the call, e.g. "telnyx". */
             readonly vendor: string;
         };
-        /** @description What one item costs: a model of a provider in a modality, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. */
+        /** @description What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself. */
         readonly Price: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description The price change that set it: on an entry in force, the price_version of every row it prices. Absent for a model the deployment runs itself that no change prices. */
             readonly change?: string;
             /** @description In upcoming: why the change is made. */
@@ -7603,6 +7743,8 @@ export type components = {
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item's SKU, the same across its price changes, which every usage event of its work records. Absent for a model the deployment runs itself that no change prices. */
             readonly sku?: string;
             /** @description What a customer is charged for long prompts. */
@@ -7634,6 +7776,8 @@ export type components = {
             readonly source: string;
         };
         readonly PriceChangeEntry: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             readonly free?: boolean;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
@@ -7649,6 +7793,8 @@ export type components = {
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item's SKU: the one it is priced under, or the one a withdrawal stopped pricing. */
             readonly sku: string;
             /** @description The vendor's cost for long prompts, for reference. */
@@ -7707,6 +7853,8 @@ export type components = {
             readonly version?: string;
         };
         readonly PriceEntry: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /**
              * Format: date-time
              * @description When the entry took effect, or takes effect.
@@ -7730,6 +7878,8 @@ export type components = {
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices. */
             readonly sku?: string;
             /** @description The vendor's cost for long prompts, for reference. */
@@ -7742,6 +7892,8 @@ export type components = {
             };
         };
         readonly PriceEntryInput: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description The vendor charges nothing for it. A free entry has no price. */
             readonly free?: boolean;
             /** @description Refused with invalid_price: a model is local when the routing config says so. */
@@ -7751,7 +7903,7 @@ export type components = {
             readonly model: string;
             /** @description What customers are charged for long prompts: one tier for each of tiers, at its threshold and with its meters, or 400 price_tiers_mismatch. */
             readonly price_tiers?: readonly components["schemas"]["PriceTier"][] | null;
-            /** @description What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them. Bounded as a rate is. */
+            /** @description What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is. */
             readonly prices?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
@@ -7760,7 +7912,9 @@ export type components = {
             readonly rates?: {
                 readonly [key: string]: components["schemas"]["PriceRate"];
             };
-            /** @description The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model and when. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed. */
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
+            /** @description The item's SKU. Absent keeps the one the item has, or gives a new item one made from its modality, provider, model, when, region and byok. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, only when that item is withdrawn in the same change or is no longer in force: else 400 sku_in_use. An item in force keeps its SKU: another is 400 sku_changed. */
             readonly sku?: string;
             /** @description The vendor's cost for long prompts. Each tier rates every meter the entry does. */
             readonly tiers?: readonly components["schemas"]["PriceTier"][] | null;
@@ -7774,10 +7928,14 @@ export type components = {
             readonly withdrawn?: boolean;
         };
         readonly PriceItem: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
             readonly provider: string;
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
             readonly when?: {
                 readonly [key: string]: string;
@@ -7812,6 +7970,8 @@ export type components = {
             readonly after?: components["schemas"]["PricedEntry"];
             /** @description How it is priced before the change. Absent when nothing prices it. */
             readonly before?: components["schemas"]["PricedEntry"];
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /** @description Such as llm, stt, tts, sms or phone. */
             readonly modality: string;
             readonly model: string;
@@ -7821,6 +7981,8 @@ export type components = {
                 readonly [key: string]: number;
             };
             readonly provider: string;
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description It is priced before the change and billable with no price after. */
             readonly unpriced?: boolean;
             /** @description The item attributes the entry applies to, such as {"service_tier": "flex"}. Absent is the item's default entry. */
@@ -7856,7 +8018,7 @@ export type components = {
              * @description The moment the list is read at.
              */
             readonly at: string;
-            /** @description Every item priced now, by modality, provider and model. */
+            /** @description Every item priced now, by modality, provider, model and region, each item's BYOK price after the one that is not BYOK. */
             readonly entries: readonly components["schemas"]["Price"][];
             /** @description What the changes scheduled after at will set, soonest first. */
             readonly upcoming: readonly components["schemas"]["Price"][];
@@ -7884,6 +8046,11 @@ export type components = {
             /** @example elevenlabs */
             readonly provider: string;
             readonly realtime: boolean;
+            /**
+             * @description Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances.
+             * @example us
+             */
+            readonly region: string;
             /**
              * @description The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none.
              * @example [
@@ -7960,6 +8127,47 @@ export type components = {
              * @description Requests seen in the current health window.
              */
             readonly requests: number;
+        };
+        readonly ProviderKey: {
+            /**
+             * Format: date-time
+             * @description When a key for the provider in the region was first put.
+             */
+            readonly created_at: string;
+            /**
+             * @description The key's last four characters, so one key can be told from another; empty for a key under 16 characters. The key itself is never returned.
+             * @example x9Qa
+             */
+            readonly key_hint: string;
+            /** @example anthropic */
+            readonly provider: string;
+            /** @example us */
+            readonly region: string;
+            /**
+             * Format: date-time
+             * @description When the key now kept was put.
+             */
+            readonly updated_at: string;
+        };
+        readonly ProviderKeyPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ProviderKey"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
+        readonly ProviderKeyRequest: {
+            /** @description The key, as the vendor issued it. Stored sealed and never returned. */
+            readonly api_key: string;
+            /**
+             * @description The vendor the key is for, as the router names it: a language model vendor whose models take a key of their own here (openai, anthropic, gemini, xai, deepseek where routed), turbopuffer or daytona.
+             * @example anthropic
+             */
+            readonly provider: string;
+            /**
+             * @description The region whose work the key is used for: only the instances running there are tried on it. Omitted is us.
+             * @example eu
+             */
+            readonly region?: string;
         };
         /** @description What this deployment is billed for the model, in US dollars. A rate is absent when the model is not billed by that unit. */
         readonly ProviderPrice: {
@@ -8432,6 +8640,8 @@ export type components = {
             readonly agent_id: string;
             /** @description The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing. */
             readonly call_id: string;
+            /** @description How the call the router placed for this session ended. Read by a backend only. */
+            readonly call_outcome?: components["schemas"]["SessionCallOutcome"];
             readonly call_type: string;
             /**
              * Format: date-time
@@ -8502,6 +8712,21 @@ export type components = {
             readonly id: string;
             /** @description The call type, such as default. */
             readonly type: string;
+        };
+        /** @description How the call the router placed for a session ended. */
+        readonly SessionCallOutcome: {
+            /**
+             * Format: date-time
+             * @description When the person picked up: their phone joined the call.
+             */
+            readonly answered_at?: string;
+            /**
+             * Format: int64
+             * @description How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has.
+             */
+            readonly duration_seconds?: number;
+            /** @description How the call ended. Absent while it is ringing or under way. */
+            readonly outcome?: components["schemas"]["CallOutcome"];
         };
         /** @description The connection a session uses for one of its agent config's connector bindings chosen per session. Only a reference: the credential stays sealed on the connection. */
         readonly SessionConnectorBinding: {
@@ -8671,6 +8896,12 @@ export type components = {
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
+        };
+        readonly SetNumberAgentRequest: {
+            /** @description The name of the agent config that answers the number. Give this or config_id. */
+            readonly agent?: string;
+            /** @description The id of the agent config that answers the number. Give this or agent. */
+            readonly config_id?: string;
         };
         /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
         readonly SetPluginClientRequest: {
@@ -9299,6 +9530,11 @@ export type components = {
              * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            /**
+             * @description agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
+             * @example eu
+             */
+            readonly region?: string;
             /** @description How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored. */
             readonly resume_history?: components["schemas"]["ResumeHistory"];
             readonly role?: components["schemas"]["AgentRole"];
@@ -9792,6 +10028,8 @@ export type components = {
             readonly turn_count: number;
         };
         readonly UpcomingPriceEntry: {
+            /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
+            readonly byok?: boolean;
             /**
              * Format: date-time
              * @description When the entry took effect, or takes effect.
@@ -9817,6 +10055,8 @@ export type components = {
             };
             /** @description The change's reason. */
             readonly reason: string;
+            /** @description Where the work runs, such as us or eu: a letter and up to 31 of a-z, 0-9 and hyphens. Work is priced only by an entry of its own region, never another region's. */
+            readonly region: string;
             /** @description The item's SKU, the same across its price changes, which every row it prices records. Absent only on a local model no change prices. */
             readonly sku?: string;
             /** @description The vendor's cost for long prompts, for reference. */
@@ -9902,7 +10142,7 @@ export type components = {
              * @description What the organization is charged for the work, in millionths of a dollar.
              */
             readonly cost_micros: number;
-            /** @description Why it failed, when it did. */
+            /** @description Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK). */
             readonly error_code?: string;
             /** @description The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model, memory, knowledge or phone, or runtime or sandbox. More may be added. */
             readonly meter: string;
@@ -11648,6 +11888,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
@@ -14439,6 +14688,110 @@ export interface operations {
             readonly 500: components["responses"]["InternalError"];
         };
     };
+    readonly listProviderKeys: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The `next_cursor` of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The customer's keys, by provider and then region */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderKeyPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly putProviderKey: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProviderKeyRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The key is kept */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProviderKey"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteProviderKey: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The region the key is kept for. Omitted is us. */
+                readonly region?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The provider the key is for, such as anthropic. */
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The key is gone */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
     readonly createRun: {
         readonly parameters: {
             readonly query?: never;
@@ -14916,7 +15269,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description A session with that id already exists */
+            /** @description A session with that id already exists, or the call placed for this phone session ended without an answer (call_unanswered) */
             readonly 409: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -17624,6 +17977,85 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
+    readonly setPhoneNumberAgent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The number in +15551234567 form. */
+                readonly e164: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SetNumberAgentRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The agent now answers the number */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PhoneNumber"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly removePhoneNumberAgent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The number in +15551234567 form. */
+                readonly e164: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No agent answers the number */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
     readonly attachPhoneNumber: {
         readonly parameters: {
             readonly query?: never;
@@ -17904,6 +18336,48 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly receiveCallStatus: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The status is recorded */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The status could not be read */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No placed call is waiting for its status at this token */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The status is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listSipTrunks: {
@@ -18730,6 +19204,8 @@ export interface operations {
             readonly query?: {
                 /** @description Only this modality's items, such as llm, stt, tts, sms or phone. */
                 readonly modality?: string;
+                /** @description Only this region's items, such as us or eu. */
+                readonly region?: string;
             };
             readonly header?: never;
             readonly path?: never;

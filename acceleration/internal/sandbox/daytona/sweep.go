@@ -55,6 +55,10 @@ type SweepOptions struct {
 	}
 	// Slots holds the sweep's lease, so one router sweeps at a time.
 	Slots *concurrency.Slots
+	// Accounts are the keys of the customers' own Daytona organizations, where the sandboxes
+	// made on their keys keep their secrets, swept as the deployment's is. Nil sweeps the
+	// deployment's alone. A key it could not read is its error, and the others are swept.
+	Accounts func(ctx context.Context) ([]string, error)
 	// Every is how often Run sweeps; zero is an hour.
 	Every  time.Duration
 	Logger *slog.Logger
@@ -66,6 +70,12 @@ type Sweeper struct {
 	options SweepOptions
 	// wait is what a sweep waits before it asks again whether a session is live.
 	wait func(ctx context.Context) error
+}
+
+// organization is one Daytona organization a sweep reaches, and what its log lines call it.
+type organization struct {
+	client *sdk.Client
+	name   string
 }
 
 func NewSweeper(o SweepOptions) (*Sweeper, error) {
@@ -118,8 +128,9 @@ func (s *Sweeper) Run(ctx context.Context) {
 }
 
 // Sweep deletes every va_<prefix>_ secret older than secretMaxAge whose session is live on no
-// router, asked twice recheckAfter apart. It deletes nothing unless every page was listed, and
-// nothing while another router sweeps.
+// router, asked twice recheckAfter apart, in the deployment's organization and in each of the
+// customers' own it reaches. It deletes nothing in an organization unless every page of it was
+// listed, and nothing while another router sweeps.
 func (s *Sweeper) Sweep(ctx context.Context) error {
 	// Slots lets the sweep run when Redis cannot be reached, and Sessions then fails, which keeps
 	// every secret.
@@ -131,15 +142,40 @@ func (s *Sweeper) Sweep(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, sweepLease)
 	defer cancel()
 
+	organizations := []organization{{client: s.client, name: "deployment"}}
+	var failed []error
+	if s.options.Accounts != nil {
+		keys, err := s.options.Accounts(ctx)
+		failed = append(failed, err)
+		for _, key := range keys {
+			client, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: key, APIUrl: s.options.APIURL, HTTPClient: s.options.HTTPClient})
+			if err != nil {
+				failed = append(failed, stack.Wrap(fmt.Errorf("daytona: reach a customer's organization: %w", err)))
+				continue
+			}
+			organizations = append(organizations, organization{client: client, name: "customer"})
+		}
+	}
+	for _, at := range organizations {
+		failed = append(failed, s.sweepIn(ctx, at))
+	}
+	for _, at := range organizations[1:] {
+		failed = append(failed, at.client.Close(ctx))
+	}
+	return errors.Join(failed...)
+}
+
+// sweepIn is Sweep in one organization, under the lease Sweep holds.
+func (s *Sweeper) sweepIn(ctx context.Context, at organization) error {
 	prefix := "va_" + s.options.Prefix + "_"
 	var expired []*types.Secret
 	// Daytona matches the name anywhere in it, so a secret of another environment whose
 	// session id holds this prefix is listed too.
 	query := &types.ListSecretsQuery{Name: &prefix}
 	for {
-		page, err := s.client.Secret.List(ctx, query)
+		page, err := at.client.Secret.List(ctx, query)
 		if err != nil {
-			return fmt.Errorf("daytona: list secrets: %w", err)
+			return fmt.Errorf("daytona: list secrets in the %s organization: %w", at.name, err)
 		}
 		for _, secret := range page.Items {
 			if strings.HasPrefix(secret.Name, prefix) && time.Since(secret.CreatedAt) >= secretMaxAge {
@@ -163,14 +199,15 @@ func (s *Sweeper) Sweep(ctx context.Context) error {
 	}
 	deleted := 0
 	for _, secret := range dead {
-		if err := s.client.Secret.Delete(ctx, secret.ID); err != nil {
+		if err := at.client.Secret.Delete(ctx, secret.ID); err != nil {
 			failed = append(failed, fmt.Errorf("daytona: delete secret %s: %w", secret.Name, err))
 			continue
 		}
 		deleted++
-		s.options.Logger.Info("deleted a sandbox secret no live session holds", "secret", secret.Name)
+		s.options.Logger.Info("deleted a sandbox secret no live session holds", "secret", secret.Name, "organization", at.name)
 	}
-	s.options.Logger.Debug("swept the sandbox secrets", "expired", len(expired), "deleted", deleted, "failed", len(failed))
+	s.options.Logger.Debug("swept the sandbox secrets", "organization", at.name, "expired", len(expired), "deleted", deleted,
+		"failed", len(failed))
 	return errors.Join(failed...)
 }
 

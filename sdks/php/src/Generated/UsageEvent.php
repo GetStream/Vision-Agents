@@ -44,7 +44,7 @@ final readonly class UsageEvent
         public ?array $attributes = null,
         // The call the work was done in.
         public ?string $callId = null,
-        // Why it failed, when it did.
+        // Why it failed, when it did. key_refused is the vendor refusing the key the app keeps for it (BYOK).
         public ?string $errorCode = null,
         // The model that did it.
         public ?string $model = null,

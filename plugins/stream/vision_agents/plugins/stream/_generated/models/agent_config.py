@@ -45,6 +45,8 @@ class AgentConfig:
             hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech
             target and a session created from it needs no call to join.
         name (str):
+        region (str): Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox
+            are in it. us unless the agent's agent.yaml or config names another. Example: us.
         updated_at (datetime.datetime):
         channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
             number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
@@ -109,6 +111,7 @@ class AgentConfig:
     id: str
     mode: AgentMode
     name: str
+    region: str
     updated_at: datetime.datetime
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
@@ -155,6 +158,8 @@ class AgentConfig:
         mode = self.mode.value
 
         name = self.name
+
+        region = self.region
 
         updated_at = self.updated_at.isoformat()
 
@@ -293,6 +298,7 @@ class AgentConfig:
                 "id": id,
                 "mode": mode,
                 "name": name,
+                "region": region,
                 "updated_at": updated_at,
             }
         )
@@ -391,6 +397,8 @@ class AgentConfig:
         mode = AgentMode(d.pop("mode"))
 
         name = d.pop("name")
+
+        region = d.pop("region")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
@@ -581,6 +589,7 @@ class AgentConfig:
             id=id,
             mode=mode,
             name=name,
+            region=region,
             updated_at=updated_at,
             channels=channels,
             connectors=connectors,

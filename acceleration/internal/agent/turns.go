@@ -113,6 +113,8 @@ type openTurn struct {
 	// settled is how many of them have completed.
 	settled     int
 	interrupted bool
+	// why is why the reply was abandoned, set with interrupted.
+	why interruption
 	// marks is what the edge reports queuedAt and pulledAt to.
 	marks turnMarks
 	// waiting is the timer that closes the turn once the track has taken its speech, or
@@ -339,15 +341,18 @@ func (t *turnTracker) completed(turnID string, timeToFirstTokenMs float64, synth
 }
 
 // interrupt closes a turn a participant talked over. Whatever was measured before the
-// interruption still happened and is still worth reporting.
-func (t *turnTracker) interrupt(turnID string) {
+// interruption still happened and is still worth reporting. It returns how long the reply
+// had been going out, from its first audio, zero when none went out.
+func (t *turnTracker) interrupt(turnID string, why interruption) float64 {
 	t.mu.Lock()
 	current, ok := t.open[turnID]
 	if !ok {
 		t.mu.Unlock()
-		return
+		return 0
 	}
 	current.interrupted = true
+	current.why = why
+	playedMs := leg(current.firstAudioAt, time.Now())
 	if current.waiting != nil {
 		current.waiting.Stop()
 	}
@@ -356,6 +361,7 @@ func (t *turnTracker) interrupt(turnID string) {
 	t.mu.Unlock()
 
 	t.report(turnID, current, &finished)
+	return playedMs
 }
 
 // settleLocked closes the turn if nothing more can be learned about it.

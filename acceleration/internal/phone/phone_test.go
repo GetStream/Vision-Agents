@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -645,6 +646,21 @@ func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 
 func (s *stub) SendDigits(context.Context, string, string) error { return s.err }
 
+// ReadStatus reads a form's result and word, as a vendor's status post would carry them.
+func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return CallStatus{}, err
+	}
+	if !form.Has("word") {
+		return CallStatus{}, errors.New("stub: a status needs a word")
+	}
+	return CallStatus{Result: CallResult(form.Get("result")), Word: form.Get("word")}, nil
+}
+
+// silent is a vendor that reports nothing on the calls it places.
+type silent struct{ Provider }
+
 func (s *stub) Supports(filter Filter) bool { return !slices.Contains(s.unsupported, filter) }
 
 func (s *stub) Dials(feature CallFeature) bool { return !slices.Contains(s.undialable, feature) }
@@ -700,13 +716,16 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 	prices, err := pricing.NewList("config", pricing.PricedAll(PriceEntries(config)), slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
-	own := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: SIPTrunkVendor, Model: ModelNumber}, nil)
+	number := func(vendor string) pricing.Item {
+		return routing.ItemOf(routing.Phone, routing.ProviderConfig{Provider: vendor, Model: ModelNumber}, nil)
+	}
+	own := prices.Quote(number(SIPTrunkVendor), nil)
 	s.False(own.Billable)
 	s.False(own.Unpriced)
 	for _, vendor := range config.Vendors {
-		quote := prices.Quote(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, nil)
+		quote := prices.Quote(number(vendor.Vendor), nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
-		resold := prices.Quoted(pricing.Item{Modality: string(routing.Phone), Provider: vendor.Vendor, Model: ModelNumber}, 1_000_000)
+		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
 		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
 		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)

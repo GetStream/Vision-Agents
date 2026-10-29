@@ -34,6 +34,9 @@ const (
 	// AuditSpendLimit is one of the organization's spend limits, named by its id, or a grant or
 	// a reset, named grant:<id> and reset:<id> (20261112120000_limits.sql).
 	AuditSpendLimit = "limit"
+	// AuditProviderKey is a key the customer keeps for their own account at a vendor, named
+	// <provider>/<region> (20261202130000_provider_keys.sql).
+	AuditProviderKey = "provider_key"
 )
 
 // auditResourceTypes is every resource a change may be recorded against, which is the
@@ -41,6 +44,7 @@ const (
 var auditResourceTypes = []string{
 	AuditAgentConfig, AuditSkill, AuditKnowledge, AuditKnowledgeURL,
 	AuditRouterConfig, AuditPlugin, AuditPolicy, AuditResourcePriceList, AuditEndUser, AuditSpendLimit,
+	AuditProviderKey,
 }
 
 // deploymentResources are the resources that belong to the deployment rather than to one

@@ -525,7 +525,7 @@ func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
 	// vendor list's rates times the factor.
 	list, err := routing.Prices(config, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
-	opus := pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5"}
+	opus := pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5", Region: pricing.RegionUS}
 	s.Equal(pricingtest.Micros(s.T(), list, opus, pricing.Quantities{pricing.InputTokens: 1_000,
 		pricing.CachedInputTokens: 90_000, pricing.CacheWriteInputTokens: 9_000, pricing.OutputTokens: 10}), timing.CostMicros)
 }

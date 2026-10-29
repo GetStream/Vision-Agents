@@ -17,9 +17,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
@@ -75,17 +77,51 @@ func sandboxRouter(settings config.Config) string {
 	return cmp.Or(settings.Shard, routing.Unsharded)
 }
 
-// newSandboxes makes the sessions' sandboxes, labelled with the deployment and shard and
-// billed through the process's writer.
-func newSandboxes(settings config.Config, writer *routing.Writer, prices pricing.Pricer, logger *slog.Logger) *metered.Sandboxes {
+// newSandboxes makes the sessions' sandboxes, labelled with the deployment and shard, each on
+// the Daytona target of the region its session's work is done in, in the owner's own
+// organization when keys holds their Daytona key for that region, and billed through the
+// process's writer.
+func newSandboxes(settings config.Config, writer *routing.Writer, prices pricing.Pricer,
+	keys routing.CustomerKeys, logger *slog.Logger) *metered.Sandboxes {
 	return metered.NewSandboxes(metered.SandboxesOptions{
 		Recorder:    routing.NewRecorderOn(routing.Sandbox, writer, prices, logger),
 		Deployment:  settings.CodeSandbox.Deployment,
 		Environment: sandboxEnvironment(),
 		Router:      sandboxRouter(settings),
 		Lifecycle:   sandbox.Lifecycle{IdleStop: settings.CodeSandbox.IdleStop, StoppedDelete: settings.CodeSandbox.StoppedDelete},
+		Targets:     settings.CodeSandbox.Targets,
+		Keys:        keys,
 		Logger:      logger,
 	})
+}
+
+// customerDaytonaKeys reads the keys customers keep for their own Daytona organizations, each once
+// however many apps and regions keep it, for the jobs that look after every organization a
+// sandbox may be in. A key that does not open is its error, and the others are read. Nil without
+// a database or a keyring, without which no key could have been kept.
+func customerDaytonaKeys(pgStore *store.Store, secrets *auth.Sealer) func(context.Context) ([]string, error) {
+	if pgStore == nil || secrets == nil {
+		return nil
+	}
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := pgStore.ProviderKeysOf(ctx, providerkeys.Daytona)
+		if err != nil {
+			return nil, err
+		}
+		var keys []string
+		var failed []error
+		for _, row := range rows {
+			key, err := providerkeys.Open(secrets, row)
+			if err != nil {
+				failed = append(failed, err)
+				continue
+			}
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
+		return keys, errors.Join(failed...)
+	}
 }
 
 // runUsageSandboxes deletes the sandboxes of this shard no session needs any more and, asked
@@ -130,12 +166,42 @@ func runUsageSandboxes(ctx context.Context, args []string, settings config.Confi
 		sandboxes:  metered.NewSandboxes(metered.SandboxesOptions{Recorder: recording, Deployment: deployment, Logger: logger}),
 		deployment: deployment, router: sandboxRouter(settings), logger: logger, out: out, now: now,
 	}
-	var failed []error
-	if *reconcile {
-		failed = append(failed, job.reconcile(ctx, day))
+	failed := job.run(ctx, *reconcile, day)
+
+	// The sandboxes made on customers' own keys are in their organizations, which only those keys
+	// list, and the keys open only with the keyring they were sealed under.
+	secrets, err := newSecretSealer(ctx, settings)
+	if err != nil {
+		return errors.Join(append(failed, fmt.Errorf("usage sandboxes: %w", err))...)
 	}
-	failed = append(failed, job.sweep(ctx))
+	if keys := customerDaytonaKeys(pgStore, secrets); keys != nil {
+		opened, err := keys(ctx)
+		if err != nil {
+			logger.Error("could not open every customer's Daytona key, so their organizations are not looked after", "error", err)
+			failed = append(failed, fmt.Errorf("usage sandboxes: %w", err))
+		}
+		for _, key := range opened {
+			theirs, err := daytona.NewFleet(daytona.FleetOptions{APIKey: key, Customer: true})
+			if err != nil {
+				failed = append(failed, fmt.Errorf("usage sandboxes: %w", err))
+				continue
+			}
+			defer theirs.Close(ctx) //nolint:errcheck // nothing is left to send
+			customer := *job
+			customer.fleet, customer.byok = theirs, true
+			failed = append(failed, customer.run(ctx, *reconcile, day)...)
+		}
+	}
 	return errors.Join(failed...)
+}
+
+// run reconciles day, when asked to, and sweeps, in the job's organization.
+func (j *sandboxJob) run(ctx context.Context, reconcile bool, day time.Time) []error {
+	var failed []error
+	if reconcile {
+		failed = append(failed, j.reconcile(ctx, day))
+	}
+	return append(failed, j.sweep(ctx))
 }
 
 // sandboxDayOf is the day a reconciliation covers: the one --day names, or the day before
@@ -151,7 +217,8 @@ func sandboxDayOf(text string, now time.Time) (time.Time, error) {
 	return day, nil
 }
 
-// sandboxJob looks after this shard's sandboxes in the deployment's Daytona organization.
+// sandboxJob looks after this shard's sandboxes in one Daytona organization: the deployment's,
+// or a customer's own, which holds the sandboxes made on their key.
 type sandboxJob struct {
 	fleet     *daytona.Fleet
 	store     *store.Store
@@ -159,19 +226,37 @@ type sandboxJob struct {
 	// deployment and router are the labels this shard's sandboxes carry; deployment is never
 	// empty, and is on each of their rows too.
 	deployment, router string
-	logger             *slog.Logger
-	out                io.Writer
-	now                time.Time
+	// byok is a customer's own organization, whose sandboxes are priced at the BYOK entries.
+	byok   bool
+	logger *slog.Logger
+	out    io.Writer
+	now    time.Time
 }
 
-// labels are the labels every one of this shard's sandboxes carries.
+// labels are the labels every one of this shard's sandboxes in the organization carries.
 func (j *sandboxJob) labels() map[string]string {
-	return map[string]string{metered.LabelDeployment: j.deployment, metered.LabelRouter: j.router}
+	labels := map[string]string{metered.LabelDeployment: j.deployment, metered.LabelRouter: j.router}
+	if j.byok {
+		labels[metered.LabelAccount] = metered.SandboxAccountCustomer
+	}
+	return labels
 }
 
-// ours reports whether labels are this shard's.
+// ours reports whether labels are this shard's, made in the organization the job looks after: a
+// sandbox made on a customer's key is never the deployment organization's, even when a key
+// reaches both.
 func (j *sandboxJob) ours(labels map[string]string) bool {
-	return labels[metered.LabelDeployment] == j.deployment && labels[metered.LabelRouter] == j.router
+	return labels[metered.LabelDeployment] == j.deployment && labels[metered.LabelRouter] == j.router &&
+		(labels[metered.LabelAccount] == metered.SandboxAccountCustomer) == j.byok
+}
+
+// heading is what the job's lines start with: nothing in the deployment's organization, as
+// before customers' own.
+func (j *sandboxJob) heading() string {
+	if j.byok {
+		return "a customer's organization: "
+	}
+	return ""
 }
 
 // sweep deletes each of this shard's sandboxes whose session has ended, or has no session,
@@ -231,8 +316,8 @@ func (j *sandboxJob) sweep(ctx context.Context) error {
 		j.logger.Warn("deleted a sandbox its session no longer needs", "sandbox", box.ID, "session", session,
 			"age", age.Round(time.Second), "reason", reason, "state", box.State)
 	}
-	if _, err := fmt.Fprintf(j.out, "sandboxes: %d orphans deleted, %d kept for open sessions, %d too new to judge, %d could not be deleted\n",
-		deleted, kept, young, len(failed)); err != nil {
+	if _, err := fmt.Fprintf(j.out, "%ssandboxes: %d orphans deleted, %d kept for open sessions, %d too new to judge, %d could not be deleted\n",
+		j.heading(), deleted, kept, young, len(failed)); err != nil {
 		return err
 	}
 	if len(failed) > 0 {
@@ -295,7 +380,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 			continue
 		}
 		ours := recorded[used.SandboxID]
-		owner, class, known, err := j.owner(ctx, used.SandboxID, ours)
+		owner, class, region, known, err := j.owner(ctx, used.SandboxID, ours)
 		switch {
 		case err != nil:
 			j.logger.Error("could not read a sandbox Daytona billed, so it is not reconciled", "sandbox", used.SandboxID, "error", err)
@@ -325,7 +410,7 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 		} else {
 			matched++
 		}
-		gaps, err := j.gaps(ctx, used.SandboxID, owner, class, daytonas, have, ours.Rows == 0, from, to)
+		gaps, err := j.gaps(ctx, used.SandboxID, owner, class, region, daytonas, have, ours.Rows == 0, from, to)
 		if err != nil {
 			j.logger.Error("could not record what a sandbox was billed short", "sandbox", used.SandboxID, "day", dayText, "error", err)
 			unread = append(unread, used.SandboxID)
@@ -334,9 +419,9 @@ func (j *sandboxJob) reconcile(ctx context.Context, day time.Time) error {
 		filled += gaps
 	}
 
-	if _, err := fmt.Fprintf(j.out, "%s: %d sandboxes matched Daytona's records, %d did not, %d gaps recorded from them, "+
+	if _, err := fmt.Fprintf(j.out, "%s%s: %d sandboxes matched Daytona's records, %d did not, %d gaps recorded from them, "+
 		"%d made by hand, %d another deployment's, %d no longer known, %d could not be read\n",
-		dayText, matched, len(mismatched), filled, handMade, notOurs, unknown, len(unread)); err != nil {
+		j.heading(), dayText, matched, len(mismatched), filled, handMade, notOurs, unknown, len(unread)); err != nil {
 		return err
 	}
 	if len(mismatched) > 0 {
@@ -359,40 +444,41 @@ const (
 	ownerUnknown
 )
 
-// owner is whose a sandbox Daytona billed was, and what class of sandbox: the organization,
-// app and session on its rows, when this shard recorded some under this deployment, or on its
-// labels. A sandbox labelled by no router is made by hand; one without this deployment and
-// shard on its labels, such as one made by a router with no code_sandbox.deployment, is
-// another's.
-func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (routing.Owner, string, int, error) {
+// owner is whose a sandbox Daytona billed was, what class of sandbox and the region it ran in:
+// the organization, app, session and region on its rows, when this shard recorded some under
+// this deployment, or on its labels. A sandbox labelled by no router is made by hand; one
+// without this deployment and shard on its labels, such as one made by a router with no
+// code_sandbox.deployment, is another's. Every Daytona target of the organization is listed, so
+// a sandbox in any region is reconciled.
+func (j *sandboxJob) owner(ctx context.Context, id string, recorded store.SandboxUsed) (owner routing.Owner, class, region string, known int, err error) {
 	owned := func(app, organization, session string) routing.Owner {
 		return routing.Owner{CustomerID: app, Attribution: routing.Attribution{
 			OrganizationID: organization, APIKey: sandboxOrigin, SessionID: session,
 		}}
 	}
 	if recorded.Rows > 0 {
-		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), recorded.Class, ownerOurs, nil
+		return owned(recorded.CustomerID, recorded.OrganizationID, recorded.SessionID), recorded.Class, recorded.Region, ownerOurs, nil
 	}
 	box, found, err := j.fleet.Sandbox(ctx, id)
 	switch {
 	case err != nil:
-		return routing.Owner{}, "", ownerUnknown, err
+		return routing.Owner{}, "", "", ownerUnknown, err
 	case !found:
-		return routing.Owner{}, "", ownerUnknown, nil
+		return routing.Owner{}, "", "", ownerUnknown, nil
 	case box.Labels[metered.LabelEnv] == "" && box.Labels[metered.LabelDeployment] == "":
-		return routing.Owner{}, "", ownerHandMade, nil
+		return routing.Owner{}, "", "", ownerHandMade, nil
 	case !j.ours(box.Labels) || box.Labels[metered.LabelApp] == "":
-		return routing.Owner{}, "", ownerTheirs, nil
+		return routing.Owner{}, "", "", ownerTheirs, nil
 	}
 	labels := box.Labels
 	return owned(labels[metered.LabelApp], labels[metered.LabelOrganization], labels[metered.LabelSession]), box.Class,
-		ownerOurs, nil
+		labels[metered.LabelRegion], ownerOurs, nil
 }
 
 // gaps records what a sandbox was billed short of Daytona's records over the day, and says how
 // many rows that took: nothing billed at all is recorded a Daytona period at a time; billed
 // short, the day's difference on each meter in one row.
-func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, class string, daytonas, have tally,
+func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, class, region string, daytonas, have tally,
 	unmetered bool, from, to time.Time) (int, error) {
 	closed := j.closedAt(ctx, owner.SessionID)
 	if !unmetered {
@@ -401,7 +487,7 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, c
 			return 0, nil
 		}
 		return 1, j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: from.Format(time.DateOnly), At: from,
-			Model: model(short), Used: short.used(), Class: class, Orphan: closed != nil && closed.Before(from)})
+			Model: model(short), Used: short.used(), Class: class, Region: region, BYOK: j.byok, Orphan: closed != nil && closed.Before(from)})
 	}
 	periods, err := j.fleet.Periods(ctx, id, from, to)
 	if err != nil {
@@ -426,7 +512,7 @@ func (j *sandboxJob) gaps(ctx context.Context, id string, owner routing.Owner, c
 		// Keyed by where the period starts within the day, so a period across midnight is a gap
 		// on each day it covers.
 		err := j.sandboxes.Reconcile(metered.SandboxGap{Owner: owner, SandboxID: id, Key: start.UTC().Format(time.RFC3339Nano),
-			At: start, Model: model(used), Used: used.used(), Class: class, Orphan: closed != nil && !start.Before(*closed)})
+			At: start, Model: model(used), Used: used.used(), Class: class, Region: region, BYOK: j.byok, Orphan: closed != nil && !start.Before(*closed)})
 		if err != nil {
 			return recorded, err
 		}

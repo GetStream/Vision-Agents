@@ -7,6 +7,8 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let agentId: String
     /// The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing.
     let callId: String
+    /// How the call the router placed for a session ended.
+    let callOutcome: SessionCallOutcome?
     let callType: String
     /// When the session ended. Absent while it is still running.
     let closedAt: Date?
@@ -64,10 +66,11 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
+        self.callOutcome = callOutcome
         self.callType = callType
         self.closedAt = closedAt
         self.configId = configId
@@ -107,6 +110,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.agent = try container.decodeIfPresent(String.self, forKey: .agent)
         self.agentId = try container.decode(String.self, forKey: .agentId)
         self.callId = try container.decode(String.self, forKey: .callId)
+        self.callOutcome = try container.decodeIfPresent(SessionCallOutcome.self, forKey: .callOutcome)
         self.callType = try container.decode(String.self, forKey: .callType)
         self.closedAt = try container.decodeIfPresent(Date.self, forKey: .closedAt)
         self.configId = try container.decodeIfPresent(String.self, forKey: .configId)
@@ -146,6 +150,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(agent, forKey: .agent)
         try container.encode(agentId, forKey: .agentId)
         try container.encode(callId, forKey: .callId)
+        try container.encodeIfPresent(callOutcome, forKey: .callOutcome)
         try container.encode(callType, forKey: .callType)
         try container.encodeIfPresent(closedAt, forKey: .closedAt)
         try container.encodeIfPresent(configId, forKey: .configId)
@@ -187,6 +192,7 @@ extension SessionPayload: Hashable {
         lhs.agent == rhs.agent &&
         lhs.agentId == rhs.agentId &&
         lhs.callId == rhs.callId &&
+        lhs.callOutcome == rhs.callOutcome &&
         lhs.callType == rhs.callType &&
         lhs.closedAt == rhs.closedAt &&
         lhs.configId == rhs.configId &&
@@ -225,6 +231,7 @@ extension SessionPayload: Hashable {
         hasher.combine(agent)
         hasher.combine(agentId)
         hasher.combine(callId)
+        hasher.combine(callOutcome)
         hasher.combine(callType)
         hasher.combine(closedAt)
         hasher.combine(configId)

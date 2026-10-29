@@ -387,7 +387,7 @@ func (s *OpenAICompatSuite) TestReasoningOutsideCompletionIsCounted() {
 	s.EqualValues(9_550, response.Usage.VendorCostMicros)
 	list, err := pricing.NewList("vendor", prices.Vendor().Entries, nil)
 	s.Require().NoError(err)
-	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7"}, response.Used())
+	quote := list.Quote(pricing.Item{Modality: "llm", Provider: "xai", Model: "grok-4.7", Region: pricing.RegionUS}, response.Used())
 	s.EqualValues(9_550, quote.BaseCostMicros, "priced at the vendor's rates, it is what xAI charged")
 }
 
@@ -735,6 +735,73 @@ func (s *OpenAICompatSuite) TestAToolCallWrittenInAnotherSyntaxIsMadeNotSpoken()
 			s.Require().Len(response.ToolCalls, 1)
 			s.Equal(tc.name, response.ToolCalls[0].Name)
 			s.JSONEq(tc.arguments, response.ToolCalls[0].Arguments)
+		})
+	}
+}
+
+func (s *OpenAICompatSuite) TestAToolNamedInASentenceIsSpokenNotMade() {
+	params := hello()
+	params.Tools = []llm.Tool{{Name: "send_note"}, {Name: "check_stock"}}
+	cases := map[string]struct {
+		frames []string
+		spoken string
+		made   []string
+	}{
+		"bare call followed by words": {
+			frames: []string{"You can use send_note(to=\"ana\", text=\"hi\")", " to message her."},
+			spoken: "You can use send_note(to=\"ana\", text=\"hi\") to message her.",
+		},
+		"call followed by a space, then words": {
+			frames: []string{"I would call send_note{to: \"ana\"} if you want."},
+			spoken: "I would call send_note{to: \"ana\"} if you want.",
+		},
+		"bare call followed by the start of another name": {
+			frames: []string{"Try send_note(to=\"ana\") or check"},
+			spoken: "Try send_note(to=\"ana\") or check",
+		},
+		"bare call that ends the answer": {
+			frames: []string{"Sending it now. send_note(to=", "\"ana\")"},
+			spoken: "Sending it now. ",
+			made:   []string{"send_note"},
+		},
+		"bare call followed by its closing marker": {
+			frames: []string{"Sending it now. send_note(to=\"ana\") <tool_", "call|>"},
+			spoken: "Sending it now. ",
+			made:   []string{"send_note"},
+		},
+		"bare calls one after another": {
+			frames: []string{"One moment. check_stock{} ", "send_note{to: \"ana\"}"},
+			spoken: "One moment.  ",
+			made:   []string{"check_stock", "send_note"},
+		},
+		"marked call followed by words": {
+			frames: []string{"<|tool_call>call:send_note{to:<|\"|>ana<|\"|>}<tool_call|> Sent."},
+			spoken: " Sent.",
+			made:   []string{"send_note"},
+		},
+		"call: prefix followed by words": {
+			frames: []string{"call:send_note{to: \"ana\"} Sent."},
+			spoken: " Sent.",
+			made:   []string{"send_note"},
+		},
+	}
+	for name, tc := range cases {
+		s.Run(name, func() {
+			s.frames = nil
+			for _, frame := range tc.frames {
+				s.frames = append(s.frames, textFrame(frame))
+			}
+			s.frames = append(s.frames, usageFrame(20, 0, 30, 0, "stop"))
+			provider := s.provider(Options{ToolCallText: true})
+
+			response, _ := s.ask(provider, params)
+
+			s.Equal(tc.spoken, response.OutputText)
+			var made []string
+			for _, call := range response.ToolCalls {
+				made = append(made, call.Name)
+			}
+			s.Equal(tc.made, made)
 		})
 	}
 }
@@ -1638,19 +1705,4 @@ func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
 	s.Require().NoError(err)
 	s.Contains(string(encoded), "one.png")
 	s.Contains(string(encoded), "two.png")
-}
-
-func (s *OpenAICompatSuite) TestAForcedCallRequiresEveryArgument() {
-	offered := []llm.Tool{
-		{Name: "verify_account", Parameters: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{"pin": map[string]any{}, "last4": map[string]any{}, "address": map[string]any{}},
-			"required":   []any{"pin"},
-		}},
-		{Name: "check_outage"},
-	}
-	required := everyArgumentRequired(offered)
-	s.Equal([]string{"address", "last4", "pin"}, required[0].Parameters["required"])
-	s.Nil(required[1].Parameters)
-	s.Equal([]any{"pin"}, offered[0].Parameters["required"], "the offered schema was changed")
 }

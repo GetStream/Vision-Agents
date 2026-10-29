@@ -1154,6 +1154,70 @@ func (s *ScheduledTasksSuite) TestDeletingAConfigPausesItsTasks() {
 		"a task of a deleted agent has nothing to run on, and stops counting against the user's limit")
 }
 
+// A caller that hangs up once the delete committed still leaves the config's tasks paused
+// (AI-2183): nothing pauses them later, and every occurrence of one fails for want of its
+// config. The test holds the task's row locked, so the delete waits in the pause, after its
+// commit, and hangs up there, as net/http does when the caller goes.
+func (s *ScheduledTasksSuite) TestACallerThatHangsUpAfterTheDeleteStillLeavesItsTasksPaused() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	ctx := context.Background()
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	var holder int
+	s.Require().NoError(hold.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder))
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+
+	request, hangUp := context.WithCancel(context.WithValue(context.WithValue(ctx,
+		customerContextKey{}, s.customerID()), serverSideContextKey{}, true))
+	defer hangUp()
+	answered := make(chan error, 1)
+	go func() {
+		_, err := s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+		answered <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", holder).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the delete never reached its config's tasks")
+	hangUp()
+	s.Require().NoError(hold.Rollback())
+	s.Require().NoError(<-answered)
+
+	_, err = s.store.AgentConfig(ctx, s.customerID(), config)
+	s.Require().ErrorIs(err, store.ErrNoAgentConfig, "the delete committed before the caller hung up")
+	s.Equal(store.ScheduledTaskPaused, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State)
+}
+
+// The pause after a delete gives up at auditWriteTimeout (AI-2183): it runs without its
+// caller's cancellation, so a task row locked for longer would hold the request open. The
+// test locks the task's row until two seconds past the bound and reads how long the delete
+// took to return.
+func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLocked() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	ctx := context.Background()
+	hold, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = hold.Rollback() }()
+	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
+	s.Require().NoError(err)
+	release := time.AfterFunc(auditWriteTimeout+2*time.Second, func() { _ = hold.Rollback() })
+	defer release.Stop()
+
+	request := context.WithValue(context.WithValue(ctx, customerContextKey{}, s.customerID()), serverSideContextKey{}, true)
+	start := time.Now()
+	_, err = s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+	took := time.Since(start)
+
+	s.Require().NoError(err)
+	s.Less(took, auditWriteTimeout+time.Second, "the pause waits on a locked task past its bound")
+}
+
 func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
@@ -2519,6 +2583,9 @@ type channelSink struct {
 	// refusingMedia is the people every file sent to is refused for, as Telnyx refuses an MMS
 	// to a number outside the US and Canada.
 	refusingMedia map[string]bool
+	// dialled, when set, is told the status URL of every call placed, before the call is
+	// answered as placed.
+	dialled func(statusURL string)
 }
 
 // refuseMedia has the provider refuse every file sent to number, and take its words.
@@ -2543,11 +2610,18 @@ func (c *channelSink) fail(number string, times int) {
 
 func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To    string          `json:"to"`
-		Text  json.RawMessage `json:"text"`
-		Media []string        `json:"media_urls"`
+		To             string          `json:"to"`
+		Text           json.RawMessage `json:"text"`
+		Media          []string        `json:"media_urls"`
+		StatusCallback string          `json:"StatusCallback"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	c.mu.Lock()
+	dialled := c.dialled
+	c.mu.Unlock()
+	if dialled != nil && body.StatusCallback != "" {
+		dialled(body.StatusCallback)
+	}
 	text := ""
 	var meta struct {
 		Body string `json:"body"`

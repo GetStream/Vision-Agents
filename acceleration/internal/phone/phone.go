@@ -386,6 +386,11 @@ type Outbound struct {
 	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
 	// finds its session. It is set only on the shared path; empty sends no header.
 	CallID string
+	// StatusURL is where the vendor posts the call's status. Empty sends none.
+	StatusURL string
+	// Ended is told how a call through a customer's own SIP trunk ended, which only the
+	// router's own bridge sees. Nil tells nobody.
+	Ended func(CallStatus)
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to
@@ -428,6 +433,30 @@ const (
 // StreamLegger is a provider that says how its leg to Stream is set up.
 type StreamLegger interface {
 	StreamLeg() StreamLeg
+}
+
+// CallResult is how a vendor says a placed call ended. Empty is a report that is not final.
+// There is no unknown: only the router decides that, from a call nobody reported on.
+type CallResult string
+
+const (
+	CallCompleted CallResult = "completed"
+	CallBusy      CallResult = "busy"
+	CallNoAnswer  CallResult = "no_answer"
+	CallFailed    CallResult = "failed"
+	CallCanceled  CallResult = "canceled"
+)
+
+// CallStatus is one report a vendor sent on a placed call. Word is the vendor's own, kept for
+// debugging.
+type CallStatus struct {
+	Result CallResult
+	Word   string
+}
+
+// StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
+type StatusReader interface {
+	ReadStatus(contentType string, body []byte) (CallStatus, error)
 }
 
 // StreamLegOf is the provider's stream leg, per call for one that does not say.

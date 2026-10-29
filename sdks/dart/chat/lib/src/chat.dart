@@ -26,15 +26,16 @@ extension SessionChat on AgentSession {
   /// The channel this conversation is kept in, not yet watched.
   ///
   /// It opens on the client handed over with `useChat`, or else on one built here and
-  /// connected with the agents' key, user and token, which every session then shares. Only a
-  /// text session that is not incognito keeps one; asking any other is a [StateError].
+  /// connected with the agents' key, user and token, which every session then shares. A text
+  /// or voice session keeps one unless it is incognito; asking an incognito one is a
+  /// [StateError].
   Future<stream.Channel> chat() async {
     final cid = session.conversationId;
     final colon = cid.indexOf(':');
     if (colon <= 0 || colon == cid.length - 1) {
       throw StateError(
-        'this session keeps no transcript, so there is no channel to read: only a text '
-        'session has one, and an incognito session never does',
+        'this session keeps no transcript, so there is no channel to read: an incognito '
+        'session never has one',
       );
     }
     final client = await backend.shared<stream.StreamChatClient>(

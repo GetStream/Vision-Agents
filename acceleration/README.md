@@ -51,9 +51,9 @@ and billing as a direct API call.
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
-| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM Truss, thinking off, live on Baseten `qvmmvrrq` |
+| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM recipe, thinking off: a Truss for Baseten, the same flags for Nebius |
 
-Three providers are therefore unreachable until someone deploys them. `s2pro` is under the
+Two providers are therefore unreachable until someone deploys them. `s2pro` is under the
 Fish Audio Research License and wants an H100, so both questions are worth settling before
 the push; the hosted `fish` provider serves the same model in the meantime. `breeze` is in
 the same position under the BreezeBlue Research and Non-Commercial License, and there its
@@ -85,9 +85,9 @@ go run ./cmd/router --config /etc/router.yaml
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
 `postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
-`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled` and
-`stream.{api_key,api_secret}`. Naming no file loads one of the three embedded in the
-binary, by `ROUTER_ENV`.
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled`,
+`knowledge.regions`, `code_sandbox.targets` and `stream.{api_key,api_secret}`. Naming no file
+loads one of the three embedded in the binary, by `ROUTER_ENV`.
 
 Every variable below still wins over the file, so a chart, compose and `.env` keep working
 with nothing changed, and the effective settings are written back into the environment for
@@ -107,7 +107,7 @@ the other commands that read them there.
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for a model, and loads both into its database. An entry may set its `prices`, `price_tiers` and `sku`; one without a price is priced at its rates times 1.2 when it is first loaded. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -119,7 +119,10 @@ the other commands that read them there.
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
+| `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
+| `ROUTER_KNOWLEDGE_REGIONS` | `knowledge.regions`: each region knowledge is kept in and the turbopuffer region serving it, as `region=turbopuffer region` pairs, such as `eu=aws-eu-central-1`. `us` is always served: left out, at `TURBOPUFFER_REGION`, then `gcp-us-central1`, as before. One `TURBOPUFFER_API_KEY` serves every region. See [Regions](#regions) |
 | `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
+| `ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD` | A listening socket inherited from a supervisor, served instead of `ROUTER_CODE_SANDBOX_PROXY_ADDR`, as `ROUTER_LISTEN_FD` is for the API, so no sandbox's connection is refused while an old router hands the proxy over to a new one. Unset, the default, listens on the address. Needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`, and a descriptor other than `ROUTER_LISTEN_FD`'s |
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
@@ -165,8 +168,8 @@ the other commands that read them there.
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
-| `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
-| `GEMMA_API_KEY`         | Optional; the bearer token for `GEMMA_BASE_URL` when it is not on Baseten. `BASETEN_API_KEY` is used when unset |
+| `GEMMA_BASE_URL`        | The root of any OpenAI-compatible Gemma 4 endpoint, ending in `/v1`. On Baseten: `https://model-<model id>.api.baseten.co/environments/production/sync/v1`. On Nebius: `https://<managed host>/v1`, where the host is the endpoint's `https://` public endpoint. See `deploy/gemma-4` |
+| `GEMMA_API_KEY`         | Optional; the host's bearer token for `GEMMA_BASE_URL`. `BASETEN_API_KEY` is used when unset |
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
@@ -299,9 +302,13 @@ signs the header, so it cannot promote a request on its own, and a server token 
 a browser that sends the client header is used by a browser and treated as one. Stream's own
 convention is the same one, so a token minted by a Stream server SDK already fits.
 
-The auth type has no query parameter, unlike the key and the token. A browser WebSocket
-cannot set a header, so there is nothing for one to say, which is what stops a browser
-opening a dispatch socket and answering somebody else's callers.
+A browser WebSocket cannot set a header, so a socket in `proxy` mode, with no proxy that
+declares kinds, may name its auth type in the `stream-auth-type` query parameter instead. It
+is read only as `jwt` or `anonymous`, only when the header is absent, and only in that mode,
+where saying nothing already makes a caller a backend: the parameter can only make a socket
+weaker, never a backend. It is what lets a device's socket be the device that created its
+session, so the router asks it to run that device's tools. A plain request may send it too,
+and is read the same way.
 
 The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
 specific answer gives nothing away, and one told "unauthenticated" would go looking for a
@@ -474,7 +481,7 @@ optional. The organization's are a floor its apps can tighten but not loosen.
 
 | Setting | What it does |
 | ------- | ------------ |
-| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models. A policy has no `region`, and one sent is refused: where work is done is the agent's own `region`, or a direct call's `data_policy.region`; see [Regions](#regions) |
 | `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
 | `tool_output_retention` | How long sessions keep what their tools were given and gave back: `none`, or `1h` to `3650d` such as `30d`. The shortest of the organization's, the app's and the agent config's `tools.output_retention` applies. See [What is recorded](#what-is-recorded) |
 | `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
@@ -926,6 +933,178 @@ treats as the transcriber settling rather than as the caller saying it twice.
 Billing is per token, not per hour: audio in at $3.50/1M against 25 tokens a second, text
 out at $21.00/1M. The router config carries Google's own blended figure of about $0.009 an
 audio minute, so a busy call costs more than the table suggests and a quiet one less.
+
+### Regions
+
+An agent's work is done in one region, `us` or `eu` for now, and never in another: every model
+its sessions route to, its knowledge base and its sandbox. The region is the agent's own.
+`agent.yaml` names it as `region` (the sync's `region`), as a config written with the API does
+(`AgentConfigRequest.region`, `AgentConfigPatch.region`), and it is stored in
+`agent_configs.region` (migration `20261202135000_agent_region`, which puts every agent before it
+in `us`). An agent that names none is in `us` (`pricing.DefaultRegion`), and a sync, an update or a
+patch that leaves it out keeps the stored one. A region is a letter and up to 31 of a-z, 0-9 and
+hyphens (`pricing.ValidRegion`).
+
+Nothing about a region is looked up when work arrives. A session takes its region from its config,
+and carries it on every call it makes (`routing.Owner.Region`): its models', the flow controller's,
+the title's, the review's, the guardrail's and the prompt-injection screen's, its knowledge's and
+its sandbox's. So do the agent's text channels, phone calls, scheduled tasks and plugin events,
+which are sessions of its config, its episode summaries, and its simulations, whose simulated
+caller and judge are handed the agent's conversation and run in its region too. Phone legs, texts
+and memory are not routed by region.
+
+A sync, and a config create, update or patch, is checked before anything is written, and refused
+(400 `invalid_request`) naming each part of the agent's work that could not be done in its region:
+
+- a model it names (`llm`, `stt`, `tts`, `sts`, `subagent`, `search`) with no instance there:
+  `llm: no instance of anthropic/claude-haiku-5-5 in region eu`. A shortcut or a vendor name
+  passes when one of its instances runs there, as the router resolves it; a customer's own model
+  (`custom/<name>`) runs in `us` alone. A target the deployment does not route at all is left to
+  the session to refuse, as before regions, and so are the defaults of the models it leaves out;
+- its knowledge base kept in another region: a knowledge base is never moved. A sync's is the base
+  named after the agent, which it writes in the agent's region; a config's is its
+  `knowledge_namespace`. A region this deployment keeps no knowledge in is refused too;
+- a sandbox it names, in a region with no Daytona target.
+
+A read that fails fails the save, and the caller tries again. A model, a knowledge base or a
+sandbox the save leaves as it was, in the region it was in, is not checked again, so an agent
+stored before the check stays editable. The region is in what `check_changes` compares and in
+what the audit entry shows.
+
+A direct call, an `stt`, `tts` or `sts` socket or recording with no agent, names its own region in
+its option block's `data_policy.region`, `us` when it names none. Work naming two regions, its
+agent's and its data policy's, is refused naming both (`options.ErrRegionConflict`). A policy
+names no region: an app's and an organization's `data_policy` hold `allow_training` and
+`retention`, and refuse `region`, so no policy read, failed or not, moves any work.
+
+`router.yaml` may declare a model once per region. An instance is the provider, the model and
+its `region` (`us` when it names none); the same three twice is refused at start.
+
+```yaml
+llm:
+  providers:
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+      region: eu
+      endpoint: https://eu.anthropic.example/v1
+      api_key_env: ANTHROPIC_EU_API_KEY
+```
+
+- `endpoint` is the base URL of that instance's regional API, in place of the vendor's
+  default host.
+- `api_key_env` names the environment variable holding that instance's key, in place of the
+  vendor's own variable. It is read once at start, never logged, and a variable that is unset
+  or empty stops the router from starting.
+- A factory says which of them it takes (`routing.OverrideBaseURL`, `OverrideAPIKey`), and the
+  router refuses to start with an instance that sets one its factory would drop. The LLM
+  factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both; nothing else takes either
+  yet.
+- Every vendor's default host is taken to be in `us`, so an instance anywhere else must set an
+  `endpoint`, or the router refuses to start, unless its factory picks the region's host
+  itself from the region it is given (`routing.OverrideRegion`; none does yet).
+
+Every routing filter runs as before, then the region's: only the instances in the work's region
+are kept, and with none left the request is refused, naming the region (`no candidate in region
+eu`, a 400). Fallback walks the rest in the usual order, so a failing EU instance falls back only
+to other EU instances. That holds for every routed modality, so an EU agent's session needs an EU
+instance of each model it uses: the transcriber, the voice, the reply's model and the flow
+controller's (`llm-flow`), the title's (`llm-fast`), and search and the decision models where it
+uses them. A prompt-injection screen with no instance in the region lets the response stand, as
+one that cannot be reached does. A concrete `provider/model`, a vendor name and a shortcut
+each resolve to every region's instances first, and a shortcut's `prefer` holds in each region.
+Live health and statistics stay keyed by provider and model: an EU instance shares its US
+twin's health. A customer's own model (`custom/<name>`) runs in `us`, its stored config having
+no region, and is filtered the same way. Each instance's work is priced at its region's entry,
+so EU work is billed under an `-eu` SKU.
+
+Knowledge and sandboxes are not routed, so they are done in the work's region
+(`routing.Owner.Region`), `us` when it names none:
+
+- **Knowledge.** One turbopuffer backend per region `knowledge.regions` maps
+  (`ROUTER_KNOWLEDGE_REGIONS`), `us` always among them as before. A knowledge base stays in the
+  region of its first write through the router, recorded in `knowledge_namespaces` (migration
+  `20261202125000_knowledge_region`, which records every existing base as `us`). Work naming a
+  region, an agent's, reads and writes a base kept there, makes one nothing was written to
+  there, and is refused one kept in another rather than having it moved. Work naming none, as
+  the knowledge API's (`/v1/agents/knowledge`) and a page's read, goes where the base is kept,
+  and makes a new one in `us`. A sync keeps the agent's base in its region before it adds a page,
+  so a page read later lands there. A delete goes where the base is, whatever the work names. A
+  region with no backend is refused. Each region's rows are priced there
+  (`knowledge-turbopuffer-write-eu`), and `router usage storage` samples every region's bases.
+  `cmd/knowledge` still writes to `TURBOPUFFER_REGION` directly, and records no region.
+- **Sandboxes.** Each is made on the Daytona target `code_sandbox.targets` maps its session's
+  region to (`ROUTER_CODE_SANDBOX_TARGETS`); `us` with none is `DAYTONA_TARGET`, then the
+  organization's default, as before. A region with no target is refused when the agent is
+  saved naming a sandbox, and again when a session's sandbox is opened. A sandbox is labelled
+  `stream.region` and its rows carry `region` and
+  the region's SKU. `router usage sandboxes` lists every target of the organization, so the
+  sweep and the reconciliation cover them all, pricing a gap in the sandbox's region.
+
+`GET /v1/{modality}/providers` lists a model once per instance, each with its `region`.
+
+### Customers' own provider keys (BYOK)
+
+A customer may keep a key for their own account at a vendor, one per vendor and region:
+`PUT /v1/agents/provider-keys` with `provider`, `region` (`us` when left out) and `api_key`,
+`GET /v1/agents/provider-keys` to list them and `DELETE /v1/agents/provider-keys/{provider}?region=`
+to forget one, all server-side only and audited as `provider_key`. A key is taken for an LLM
+vendor the deployment routes whose factory builds with an instance's own key
+(`routing.OverrideAPIKey`: OpenAI, Anthropic, Gemini, xAI and DeepSeek today), for `turbopuffer`
+and for `daytona`; any other is a 400 `provider_takes_no_key` naming the ones that are. Only a key
+is taken, never an endpoint: the deployment's own is used.
+
+Keys are kept in `provider_keys` (migration `20261202130000_provider_keys`), sealed with the
+deployment's keyring (`auth.Sealer`, as the other customer secrets are) and bound to the customer,
+the vendor and the region, so a sealed key copied to another row does not open. A key is never
+returned, logged or put in an error: the API lists its last four characters (`key_hint`, empty for a
+key under 16 characters), and its audit entries show no more. A key holding a space, a comma or a
+control character is refused. Without a keyring a put is refused, and without a database there are
+no keys.
+
+- **Routing.** For each candidate in the work's region whose vendor the customer keeps a key for
+  there, the router inserts the customer's own instance immediately before it: a copy of the
+  instance with `BYOK` set, at the deployment's endpoint, built with the customer's key. The order
+  between models stays the priority list's or the ranking's, and each model is tried on the
+  customer's key first. When that fails, as it is built or when the vendor refuses the request, the
+  walk and the LLM fallback move on to the deployment's instance of the model as to any next
+  candidate. A key is looked up for the work's region alone: a key for `eu` is used only for `eu`
+  work, and a key for `us` only for `us` work. A model the deployment holds no key
+  for is still served on the customer's. Keys are read through the appconfig cache (Redis, and the
+  copy rueidis keeps in each process, dropped on every replica when a key is put or deleted) and
+  opened, one AES-GCM open, when work is routed.
+- **Health.** Work on a customer's key is counted for the customer and kept out of the vendor and
+  model's live health and its fatal mark, so one customer's revoked key never marks the model down
+  for everyone. `router_requests_total` counts its failures under `outcome="customer_key"`, never
+  `error` or `timeout`. A 401 or 403 from the vendor on the customer's key is `error_code`
+  `key_refused` on its request row, with a message naming the vendor and region, which the customer
+  sees on their usage events and call timelines; the deployment's instance is asked next.
+- **Billing.** Work on a customer's key is priced at its item's BYOK entry (see Prices): a SKU ending
+  in `-byok`, a fee of 20% of the work at the vendor's rates, `base_cost_micros` 0. A customer who may
+  not spend money is refused it as any billable work is.
+- **Knowledge.** With a `turbopuffer` key for the work's region, a knowledge base first written from
+  then on is kept in the customer's own turbopuffer account, at the turbopuffer region of the
+  deployment's own backend there, read and written on their key and priced at
+  `knowledge-turbopuffer-*-byok`. `knowledge_namespaces.account` records the account, `stream` for
+  every base written before. A base stays in the account of its first write: one in the deployment's
+  stays there when its owner puts a key, and one in theirs whose key was deleted is refused, a 400
+  naming the base and the region, rather than read from the deployment's account. `router usage
+  storage` samples each base kept in a customer's account on their key, at the BYOK price, and counts
+  apart, not as missed, one whose key is gone.
+- **Sandboxes.** With a `daytona` key for the work's region, the session's sandbox is made in the
+  customer's own Daytona organization, on the same target, labelled `stream.account=customer`, and its
+  time is priced at `sandbox-daytona-*-byok`. Under the `daytona` broker its secrets are kept in that
+  organization too, and the hourly secret sweep covers every customer organization a key is kept
+  for. `router usage sandboxes` deletes the orphans and reconciles Daytona's records in each customer
+  organization on its key, as it does in the deployment's (its lines start `a customer's
+  organization:`), pricing a gap at the BYOK entry. A sandbox labelled for a customer's organization
+  is never the deployment organization's, even where one key reaches both.
+
+`router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
+as the router, so their CronJobs need its variables too.
 
 ## Run
 
@@ -1833,43 +2012,79 @@ refusal.
 
 ## Prices
 
-Every priced item (a modality, provider and model, and the `when` attributes that choose
-between its entries, such as a service tier or a country) has an entry with two prices:
-`rates` and `tiers`, the vendor's cost, kept for reference, and `prices` and `price_tiers`,
-what customers are charged, with the same meters and the same `above_input_tokens`
-thresholds. A quote charges the price alone (`cost_micros`), and works out the cost at the
-vendor's rates beside it (`base_cost_micros`), so the margin on every row can be read back.
-Nothing adds a markup when a row is priced. A free entry has no price, and a local model with
-none costs nothing, as before.
+Every priced item is a modality, provider and model, in a region, with the customer's own key
+or without (BYOK), and the `when` attributes that choose between its entries, such as a
+service tier or a country. It has an entry with two prices: `rates` and `tiers`, the vendor's
+cost, kept for reference, and `prices` and `price_tiers`, what customers are charged, with the
+same meters and the same `above_input_tokens` thresholds. A quote charges the price alone
+(`cost_micros`), and works out the cost at the vendor's rates beside it (`base_cost_micros`), so
+the margin on every row can be read back. Nothing adds a markup when a row is priced. A free
+entry has no price, and a local model with none costs nothing, as before.
+
+Every entry and every item names its region: `us` or `eu` for now, more later (a letter and up
+to 31 of a-z, 0-9 and hyphens). The region and the BYOK state are matched exactly: work is
+priced only by an entry of its own region and BYOK state, so EU work is never priced by a US
+entry, and BYOK work never by an entry that is not BYOK, nor the other way round. Work no entry
+matches is unpriced, as before, and logged with its region and BYOK state. It is counted in
+`router_usage_unpriced_total` with `region` and `byok` labels besides the item's, and its alert
+names it as `<modality>/<provider>/<model>/<region>/<byok>`, such as
+`llm/anthropic/claude-haiku-5-5/eu/false`. Within those, `when`
+picks the entry whose conditions all hold with the most of them. A provider instance runs in
+the `region` its routing config names. When `router.yaml` names none, as it names none today,
+parsing gives it `pricing.DefaultRegion`, `us`, so a parsed config never has an empty region.
+A config built in code, as phone, knowledge, memory and sandbox metering build one, names none
+and runs in the default region too. The default region is only where such an instance runs,
+never a fallback when an item is priced.
+
+Work done with the customer's own key is billed to the customer by the vendor, so its price is
+a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
+tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
+BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
+`cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
+(`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
+reading any of them, `vendor.json` included, adds a BYOK twin of each `llm`, `knowledge` and
+`sandbox` entry that is not BYOK (`pricing.WithBYOK`, for `pricing.BYOKModalities`). The twin has
+the same item, region and `when`, the same rates, tiers and free flag, and no price or SKU of
+its own, so it is priced at the fee and given its own SKU when it is first loaded. A file may
+write a BYOK entry itself, with a price of its own, and it wins over the twin.
 
 Every item has a SKU, kept across all its price changes, which each row it prices records
 (`requests.sku`, and `sku` on the usage event). A new item is given its modality, provider,
-model and `when` attributes, lowercased with every run of other characters one hyphen
-(`llm-openai-gpt-5-6-luna-service-tier-flex`), numbered `-2`, `-3` past a SKU another item
-has had. A change may give a new item an existing SKU, as a model its vendor renamed keeps
-the old name's, only when that SKU's item is withdrawn by the same change or is no longer in
-force.
+model, each `when` attribute and its value, its region, and `byok` for a BYOK item, lowercased
+with every run of other characters one hyphen: `llm-anthropic-claude-haiku-5-5-us`,
+`llm-anthropic-claude-haiku-5-5-us-byok`, `llm-openai-gpt-6-luna-service-tier-batch-us`,
+`knowledge-turbopuffer-write-us-byok`. It is numbered `-2`, `-3` past a SKU another item has had
+(`llm-openai-gpt-4-1-us-2`). A change may give a new item an existing SKU, as a model its vendor
+renamed keeps the old name's, only when that SKU's item is withdrawn by the same change or is no
+longer in force.
 
 `prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
-service tier where a vendor charges one), embedded in the binary: rates only, no price of the
-operator's and no negotiated figure. A deployment may lay a price file of its own over it with
-`ROUTER_PRICES_FILE`: for one model and `when`, the first file with an entry wins. An entry
-of either file may set `prices`, `price_tiers` and `sku`; one with no price is priced at its
-rates times `pricing.PriceFactorBps` (12000, so 1.2), each rate kept to 12 significant digits.
-A file's top-level `markup_bps`, which older files have, is ignored with a warning.
+service tier where a vendor charges one), all in the `us`, embedded in the binary: rates only,
+no price of the operator's and no negotiated figure. A deployment may lay a price file of its
+own over it with `ROUTER_PRICES_FILE`: for one item, region, BYOK state and `when`, the first
+file with an entry wins. Every entry of `vendor.json` names its `region`, and one that names
+none is refused, naming the entry. A deployment's own file should too, but for now an entry of
+it that names none is read as `us`, with a warning naming the entries: every router of a
+deployment reads the same file at its start, and a router built before regions refuses a
+`region` field, so the file can name regions only once none of its routers is that old. An
+entry may set `prices`, `price_tiers` and `sku`. One with no price
+is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), or a BYOK one at
+`pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
+which older files have, is ignored with a warning.
 
 At start, right after migrating, a router loads them into the shared database's
-`price_changes` and `price_entries`: everything into an empty database, as one `seed` change,
-and otherwise only the models the database has never priced, as one `release` change. Those
-are the only entries priced at the factor; a model the database has priced keeps its price,
-whatever the files say now, and staff set every later price outright through the management
-API. Each load is audited (`price_list`, source `cli`). A load that fails is retried every 30
-seconds while the router serves; a file that does not parse stops the router at start. Rows
-are only ever added: a trigger refuses to change or delete an entry, its price and SKU
-included, and a change can only be cancelled before it takes effect. The one exception is
-`router prices reload`, for a development database only, below. An amount a vendor quotes
-outright, such as a number's monthly rental, is charged at that amount times the same factor,
-which no entry stores; its `base_cost_micros` is the vendor's amount.
+`price_changes` and `price_list_entries`: everything into an empty database, as one `seed`
+change, and otherwise only the items the database has never priced, as one `release` change.
+Those are the only entries priced at the factor or the fee; an item the database has priced
+keeps its price, whatever the files say now, and staff set every later price outright through
+the management API. Each load is audited (`price_list`, source `cli`). A load that fails is
+retried every 30 seconds while the router serves; a file that does not parse stops the router
+at start. Rows are only ever added: a trigger refuses to change or delete an entry, its price,
+SKU, region and BYOK state included, and a change can only be cancelled before it takes effect.
+The one exception is `router prices reload`, for a development database only, below. An amount
+a vendor quotes outright, such as a number's monthly rental, is charged at that amount times the
+same factor, which no entry stores; its `base_cost_micros` is the vendor's amount, or 0 with the
+fee charged for a BYOK item.
 
 Migration `20261118120000_price_entry_prices` stored every existing entry's price as what it
 was charged: its rates times its own markup, else the list's in force when it is (or was), and
@@ -1877,11 +2092,26 @@ gave every item its SKU. Migration `20261130120000_drop_price_markup` then drops
 `markup_bps` those markups were kept in, on `price_changes` and `price_entries`, which nothing
 had read since.
 
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`
+and adds `region` and `byok`: every existing entry is `us` and not BYOK, and `region` keeps no
+default, so every later insert names one. It ends every existing SKU in `-us`
+(`llm-openai-a` becomes `llm-openai-a-us`, `llm-openai-gpt-4-1-2` becomes
+`llm-openai-gpt-4-1-2-us`), and indexes items by region and BYOK state as well. `requests.sku`
+and the usage ledger are not rewritten: a row keeps the SKU it was billed under, so a row priced
+before the migration names its item's SKU without the region. The rename is what keeps a router
+built before it from reading a BYOK entry as its item's newest price: that router's reads and
+writes of the price list fail, and it keeps pricing with the list it holds in memory, reading
+again every 30 seconds, until it is replaced. The first start after the migration writes one
+`release` change holding only the BYOK twins the files now have, at the fee; every US item keeps
+its price and its SKU. Down takes the region off the SKUs, drops the columns and renames the
+table back, and refuses a list that holds a BYOK or non-US entry, which a router built before
+it would read as a US price.
+
 | Command | What it does |
 | --- | --- |
-| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's SKU, its vendor rates and its price; `--unpriced` lists the routed models no entry prices |
-| `router prices sync --dry-run` | What the next start would load, writing nothing |
-| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's item, region and BYOK state, its SKU, its vendor rates and its price; `--unpriced` lists the routed items no entry prices, each in its region |
+| `router prices sync --dry-run` | What the next start would load, each item with its region and BYOK state, writing nothing |
+| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database, counting its entries by region and BYOK state |
 | `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
 | `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
 | `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
@@ -1889,7 +2119,7 @@ had read since.
 A start never changes a price the database already has, so on a laptop an edit to
 `vendor.json` (a rate fixed, say) does not reach a database seeded before it.
 `router prices reload --development` puts the files' list back: in one transaction, under the
-lock a load takes, it empties `price_changes` and `price_entries` (every change goes, those
+lock a load takes, it empties `price_changes` and `price_list_entries` (every change goes, those
 scheduled and cancelled included), then writes the `seed` a fresh database gets from
 `ROUTER_PRICES_FILE` over `vendor.json`. It first prints
 the database it is pointed at, the address it connects to and the address the server answers
@@ -1919,24 +2149,30 @@ docker compose up -d --build router && docker compose exec router router prices 
 ```
 
 Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
-included): every entry in force from the router's memory, its `sku` and its price in `rates`
-and `tiers` (what they are charged), with the change that wrote it, and `upcoming`, what the
-scheduled changes will set, soonest first, with their reason. The vendor's cost, the unpriced
-items and each change's source and author stay on the staff operations.
+included): every entry in force from the router's memory, its `region`, `byok`, `sku` and its
+price in `rates` and `tiers` (what they are charged), with the change that wrote it, and
+`upcoming`, what the scheduled changes will set, soonest first, with their reason. `region` and
+`modality` in the query keep one region's or one modality's prices alone. The vendor's cost, the
+unpriced items and each change's source and author stay on the staff operations, whose list in
+force and preview name each item's `region` and `byok` too.
 
 Staff change the list with `createPriceChange` (`/v1/manage/price-lists/changes`): each entry
-sets the vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright,
-the same meters in both (else 400 `price_meters_mismatch`) and a price tier for each tier
-(else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in force is
-400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). The preview's
-`confirmation_required` is worked out on the prices: one moving by a factor of 2 or more.
+names its `region` (an entry without one, or with one of another form, fails validation with a
+400 `validation_failed`) and, for work on the customer's own key, `byok: true`. It sets the
+vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright, a BYOK entry's
+fee included, the same meters in both (else 400 `price_meters_mismatch`) and a price tier for
+each tier (else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in
+force is 400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). An entry of
+another region or BYOK state is an item of its own: it moves no other entry's price. The
+preview's `confirmation_required` is worked out on the prices: one moving by a factor of 2 or
+more.
 
 Until the router prices from the database, it prices every row from its price files:
-`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them. A
-`price:` block in a routing config is ignored, with a warning at start;
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them, BYOK
+twins included. A `price:` block in a routing config is ignored, with a warning at start;
 `router prices export --from <your config> --out own-prices.json` moves one into a file for
-`ROUTER_PRICES_FILE`, which keeps those models priced. The `check_prices` skill checks the list
-against what each vendor charges.
+`ROUTER_PRICES_FILE`, each entry in its provider's region, which keeps those models priced. The
+`check_prices` skill checks the list against what each vendor charges.
 
 ## Transcripts, memory and phone
 

@@ -87,17 +87,28 @@ func (s *DropPriceMarkupMigrationSuite) markupChecks() int {
 WHERE conname IN ('price_changes_markup_bps_check', 'price_entries_markup_bps_check')`)
 }
 
-// scheduled writes a change made through the API, in force in an hour, of one entry.
+// scheduled writes a change made through the API, in force in an hour, of one entry, on the
+// schema every migration has run on.
 func (s *DropPriceMarkupMigrationSuite) scheduled(name string) {
 	change := PriceChange{Name: name, Kind: PriceChangeAPI, Reason: "dearer", Source: "a test",
 		EffectiveAt: time.Now().Add(time.Hour), CreatedBy: "operator"}
 	_, err := s.db.DB().NewInsert().Model(&change).Exec(s.ctx)
 	s.Require().NoError(err)
-	entry := entryRow(pricing.Entry{Modality: "llm", Provider: "openai", Model: "b",
+	entry := entryRow(pricing.Entry{Modality: "llm", Provider: "openai", Model: "b", Region: pricing.RegionUS,
 		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1)}})
 	entry.Change = name
 	_, err = s.db.DB().NewInsert().Model(&entry).Exec(s.ctx)
 	s.Require().NoError(err)
+}
+
+// scheduledBeforeRegions is scheduled on a schema the regions migration has not run on, whose
+// entries are in price_entries and name no region.
+func (s *DropPriceMarkupMigrationSuite) scheduledBeforeRegions(name string) {
+	s.exec(`INSERT INTO price_changes (name, kind, reason, source, effective_at, created_by)
+VALUES ('`+name+`', 'api', 'dearer', 'a test', now() + interval '1 hour', 'operator')`,
+		`INSERT INTO price_entries (change, sku, modality, provider, model, rates, prices, effective_at)
+VALUES ('`+name+`', 'llm-openai-b', 'llm', 'openai', 'b', '{"input_tokens": {"usd": 1, "per": 1000000}}',
+        '{"input_tokens": {"usd": 1, "per": 1000000}}', now())`)
 }
 
 func (s *DropPriceMarkupMigrationSuite) TestTheColumnsAndTheirChecksAreGoneAndEveryPriceStays() {
@@ -129,7 +140,7 @@ func (s *DropPriceMarkupMigrationSuite) TestAChangeIsStillCancelledOnceAndNothin
 		"UPDATE price_changes SET cancelled_at = now(), source = 'rewritten' WHERE name = '20990101000001_other'")
 	change, _, cancelled, err := s.db.CancelPriceChange(s.ctx, "20990101000000_dearer", "not now", "staff-1", "Staff")
 	_, again := s.db.DB().ExecContext(s.ctx, "UPDATE price_changes SET cancelled_at = now() WHERE name = '20990101000000_dearer'")
-	_, entry := s.db.DB().ExecContext(s.ctx, "UPDATE price_entries SET rates = '{}' WHERE model = 'a'")
+	_, entry := s.db.DB().ExecContext(s.ctx, "UPDATE price_list_entries SET rates = '{}' WHERE model = 'a'")
 
 	s.ErrorContains(reason, "a price change can only be cancelled")
 	s.ErrorContains(both, "a price change can only be cancelled")
@@ -153,13 +164,12 @@ VALUES ('20990101000001_dear', 'api', 'dear', 'a test', now() + interval '1 hour
 VALUES ('20261101000000_seed', 'llm', 'openai', 'c', 'llm-openai-c', 100001, now())`)
 	s.ErrorContains(changeOutOfRange, "price_changes_markup_bps_check")
 	s.ErrorContains(entryOutOfRange, "price_entries_markup_bps_check")
-	s.scheduled("20990101000000_dearer")
+	s.scheduledBeforeRegions("20990101000000_dearer")
 	_, markup := s.db.DB().ExecContext(s.ctx,
 		"UPDATE price_changes SET cancelled_at = now(), markup_bps = 1000 WHERE name = '20990101000000_dearer'")
 	s.ErrorContains(markup, "a price change can only be cancelled", "the guard compares markup_bps again")
-	_, _, cancelled, err := s.db.CancelPriceChange(s.ctx, "20990101000000_dearer", "not now", "staff-1", "Staff")
-	s.Require().NoError(err)
-	s.True(cancelled)
+	s.exec("UPDATE price_changes SET cancelled_at = now(), cancelled_by = 'staff-1', cancel_reason = 'not now' " +
+		"WHERE name = '20990101000000_dearer'")
 
 	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", dropPriceMarkup))
 	s.Zero(s.markupColumns())

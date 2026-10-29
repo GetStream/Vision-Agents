@@ -17,6 +17,8 @@ final readonly class Provider
         public string $model,
         public string $provider,
         public bool $realtime,
+        // Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than...
+        public string $region,
         public Tier|string $tier,
         public ?ProviderBenchmark $benchmark = null,
         // What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
@@ -41,6 +43,7 @@ final readonly class Provider
             model: Json::string($data, 'model'),
             provider: Json::string($data, 'provider'),
             realtime: Json::bool($data, 'realtime'),
+            region: Json::string($data, 'region'),
             tier: Json::enum($data, 'tier', Tier::class),
             benchmark: array_key_exists('benchmark', $data) && $data['benchmark'] !== null ? ProviderBenchmark::fromArray(Json::object($data, 'benchmark')) : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
@@ -63,6 +66,7 @@ final readonly class Provider
         $out['model'] = $this->model;
         $out['provider'] = $this->provider;
         $out['realtime'] = $this->realtime;
+        $out['region'] = $this->region;
         $out['tier'] = Json::enumValue($this->tier);
         if ($this->benchmark !== null) {
             $out['benchmark'] = $this->benchmark->toArray();

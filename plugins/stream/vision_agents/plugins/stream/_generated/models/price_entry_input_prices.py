@@ -17,7 +17,7 @@ T = TypeVar("T", bound="PriceEntryInputPrices")
 @_attrs_define
 class PriceEntryInputPrices:
     """What customers are charged, in the shape of rates: the same meters, or 400 price_meters_mismatch. Required with
-    rates; set outright, never worked out from them. Bounded as a rate is.
+    rates; set outright, never worked out from them, a BYOK entry's fee included. Bounded as a rate is.
 
     """
 

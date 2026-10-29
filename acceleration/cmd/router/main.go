@@ -57,6 +57,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -74,6 +75,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -652,6 +654,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 		defer configs.Close()
 	}
+	// The keys customers keep for their own accounts at the vendors, read through the same cache
+	// and opened with the keyring they were sealed under. Without either, work is routed on the
+	// deployment's own keys alone.
+	var customerKeys routing.CustomerKeys
+	if configs != nil && secrets != nil {
+		customerKeys = providerkeys.NewKeyring(configs, secrets)
+	}
 
 	// Who each app is acting for, written down once per user rather than once per
 	// request: an LRU of the last few thousand this process saw, a key the replicas share
@@ -894,6 +903,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Gate:       gate,
 			Pricer:     prices,
 			Models:     models,
+			Keys:       customerKeys,
 			Screen:     screen,
 			ReplyHedge: settings.Agent.ReplyHedge,
 			FlowHedge:  settings.Agent.FlowHedge,
@@ -1045,7 +1055,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
 	// tool is offered to no session, and there is nothing to fill either.
-	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, logger)
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, pgStore, customerKeys, logger)
 	if base != nil {
 		defer base.Close()
 	}
@@ -1060,7 +1070,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if directory != nil {
 		defer directory.Close()
 	}
-	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, logger); err != nil {
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, customerDaytonaKeys(pgStore, secrets), logger); err != nil {
 		return err
 	}
 
@@ -1081,7 +1091,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		sessionConnectors.Resolver = connectorResolver
 	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
-		sessionConnectors, prices, policies, logger)
+		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
 	}
@@ -1500,7 +1510,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}()
 
 	handler := server.Handler()
-	public, err := listen(settings.Addr, settings.ListenFD)
+	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
 	if err != nil {
 		return err
 	}
@@ -1529,8 +1539,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		go serve(peerServer, peers)
 	}
 
-	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr, settings.CodeSandbox.ProxyPublicURL,
-		settings.ListenFD != 0, serve, logger)
+	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr,
+		settings.CodeSandbox.ProxyListenFD, settings.CodeSandbox.ProxyPublicURL, settings.ListenFD != 0, serve, logger)
 	if err != nil {
 		return err
 	}
@@ -1561,9 +1571,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 }
 
-// listen opens the public listener: the socket a supervisor handed down when there is one,
-// so the process before this one and this one take connections from the same queue.
-func listen(address string, fd int) (net.Listener, error) {
+// listen opens a listener: the socket a supervisor handed down when there is one, so the
+// process before this one and this one take connections from the same queue. setting names
+// fd in the error.
+func listen(address string, fd int, setting string) (net.Listener, error) {
 	if fd == 0 {
 		return net.Listen("tcp", address)
 	}
@@ -1571,7 +1582,7 @@ func listen(address string, fd int) (net.Listener, error) {
 	defer inherited.Close()
 	listener, err := net.FileListener(inherited)
 	if err != nil {
-		return nil, fmt.Errorf("could not serve on the inherited socket %d (listen_fd): %w", fd, err)
+		return nil, fmt.Errorf("could not serve on the inherited socket %d (%s): %w", fd, setting, err)
 	}
 	return listener, nil
 }
@@ -1592,7 +1603,8 @@ type stopping struct {
 	handOverMetrics func()
 	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
 	// so the router taking over on the same address serves the sandboxes; the tunnels already
-	// open stay until the process ends. Without a drain the caller stops it at exit. It does nothing outside an overlap deploy.
+	// open stay until the process ends. Without a drain the caller stops it at exit. It does
+	// nothing without an overlap deploy, unless proxy_listen_fd is set.
 	handOverProxy func()
 	drain         time.Duration
 	// grace is how long the requests still open on a closing listener get to finish; zero
@@ -1896,6 +1908,7 @@ func buildSessions(
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
+	keys routing.CustomerKeys,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -1946,7 +1959,7 @@ func buildSessions(
 	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
 		return nil, err
 	}
-	options.Sandboxes = newSandboxes(settings, usageWriter, prices, logger)
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, keys, logger)
 	options.SandboxLimits = policies
 	options.ResumeHistories = policies
 	return session.NewManager(options)
@@ -2003,15 +2016,62 @@ func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
 	return asynq.RedisClientOpt{Addr: redis.Addr, Username: redis.Username, Password: redis.Password}
 }
 
-// newKnowledge is the knowledge base every lookup and write goes through, recorded by
-// recorder and each write admitted by gate, or nil without a turbopuffer key.
-func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, logger *slog.Logger) *metered.Knowledge {
-	backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings.Knowledge), Logger: logger})
+// newKnowledge is the knowledge base every lookup and write goes through, a backend in each
+// region the settings map, recorded by recorder, each write admitted by gate, and the place
+// each base is kept recorded in pgStore: its region, and the customer's own account there when
+// keys holds their turbopuffer key for it as the base is first written. Nil without a
+// turbopuffer key of the deployment's.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, pgStore *store.Store,
+	keys routing.CustomerKeys, logger *slog.Logger) *metered.Knowledge {
+	backends, err := knowledgeBackends(settings.Knowledge, 0, logger)
 	if err != nil {
 		logger.Debug("nothing will be looked up or written down", "error", err)
 		return nil
 	}
-	return metered.NewKnowledge(backend, recorder, gate)
+	// A nil *store.Store in the interface would not be a nil interface.
+	var places metered.NamespacePlaces
+	if pgStore != nil {
+		places = pgStore
+	}
+	base := metered.NewRegionalKnowledge(backends, recorder, gate, places)
+	if keys != nil {
+		base.WithCustomerAccounts(keys, knowledgeAccounts(settings.Knowledge, 0, logger))
+	}
+	return base
+}
+
+// knowledgeAccounts builds the turbopuffer store of a customer's own account in a region the
+// settings map, on their key, at the turbopuffer region the deployment's own store there is at.
+// Each is built for one call, which costs nothing: it holds no connection of its own, every
+// store dialling through the default transport.
+func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) metered.AccountBackend {
+	return func(region, key string) (knowledge.Backend, error) {
+		return turbopuffer.New(turbopuffer.Options{APIKey: key, Region: settings.Regions[region], Timeout: timeout, Logger: logger})
+	}
+}
+
+// knowledgeBackends is a turbopuffer store in each region knowledge.regions maps to one of
+// turbopuffer's, each bounding a call by timeout (zero is a lookup's). The default region is
+// always served: where the setting names none for it, at TURBOPUFFER_REGION, then
+// gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
+// every turbopuffer region.
+func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	backends := make(map[string]knowledge.Backend, len(mapped))
+	for region, theirs := range mapped {
+		backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings), Region: theirs, Timeout: timeout, Logger: logger})
+		if err != nil {
+			return nil, err
+		}
+		backends[region] = backend
+	}
+	return backends, nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.
@@ -2133,7 +2193,8 @@ func newPrices(capabilities routing.Config, files store.PriceLoad, version strin
 		return nil, err
 	}
 	for _, item := range list.Unpriced(routing.Items(capabilities)) {
-		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model)
+		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
+			"region", item.Region, "byok", item.BYOK)
 	}
 	return list, nil
 }

@@ -112,8 +112,8 @@ func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsFor
 	select {
 	case err := <-delivered:
 		s.NoError(err)
-	case <-time.After(settleFor):
-		s.FailNow("the follow-up never started once the reply finished")
+	case <-time.After(scheduledPoll / 4):
+		s.FailNow("the follow-up did not start within replyPoll of the reply finishing")
 	}
 	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+2 }, settleFor, 10*time.Millisecond)
 }

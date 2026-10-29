@@ -1314,6 +1314,7 @@ final class Session {
     this.agent,
     required this.agentId,
     required this.callId,
+    this.callOutcome,
     required this.callType,
     this.closedAt,
     this.configId,
@@ -1357,6 +1358,10 @@ final class Session {
       },
       agentId: _string(json['agent_id'], 'Session.agent_id'),
       callId: _string(json['call_id'], 'Session.call_id'),
+      callOutcome: switch (json['call_outcome']) {
+        null => null,
+        final Object value => SessionCallOutcome.fromJson(value),
+      },
       callType: _string(json['call_type'], 'Session.call_type'),
       closedAt: switch (json['closed_at']) {
         null => null,
@@ -1473,6 +1478,7 @@ final class Session {
   final String? agent;
   final String agentId;
   final String callId;
+  final SessionCallOutcome? callOutcome;
   final String callType;
   final DateTime? closedAt;
   final String? configId;
@@ -1510,6 +1516,7 @@ final class Session {
     'agent': ?agent,
     'agent_id': agentId,
     'call_id': callId,
+    if (callOutcome case final value?) 'call_outcome': value.toJson(),
     'call_type': callType,
     if (closedAt case final value?) 'closed_at': value.toUtc().toIso8601String(),
     'config_id': ?configId,
@@ -1561,6 +1568,39 @@ final class SessionCall {
   final String type;
 
   Map<String, Object?> toJson() => {'id': id, 'type': type};
+}
+
+/// How the call the router placed for a session ended.
+final class SessionCallOutcome {
+  const SessionCallOutcome({this.answeredAt, this.durationSeconds, this.outcome});
+
+  factory SessionCallOutcome.fromJson(Object? value) {
+    final json = _object(value, 'SessionCallOutcome');
+    return SessionCallOutcome(
+      answeredAt: switch (json['answered_at']) {
+        null => null,
+        final Object value => _date(value, 'SessionCallOutcome.answered_at'),
+      },
+      durationSeconds: switch (json['duration_seconds']) {
+        null => null,
+        final Object value => _int(value, 'SessionCallOutcome.duration_seconds'),
+      },
+      outcome: switch (json['outcome']) {
+        null => null,
+        final Object value => _string(value, 'SessionCallOutcome.outcome'),
+      },
+    );
+  }
+
+  final DateTime? answeredAt;
+  final int? durationSeconds;
+  final String? outcome;
+
+  Map<String, Object?> toJson() => {
+    if (answeredAt case final value?) 'answered_at': value.toUtc().toIso8601String(),
+    'duration_seconds': ?durationSeconds,
+    'outcome': ?outcome,
+  };
 }
 
 /// The connection a session uses for one of its agent config's connector bindings chosen per session.

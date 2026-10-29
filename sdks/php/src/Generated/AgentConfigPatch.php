@@ -42,6 +42,8 @@ final readonly class AgentConfigPatch
         // Deprecated: use connectors, a binding to a connector.
         /** @var list<mixed>|null */
         public ?array $plugins = null,
+        // Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowled...
+        public ?string $region = null,
         public ?ResumeHistory $resumeHistory = null,
         public ?AgentReview $review = null,
         public AgentRole|string|null $role = null,
@@ -90,6 +92,7 @@ final readonly class AgentConfigPatch
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
+            region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
@@ -165,6 +168,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
+        }
+        if ($this->region !== null) {
+            $out['region'] = $this->region;
         }
         if ($this->resumeHistory !== null) {
             $out['resume_history'] = $this->resumeHistory->toArray();

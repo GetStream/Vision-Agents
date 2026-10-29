@@ -107,6 +107,14 @@ describe("loadFolder", () => {
     });
   });
 
+  it("reads the region the agent's work is done in, and none when agent.yaml names none", async () => {
+    const placed = await loadFolder(await agentDir({ "agent.yaml": "name: jean\nregion: eu\n" }));
+    const unplaced = await loadFolder(await agentDir({ "agent.yaml": "name: jean\n" }));
+
+    assert.equal(placed.settings?.region, "eu");
+    assert.equal(unplaced.settings?.region, undefined, "left out, the stored region stays");
+  });
+
   it("is called after its directory when agent.yaml names nothing", async () => {
     const folder = await loadFolder(await agentDir({ "agent.yaml": "llm: llm-fast\n" }));
 

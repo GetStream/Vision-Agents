@@ -310,3 +310,67 @@ func (s *VonageSuite) answer(body string) {
 		_, _ = w.Write([]byte(body))
 	}
 }
+
+func (s *VonageSuite) TestACallWithAStatusURLAsksForItsEnd() {
+	s.answer(`{"uuid":"call-9","status":"started"}`)
+	statusURL := "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+15125551234",
+		To:        "+15550001111",
+		Bridge:    phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		StatusURL: statusURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal([]any{statusURL}, s.seen.body["event_url"])
+	s.Equal(http.MethodPost, s.seen.body["event_method"])
+}
+
+func (s *VonageSuite) TestACallWithoutAStatusURLAsksForNothing() {
+	s.answer(`{"uuid":"call-9","status":"started"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.body, "event_url")
+	s.NotContains(s.seen.body, "event_method")
+}
+
+func (s *VonageSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"completed":  phone.CallCompleted,
+		"busy":       phone.CallBusy,
+		"rejected":   phone.CallBusy,
+		"unanswered": phone.CallNoAnswer,
+		"timeout":    phone.CallNoAnswer,
+		"failed":     phone.CallFailed,
+		"cancelled":  phone.CallCanceled,
+	} {
+		status, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9","status":"`+word+`"}`))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+func (s *VonageSuite) TestAProgressReportDecidesNothing() {
+	status, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9","status":"ringing"}`))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+}
+
+func (s *VonageSuite) TestAStatusItCannotReadIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9"}`))
+	s.ErrorContains(err, "status")
+
+	_, err = s.provider.ReadStatus("application/json", []byte(`not json`))
+	s.Error(err)
+
+	_, err = s.provider.ReadStatus("application/x-www-form-urlencoded", []byte("status=completed"))
+	s.Error(err)
+}

@@ -120,7 +120,7 @@ void main() {
       expect(() => Backend(url: Uri.parse('http://x')), throwsArgumentError);
     });
 
-    test('puts credentials in a socket url and no auth type, which has no query form', () async {
+    test('puts credentials and a device\'s auth type in a socket url by customer id', () async {
       final backend = Backend(
         url: Uri.parse('https://router.example/base'),
         customerId: 'acme',
@@ -130,7 +130,31 @@ void main() {
 
       expect(url.scheme, 'wss');
       expect(url.path, '/base/v1/agents/sessions/s1/events');
-      expect(url.queryParameters, {'decisions': 'false', 'customer_id': 'acme', 'user_id': 'ada'});
+      expect(url.queryParameters, {
+        'decisions': 'false',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+        'stream-auth-type': 'jwt',
+      });
+    });
+
+    test('puts the key, the token and a device\'s auth type in a socket url by key', () async {
+      for (final url in [
+        Uri.parse('http://localhost:8080'),
+        Backend.defaultUrl,
+        Backend.regionUrl('europe-west4'),
+      ]) {
+        final backend = Backend(url: url, apiKey: 'key', token: () async => 'token');
+
+        final socket = await backend.socketUri('/v1/agents/sessions/s1/events');
+
+        expect(socket.queryParameters, {
+          'api_key': 'key',
+          'token': 'token',
+          'authorization': 'token',
+          'stream-auth-type': 'jwt',
+        });
+      }
     });
   });
 
@@ -146,6 +170,7 @@ void main() {
           title: 'Billing',
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
+          returnUrl: 'com.example.app:/connected',
         ),
       );
 
@@ -156,12 +181,65 @@ void main() {
         'title': 'Billing',
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
+        'return_url': 'com.example.app:/connected',
       });
       expect(session.id, 's1');
       expect(session.isText, isTrue);
       expect(session.mode, SessionMode.text);
       expect(session.modality, SessionModality.text);
       expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+    });
+
+    test('an empty return url sends none, so the sign-in goes back to the dashboard', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      await agents.sessions.create(const SessionOptions(returnUrl: ''));
+
+      expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
+    });
+
+    test("memory is the signed-in user's, narrowed by the labels asked for", () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+      final ada = agents.withUser('ada');
+
+      await ada.sessions.create(
+        const SessionOptions(
+          memory: SessionMemory(filter: {'topic': 'billing'}, appId: 'web'),
+          timezone: 'Europe/Amsterdam',
+        ),
+      );
+      final narrowed = router.last('POST /v1/agents/sessions').json;
+      await ada
+          .agent('docs')
+          .sessions
+          .create(const SessionOptions(memory: SessionMemory(), incognito: true));
+
+      expect(narrowed, {
+        'memory': {
+          'app_id': 'web',
+          'filter': {'topic': 'billing'},
+          'user_id': 'ada',
+        },
+        'timezone': 'Europe/Amsterdam',
+      });
+      // The router keeps nothing of an incognito session, so the two are sent as asked and it
+      // decides.
+      expect(router.last('POST /v1/agents/sessions').json, {
+        'agent': 'docs',
+        'incognito': true,
+        'memory': {'user_id': 'ada'},
+      });
+    });
+
+    test('remembering with nobody named sends no user, and no memory is none at all', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      await agents.sessions.create(const SessionOptions(memory: SessionMemory()));
+      final remembering = router.last('POST /v1/agents/sessions').json;
+      await agents.withUser('ada').sessions.create(const SessionOptions(timezone: ''));
+
+      expect(remembering, {'memory': <String, Object?>{}});
+      expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
     });
 
     test('a voice session asks to start voice and is on its own call', () async {
@@ -268,6 +346,46 @@ void main() {
       expect(page.hasMore, isTrue);
       expect(page.nextCursor, 'c2');
     });
+
+    test(
+      'narrows a query to when a conversation started and its labels, in the order asked',
+      () async {
+        router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
+
+        await agents.sessions.query(
+          SessionQuery(
+            createdSince: DateTime.utc(2026, 10, 1),
+            createdBefore: DateTime.utc(2026, 10, 8),
+            custom: const {'topic': 'billing'},
+            sort: SessionSort.updatedAt,
+          ),
+        );
+        final ranged = router.last('POST /v1/agents/sessions/query').json;
+        await agents.sessions.search(
+          'refund',
+          SessionQuery(createdSince: DateTime.utc(2026, 10, 1), sort: SessionSort.relevance),
+        );
+
+        expect(ranged, {
+          'filter': {
+            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z', r'$lt': '2026-10-08T00:00:00.000Z'},
+            'custom': {'topic': 'billing'},
+          },
+          'sort': [
+            {'field': 'updated_at'},
+          ],
+        });
+        expect(router.last('POST /v1/agents/sessions/query').json, {
+          'filter': {
+            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z'},
+            'text': {r'$q': 'refund'},
+          },
+          'sort': [
+            {'field': 'relevance'},
+          ],
+        });
+      },
+    );
 
     test('a query with nothing to narrow it sends no filter', () async {
       router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
@@ -532,6 +650,7 @@ void main() {
       expect(response.id, 'r1');
       expect(response.status, ResponseStatus.running);
       expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
         'text': 'What is my name?',
         'images': [
           {'url': 'https://x/cat.png', 'detail': 'low'},

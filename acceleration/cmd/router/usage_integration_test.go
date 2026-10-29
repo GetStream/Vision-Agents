@@ -73,7 +73,7 @@ func (s *UsageCommandsSuite) quoted(modality routing.Modality, provider, model s
 	s.Require().NoError(err)
 	charged, err := prices.Embedded(nil, release, discard)
 	s.Require().NoError(err)
-	item := pricing.Item{Modality: string(modality), Provider: provider, Model: model, Attributes: attributes}
+	item := routing.ItemOf(modality, routing.ProviderConfig{Provider: provider, Model: model}, attributes)
 	return pricingtest.Micros(s.T(), atCost, item, used), pricingtest.Micros(s.T(), charged, item, used)
 }
 

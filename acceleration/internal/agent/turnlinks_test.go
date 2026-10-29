@@ -242,7 +242,8 @@ func (s *AgentSuite) TestAnUtteranceIsLoggedWithWhatStartedItsTurn() {
 		s.Require().Len(spoke, 1, kind)
 		s.Equal("INFO", spoke[0]["level"])
 		s.Contains(spoke[0], "audio_ms")
-		s.Equal(false, spoke[0]["interrupted"])
+		s.Equal(false, spoke[0]["synthesis_cut"])
+		s.Equal(false, spoke[0]["turn_abandoned"])
 	}
 }
 

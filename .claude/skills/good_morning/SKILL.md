@@ -1,6 +1,6 @@
 ---
 name: good_morning
-description: Pull and merge the latest code across the workspace repos (chat, Vision-Agents, artemis-impl, getstream.io, volt-dashboard). Use when the user says good morning or asks to sync their repos.
+description: Pull and merge the latest code across the workspace repos (chat, Vision-Agents, artemis-impl, getstream.io, volt-dashboard). Use when the user says good morning or asks to sync their repos. Checks the team Slack channel and summarises new messages from the last day. 
 ---
 
 # Good morning
@@ -45,3 +45,5 @@ git merge --autostash --no-edit origin/<base> # only when the table names one
 
 One line per repo: branch, how many commits came in (`git rev-list --count ORIG_HEAD..HEAD`
 or compare `HEAD` before and after), and any conflict or skipped step.
+
+As part of your report, check the team's #video-ai channel to summarise messages in the last 12 hours, keep it simple and a bulletpoint format of important topics such as new examples, customer issues to check on, etc. If slack is not connected, prompt the user to set it up. 
