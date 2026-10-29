@@ -990,8 +990,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/stream_chat_flutter_ai"
-      ref: b92690920b181197cc668b2c9c2241b0c7d07842
-      resolved-ref: b92690920b181197cc668b2c9c2241b0c7d07842
+      ref: e7a0d2a254a5cf9d7bc2a07321a8ebd20523e354
+      resolved-ref: e7a0d2a254a5cf9d7bc2a07321a8ebd20523e354
       url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
     source: git
     version: "0.1.0"
