@@ -10,6 +10,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -1435,6 +1436,7 @@ func (s *Server) listProviders(ctx context.Context, request *listProvidersReques
 			Description: &candidate.Config.Description,
 			Languages:   candidate.Config.Languages,
 			Realtime:    candidate.Config.Realtime,
+			Region:      cmp.Or(candidate.Config.Region, pricing.DefaultRegion),
 			Supports:    supportsOf(candidate.Config.Terms),
 			Tier:        tierOf(candidate.Config),
 			Health:      providerHealth(candidate.Health),

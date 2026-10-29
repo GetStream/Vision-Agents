@@ -81,6 +81,11 @@ class AgentConfigRequest:
             once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and
             the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs
             one.
+        region (str | Unset): Where the agent's work is done: us or eu for now. Every model its sessions run, its
+            knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a
+            model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there
+            is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update
+            keeps the stored region. Example: eu.
         resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
             on.
         review (AgentReview | Unset): How a finished call under an agent is reviewed.
@@ -142,6 +147,7 @@ class AgentConfigRequest:
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
@@ -231,6 +237,8 @@ class AgentConfigRequest:
                 else:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
+
+        region = self.region
 
         resume_history: dict[str, Any] | Unset = UNSET
         if not isinstance(self.resume_history, Unset):
@@ -325,6 +333,8 @@ class AgentConfigRequest:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if region is not UNSET:
+            field_dict["region"] = region
         if resume_history is not UNSET:
             field_dict["resume_history"] = resume_history
         if review is not UNSET:
@@ -479,6 +489,8 @@ class AgentConfigRequest:
 
                 plugins.append(plugins_item)
 
+        region = d.pop("region", UNSET)
+
         _resume_history = d.pop("resume_history", UNSET)
         resume_history: ResumeHistory | Unset
         if isinstance(_resume_history, Unset):
@@ -575,6 +587,7 @@ class AgentConfigRequest:
             mode=mode,
             plugin_events=plugin_events,
             plugins=plugins,
+            region=region,
             resume_history=resume_history,
             review=review,
             role=role,

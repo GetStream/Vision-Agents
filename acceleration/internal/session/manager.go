@@ -292,7 +292,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	return manager, nil
 }
 
-// owner is who a session's own time is billed to: its runtime and its sandbox's.
+// owner is who a session's own time is billed to, its runtime and its sandbox's, and the region
+// the sandbox runs in.
 func owner(spec Spec) routing.Owner {
 	return routing.Owner{
 		CustomerID:  spec.CustomerID,
@@ -300,6 +301,7 @@ func owner(spec Spec) routing.Owner {
 		Caller:      spec.Caller,
 		AgentID:     spec.AgentID,
 		CallID:      spec.CallID,
+		Region:      spec.Region,
 		Tags:        spec.Tags,
 	}
 }
@@ -742,6 +744,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			AgentID:       spec.AgentID,
 			ConfigID:      spec.ConfigID,
 			CallID:        spec.CallID,
+			Region:        spec.Region,
 			Tags:          spec.Tags,
 			LLM:           m.options.LLM,
 			LLMTarget:     spec.LLMTarget,
@@ -871,10 +874,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.records = m.records
 	}
 
+	run := created.track(built)
+	if spec.Greeting != "" && run != nil {
+		run.holdGreeting(created.sayGreeting(ctx, built, spec))
+	}
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume(built, created.transcript, created.track(built))
+	go created.consume(built, created.transcript, run)
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
@@ -884,7 +891,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	if spec.Greeting != "" {
+	// If the call does not report its participants, or if the session is text only, the
+	// agent says the greeting immediately after it joins.
+	if spec.Greeting != "" && run == nil {
 		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
 			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
@@ -901,7 +910,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
 			if !spec.NoReview {
-				m.reviews.Review(row(created), spec.Attribution, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
+				m.reviews.Review(row(created), spec.Attribution, spec.Region, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
 			}
 		})
 		m.calls.Started(row(created))
@@ -1448,6 +1457,12 @@ func (m *Manager) Running(id string) bool {
 	return running
 }
 
+// SandboxesIn reports whether a session's sandbox can be made in region: a config naming a
+// sandbox in a region with no Daytona target here is refused as it is written.
+func (m *Manager) SandboxesIn(region string) bool {
+	return m.options.Sandboxes.Serves(region)
+}
+
 // Len is how many sessions this process is running, which is what a draining router waits
 // on before it ends the rest.
 func (m *Manager) Len() int {
@@ -1611,7 +1626,7 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 		}
 		asked.Grants, asked.Broker = connectors.grants, broker
 	}
-	box, err := m.options.Sandboxes.Open(owner(spec), asked)
+	box, err := m.options.Sandboxes.Open(ctx, owner(spec), asked)
 	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
 		return box, err
 	}
@@ -1663,6 +1678,7 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 			Attribution: spec.Attribution,
 			AgentID:     spec.AgentID,
 			CallID:      spec.CallID,
+			Region:      spec.Region,
 			Tags:        spec.Tags,
 		},
 		Classifier: m.options.Classifier,

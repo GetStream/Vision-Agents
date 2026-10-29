@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -30,6 +32,7 @@ type SyncAgentRequest struct {
 	Simulations       *[]SimulationDeclaration   `json:"simulations,omitempty" doc:"The simulations the directory's simulations/*.yaml declare. Sent, they are the whole of the agent's simulations: each is found by name, and one no longer declared is deleted. Left out, the stored ones are left alone."`
 	Role              *AgentRole                 `json:"role,omitempty"`
 	Mode              *AgentMode                 `json:"mode,omitempty"`
+	Region            *string                    `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region."`
 	Stt               *string                    `json:"stt,omitempty"`
 	Tts               *string                    `json:"tts,omitempty"`
 	Sts               *string                    `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
@@ -237,6 +240,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
 	applySettings(&config, body)
+	// Named whatever the directory says, so the knowledge the sync writes is never written
+	// into a base kept in another region than the agent's.
+	config.Region = cmp.Or(config.Region, pricing.DefaultRegion)
 	if message, ok := textSubagentComplaint(&config, body.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -288,6 +294,23 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
 		return nil, invalidRequest(message)
 	}
+	// Asked of the knowledge base the sync is about to write, the one named after the agent.
+	documents := documentsOf(body.Knowledge)
+	knows := len(documents) > 0 || (body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0)
+	regional := config
+	regional.KnowledgeNamespace = ""
+	if knows {
+		regional.KnowledgeNamespace = name
+	}
+	var prior *store.AgentConfig
+	if found {
+		prior = &existing
+	}
+	if message, ok, err := s.regionComplaint(ctx, regional, prior); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 
 	skills := skillsOf(body.Skills)
 	// After the settings, so a sandbox stored before and not repeated still counts.
@@ -317,14 +340,15 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		}
 	}
 
-	documents := documentsOf(body.Knowledge)
+	// The writes are the agent's work, so a base nothing was written to is made in its region
+	// and one kept in another refuses them.
 	namespace := ""
 	if len(documents) > 0 {
 		if s.knowledge == nil {
 			return nil, errNoKnowledge
 		}
 		namespace = name
-		if _, _, err := s.fillKnowledge(ctx, customerID, namespace, documents, nil); err != nil {
+		if _, _, err := s.fillKnowledge(ctx, customerID, config.Region, namespace, documents, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -333,6 +357,12 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			return nil, errNoKnowledgeURLs
 		}
 		namespace = name
+		// A page is read later, by work naming no region, which writes where the base is kept.
+		if s.knowledge != nil {
+			if err := s.knowledgeFor(ctx, customerID, config.Region).Keep(ctx, namespace); err != nil {
+				return nil, err
+			}
+		}
 		for _, page := range *body.KnowledgeUrls {
 			wanted := urls.Subscription{Namespace: namespace, URL: page.Url}
 			wanted.Title = value(page.Title)
@@ -408,6 +438,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 func syncComplaint(body SyncAgentRequest) (string, bool) {
 	if _, ok := modeOf(body.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
+	if complaint, ok := agentRegionComplaint(body.Region); !ok {
+		return complaint, false
 	}
 	if complaint, ok := guardrailComplaint(body.Guardrail); !ok {
 		return complaint, false
@@ -524,6 +557,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Mode != nil && *body.Mode != "" {
 		mode, _ := modeOf(body.Mode)
 		config.Mode = mode
+	}
+	if body.Region != nil {
+		config.Region = *body.Region
 	}
 	if body.Stt != nil {
 		config.STT = *body.Stt

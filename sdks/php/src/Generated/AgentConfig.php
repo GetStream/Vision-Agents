@@ -15,6 +15,8 @@ final readonly class AgentConfig
         public string $id,
         public AgentMode|string $mode,
         public string $name,
+        // Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it....
+        public string $region,
         public \DateTimeImmutable $updatedAt,
         public ?AgentChannels $channels = null,
         // The bindings exactly as they were written. Absent when there are none.
@@ -80,6 +82,7 @@ final readonly class AgentConfig
             id: Json::string($data, 'id'),
             mode: Json::enum($data, 'mode', AgentMode::class),
             name: Json::string($data, 'name'),
+            region: Json::string($data, 'region'),
             updatedAt: Json::date($data, 'updated_at'),
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
@@ -129,6 +132,7 @@ final readonly class AgentConfig
         $out['id'] = $this->id;
         $out['mode'] = Json::enumValue($this->mode);
         $out['name'] = $this->name;
+        $out['region'] = $this->region;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();

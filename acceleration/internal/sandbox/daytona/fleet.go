@@ -47,11 +47,15 @@ type Fleet struct {
 type FleetOptions struct {
 	APIKey, APIURL, Organization string
 	HTTPClient                   *http.Client
+	// Customer says APIKey is a customer's own, of their own organization: neither
+	// DAYTONA_API_KEY nor DAYTONA_ORGANIZATION_ID, the deployment's, is read, and the
+	// organization is read off a sandbox the key lists.
+	Customer bool
 }
 
 // NewFleet reaches the organization options name.
 func NewFleet(o FleetOptions) (*Fleet, error) {
-	if o.APIKey == "" {
+	if o.APIKey == "" && !o.Customer {
 		o.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if o.APIKey == "" {
@@ -63,7 +67,7 @@ func NewFleet(o FleetOptions) (*Fleet, error) {
 	if o.APIURL == "" {
 		o.APIURL = defaultAPIURL
 	}
-	if o.Organization == "" {
+	if o.Organization == "" && !o.Customer {
 		o.Organization = os.Getenv(organizationEnvVar)
 	}
 	if o.HTTPClient == nil {

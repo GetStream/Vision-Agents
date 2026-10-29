@@ -98,6 +98,19 @@ func TestNoAuth(t *testing.T) {
 		require.ErrorIs(t, err, ErrUnauthenticated)
 	})
 
+	t.Run("ignores the query auth type, which only a proxy's socket reads", func(t *testing.T) {
+		for _, declared := range []string{"jwt", "anonymous"} {
+			r := httptest.NewRequest(http.MethodGet,
+				"/v1/dispatch?customer_id=examples&stream-auth-type="+declared, nil)
+
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			require.Equal(t, Principal{
+				AppID: "examples", Kind: KindServer, ServerSide: true, APIKey: NoAuthKey,
+			}, principal, declared)
+		}
+	})
+
 	t.Run("ignores the headers a proxy would have set", func(t *testing.T) {
 		// This is the whole reason the mode was split out of the one behind a proxy.
 		// Nothing here verified any of these, so believing them would let a caller on
@@ -198,6 +211,63 @@ func TestProxy(t *testing.T) {
 		require.Equal(t, "user-1", principal.UserID)
 	})
 
+	t.Run("reads an end user's auth type from a socket's query", func(t *testing.T) {
+		// A browser WebSocket cannot set the header, and a device's socket has to be the
+		// device that created its session for the router to ask it to run that device's tools.
+		r := httptest.NewRequest(http.MethodGet,
+			"/v1/agents/sessions/s-1/ws?customer_id=examples&user_id=user-1&stream-auth-type=jwt", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, Principal{AppID: "examples", UserID: "user-1", Kind: KindAuthenticated}, principal)
+	})
+
+	t.Run("reads an anonymous auth type from a socket's query", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?customer_id=examples&stream-auth-type=anonymous", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindAnonymous, principal.Kind)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("reads the query auth type through the spaces around it", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?customer_id=examples&stream-auth-type=%20jwt%20", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+	})
+
+	t.Run("reads the query auth type whatever its case", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?customer_id=examples&stream-auth-type=JWT", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+	})
+
+	t.Run("ignores a query auth type that names no end user", func(t *testing.T) {
+		for _, declared := range []string{"server", "admin", ""} {
+			r := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=examples&stream-auth-type="+declared, nil)
+
+			principal, err := authenticator.Authenticate(context.Background(), r)
+			require.NoError(t, err)
+			require.Equal(t, KindServer, principal.Kind, declared)
+			require.True(t, principal.ServerSide, declared)
+		}
+	})
+
+	t.Run("believes the header over the query", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=examples&stream-auth-type=jwt", nil)
+		r.Header.Set(AuthTypeHeader, AuthTypeServer)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindServer, principal.Kind)
+		require.True(t, principal.ServerSide)
+	})
+
 	t.Run("takes an address only from a backend", func(t *testing.T) {
 		// The gateway passes a client's X-Stream-User-Email through unchanged, so the kind it
 		// names is the only thing between an end user and somebody else's address.
@@ -256,6 +326,23 @@ func TestProxyThatDeclaresKinds(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, KindAnonymous, principal.Kind)
 		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("ignores a query auth type", func(t *testing.T) {
+		// The gateway writes the header for every caller it verified, so the query would only
+		// be the caller's own word, and an anonymous caller must not make itself verified.
+		nobody := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?stream-auth-type=jwt", nil)
+		nobody.Header.Set(AppHeader, "app-1")
+		principal, err := authenticator.Authenticate(context.Background(), nobody)
+		require.NoError(t, err)
+		require.Equal(t, KindAnonymous, principal.Kind)
+
+		user := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions/s-1/ws?stream-auth-type=anonymous", nil)
+		user.Header.Set(AppHeader, "app-1")
+		user.Header.Set(UserHeader, "user-1")
+		principal, err = authenticator.Authenticate(context.Background(), user)
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
 	})
 
 	t.Run("believes a declared backend", func(t *testing.T) {
@@ -444,15 +531,36 @@ func TestAPIKey(t *testing.T) {
 	})
 
 	t.Run("gives a socket no way to claim to be a backend", func(t *testing.T) {
-		// The auth type has no query parameter, and a browser WebSocket sets no headers.
+		// Only the header names a backend here, and a browser WebSocket sets no headers.
 		token := signedClaims(t, secret, jwt.MapClaims{"server": true})
 		target := "/v1/dispatch?api_key=" + key + "&token=" + token +
-			"&stream_auth_type=server&" + AuthTypeHeader + "=server"
+			"&stream_auth_type=server&" + AuthTypeHeader + "=server&" + AuthTypeParam + "=server"
 
 		principal, err := authenticator.Authenticate(context.Background(),
 			httptest.NewRequest(http.MethodGet, target, nil))
 		require.NoError(t, err)
 		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("ignores the query auth type, the token alone says who the caller is", func(t *testing.T) {
+		// The keyed URL a Dart socket opens: the token twice and a declaration of its own.
+		token := signedClaims(t, secret, jwt.MapClaims{"user_id": "user-1"})
+		target := "/v1/dispatch?api_key=" + key + "&token=" + token +
+			"&authorization=" + token + "&" + AuthTypeParam + "=anonymous"
+
+		principal, err := authenticator.Authenticate(context.Background(),
+			httptest.NewRequest(http.MethodGet, target, nil))
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("takes no token from an authorization parameter", func(t *testing.T) {
+		target := "/v1/dispatch?api_key=" + key + "&authorization=" + signed(t, secret, time.Hour)
+
+		_, err := authenticator.Authenticate(context.Background(),
+			httptest.NewRequest(http.MethodGet, target, nil))
+		require.ErrorIs(t, err, ErrUnauthenticated)
 	})
 
 	t.Run("takes the key and token off a socket's query string", func(t *testing.T) {

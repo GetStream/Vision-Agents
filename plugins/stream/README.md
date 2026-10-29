@@ -165,6 +165,7 @@ everything else:
 name: customer_support
 description: Support for a subscription business.
 mode: voice
+region: eu  # or us, where all of the agent's work is done; us when left out
 llm: llm-fast
 subagent: llm-thinking
 stt: stt-fast
@@ -190,6 +191,10 @@ nobody knows is refused rather than dropped: a misspelled `llm` that went quietl
 leave the agent running on a model the file does not name.
 `plugins` and `plugin_events` are refused too: connectors replaced them, so name each
 under `connectors` instead.
+`region` is where the agent's work is done, `us` or `eu` for now: every model it runs, its
+knowledge base and its sandbox are there and nowhere else. The router refuses a sync naming a
+model with no instance in the region, naming each, and one whose knowledge base is already kept
+in another region, since a knowledge base is never moved.
 A connector entry is its id alone, or a mapping with `name` and any of `connector`, `tools`,
 `connection`, `required`, `sandbox: true` (code in the sandbox may call the connector's API)
 and `require_approval` (tools whose every call waits for the user to allow it).

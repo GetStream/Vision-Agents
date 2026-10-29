@@ -45,6 +45,9 @@ type Request struct {
 	AgentID string
 	// CallID is the call the work happens in. Empty outside a conversation.
 	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty is
+	// pricing.DefaultRegion.
+	Region string
 	// Tags are the customer's own cost labels, recorded on every row this session writes.
 	Tags routing.Tags
 	// Target is a "provider/model" name or a capability shortcut.
@@ -95,6 +98,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Spent:         routing.SpentFrom(ctx),
 		AgentID:       request.AgentID,
 		CallID:        request.CallID,
+		Region:        request.Region,
 		Tags:          request.Tags,
 		Target:        request.Target,
 		Providers:     request.Options.Providers,

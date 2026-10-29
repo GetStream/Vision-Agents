@@ -103,6 +103,9 @@ type Options struct {
 	ConfigID string
 	// CallID is the call being served, recorded alongside each request.
 	CallID string
+	// Region is where every request the agent makes is served, its knowledge looked up and
+	// its sandbox run: its config's. Empty is pricing.DefaultRegion.
+	Region string
 	// Tags are the customer's own cost labels, carried onto every request the agent
 	// makes so a conversation's whole spend can be attributed at once.
 	Tags routing.Tags
@@ -635,6 +638,7 @@ func New(options Options) (*Agent, error) {
 		Caller:      options.Caller,
 		AgentID:     options.AgentID,
 		CallID:      options.CallID,
+		Region:      options.Region,
 		Tags:        options.Tags,
 	}
 
@@ -3749,7 +3753,7 @@ func (a *Agent) openSubagent(target string) func(context.Context) (*llmrouter.Se
 	return func(ctx context.Context) (*llmrouter.Session, error) {
 		return a.options.LLM.Start(routing.WithAttribution(ctx, a.options.Attribution), llmrouter.Request{
 			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
-			AgentID: a.options.AgentID, CallID: a.options.CallID,
+			AgentID: a.options.AgentID, CallID: a.options.CallID, Region: a.options.Region,
 			Tags: a.options.Tags, Target: target,
 			LanguageHints: a.options.LanguageHints, InputModalities: modalities,
 		})

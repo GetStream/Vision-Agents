@@ -314,6 +314,11 @@ A setting left out leaves whatever is stored — a model chosen in the dashboard
 sync that says nothing about it. The harness (`harness`, subagent, sandbox and skills) is
 stored on the config this way too, never on a session: a session runs its config's.
 
+`region: eu` (or `us`) is where the agent's work is done: every model it runs, its knowledge
+base and its sandbox are there and nowhere else. Left out, the stored region stays, and a new
+agent is in `us`. The router refuses a sync naming a model with no instance in the region,
+naming each, and one whose knowledge base is already kept in another region.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an

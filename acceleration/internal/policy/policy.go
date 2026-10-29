@@ -724,7 +724,7 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 	}
 
 	decided := decision{
-		floor:  organization.DataPolicy.Stricter(app.DataPolicy),
+		floor:  organization.DataPolicy.Floor().Stricter(app.DataPolicy.Floor()),
 		models: allowedByBoth(organization.AllowedModels, app.AllowedModels),
 		tags:   labelled(organization, app),
 		screen: enabled(organization.PromptInjection) || enabled(app.PromptInjection),

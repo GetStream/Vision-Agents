@@ -7,12 +7,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// The outcomes a request is counted under: a bounded set, never the row's own error code.
+// The outcomes a request is counted under: a bounded set, never the row's own error code. Work
+// on a customer's own key that failed is customer_key, whatever failed, so one customer's revoked
+// key or spent account is not the vendor's error rate.
 const (
-	outcomeOK        = "ok"
-	outcomeCancelled = "cancelled"
-	outcomeTimeout   = "timeout"
-	outcomeError     = "error"
+	outcomeOK          = "ok"
+	outcomeCancelled   = "cancelled"
+	outcomeTimeout     = "timeout"
+	outcomeCustomerKey = "customer_key"
+	outcomeError       = "error"
 )
 
 // The kinds of token a row counts.
@@ -30,7 +33,7 @@ var (
 	trafficRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "requests_total",
-		Help:      "Requests recorded as usage rows, vendor calls and also the router's own metered work (runtime and sandbox slices, phone legs, numbers, storage), so filter by modality; by outcome: ok when Success, cancelled and timeout by ErrorCode, otherwise error",
+		Help:      "Requests recorded as usage rows, vendor calls and also the router's own metered work (runtime and sandbox slices, phone legs, numbers, storage), so filter by modality; by outcome: ok when Success, cancelled by ErrorCode, customer_key for any other failure of work on the customer's own key, timeout by ErrorCode, otherwise error",
 	}, []string{"modality", "provider", "model", "outcome"})
 	trafficTokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -66,15 +69,15 @@ var (
 	}, []string{"modality", "provider"})
 )
 
-// countTraffic counts a priced row in the traffic metrics. A quantity of zero adds nothing, so
-// no series is made for what a modality never has.
-func countTraffic(request store.Request) {
+// countTraffic counts a priced row in the traffic metrics, byok for work on the customer's own
+// key. A quantity of zero adds nothing, so no series is made for what a modality never has.
+func countTraffic(request store.Request, byok bool) {
 	modality, provider, model := request.Modality, request.Provider, request.Model
 	if provider == CustomProvider {
 		// The model is a name each customer chose: unbounded as a label.
 		model = CustomProvider
 	}
-	trafficRequests.WithLabelValues(modality, provider, model, outcome(request)).Inc()
+	trafficRequests.WithLabelValues(modality, provider, model, outcome(request, byok)).Inc()
 	tokens := func(kind string, count int64) {
 		if count > 0 {
 			trafficTokens.WithLabelValues(modality, provider, model, kind).Add(float64(count))
@@ -101,12 +104,14 @@ func countTraffic(request store.Request) {
 }
 
 // outcome is what the request is counted under.
-func outcome(request store.Request) string {
+func outcome(request store.Request, byok bool) string {
 	switch {
 	case request.Success:
 		return outcomeOK
 	case request.ErrorCode == ErrorCancelled:
 		return outcomeCancelled
+	case byok:
+		return outcomeCustomerKey
 	case request.ErrorCode == ErrorTimeout:
 		return outcomeTimeout
 	default:

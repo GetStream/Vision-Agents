@@ -10,8 +10,8 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.data_policy import DataPolicy
     from ..models.policy_budget import PolicyBudget
+    from ..models.policy_data_policy import PolicyDataPolicy
     from ..models.policy_tags import PolicyTags
     from ..models.quota import Quota
     from ..models.resume_history import ResumeHistory
@@ -36,10 +36,11 @@ class Policy:
                 organization's policy has one: an app's that sets it is refused. Example: 20000000.
             budget (PolicyBudget | Unset): Removed: spend limits are /v1/spend/limits, at every level. A policy that sends
                 budget is refused with 400 budget_moved, and none is read back.
-            data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
-                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
-                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
-                the request is refused rather than sent somewhere that does not.
+            data_policy (PolicyDataPolicy | Unset): What an organization or an app requires of what happens to what its
+                requests send. It is a floor every routed request is held to, on top of whatever the request asks: a request is
+                only routed to a model whose declared handling meets both, and is refused rather than sent somewhere that does
+                not. It says nothing of where the work is done, which is an agent's own region (agent.yaml's region) or what a
+                direct call's own data_policy.region asks, so region is refused here, as is any other field it does not have.
             prompt_injection (bool | Unset): Screen what every LLM response is asked for prompt injection. The newest input
                 - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to
                 time to first token. The end of the response is held until the verdict, and a response whose input reads as an
@@ -73,7 +74,7 @@ class Policy:
     allowed_models: list[str] | Unset = UNSET
     balance_warning_micros: int | Unset = UNSET
     budget: PolicyBudget | Unset = UNSET
-    data_policy: DataPolicy | Unset = UNSET
+    data_policy: PolicyDataPolicy | Unset = UNSET
     prompt_injection: bool | Unset = UNSET
     quota: Quota | Unset = UNSET
     require_own_stream_app: bool | Unset = UNSET
@@ -143,8 +144,8 @@ class Policy:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.data_policy import DataPolicy
         from ..models.policy_budget import PolicyBudget
+        from ..models.policy_data_policy import PolicyDataPolicy
         from ..models.policy_tags import PolicyTags
         from ..models.quota import Quota
         from ..models.resume_history import ResumeHistory
@@ -162,11 +163,11 @@ class Policy:
             budget = PolicyBudget.from_dict(_budget)
 
         _data_policy = d.pop("data_policy", UNSET)
-        data_policy: DataPolicy | Unset
+        data_policy: PolicyDataPolicy | Unset
         if isinstance(_data_policy, Unset):
             data_policy = UNSET
         else:
-            data_policy = DataPolicy.from_dict(_data_policy)
+            data_policy = PolicyDataPolicy.from_dict(_data_policy)
 
         prompt_injection = d.pop("prompt_injection", UNSET)
 

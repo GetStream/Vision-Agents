@@ -65,6 +65,9 @@ class AgentConfigPatch:
             name (str | Unset): What the config is called, which is unique among the customer's own.
             plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
             plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+            region (str | Unset): Where the agent's work is done: us or eu for now. A change naming a model with no instance
+                there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming
+                each. Example: eu.
             resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
                 on.
             review (AgentReview | Unset): How a finished call under an agent is reviewed.
@@ -115,6 +118,7 @@ class AgentConfigPatch:
     name: str | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
+    region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
@@ -203,6 +207,8 @@ class AgentConfigPatch:
                 else:
                     plugins_item = plugins_item_data
                 plugins.append(plugins_item)
+
+        region = self.region
 
         resume_history: dict[str, Any] | Unset = UNSET
         if not isinstance(self.resume_history, Unset):
@@ -295,6 +301,8 @@ class AgentConfigPatch:
             field_dict["plugin_events"] = plugin_events
         if plugins is not UNSET:
             field_dict["plugins"] = plugins
+        if region is not UNSET:
+            field_dict["region"] = region
         if resume_history is not UNSET:
             field_dict["resume_history"] = resume_history
         if review is not UNSET:
@@ -449,6 +457,8 @@ class AgentConfigPatch:
 
                 plugins.append(plugins_item)
 
+        region = d.pop("region", UNSET)
+
         _resume_history = d.pop("resume_history", UNSET)
         resume_history: ResumeHistory | Unset
         if isinstance(_resume_history, Unset):
@@ -545,6 +555,7 @@ class AgentConfigPatch:
             name=name,
             plugin_events=plugin_events,
             plugins=plugins,
+            region=region,
             resume_history=resume_history,
             review=review,
             role=role,

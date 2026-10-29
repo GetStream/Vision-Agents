@@ -114,8 +114,8 @@ func newReviewer(router *llmrouter.Router, pgStore *store.Store, logger *slog.Lo
 // Review starts a pass over a finished call, judged by guide, or by the default guide when
 // it is empty. A call nobody said anything on is not reviewed: there is nothing to
 // summarise, and asking would cost the customer money to be told so. The review is owned by
-// whoever the session was.
-func (r *reviewer) Review(call store.Call, attribution routing.Attribution, target, guide string, said []spoken) {
+// whoever the session was, and done in the session's region.
+func (r *reviewer) Review(call store.Call, attribution routing.Attribution, region, target, guide string, said []spoken) {
 	if len(said) == 0 {
 		return
 	}
@@ -130,7 +130,7 @@ func (r *reviewer) Review(call store.Call, attribution routing.Attribution, targ
 		ctx, cancel := context.WithTimeout(routing.WithAttribution(r.ctx, attribution), reviewTimeout)
 		defer cancel()
 
-		err := r.review(ctx, call, target, guide, said)
+		err := r.review(ctx, call, region, target, guide, said)
 		switch {
 		case err == nil:
 		case r.ctx.Err() != nil:
@@ -149,11 +149,12 @@ func (r *reviewer) Close() {
 	r.running.Wait()
 }
 
-func (r *reviewer) review(ctx context.Context, call store.Call, target, guide string, said []spoken) error {
+func (r *reviewer) review(ctx context.Context, call store.Call, region, target, guide string, said []spoken) error {
 	session, err := r.llm.Start(ctx, llmrouter.Request{
 		CustomerID: call.CustomerID,
 		AgentID:    call.AgentID,
 		CallID:     call.CallID,
+		Region:     region,
 		Tags:       call.Tags,
 		Target:     target,
 	})
