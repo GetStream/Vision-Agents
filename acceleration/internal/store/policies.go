@@ -52,7 +52,7 @@ type PolicyDocument struct {
 	Quota *Quota `json:"quota,omitempty"`
 	// DataPolicy is the floor every routed request is held to, on top of whatever the
 	// request itself asked for.
-	DataPolicy options.DataPolicy `json:"data_policy,omitzero"`
+	DataPolicy PolicyDataPolicy `json:"data_policy,omitzero"`
 	// PromptInjection screens what an LLM is asked for injection attempts.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 	// AllowedModels are the "provider/model" names requests may be routed to. Nil allows
@@ -74,6 +74,22 @@ type PolicyDocument struct {
 	// ToolOutputRetention is the longest any of the scope's sessions keeps what its tools
 	// were given and gave back. An agent config can shorten it and never lengthen it.
 	ToolOutputRetention options.Retention `json:"tool_output_retention,omitempty"`
+}
+
+// PolicyDataPolicy is what a policy requires of what a provider does with what it is sent. It
+// says nothing of where work is done: that is an agent's own (AgentConfig.Region), or a
+// direct call's, and a document written with a region has it ignored.
+type PolicyDataPolicy struct {
+	// AllowTraining false requires a provider that has said it does not train on what it
+	// is sent. Nil asks nothing, and true permits it.
+	AllowTraining *bool `json:"allow_training,omitempty"`
+	// Retention is the longest a provider may keep what it is sent. Empty asks nothing.
+	Retention options.Retention `json:"retention,omitempty"`
+}
+
+// Floor is the data policy every routed request of the scope is held to.
+func (p PolicyDataPolicy) Floor() options.DataPolicy {
+	return options.DataPolicy{AllowTraining: p.AllowTraining, Retention: p.Retention}
 }
 
 // Quota is what one end user may spend in a UTC day. A nil field is no opinion, so the

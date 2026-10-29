@@ -249,6 +249,27 @@ func (s *OptionsSuite) TestTheStricterPolicyKeepsTheShorterRetention() {
 	s.Equal(Retention("30d"), DataPolicy{Retention: "30d"}.Stricter(DataPolicy{}).Retention)
 }
 
+func (s *OptionsSuite) TestTheStricterPolicyKeepsTheRequestsRegionAndTakesNoneFromAFloor() {
+	s.Equal("eu", DataPolicy{Region: "eu"}.Stricter(DataPolicy{}).Region)
+	s.Empty(DataPolicy{}.Stricter(DataPolicy{Region: "eu"}).Region, "a policy's floor says nothing of where work is done")
+}
+
+func (s *OptionsSuite) TestARegionCountsAsAsking() {
+	s.True(DataPolicy{Region: "eu"}.Asks())
+}
+
+func (s *OptionsSuite) TestARegionOfAnotherFormIsRefused() {
+	s.ErrorContains(STT{DataPolicy: DataPolicy{Region: "EU West"}}.Validate(), `region is a letter`)
+	s.NoError(TTS{DataPolicy: DataPolicy{Region: "eu"}}.Validate())
+}
+
+func (s *OptionsSuite) TestAConfigsRegionIsKeptUnlessTheRequestNamesOne() {
+	config := STT{DataPolicy: DataPolicy{Region: "eu"}}
+
+	s.Equal("eu", config.Merge(STT{}).DataPolicy.Region)
+	s.Equal("us", config.Merge(STT{DataPolicy: DataPolicy{Region: "us"}}).DataPolicy.Region)
+}
+
 func intOf(value int) *int { return &value }
 
 func (s *OptionsSuite) TestTheShorterRetentionIsTheOneThatKeepsLess() {

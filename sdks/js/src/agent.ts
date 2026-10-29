@@ -97,6 +97,12 @@ export interface Declaration {
   name?: string;
   description?: string;
   mode?: Schemas["AgentMode"];
+  /**
+   * Where the agent's work is done: `us` or `eu` for now. Every model it names needs an instance
+   * there, and its knowledge base and sandbox are kept there; the router refuses a sync naming
+   * one that has none. Left out, the stored region stays, and a new agent is in `us`.
+   */
+  region?: string;
   stt?: string;
   tts?: string;
   /** An empty string turns speech-to-speech off, which is different from saying nothing. */
@@ -721,6 +727,7 @@ function skillRequest(skill: Skill): Omit<Schemas["SkillRequest"], "config_id"> 
 function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentRequest"]> {
   return {
     ...(declared.mode ? { mode: declared.mode } : {}),
+    ...(declared.region ? { region: declared.region } : {}),
     ...(declared.stt ? { stt: declared.stt } : {}),
     ...(declared.tts ? { tts: declared.tts } : {}),
     ...(declared.sts === undefined ? {} : { sts: declared.sts }),

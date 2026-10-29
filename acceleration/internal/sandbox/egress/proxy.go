@@ -50,10 +50,16 @@ const (
 	// proxy_read_timeout default
 	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
 	headerTimeout = 60 * time.Second
-	// leafValidity is how long a host's certificate is valid. A client checks it only in the
-	// handshake it is minted for; an hour each side leaves room for a sandbox clock that is
-	// off by that much.
+	// leafValidity is how long a host's certificate is valid for the handshake it is minted
+	// for; an hour each side leaves room for a sandbox clock that is off by that much. A kept
+	// certificate is served up to leafValidity/2 later, so it is dated leafValidity/2 longer
+	// (sign), and a client's clock may still be off by an hour.
 	leafValidity = time.Hour
+	// maxLeaves caps the certificates kept. A wildcard grant lets a sandbox name any host under
+	// a domain, so the hosts are not bounded by the grants. A DER certificate here is under
+	// 1 KiB (P-256 key and CA signature), so the cap holds under 1 MiB. Past it a host's
+	// certificate is signed for the handshake alone, as it was before the cache.
+	maxLeaves = 1024
 	// authenticate is the challenge a 407 must carry (RFC 9110 section 15.5.8), for the
 	// Basic credential a proxy URL's userinfo sends (RFC 7617).
 	authenticate = `Basic realm="sandbox egress"`
@@ -78,6 +84,9 @@ type Options struct {
 	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
 	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
 	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
+	// Now replaces time.Now when set, for tests: it dates a certificate and tells when a kept
+	// one is renewed.
+	Now func() time.Time
 }
 
 // Proxy is an HTTP proxy that takes CONNECT only.
@@ -92,6 +101,23 @@ type Proxy struct {
 	logger    *slog.Logger
 
 	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
+
+	now func() time.Time
+	// leaves holds each host's certificate until it is half of leafValidity old, so a handshake
+	// costs no CA signature (P-256 about 66 us, RSA-4096 about 4.5 ms) once a host has one.
+	leaves leaves
+}
+
+type leaves struct {
+	mu     sync.Mutex
+	byHost map[string]keptLeaf
+}
+
+type keptLeaf struct {
+	certificate tls.Certificate
+	// renewAt is when the certificate is signed anew: leafValidity/2 after it was dated, so a
+	// client still has half of leafValidity left on it.
+	renewAt time.Time
 }
 
 func New(options Options) (*Proxy, error) {
@@ -116,10 +142,14 @@ func New(options Options) (*Proxy, error) {
 	if dial == nil {
 		dial = publicegress.DialPublic
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
 		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
-		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout)}, nil
+		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -707,8 +737,8 @@ func (p *Proxy) lookup(ctx context.Context, credential string) (Record, bool, er
 
 // ListenerTLS is the TLS the proxy is served with when a sandbox reaches it at address, an IP
 // address: the sandbox's proxy credential then never crosses the network in the clear. Each
-// handshake gets a certificate for address, signed by the CA the sandbox trusts, as each
-// tunnel does, since one is valid for leafValidity alone.
+// handshake gets the certificate kept for address (Proxy.leaf), signed by the CA the sandbox
+// trusts, as each tunnel does.
 func (p *Proxy) ListenerTLS(address string) *tls.Config {
 	// The same floor and HTTP/1.1 as tunnel() holds a sandbox to: the server here serves no HTTP/2.
 	return &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"},
@@ -719,21 +749,62 @@ func (p *Proxy) ListenerTLS(address string) *tls.Config {
 }
 
 // leaf is host's certificate, signed by the CA. host is a name, or the proxy's own IP address.
+// The same one is returned until it is half of leafValidity old. The lock is not held while the
+// CA signs, so a flood of new hosts never holds up a host that has a certificate; two
+// handshakes for one host may both sign, and the first certificate stored is the one both return.
 func (p *Proxy) leaf(host string) (tls.Certificate, error) {
+	now := p.now()
+	if certificate, ok := p.kept(host, now); ok {
+		return certificate, nil
+	}
+	certificate, err := p.sign(host, now)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	if kept, ok := p.leaves.byHost[host]; ok && now.Before(kept.renewAt) {
+		return kept.certificate, nil
+	}
+	if len(p.leaves.byHost) >= maxLeaves {
+		for name, kept := range p.leaves.byHost {
+			if !now.Before(kept.renewAt) {
+				delete(p.leaves.byHost, name)
+			}
+		}
+	}
+	if len(p.leaves.byHost) < maxLeaves {
+		p.leaves.byHost[host] = keptLeaf{certificate: certificate, renewAt: now.Add(leafValidity / 2)}
+	}
+	return certificate, nil
+}
+
+// kept is host's kept certificate, when it is not due for renewal at now.
+func (p *Proxy) kept(host string, now time.Time) (tls.Certificate, bool) {
+	p.leaves.mu.Lock()
+	defer p.leaves.mu.Unlock()
+	kept, ok := p.leaves.byHost[host]
+	return kept.certificate, ok && now.Before(kept.renewAt)
+}
+
+// sign makes host's certificate, dated now.
+func (p *Proxy) sign(host string, now time.Time) (tls.Certificate, error) {
 	// RFC 5280 section 4.1.2.2: a positive serial of at most 20 octets.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, stack.Wrap(err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    now.Add(-leafValidity),
-		NotAfter:     now.Add(leafValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// A kept certificate is served up to leafValidity/2 after it is dated, so it is valid
+		// that much longer: a client sees leafValidity left on it, as on a certificate signed
+		// for its handshake.
+		NotAfter:    now.Add(leafValidity + leafValidity/2),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if address := net.ParseIP(host); address != nil {
 		// A client checks an IP address against the certificate's iPAddress names alone (RFC 5280

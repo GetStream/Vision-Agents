@@ -65,6 +65,7 @@ func newJudge(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) 
 		CustomerID: deps.Owner.CustomerID,
 		AgentID:    deps.Owner.AgentID,
 		CallID:     deps.Owner.CallID,
+		Region:     deps.Owner.Region,
 		Tags:       deps.Owner.Tags,
 		Target:     target,
 	})

@@ -557,6 +557,7 @@ const SCALARS = new Set([
   "name",
   "description",
   "mode",
+  "region",
   "stt",
   "tts",
   "sts",

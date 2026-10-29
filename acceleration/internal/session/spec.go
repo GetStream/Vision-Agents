@@ -1,6 +1,7 @@
 package session
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -129,6 +131,10 @@ type Spec struct {
 	AgentName string
 	// AgentID keys transcripts and statistics. Empty means the call id.
 	AgentID string
+	// Region is where everything the session does is done: every model it routes to, its
+	// knowledge and its sandbox. It is its config's, and a session that spelled itself out
+	// names none, which is pricing.DefaultRegion.
+	Region string
 	// Tags are the caller's own cost labels, carried onto every request the session
 	// makes.
 	Tags routing.Tags
@@ -353,6 +359,8 @@ func FromConfig(config store.AgentConfig) Spec {
 		ConfigID:   config.ID,
 		Role:       config.Role,
 		AgentName:  config.Name,
+		// Never empty, so the session's knowledge is never reached in another region than its own.
+		Region: cmp.Or(config.Region, pricing.DefaultRegion),
 		// A text agent holds its conversation in writing, so a session created from one
 		// joins no call unless the request asks for a voice session explicitly.
 		Text:           config.Mode == store.AgentModeText,

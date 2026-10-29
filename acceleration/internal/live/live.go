@@ -185,6 +185,10 @@ type Usage struct {
 	Cancelled bool
 	// Fatal marks a failure the provider gives every caller, such as an account it refuses.
 	Fatal bool
+	// Private marks work done on the customer's own key at the provider. What it says is about
+	// their account, not the provider, so it is counted for the customer and left out of the
+	// provider's health, which every customer is routed by.
+	Private bool
 }
 
 // spent reports whether the request used anything at all.
@@ -237,13 +241,16 @@ func (c *Client) requestCommands(usage Usage) []rueidis.Completed {
 	ttl := int64(c.options.Window.Seconds())
 
 	var commands []rueidis.Completed
-	if !usage.Cancelled {
+	measured := !usage.Cancelled && !usage.Private
+	if measured {
 		commands = append(commands,
 			c.shard.B().Hincrby().Key(healthKey).Field("requests").Increment(1).Build(),
 			c.shard.B().Hincrbyfloat().Key(healthKey).Field("latency_ms_total").Increment(usage.LatencyMs).Build(),
 			c.shard.B().Expire().Key(healthKey).Seconds(ttl).Build(),
-			c.shard.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build(),
 		)
+	}
+	if !usage.Cancelled {
+		commands = append(commands, c.shard.B().Hincrby().Key(customerKey).Field("requests").Increment(1).Build())
 	}
 	// A cancelled request that generated nothing adds nothing, so it writes nothing.
 	if !usage.Cancelled || usage.spent() {
@@ -257,13 +264,13 @@ func (c *Client) requestCommands(usage Usage) []rueidis.Completed {
 			c.shard.B().Expire().Key(customerKey).Seconds(ttl).Build(),
 		)
 	}
-	if !usage.Success && !usage.Cancelled {
-		commands = append(commands,
-			c.shard.B().Hincrby().Key(healthKey).Field("errors").Increment(1).Build(),
-			c.shard.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build(),
-		)
+	if !usage.Success && measured {
+		commands = append(commands, c.shard.B().Hincrby().Key(healthKey).Field("errors").Increment(1).Build())
 	}
-	if usage.Fatal {
+	if !usage.Success && !usage.Cancelled {
+		commands = append(commands, c.shard.B().Hincrby().Key(customerKey).Field("errors").Increment(1).Build())
+	}
+	if usage.Fatal && !usage.Private {
 		// A time rather than a count: the key's expiry moves with every request, so a count
 		// would hold a provider that keeps being asked unavailable for good.
 		commands = append(commands, c.shard.B().Hset().Key(healthKey).FieldValue().

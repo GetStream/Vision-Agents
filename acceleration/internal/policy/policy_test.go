@@ -551,10 +551,10 @@ func (s *PolicySuite) TestAResetCountsFromItsBaseline() {
 func (s *PolicySuite) TestAnAppCanTightenItsOrganizationsDataPolicyButNotLoosenIt() {
 	no, yes := false, true
 	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{
-		DataPolicy: options.DataPolicy{AllowTraining: &no, Retention: "30d"},
+		DataPolicy: store.PolicyDataPolicy{AllowTraining: &no, Retention: "30d"},
 	})
 	s.save(store.ScopeApp, s.app, store.PolicyDocument{
-		DataPolicy: options.DataPolicy{AllowTraining: &yes, Retention: options.RetentionNone},
+		DataPolicy: store.PolicyDataPolicy{AllowTraining: &yes, Retention: options.RetentionNone},
 	})
 
 	admitted, err := s.enforcer.Admit(s.ctx, ownerOf(s.app))
