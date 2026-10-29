@@ -1406,6 +1406,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AttachedNumber
     {
 
+        /// <summary>
+        /// The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("route_id")]
         public string RouteId { get; set; } = default!;
 
@@ -8267,6 +8273,12 @@ namespace GetStream.VisionAgents.Models
     public partial class PhoneNumber
     {
 
+        /// <summary>
+        /// The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("capabilities")]
         public System.Collections.Generic.List<string> Capabilities { get; set; } = new System.Collections.Generic.List<string>();
 
@@ -12046,6 +12058,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string? Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SetNumberAgentRequest
+    {
+
+        /// <summary>
+        /// The name of the agent config that answers the number. Give this or config_id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent")]
+        public string? Agent { get; set; } = default!;
+
+        /// <summary>
+        /// The id of the agent config that answers the number. Give this or agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

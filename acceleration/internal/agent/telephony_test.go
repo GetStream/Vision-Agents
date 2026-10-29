@@ -1353,9 +1353,7 @@ func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
 	ran := s.awaitToolRan()
 	s.Require().Error(ran.Err)
 	s.Contains(ran.Result, "did not work")
-	// Told only to tell the caller, Gemma answered "reboot the gateway before dispatching a
-	// truck" by reading the caller reboot steps instead of calling the reboot tool it had.
-	s.Contains(ran.Result, "If it names a step one of your tools does, call that tool and try again")
+	s.NotContains(ran.Result, "try again", "a failure is told to the caller, not answered with other calls")
 	s.eventually(func() bool {
 		return s.spokenText("cannot look that up")
 	}, "the caller was left in silence by a tool that failed")

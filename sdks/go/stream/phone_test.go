@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,4 +37,52 @@ func TestDetachSaysWhyTheRouterRefused(t *testing.T) {
 
 	err = NewPhone(client).Detach(t.Context(), "+15125551234")
 	require.ErrorContains(t, err, "no phone number +15125551234 is held")
+}
+
+func TestSetAgentPutsTheAgentOnTheNumber(t *testing.T) {
+	var method, path, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.EscapedPath()
+		sent, _ := io.ReadAll(r.Body)
+		body = string(sent)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"e164": "+15125551234", "agent_config_id": "cfg_1"}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := acceleration.NewClientWithResponses(server.URL)
+	require.NoError(t, err)
+
+	number, err := NewPhone(client).SetAgent(t.Context(), "+15125551234", "support")
+	require.NoError(t, err)
+	require.Equal(t, http.MethodPut, method)
+	require.Equal(t, "/v1/phone/numbers/+15125551234/agent", path)
+	require.JSONEq(t, `{"agent":"support"}`, body)
+	require.Equal(t, "cfg_1", *number.AgentConfigId)
+}
+
+func TestSetAgentSaysWhyTheRouterRefused(t *testing.T) {
+	server := refusing(t, http.StatusConflict, "application/json", `{"error": {
+		"message": "The number is not attached: attach the number first.",
+		"type": "conflict", "code": "conflict",
+		"doc_url": "https://getstream.io/agents/docs/api/errors/#conflict"}}`)
+	client, err := acceleration.NewClientWithResponses(server.URL)
+	require.NoError(t, err)
+
+	_, err = NewPhone(client).SetAgent(t.Context(), "+15125551234", "support")
+	require.ErrorContains(t, err, "The number is not attached: attach the number first.")
+}
+
+func TestRemoveAgentDeletesIt(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.EscapedPath()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client, err := acceleration.NewClientWithResponses(server.URL)
+	require.NoError(t, err)
+
+	require.NoError(t, NewPhone(client).RemoveAgent(t.Context(), "+15125551234"))
+	require.Equal(t, http.MethodDelete, method)
+	require.Equal(t, "/v1/phone/numbers/+15125551234/agent", path)
 }
