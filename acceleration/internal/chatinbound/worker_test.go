@@ -140,6 +140,39 @@ func (s *WorkerSuite) TestCloseWaitsForTheAnswerInFlightAndRecordsIt() {
 	s.Never(func() bool { return answers.of(later) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "a closed worker claimed a delivery")
 }
 
+// The router's stop signal ends the worker's claims: the answer it took before goes on and is
+// recorded, and a delivery queued after the signal stays queued, with no attempt, until another
+// router answers it.
+func (s *WorkerSuite) TestAfterTheStopSignalAWorkerFinishesItsAnswerAndClaimsNoOther() {
+	answers := &answers{}
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	queued := s.queue()
+	stopping, stop := context.WithCancel(s.ctx)
+	worker := s.startUntil(stopping, Options{Answer: answers.answer(func(int) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	})})
+	<-started
+
+	stop()
+	later := s.queue()
+	worker.Kick()
+	close(release)
+
+	s.Eventually(func() bool { return s.row(queued).State == store.ChatInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool {
+		row := s.row(later)
+		return answers.of(later) > 0 || row.Attempts != 0 || row.NextAttemptAt.After(time.Now())
+	}, 300*time.Millisecond, 10*time.Millisecond, "a stopped worker claimed a delivery")
+
+	s.start(Options{Answer: answers.answer(nil)})
+
+	s.Eventually(func() bool { return s.row(later).State == store.ChatInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal(1, answers.of(later))
+}
+
 // An answer Close cut short is no attempt: the row waits for its lease to run out, and a
 // router answers it then.
 func (s *WorkerSuite) TestAnAnswerCloseCutShortIsLeftForItsLease() {
@@ -252,7 +285,7 @@ func (s *WorkerSuite) TestAKickBeforeStartOrAfterCloseReturnsAtOnce() {
 		defer close(kicked)
 		worker.Kick()
 		worker.Kick()
-		worker.Start()
+		worker.Start(s.ctx)
 		worker.Close()
 		worker.Kick()
 		worker.Kick()
@@ -278,7 +311,7 @@ func (s *WorkerSuite) TestAWorkerWithEverySlotTakenWaitsForOneToFree() {
 		worker.slots <- struct{}{}
 	}
 
-	_, again := worker.answerDue()
+	_, again := worker.answerDue(s.ctx)
 
 	s.False(again)
 }
@@ -292,7 +325,7 @@ func (s *WorkerSuite) TestALookThatFailedIsTriedAgainAPollOn() {
 	worker, err := NewWorker(Options{Store: closed, Answer: (&answers{}).answer(nil), Poll: 30 * time.Millisecond})
 	s.Require().NoError(err)
 
-	wait, again := worker.answerDue()
+	wait, again := worker.answerDue(s.ctx)
 
 	s.True(again)
 	s.Equal(30*time.Millisecond, wait)
@@ -303,7 +336,7 @@ func (s *WorkerSuite) TestAWorkerWithNothingQueuedLooksAgainALookLater() {
 	worker, err := NewWorker(Options{Store: s.store, Answer: (&answers{}).answer(nil), Poll: 30 * time.Millisecond})
 	s.Require().NoError(err)
 
-	wait, again := worker.answerDue()
+	wait, again := worker.answerDue(s.ctx)
 
 	s.True(again)
 	s.Equal(look, wait)
@@ -315,12 +348,12 @@ func (s *WorkerSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 	s.Require().NoError(err)
 	first := s.finished(s.queue(), 25*time.Hour)
 
-	worker.answerDue()
+	worker.answerDue(s.ctx)
 
 	s.False(s.exists(first), "an answered message's row is kept a day")
 	second := s.finished(s.queue(), 25*time.Hour)
 
-	worker.answerDue()
+	worker.answerDue(s.ctx)
 
 	s.True(s.exists(second), "the next prune is an hour after the first")
 }
@@ -338,13 +371,19 @@ func (s *WorkerSuite) queue() string {
 
 // start runs a worker on the suite's store, looking every 10 ms, until the test ends.
 func (s *WorkerSuite) start(options Options) *Worker {
+	return s.startUntil(s.ctx, options)
+}
+
+// startUntil is start whose worker claims until stopping ends, as a router's until its stop
+// signal.
+func (s *WorkerSuite) startUntil(stopping context.Context, options Options) *Worker {
 	options.Store = s.store
 	if options.Poll == 0 {
 		options.Poll = 10 * time.Millisecond
 	}
 	worker, err := NewWorker(options)
 	s.Require().NoError(err)
-	worker.Start()
+	worker.Start(stopping)
 	s.T().Cleanup(worker.Close)
 	return worker
 }

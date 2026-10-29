@@ -56,26 +56,34 @@ const maxMessageID = 255
 // already there (staging app 1257545, 2026-10-28 05:20:35 UTC).
 var readableID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// Start runs the worker that writes the queued inbound messages until Close, and hands each one
-// it writes to answer, the one way a channel message reaches the agent; nil answers none. It
-// looks at start, for the ones a router queued before it stopped, then when a write finishes or
-// wake says a message was queued, at the first one due, and at least once a lease: with nothing
-// queued it sends Postgres 2 queries a minute.
-func (b *Bridge) Start(answer Answer) {
+// Start runs the worker that writes the queued inbound messages until ctx ends or Close, and
+// hands each one it writes to answer, the one way a channel message reaches the agent; nil
+// answers none. It looks at start, for the ones a router queued before it stopped, then when a
+// write finishes or wake says a message was queued, at the first one due, and at least once a
+// lease: with nothing queued it sends Postgres 2 queries a minute.
+//
+// ctx is the router's stop signal: a draining router takes no more messages, so it starts no
+// turn its drain could cut, and the ones still queued wait for another router. The writes
+// already taken finish, and Close waits for them.
+func (b *Bridge) Start(ctx context.Context, answer Answer) {
 	b.answer = answer
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(b.ctx, cancel)
 	b.working.Add(1)
 	go func() {
 		defer b.working.Done()
+		defer stop()
+		defer cancel()
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		for {
-			wait, again := b.writeDue()
+			wait, again := b.writeDue(ctx)
 			timer.Stop()
 			if again {
 				timer.Reset(wait)
 			}
 			select {
-			case <-b.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-timer.C:
 			case <-b.kick:
@@ -98,10 +106,10 @@ func (b *Bridge) wake() {
 // busy. While messages are queued it waits until the first is due, its retry or another
 // router's lease running out, and at least the poll; a lease at most, also when none is
 // queued: a router that queued or leased one and then stopped wakes nobody else.
-func (b *Bridge) writeDue() (wait time.Duration, again bool) {
-	b.prune()
+func (b *Bridge) writeDue(ctx context.Context) (wait time.Duration, again bool) {
+	b.prune(ctx)
 	for {
-		if b.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return 0, false
 		}
 		free := cap(b.slots) - len(b.slots)
@@ -109,9 +117,9 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 			return 0, false
 		}
 		now := time.Now()
-		claimed, err := b.store.ClaimChannelInbound(b.ctx, now, free, now.Add(inboundLease))
+		claimed, err := b.store.ClaimChannelInbound(ctx, now, free, now.Add(inboundLease))
 		if err != nil {
-			if b.ctx.Err() == nil {
+			if ctx.Err() == nil {
 				b.logger.Error("could not take the inbound messages due", "error", err)
 			}
 			return b.inboundPoll, true
@@ -132,10 +140,10 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 			break
 		}
 	}
-	next, queued, err := b.store.NextChannelInboundAt(b.ctx)
+	next, queued, err := b.store.NextChannelInboundAt(ctx)
 	switch {
 	case err != nil:
-		if b.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			b.logger.Error("could not find when the next inbound message is due", "error", err)
 		}
 		return b.inboundPoll, true
@@ -147,12 +155,12 @@ func (b *Bridge) writeDue() (wait time.Duration, again bool) {
 
 // prune deletes the rows past their keep, once every pruneEvery. Only the worker's goroutine
 // calls it.
-func (b *Bridge) prune() {
+func (b *Bridge) prune(ctx context.Context) {
 	if time.Since(b.pruned) < pruneEvery {
 		return
 	}
 	b.pruned = time.Now()
-	if _, err := b.store.PruneChannelInbound(b.ctx, b.pruned); err != nil && b.ctx.Err() == nil {
+	if _, err := b.store.PruneChannelInbound(ctx, b.pruned); err != nil && ctx.Err() == nil {
 		b.logger.Error("could not delete the inbound messages past their keep", "error", err)
 	}
 }

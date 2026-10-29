@@ -485,7 +485,7 @@ func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsWritten
 	s.Require().NoError(err)
 	s.True(answered)
 	next := s.anotherRouter()
-	next.Start(s.router.AnswerQueued)
+	next.Start(context.Background(), s.router.AnswerQueued)
 	defer next.Close()
 	channel := s.threadChannel()
 	s.Require().Eventually(func() bool { return len(s.bridged(channel)) == 1 }, settleFor, 10*time.Millisecond)
@@ -510,7 +510,7 @@ func (s *EventForwardingSuite) TestAMessageARouterQueuedBeforeItStoppedIsForward
 
 	s.Require().NoError(err)
 	next := s.anotherRouter()
-	next.Start(s.router.AnswerQueued)
+	next.Start(context.Background(), s.router.AnswerQueued)
 	defer next.Close()
 	got := s.forwardedTo(target, 1)[0]
 	s.Equal(message.Raw, got.body)

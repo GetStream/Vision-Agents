@@ -610,6 +610,42 @@ func (s *InboundSuite) TestCloseWaitsForAWriteInFlightAndStopsTheWorker() {
 	s.Equal([]string{"hello"}, s.chat.Messages(thread.ChannelID))
 }
 
+// The router's stop signal ends the worker's claims: the write it took before finishes and is
+// handed to the agent, and a message queued after the signal stays queued, with no attempt,
+// until another router writes it.
+func (s *InboundSuite) TestAfterTheStopSignalAWorkerFinishesItsWriteAndTakesNoOther() {
+	thread := s.thread("fake_line")
+	waiting, release := s.chat.Hold("/" + thread.ChannelID + "/message")
+	s.queue(thread, "m-1", "hello", nil)
+	stopping, stop := context.WithCancel(s.ctx)
+	draining := s.newBridge(nil)
+	handed := make(chan Written, 4)
+	draining.Start(stopping, func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+		handed <- message
+		return func() {}, nil
+	})
+	<-waiting
+
+	stop()
+	other := s.thread("fake_line")
+	s.queue(other, "m-2", "after", nil)
+	draining.wake()
+	release()
+
+	s.Equal(thread.ChannelID+"-m-1", s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Never(func() bool {
+		row := s.row(other, "m-2")
+		return row.State != store.ChannelInboundQueued || row.Attempts != 0 || row.NextAttemptAt.After(time.Now())
+	}, 300*time.Millisecond, 20*time.Millisecond, "a stopped worker took a message")
+	s.Empty(s.chat.Stored(other.ChannelID))
+
+	s.bridge(nil)
+
+	s.Require().Eventually(func() bool { return s.row(other, "m-2").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal([]string{"after"}, s.chat.Messages(other.ChannelID))
+}
+
 func (s *InboundSuite) TestAWorkerWithNothingQueuedCallsNoStreamChat() {
 	bridge := s.bridge(nil)
 	for range 5 {
@@ -624,7 +660,7 @@ func (s *InboundSuite) TestAWorkerWithNothingQueuedCallsNoStreamChat() {
 func (s *InboundSuite) TestAWorkerWithNothingQueuedLooksAgainALeaseLater() {
 	s.emptyQueue()
 
-	wait, again := s.newBridge(nil).writeDue()
+	wait, again := s.newBridge(nil).writeDue(s.ctx)
 
 	s.True(again)
 	s.Equal(inboundLease, wait)
@@ -634,7 +670,7 @@ func (s *InboundSuite) TestAWorkerWithNothingQueuedLooksAgainALeaseLater() {
 func (s *InboundSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 	s.emptyQueue()
 	bridge := s.newBridge(nil)
-	bridge.writeDue()
+	bridge.writeDue(s.ctx)
 	thread := s.thread("fake_line")
 	s.queue(thread, "m-1", "hello", nil)
 	_, err := s.store.DB().NewUpdate().Model((*store.ChannelInbound)(nil)).
@@ -642,7 +678,7 @@ func (s *InboundSuite) TestTheWorkerDeletesRowsPastTheirKeepOnceAnHour() {
 		Where("channel_id = ? AND provider_message_id = 'm-1'", thread.ChannelID).Exec(s.ctx)
 	s.Require().NoError(err)
 
-	bridge.writeDue()
+	bridge.writeDue(s.ctx)
 
 	s.Equal(1, s.rows(thread), "the next prune is an hour after the first")
 }
@@ -747,7 +783,7 @@ func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain()
 	s.queue(thread, "m-1", "hello", nil)
 	var calls atomic.Int32
 	handed := make(chan Written, 4)
-	s.newBridge(&Options{InboundRetries: []time.Duration{10 * time.Millisecond, time.Hour}}).Start(
+	s.newBridge(&Options{InboundRetries: []time.Duration{10 * time.Millisecond, time.Hour}}).Start(s.ctx,
 		func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
 			handed <- message
 			if calls.Add(1) == 1 {
@@ -771,7 +807,7 @@ func (s *InboundSuite) TestAMessageWhoseTurnCouldNotBeClaimedIsHandedOverAgain()
 func (s *InboundSuite) TestAMessageWhoseTurnWasClaimedBeforeIsDone() {
 	thread := s.thread("fake_line")
 	s.queue(thread, "m-1", "hello", nil)
-	s.newBridge(nil).Start(func(context.Context, store.ChannelThread, Written) (func(), error) { return nil, nil })
+	s.newBridge(nil).Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) { return nil, nil })
 
 	s.Require().Eventually(func() bool { return s.row(thread, "m-1").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
 }
@@ -785,7 +821,7 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() 
 	release := make(chan struct{})
 	var running atomic.Int32
 	bridge := s.newBridge(nil)
-	bridge.Start(func(context.Context, store.ChannelThread, Written) (func(), error) {
+	bridge.Start(s.ctx, func(context.Context, store.ChannelThread, Written) (func(), error) {
 		return func() {
 			running.Add(1)
 			<-release
@@ -812,7 +848,7 @@ func (s *InboundSuite) TestATurnRunsOffTheWorkersSlotAndCloseDoesNotWaitForIt() 
 // returns what it hands over. options are as bridge takes them.
 func (s *InboundSuite) handedTo(options *Options) <-chan Written {
 	handed := make(chan Written, 4)
-	s.newBridge(options).Start(func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
+	s.newBridge(options).Start(s.ctx, func(_ context.Context, _ store.ChannelThread, message Written) (func(), error) {
 		handed <- message
 		return func() {}, nil
 	})
@@ -834,7 +870,7 @@ func (s *InboundSuite) handed(handed <-chan Written) Written {
 // options, when not nil, set the inbound retries and the forward of what it gives up.
 func (s *InboundSuite) bridge(options *Options) *Bridge {
 	bridge := s.newBridge(options)
-	bridge.Start(nil)
+	bridge.Start(s.ctx, nil)
 	return bridge
 }
 

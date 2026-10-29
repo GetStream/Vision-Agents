@@ -1476,7 +1476,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// (AnswerQueued), and the server is built with the bridge (options.ChannelBridge), so the
 	// worker is handed it here, once both exist, not in channelbridge.Options.
 	if bridge != nil {
-		bridge.Start(server.AnswerQueued)
+		bridge.Start(ctx, server.AnswerQueued)
 	}
 	// Every router runs the scheduled-task worker: whichever of them claims
 	// an occurrence delivers it, in the conversation its task belongs to. It
@@ -1498,7 +1498,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		server.SetChatInboundKick(deliveries.Kick)
-		deliveries.Start()
+		deliveries.Start(ctx)
 		defer deliveries.Close()
 	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are

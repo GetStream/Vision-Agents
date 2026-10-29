@@ -441,7 +441,7 @@ func (d *chatInbounds) answering(router *RouterSuite) {
 		Retries: []time.Duration{time.Hour},
 	})
 	router.Require().NoError(err)
-	worker.Start()
+	worker.Start(context.Background())
 	d.worker.Store(worker)
 	router.T().Cleanup(worker.Close)
 }

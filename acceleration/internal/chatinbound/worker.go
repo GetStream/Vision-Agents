@@ -113,22 +113,31 @@ func NewWorker(options Options) (*Worker, error) {
 	return worker, nil
 }
 
-// Start runs the loop until Close. It looks at start, for the messages a router queued before
-// it stopped, then when an answer ends, at the first message due, and at least once a look.
-func (w *Worker) Start() {
+// Start runs the loop until ctx ends or Close. It looks at start, for the messages a router
+// queued before it stopped, then when an answer ends, at the first message due, and at least
+// once a look.
+//
+// ctx is the router's stop signal: a draining router claims no more messages, so it starts no
+// answer its drain could cut, and the ones still queued wait for another router. The answers
+// already running go on until Close.
+func (w *Worker) Start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(w.ctx, cancel)
 	w.working.Add(1)
 	go func() {
 		defer w.working.Done()
+		defer stop()
+		defer cancel()
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		for {
-			wait, again := w.answerDue()
+			wait, again := w.answerDue(ctx)
 			timer.Stop()
 			if again {
 				timer.Reset(wait)
 			}
 			select {
-			case <-w.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-timer.C:
 			case <-w.kick:
@@ -155,18 +164,18 @@ func (w *Worker) Close() {
 
 // answerDue claims as many due messages as there are free slots and answers each on its own
 // goroutine. It returns how long to wait before looking again, with again false when only an
-// ending answer needs to wake the loop: every slot is taken. After Close the claim fails on
-// the cancelled context and the loop returns.
-func (w *Worker) answerDue() (wait time.Duration, again bool) {
-	w.prune()
+// ending answer needs to wake the loop: every slot is taken. After the stop signal or Close
+// the claim fails on the cancelled context and the loop returns.
+func (w *Worker) answerDue(ctx context.Context) (wait time.Duration, again bool) {
+	w.prune(ctx)
 	free := cap(w.slots) - len(w.slots)
 	if free == 0 {
 		return 0, false
 	}
 	now := time.Now()
-	claimed, err := w.store.ClaimChatInbound(w.ctx, now, free, now.Add(w.lease))
+	claimed, err := w.store.ClaimChatInbound(ctx, now, free, now.Add(w.lease))
 	if err != nil {
-		if w.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			w.logger.Error("could not take the chat inbound messages due", "error", err)
 		}
 		return w.poll, true
@@ -183,10 +192,10 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 			w.attempt(delivery)
 		}()
 	}
-	next, queued, err := w.store.NextChatInboundAt(w.ctx)
+	next, queued, err := w.store.NextChatInboundAt(ctx)
 	switch {
 	case err != nil:
-		if w.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			w.logger.Error("could not find when the next chat inbound message is due", "error", err)
 		}
 		return w.poll, true
@@ -198,12 +207,12 @@ func (w *Worker) answerDue() (wait time.Duration, again bool) {
 
 // prune deletes the rows past their keep, once every pruneEvery. Only the loop's goroutine
 // calls it.
-func (w *Worker) prune() {
+func (w *Worker) prune(ctx context.Context) {
 	if time.Since(w.pruned) < pruneEvery {
 		return
 	}
 	w.pruned = time.Now()
-	if _, err := w.store.PruneChatInbound(w.ctx, w.pruned); err != nil && w.ctx.Err() == nil {
+	if _, err := w.store.PruneChatInbound(ctx, w.pruned); err != nil && ctx.Err() == nil {
 		w.logger.Error("could not delete the chat inbound messages past their keep", "error", err)
 	}
 }
