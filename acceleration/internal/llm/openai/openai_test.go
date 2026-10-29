@@ -354,7 +354,7 @@ func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {
 	s.Require().NoError(err)
 
 	raw, err := json.Marshal(provider.params(llm.ResponseParams{
-		Instructions: "You are Ashley.",
+		Instructions: "You are a concise assistant.",
 		Input:        []llm.Message{{Role: llm.User, Content: "hello"}},
 	}))
 	s.Require().NoError(err)
@@ -369,18 +369,17 @@ func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {
 	s.Empty(sent.PreviousResponseID)
 	s.Require().Len(sent.Input, 2)
 	s.Equal("developer", sent.Input[0].Role)
-	s.Contains(string(raw), "You are Ashley.")
+	s.Contains(string(raw), "You are a concise assistant.")
 }
 
 func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
 	// The stored response already holds the developer message it was sent. Sending it
-	// again appended a copy to the chain every turn: a 5k-token prompt became 48k after
-	// ten turns of a voice call.
+	// again would add a copy to the chain every turn.
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
 
 	raw, err := json.Marshal(provider.params(llm.ResponseParams{
-		Instructions:       "You are Ashley.",
+		Instructions:       "You are a concise assistant.",
 		Input:              []llm.Message{{Role: llm.User, Content: "and tomorrow?"}},
 		PreviousResponseID: "resp_1",
 	}))
@@ -396,7 +395,7 @@ func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
 	s.Equal("resp_1", sent.PreviousResponseID)
 	s.Require().Len(sent.Input, 1)
 	s.Equal("user", sent.Input[0].Role)
-	s.NotContains(string(raw), "You are Ashley.")
+	s.NotContains(string(raw), "You are a concise assistant.")
 }
 
 func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThatResult() {
@@ -404,7 +403,7 @@ func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThat
 	s.Require().NoError(err)
 
 	items := provider.input(llm.ResponseParams{
-		Instructions:       "You are Ashley.",
+		Instructions:       "You are a concise assistant.",
 		Input:              []llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booked"}},
 		PreviousResponseID: "resp_1",
 	})

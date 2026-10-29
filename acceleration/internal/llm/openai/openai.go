@@ -533,8 +533,7 @@ func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
 //
 // A response that continues a stored one sends no instructions: the developer message is an
 // input item like any other, so the stored response already holds it, and sending it again
-// appends another copy to the chain on every turn. A voice call with a 5k-token prompt grew
-// by 5k tokens a turn, to 48k after ten, with the model reading ten copies of the prompt.
+// would append another copy to the chain on every turn.
 func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 	items := make(responses.ResponseInputParam, 0, len(request.Input)+1)
 	if request.Instructions != "" && request.PreviousResponseID == "" {

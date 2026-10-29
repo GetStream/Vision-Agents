@@ -40,9 +40,7 @@ type compaction struct {
 // A prompt whose history does not continue the one judged before it was rewritten in
 // between, by a compaction landing, and no provider can have cached what it opens with. Its
 // cache miss says nothing about whether caching pays, so it is not taken as a reason to
-// compact. Taken as one, every summary emptied the cache that started the next: a voice
-// call compacted 12 to 21 times, about every other turn, on a history of a few thousand
-// tokens.
+// compact. Taken as one, each summary would empty the cache and so start the next.
 func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
 	h.mu.Lock()
 	rewritten := h.measured != nil && !appendsTo(h.measured, history)

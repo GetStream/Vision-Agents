@@ -1786,7 +1786,7 @@ func (s *HarnessSuite) TestAPromptNearingTheContextWindowIsCompactedEvenWhenCach
 func (s *HarnessSuite) TestAColdCacheRightAfterAHistoryIsRewrittenIsNotAReasonToCompact() {
 	// A summary rewrites the history from the front, so the prompt after it misses the
 	// cache whatever the provider does. Read as the cache no longer paying, each summary
-	// started the next: a voice call compacted every other turn.
+	// would start the next.
 	s.build(true)
 	cached := int64(float64(compactionMinTokens) * compactionCacheRatio)
 

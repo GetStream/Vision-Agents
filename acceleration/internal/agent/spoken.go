@@ -111,7 +111,7 @@ func runDigits(run []string) (string, bool) {
 }
 
 // spokenSeparator is the name of a character a caller reads out between the parts of an ID
-// or a number: "omar underscore davis", "five five five dash one two three".
+// or a number: "kit underscore moran", "five five five dash zero one nine".
 var spokenSeparator = regexp.MustCompile(`(?i)\s+\b(underscore|dash|hyphen)\b\s+`)
 
 // withSpokenSeparators writes the separators a caller named as the characters they named,

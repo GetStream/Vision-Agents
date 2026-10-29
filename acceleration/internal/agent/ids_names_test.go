@@ -12,18 +12,18 @@ type GivenNamesSuite struct{ suite.Suite }
 
 func TestGivenNames(t *testing.T) { suite.Run(t, new(GivenNamesSuite)) }
 
-func (s *GivenNamesSuite) TestAHotelTheCallerNamedIsNotRefusedAsAPersonsPlaceholder() {
+func (s *GivenNamesSuite) TestAPlaceTheCallerNamedIsNotRefusedAsAPersonsPlaceholder() {
 	history := []llm.Message{
-		{Role: llm.User, Content: "Checking in February third, checking out the fifth, two nights. The Manhattan House sounds good. Standard room."},
-		{Role: llm.User, Content: "Yes, book it under my name."},
+		{Role: llm.User, Content: "The Old Mill at Larkspur Green, please, for Saturday afternoon."},
+		{Role: llm.User, Content: "Yes, put it under my name."},
 	}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "book_hotel", Arguments: `{"hotel_name":"The Manhattan House"}`})
+	_, refused := placeholderName(history, llm.ToolCall{Name: "reserve_venue", Arguments: `{"venue_name":"The Old Mill at Larkspur Green"}`})
 	s.False(refused)
 }
 
 func (s *GivenNamesSuite) TestANameReturnedByAToolIsPreserved() {
-	history := []llm.Message{{Role: llm.ToolResult, Content: `{"hotels":[{"name":"The Manhattan House"}]}`}}
-	_, refused := placeholderName(history, llm.ToolCall{Name: "book_hotel", Arguments: `{"hotel_name":"The Manhattan House"}`})
+	history := []llm.Message{{Role: llm.ToolResult, Content: `{"venues":[{"name":"The Old Mill at Larkspur Green"}]}`}}
+	_, refused := placeholderName(history, llm.ToolCall{Name: "reserve_venue", Arguments: `{"venue_name":"The Old Mill at Larkspur Green"}`})
 	s.False(refused)
 }
 
@@ -63,9 +63,9 @@ func (s *GivenNamesSuite) TestSeparateToolValuesDoNotMakeAName() {
 	s.True(refused)
 }
 
-func (s *GivenNamesSuite) TestAGivenHotelDoesNotExcuseAMissingGuestName() {
-	history := []llm.Message{{Role: llm.User, Content: "The Manhattan House sounds good."}}
-	name, refused := placeholderName(history, llm.ToolCall{Name: "book_hotel", Arguments: `{"hotel_name":"The Manhattan House","guest_name":"John Doe"}`})
+func (s *GivenNamesSuite) TestAGivenPlaceDoesNotExcuseAMissingGuestName() {
+	history := []llm.Message{{Role: llm.User, Content: "The Old Mill at Larkspur Green sounds good."}}
+	name, refused := placeholderName(history, llm.ToolCall{Name: "reserve_venue", Arguments: `{"venue_name":"The Old Mill at Larkspur Green","guest_name":"John Doe"}`})
 	s.True(refused)
 	s.Equal("John Doe", name)
 }
