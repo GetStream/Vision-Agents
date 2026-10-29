@@ -1474,7 +1474,8 @@ benchmark's simulated caller, and everything between hearing and answering is th
 own, the cadence, the flow controller, speculation and barge-in included.
 
 The first frame is `{"type": "start", "sample_rate": 16000, "session": {...}}`, where
-`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out. The
+`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out.
+`sample_rate` is from 8000 to 192000, 16000 when left out; any other rate is refused. The
 answer is `{"type": "session", "session": {...}, "sample_rate": 16000}`. From then on
 binary frames are PCM16 mono at that rate both ways: the caller's audio in, and the agent's
 speech out in 20 ms frames at the pace it is heard on a call, so a reply the caller cuts
