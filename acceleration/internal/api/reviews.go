@@ -109,7 +109,7 @@ func (s *Server) analyzeReviews(ctx context.Context, request *analyzeReviewsRequ
 		ID:              "review-analysis",
 		Instructions:    analysisInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: reviewsRead(calls)}},
-		MaxOutputTokens: analysisTokens,
+		MaxOutputTokens: analysisTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
