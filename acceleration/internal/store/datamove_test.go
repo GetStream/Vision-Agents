@@ -100,10 +100,12 @@ func (s *DataMoveSuite) SetupTest() {
 // command does, and returns the cursor their changes carry on from.
 func (s *DataMoveSuite) move(from, to string) int64 {
 	export := s.export(from)
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range export.rows {
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
-		s.Require().NoError(s.destination.ReserveImportedIDs(s.ctx, row.table, encoded))
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 	return export.cursor
@@ -112,13 +114,15 @@ func (s *DataMoveSuite) move(from, to string) int64 {
 // moveEdited is move with the rows of one table edited first, as a file the importer wrote
 // itself would carry them.
 func (s *DataMoveSuite) moveEdited(from, to, table string, edit func(map[string]any)) {
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range s.export(from).rows {
 		if row.table == table {
 			edit(row.row)
 		}
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
-		s.Require().NoError(s.destination.ReserveImportedIDs(s.ctx, row.table, encoded))
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 }

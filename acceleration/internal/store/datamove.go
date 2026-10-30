@@ -557,40 +557,111 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	return nil
 }
 
-// ReserveImportedIDs moves this deployment's sequences past the numbers a row is about to be
-// imported with, so no row inserted here afterwards draws one of them.
+// The gap an import reserves ahead of the ids it writes, at most. Once a row's id comes
+// within half a gap of what was reserved, the reservation moves a gap past it, so a live
+// insert here draws a number a moved row would hold only when the source handed out half a
+// gap of numbers to other customers between two of the moved customer's rows. 2^40 makes
+// that a trillion numbers at once, and a bigint sequence still holds 2^23 such reservations.
+const maxReservedGap = int64(1) << 40
+
+// reservedGapShare is the part of a sequence's range one reservation takes when the range is
+// too small for maxReservedGap, as for an int4 sequence: 1/256 of its range keeps 256
+// reservations' room and, for int4, still asks the source to draw four million numbers
+// between two of the moved customer's rows before they could meet a live one.
+const reservedGapShare = 256
+
+// IDReservation keeps the sequences of this deployment ahead of the ids one run of an import
+// writes, so no row inserted here, whoever's, draws a number a moved row holds.
 //
 // An import keeps the source's ids, and the sequence behind such a column here knows nothing
-// of them: whichever customer's insert draws a number an imported row holds fails on the key.
-// It runs before the row lands, so no live insert can draw the number once the row is here. A
-// sequence already past the number stays where it is, since this deployment draws from it on
-// its own. Reading a sequence and setting it are two steps nothing locks together: should
-// inserts here draw past the row's number in between, the setval puts the sequence back below
-// what they drew.
+// of them. Setting the sequence just to each row's id would leave its next number at the
+// source's next one, and a live insert here would take the number of the source's next moved
+// row first. So a run moves the sequence a gap ahead at once and again only when a row comes
+// within half a gap of that, which is about one setval per sequence per run.
 //
 // Only for a source the operator vouches for: the numbers are the row's word, and a row naming
-// a sequence's largest value would stop every insert into its table, whoever's.
-func (s *Store) ReserveImportedIDs(ctx context.Context, table string, row json.RawMessage) error {
-	spec, found := dataTableByName(table)
-	if !found {
-		return fmt.Errorf("store: %q is not a table an export carries", table)
+// a number near a sequence's largest would use up its room for every insert into its table.
+type IDReservation struct {
+	// sequences are those behind the columns an import writes, by table and column.
+	sequences map[string]map[string]*reservedSequence
+}
+
+// reservedSequence is one sequence and how far a run has moved it.
+type reservedSequence struct {
+	name string
+	side *bun.DB
+	// mark is the number the run last set the sequence to, or read it at: this deployment
+	// draws none at or below it any more.
+	mark int64
+	gap  int64
+	max  int64
+}
+
+// ReserveImportedIDs reads the sequences behind the columns an import writes, before a run
+// writes any row, and fails if one has no room left for the run's reservations.
+func (s *Store) ReserveImportedIDs(ctx context.Context) (*IDReservation, error) {
+	reservation := &IDReservation{sequences: map[string]map[string]*reservedSequence{}}
+	for _, spec := range dataTables {
+		shape, err := s.shapeOf(ctx, spec.name)
+		if err != nil {
+			return nil, err
+		}
+		for _, column := range spec.written(shape) {
+			name, drawn := shape.sequences[column]
+			if !drawn {
+				continue
+			}
+			sequence := &reservedSequence{name: name, side: s.sideOf(spec)}
+			// The last number a sequence handed out is its last value once it has handed that
+			// out, or the one before.
+			query := fmt.Sprintf(`
+SELECT CASE WHEN s.is_called THEN s.last_value ELSE s.last_value - 1 END, p.seqmax
+FROM %s AS s, pg_sequence AS p
+WHERE p.seqrelid = ?::regclass`, name)
+			if err := sequence.side.QueryRowContext(ctx, query, name).Scan(&sequence.mark, &sequence.max); err != nil {
+				return nil, fmt.Errorf("store: read %s: %w", name, err)
+			}
+			sequence.gap = min(maxReservedGap, sequence.max/reservedGapShare)
+			if sequence.max-sequence.mark < 2*sequence.gap {
+				return nil, fmt.Errorf("store: %s has %d numbers left, fewer than the %d a copy reserves and leaves to this deployment",
+					name, sequence.max-sequence.mark, 2*sequence.gap)
+			}
+			if reservation.sequences[spec.name] == nil {
+				reservation.sequences[spec.name] = map[string]*reservedSequence{}
+			}
+			reservation.sequences[spec.name][column] = sequence
+		}
 	}
-	shape, err := s.shapeOf(ctx, table)
-	if err != nil {
-		return err
+	return reservation, nil
+}
+
+// Cover moves the sequences past the numbers a row is about to be imported with, before it
+// lands, so no live insert draws one of them once it is here.
+//
+// The sequence is read and set in one statement nothing locks: a live insert drawing in
+// between is not handed its number again, since the sequence is set a gap past what it had
+// handed out. It is never set below that.
+func (r *IDReservation) Cover(ctx context.Context, table string, row json.RawMessage) error {
+	sequences := r.sequences[table]
+	if len(sequences) == 0 {
+		return nil
 	}
-	for _, column := range spec.written(shape) {
-		sequence, drawn := shape.sequences[column]
-		if !drawn {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return fmt.Errorf("store: read a row of %s: %w", table, err)
+	}
+	for column, sequence := range sequences {
+		id, err := strconv.ParseInt(string(fields[column]), 10, 64)
+		if err != nil {
+			return fmt.Errorf("store: %s.%s of a row is %s, not a number: %w", table, column, fields[column], err)
+		}
+		if id <= sequence.mark-sequence.gap/2 {
 			continue
 		}
-		// The next number a sequence hands out is its last value, or the one after once it has
-		// handed that out.
 		query := fmt.Sprintf(`
-SELECT setval(?::regclass, r.%[1]s)
-FROM jsonb_populate_record(NULL::%[2]s, ?::jsonb) AS r, %[3]s AS s
-WHERE r.%[1]s >= CASE WHEN s.is_called THEN s.last_value + 1 ELSE s.last_value END`, column, spec.name, sequence)
-		if _, err := s.sideOf(spec).ExecContext(ctx, query, sequence, string(row)); err != nil {
+SELECT setval(?::regclass, GREATEST(?, CASE WHEN is_called THEN last_value ELSE last_value - 1 END) + ?)
+FROM %s`, sequence.name)
+		if err := sequence.side.QueryRowContext(ctx, query, sequence.name, id, sequence.gap).Scan(&sequence.mark); err != nil {
 			return fmt.Errorf("store: reserve %s.%s: %w", table, column, err)
 		}
 	}
