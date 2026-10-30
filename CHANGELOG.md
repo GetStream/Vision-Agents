@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A written conversation stops chaining tools after 16 rounds
+
+A text session whose model answers each tool result by calling another tool is made to answer, with no tools offered, at the 16th reply to a tool result since the user last wrote, as a voice call is at the 8th. It used to go on calling tools until a spend limit stopped it.
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
