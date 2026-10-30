@@ -103,6 +103,7 @@ func (s *DataMoveSuite) move(from, to string) int64 {
 	for _, row := range export.rows {
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(s.destination.ReserveImportedIDs(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 	return export.cursor
@@ -117,6 +118,7 @@ func (s *DataMoveSuite) moveEdited(from, to, table string, edit func(map[string]
 		}
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(s.destination.ReserveImportedIDs(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 }
@@ -1215,4 +1217,36 @@ func (s *DataMoveSuite) TestADeletedRequestFromBeforeUsageIDsIsReplayedToo() {
 	rows := s.requestsByUsage()
 	s.NotContains(rows, moved["usage_id"], "found by the usage id its import made from its source id")
 	s.Contains(rows, kept.UsageID.String())
+}
+
+func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes() {
+	campaign := &Campaign{CustomerID: "acme", Name: "renewals"}
+	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
+	// The source has handed out more places than the destination: its contacts' places are
+	// numbers the destination's sequence has not reached.
+	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('campaign_contacts', 'seq'), 1000)")
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000001"}}))
+
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000002"}}))
+
+	contacts, err := s.destination.CampaignContacts(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+	s.Require().Len(contacts, 2)
+	s.Equal("+15550000001", contacts[0].ToNumber, "a contact added here is rung after the ones that moved")
+	s.Equal("+15550000002", contacts[1].ToNumber)
+}
+
+func (s *DataMoveSuite) TestAMovedRequestLeavesTheSequenceOfItsIDAlone() {
+	s.takenRequest(s.source, 1_000_000_000)
+
+	s.move("acme", "acme")
+	usageID := uuid.Must(uuid.NewV7())
+	s.Require().NoError(s.destination.RecordRequest(s.ctx, &Request{UsageID: usageID, Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+
+	own := s.requestsByUsage()[usageID.String()]
+	s.Require().NotNil(own)
+	s.Less(own["id"].(float64), float64(1_000_000_000), "a moved request is given an id of the destination's, so the source's is reserved nowhere")
 }
