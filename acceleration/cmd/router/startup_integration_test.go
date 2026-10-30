@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"syscall"
@@ -208,6 +209,10 @@ func (s *RouterStartSuite) TestAStartingRouterRetiresTheStatusURLsOfOldCalls() {
 
 	s.Eventually(retired, 30*time.Second, 50*time.Millisecond, "the old call's status url is still live")
 	s.Require().NoError(stop())
+	// startPhoneSweeper is the sweep's frame (cmd/router/phonesweep.go); its goroutine ends with
+	// the context the router hands it.
+	s.Eventually(func() bool { return !strings.Contains(goroutines(), "startPhoneSweeper") },
+		10*time.Second, 50*time.Millisecond, "the phone sweep went on after the router stopped")
 }
 
 // The router starts the sweep that closes idle episodes where an agent config has the cards on.
@@ -229,6 +234,13 @@ func (s *RouterStartSuite) TestAStartingRouterClosesAnIdleEpisode() {
 	}
 	_, err = s.db.OpenEpisode(s.ctx, &episode)
 	s.Require().NoError(err)
+	// The episode's episode_activity row goes with it (ON DELETE CASCADE).
+	s.T().Cleanup(func() {
+		_, err := s.db.DB().ExecContext(context.Background(), "DELETE FROM episodes WHERE id = ?", episode.ID)
+		s.NoError(err)
+		_, err = s.db.DB().ExecContext(context.Background(), "DELETE FROM contact_map WHERE id = ?", contact.ID)
+		s.NoError(err)
+	})
 	closed := func() bool {
 		var status string
 		err := s.db.DB().QueryRowContext(s.ctx, "SELECT status FROM episodes WHERE id = ?", episode.ID).Scan(&status)
@@ -280,6 +292,13 @@ func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
 		s.Require().Fail("the router did not start listening")
 	}
 	return stop
+}
+
+// goroutines is every goroutine's stack, as the pprof endpoint prints it.
+func goroutines() string {
+	var out strings.Builder
+	_ = pprof.Lookup("goroutine").WriteTo(&out, 1)
+	return out.String()
 }
 
 // listenLog drops the router's logs and tells when it logs that it is listening.
