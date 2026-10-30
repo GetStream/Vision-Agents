@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,15 +96,17 @@ func (unpaid) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 type base struct {
 	mu       sync.Mutex
 	passages map[string]knowledge.Document
+	// namespaces are those a write made, as turbopuffer makes one on its first write.
+	namespaces map[string]struct{}
 	// writing, when set, runs once as the next write starts, before it is made.
 	writing func()
 }
 
 func newBase() *base {
-	return &base{passages: map[string]knowledge.Document{}}
+	return &base{passages: map[string]knowledge.Document{}, namespaces: map[string]struct{}{}}
 }
 
-func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Document) (knowledge.Billed, error) {
+func (b *base) Upsert(_ context.Context, namespace string, documents []knowledge.Document) (knowledge.Billed, error) {
 	b.mu.Lock()
 	writing := b.writing
 	b.writing = nil
@@ -114,6 +117,7 @@ func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Documen
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.namespaces[namespace] = struct{}{}
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
 		b.passages[document.ID] = document
@@ -155,7 +159,19 @@ func (b *base) Search(context.Context, knowledge.Query) (knowledge.Found, error)
 	return knowledge.Found{}, errors.New("the crawler does not search")
 }
 
-func (b *base) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+func (b *base) Namespaces(_ context.Context, prefix string) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var names []string
+	for namespace := range b.namespaces {
+		if strings.HasPrefix(namespace, prefix) {
+			names = append(names, namespace)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
 
 func (b *base) Stored(context.Context, string) (knowledge.Billed, error) {
 	return knowledge.Billed{}, knowledge.ErrNoNamespace
@@ -522,6 +538,9 @@ func (s *URLsSuite) TestAPageRemovedWhileItWasReadWritesNothing() {
 	s.drained(page)
 
 	s.Empty(s.base.ids(), "a page removed during its read does not come back")
+	made, err := s.base.Namespaces(s.ctx, "")
+	s.Require().NoError(err)
+	s.Empty(made, "nor makes its knowledge base again")
 }
 
 func (s *URLsSuite) TestAPageRemovedAsItsPassagesWereWrittenLeavesNoneBehind() {
