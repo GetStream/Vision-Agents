@@ -189,7 +189,8 @@ end. A run made by hand is never held.
   (`call_unanswered`, see [telephony](telephony.md)). The next channel in `deliver_to` is still tried. The
   occurrence is retried only when another channel fails with a reason that is not final
   (`scheduled_delivery.go:245`); the phone step then answers `already_called`
-  (`scheduled_delivery.go:734`). The call's session is taken on the run before it is
+  (`scheduled_delivery.go:734`). A call placed whose end the run does not record is
+  `already_called`, and no channel after `phone` is tried (`rangAlready`). The call's session is taken on the run before it is
   placed, so no retry and no worker taking the run over rings the user twice. A vendor refusing the dial gives the call back and fails the attempt
   at once; a later attempt may ring. The router keeps no vendor call dispositions and has
   no answering-machine detection, so busy collapses into the dial's answer, and a mailbox

@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -190,6 +191,17 @@ func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "memory_gb")
+}
+
+func (s *SyncSuite) TestASyncAllowingAnIPAddressAsADomainIsRefused() {
+	for _, address := range []string{"203.0.113.7", "203.0.113.7:443", "[2001:db8::7]"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+			map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+				"sandbox_options": map[string]any{"allowed_domains": []string{"api.example.com", address}}})
+
+		s.Equal(http.StatusBadRequest, status, address)
+		s.Contains(failure, fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", address), address)
+	}
 }
 
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
