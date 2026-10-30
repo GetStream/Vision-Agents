@@ -1962,6 +1962,58 @@ func (s *ScheduledTasksSuite) TestTheAgentRewordingATaskKeepsCountingFromItsStor
 	s.Equal(want[:2], s.upcomingOf(reloaded), "one of the three has already passed")
 }
 
+// countingTaskWithOnePassed stores a daily COUNT=3 task whose first run has
+// passed, and returns it with its start and the two runs it has left.
+func (s *ScheduledTasksSuite) countingTaskWithOnePassed(user *testClient, config string) (ScheduledTask, string, []time.Time) {
+	created := s.createTask(user, taskRequest(config))
+	start, want := yesterdayAtAnHourAhead()
+	stored, err := time.Parse("2006-01-02T15:04", start)
+	s.Require().NoError(err)
+	_, err = s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("rrule = ?", "FREQ=DAILY;COUNT=3").Set("timezone = ?", "UTC").
+		Set("start_local = ?", stored).Set("next_run_at = ?", want[0]).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+	return created, start, want[:2]
+}
+
+func (s *ScheduledTasksSuite) TestAnEditThatSendsTheStartBackKeepsCountingFromIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Schedule: &ScheduledTaskSchedule{At: pointerTo(start),
+			Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Until: pointerTo(left[0].AddDate(0, 1, 0).Format("2006-01-02")),
+			Timezone: pointerTo("UTC")}}, &updated))
+
+	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Require().NotNil(stored.NextRunAt)
+	s.Equal(left[0], stored.NextRunAt.UTC())
+	s.Equal(start, stored.StartLocal.UTC().Format("2006-01-02T15:04"), "the start stays")
+	s.Equal(left, s.upcomingOf(stored), "one of the three has already passed")
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentSendingTheStoredStartBackKeepsCountingFromIt() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","at":"` + start +
+			`","until":"` + left[0].AddDate(0, 1, 0).Format("2006-01-02") + `"}`})
+	s.say(user, opened.Id, "stop it after a month")
+	s.NotContains(s.ranResult(watching), `"error"`)
+
+	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Equal(start, stored.StartLocal.UTC().Format("2006-01-02T15:04"), "the start stays")
+	s.Equal(left, s.upcomingOf(stored), "one of the three has already passed")
+}
+
 func (s *ScheduledTasksSuite) TestTheAgentSchedulesARepeatWithItsStartPassedForItsWholeCount() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

@@ -292,6 +292,13 @@ func FromStored(task store.ScheduledTask) (*Schedule, error) {
 	return schedule, nil
 }
 
+// MovesStartFrom reports whether this schedule starts at a different clock
+// reading than a stored start. A reschedule that sends the stored one back, editing only its repeat
+// or until, does not move the start.
+func (s *Schedule) MovesStartFrom(stored time.Time) bool {
+	return !s.StartLocal.Equal(wallOf(stored))
+}
+
 // FromNow moves a repeat whose first occurrence has passed to start at its
 // first occurrence after now, and returns that occurrence; false when none is
 // left before until. A first occurrence still ahead leaves the start as

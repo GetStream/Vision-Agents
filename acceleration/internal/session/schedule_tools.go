@@ -549,17 +549,15 @@ func (r *scheduleRunner) rescheduled(task *store.ScheduledTask, args updateArgs,
 		parts, _ := refusalOf(err)
 		return nil, parts
 	}
-	// A reschedule that names a time moves the run: a start that has passed
-	// goes to the next occurrence, its COUNT counted from there, as a create
-	// does. One that does not re-parses the stored start, a change of title,
-	// instructions or repeat, and keeps counting from it.
+	// A reschedule that names a new time moves the run: a start that has
+	// passed goes to the next occurrence, its COUNT counted from there, as a
+	// create does. One that does not, or names the stored start again,
+	// re-parses it, a change of title, instructions or repeat, and keeps
+	// counting from it.
 	moved := args.At != nil || args.In != nil
-	var next time.Time
-	var ok bool
-	if moved {
+	next, ok := parsed.Next(now)
+	if parsed.MovesStartFrom(task.StartLocal) {
 		next, ok = parsed.FromNow(now)
-	} else {
-		next, ok = parsed.Next(now)
 	}
 	if !ok {
 		return nil, refusal(scheduling.CodeScheduleInPast, "that schedule has no occurrence left; its last one has passed")
