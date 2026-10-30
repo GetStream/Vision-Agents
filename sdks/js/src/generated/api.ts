@@ -7644,6 +7644,8 @@ export type components = {
             readonly data_policy?: components["schemas"]["PolicyDataPolicy"];
             /** @description Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on. */
             readonly prompt_injection?: boolean;
+            /** @description With prompt_injection on, refuse a response whose input the screen could not judge, because the decision model failed, left a question unanswered or did not answer within 2 seconds, as one whose input reads as an injection: it fails with prompt_injection before its tool calls can be acted on. Left out or false, such a response stands. True at either scope turns it on, so an app cannot turn its organization's off. */
+            readonly prompt_injection_fail_closed?: boolean;
             readonly quota?: components["schemas"]["Quota"];
             /** @description Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused. */
             readonly require_own_stream_app?: boolean;

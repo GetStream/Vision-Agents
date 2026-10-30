@@ -37,6 +37,17 @@ func (s *PoliciesSuite) TestAnAppPolicyIsStoredAndReadBack() {
 	s.Nil(read.Budget, "a policy reads back no budget")
 }
 
+func (s *PoliciesSuite) TestFailingTheScreenClosedIsStoredAndReadBack() {
+	stored := s.put(map[string]any{"prompt_injection": true, "prompt_injection_fail_closed": true})
+	s.Require().NotNil(stored.PromptInjectionFailClosed)
+
+	var read Policy
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/policies/app", nil, &read))
+	s.Require().NotNil(read.PromptInjectionFailClosed)
+	s.True(*read.PromptInjectionFailClosed)
+}
+
 func (s *PoliciesSuite) TestAPolicyBudgetIsRefused() {
 	for _, path := range []string{"/v1/policies/app", "/v1/policies/organization"} {
 		status, body := s.serverClient.call(http.MethodPut, path,

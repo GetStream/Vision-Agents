@@ -2,6 +2,10 @@
 
 ## Features
 
+### The prompt injection screen can fail closed
+
+A policy's `prompt_injection_fail_closed` (`PUT /v1/policies/app`, `PUT /v1/policies/organization`), with `prompt_injection` on, refuses a response whose input the screen could not judge, because the decision model failed, left a question unanswered or did not answer within 2 seconds: it fails with `prompt_injection` before its tool calls can be acted on, as one whose input reads as an injection does. Left out, such a response stands, as before. True at either scope turns it on.
+
 ### An iMessage photo reaches the agent
 
 A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).

@@ -6760,6 +6760,9 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
+	// PromptInjectionFailClosed With prompt_injection on, refuse a response whose input the screen could not judge, because the decision model failed, left a question unanswered or did not answer within 2 seconds, as one whose input reads as an injection: it fails with prompt_injection before its tool calls can be acted on. Left out or false, such a response stands. True at either scope turns it on, so an app cannot turn its organization's off.
+	PromptInjectionFailClosed *bool `json:"prompt_injection_fail_closed,omitempty"`
+
 	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 

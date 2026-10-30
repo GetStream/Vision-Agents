@@ -15,7 +15,8 @@ import (
 
 // errUserPolicyQuotaOnly answers a user's policy that sets anything but a quota.
 var errUserPolicyQuotaOnly = invalidRequest("a user's policy holds a quota only: data_policy, prompt_injection, " +
-	"allowed_models, tags, require_own_stream_app and balance_warning_micros are set on the app or the organization")
+	"prompt_injection_fail_closed, allowed_models, tags, require_own_stream_app and balance_warning_micros are set on " +
+	"the app or the organization")
 
 // UserPolicy is one end user's own quota, what they are held to, and what they spent today.
 type UserPolicy struct {
@@ -439,7 +440,7 @@ func (s *Server) updateCustomerPolicy(ctx context.Context, request *updateCustom
 	auditedAs := id
 	if scope == store.ScopeUser {
 		appID, userID, _ := store.SplitUserScopeID(id)
-		if sent.DataPolicy != nil || sent.PromptInjection != nil || sent.AllowedModels != nil ||
+		if sent.DataPolicy != nil || sent.PromptInjection != nil || sent.PromptInjectionFailClosed != nil || sent.AllowedModels != nil ||
 			sent.Tags != nil || sent.RequireOwnStreamApp != nil || sent.BalanceWarningMicros != nil {
 			return nil, errUserPolicyQuotaOnly
 		}

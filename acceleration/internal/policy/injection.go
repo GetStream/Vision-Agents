@@ -29,7 +29,8 @@ var ErrPromptInjection = errors.New("policy: the input reads as a prompt injecti
 const injectionThreshold = 0.6
 
 // screenTimeout bounds one screen. It is how long a finished response may be held waiting
-// for the verdict, and a screen that has not answered by then lets the response stand.
+// for the verdict, and a screen that has not answered by then lets the response stand, unless
+// the policies say to fail closed.
 const screenTimeout = 2 * time.Second
 
 // evasion is appended to every question, since each harm can be dressed up the same ways.
@@ -77,7 +78,8 @@ func (e *Enforcer) Screener(classifier *decisionrouter.Router) func(context.Cont
 		if e == nil || classifier == nil || owner.CustomerID == "" {
 			return nil
 		}
-		if !e.decide(ctx, owner.CustomerID).screen {
+		decided := e.decide(ctx, owner.CustomerID)
+		if !decided.screen {
 			return nil
 		}
 		text := newestInput(input)
@@ -86,16 +88,30 @@ func (e *Enforcer) Screener(classifier *decisionrouter.Router) func(context.Cont
 		}
 
 		verdict := make(chan error, 1)
-		go func() { verdict <- e.judge(context.WithoutCancel(ctx), classifier, owner, text) }()
+		go func() {
+			verdict <- e.judge(context.WithoutCancel(ctx), classifier, owner, text, decided.screenFailsClosed)
+		}()
 		return verdict
 	}
 }
 
+// errUnjudged is what a response fails with when the screen could not judge its input and
+// the policies say to fail closed. It is a prompt injection refusal, so whatever refuses one
+// refuses it the same way, before its tool calls are acted on.
+var errUnjudged = fmt.Errorf("%w: it could not be screened", ErrPromptInjection)
+
 // judge asks the classifier about every harm at once. A classifier that cannot be reached
-// or leaves a harm unanswered lets the response stand, and says so in the log.
-func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
+// in screenTimeout or leaves a harm unanswered lets the response stand, and says so in the
+// log; with failClosed it refuses it instead.
+func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string, failClosed bool) error {
 	ctx, cancel := context.WithTimeout(routing.WithAttribution(ctx, owner.Attribution), screenTimeout)
 	defer cancel()
+	unjudged := func() error {
+		if failClosed {
+			return errUnjudged
+		}
+		return nil
+	}
 
 	session, err := classifier.Start(ctx, decisionrouter.Request{
 		CustomerID: owner.CustomerID,
@@ -105,15 +121,17 @@ func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router,
 		Tags:       owner.Tags,
 	})
 	if err != nil {
-		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID, "error", err)
-		return nil
+		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID,
+			"fails_closed", failClosed, "error", err)
+		return unjudged()
 	}
 	defer session.Close()
 
 	answered, err := session.Classify(ctx, injectionRequest(text))
 	if err != nil {
-		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID, "error", err)
-		return nil
+		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID,
+			"fails_closed", failClosed, "error", err)
+		return unjudged()
 	}
 
 	var found []string
@@ -121,8 +139,8 @@ func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router,
 		answer, ok := answered.Answers[id]
 		if !ok {
 			e.logger.Warn("the classifier left a prompt injection harm unanswered",
-				"customer", owner.CustomerID, "harm", id, "model", answered.Model)
-			return nil
+				"customer", owner.CustomerID, "harm", id, "model", answered.Model, "fails_closed", failClosed)
+			return unjudged()
 		}
 		if answer.Yes >= injectionThreshold {
 			found = append(found, id)

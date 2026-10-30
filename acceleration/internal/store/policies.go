@@ -55,6 +55,9 @@ type PolicyDocument struct {
 	DataPolicy PolicyDataPolicy `json:"data_policy,omitzero"`
 	// PromptInjection screens what an LLM is asked for injection attempts.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
+	// PromptInjectionFailClosed refuses a response the screen could not judge, where it would
+	// otherwise stand.
+	PromptInjectionFailClosed *bool `json:"prompt_injection_fail_closed,omitempty"`
 	// AllowedModels are the "provider/model" names requests may be routed to. Nil allows
 	// every model, and an empty list allows none.
 	AllowedModels *[]string `json:"allowed_models,omitempty"`

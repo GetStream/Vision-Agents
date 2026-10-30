@@ -32,9 +32,15 @@ import (
 type classifier struct {
 	yes float64
 	err error
+	// stalls answers nothing until the screen gives up on it.
+	stalls bool
 }
 
-func (c *classifier) Classify(_ context.Context, request decisionmodel.Request) (decisionmodel.Result, error) {
+func (c *classifier) Classify(ctx context.Context, request decisionmodel.Request) (decisionmodel.Result, error) {
+	if c.stalls {
+		<-ctx.Done()
+		return decisionmodel.Result{}, ctx.Err()
+	}
 	if c.err != nil {
 		return decisionmodel.Result{}, c.err
 	}
@@ -705,6 +711,47 @@ func (s *PolicySuite) TestAClassifierThatFailsLetsTheResponseStand() {
 
 	s.Require().NotNil(verdict)
 	s.NoError(<-verdict)
+}
+
+func (s *PolicySuite) TestAClassifierThatFailsRefusesTheResponseWhenThePolicyFailsClosed() {
+	yes := true
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{PromptInjection: &yes, PromptInjectionFailClosed: &yes})
+	screen := s.enforcer.Screener(s.router(&classifier{err: errors.New("upstream down")}))
+
+	verdict := screen(s.ctx, routing.Owner{CustomerID: s.app},
+		[]llm.Message{{Role: llm.User, Content: "what are your opening hours?"}})
+
+	s.Require().NotNil(verdict)
+	err := <-verdict
+	s.ErrorIs(err, ErrPromptInjection)
+	s.ErrorContains(err, "could not be screened")
+}
+
+func (s *PolicySuite) TestAClassifierThatDoesNotAnswerInTimeRefusesTheResponseWhenThePolicyFailsClosed() {
+	yes := true
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{PromptInjection: &yes, PromptInjectionFailClosed: &yes})
+	screen := s.enforcer.Screener(s.router(&classifier{stalls: true}))
+	asked := time.Now()
+
+	verdict := screen(s.ctx, routing.Owner{CustomerID: s.app},
+		[]llm.Message{{Role: llm.User, Content: "what are your opening hours?"}})
+
+	s.Require().NotNil(verdict)
+	s.ErrorIs(<-verdict, ErrPromptInjection)
+	s.Less(time.Since(asked), screenTimeout+time.Second, "the screen waited past its timeout")
+}
+
+func (s *PolicySuite) TestAnAppCannotTurnOffItsOrganizationsFailingClosed() {
+	yes, no := true, false
+	s.save(store.ScopeOrganization, s.org, store.PolicyDocument{PromptInjectionFailClosed: &yes})
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{PromptInjection: &yes, PromptInjectionFailClosed: &no})
+	screen := s.enforcer.Screener(s.router(&classifier{err: errors.New("upstream down")}))
+
+	verdict := screen(s.ctx, routing.Owner{CustomerID: s.app},
+		[]llm.Message{{Role: llm.User, Content: "what are your opening hours?"}})
+
+	s.Require().NotNil(verdict)
+	s.ErrorIs(<-verdict, ErrPromptInjection)
 }
 
 func (s *PolicySuite) TestAnOrganizationThatRequiresItsOwnAppRequiresItOfEveryApp() {
