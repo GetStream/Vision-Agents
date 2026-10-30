@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A written conversation stops chaining tools after 16 rounds
+
+A text session whose model answers each tool result by calling another tool is made to answer, with no tools offered, at the 16th reply to a tool result since the user last wrote, as a voice call is at the 8th. It used to go on calling tools until a spend limit stopped it.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

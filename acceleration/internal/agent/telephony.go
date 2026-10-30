@@ -137,6 +137,11 @@ func spokenResults(history []llm.Message) []llm.Message {
 // query corrected once.
 const maxToolRounds = 8
 
+// maxTextToolRounds is maxToolRounds for a conversation held in writing. Nobody waits on a
+// hold line there, so it chains twice as far, but a model that answers every result with
+// another tool would otherwise run tools, each one billed, until a spend limit stopped it.
+const maxTextToolRounds = 2 * maxToolRounds
+
 // lateResult introduces the result of a call answered with stillRunning. It comes after
 // other turns, where a tool result answering an earlier call is refused, so it is the
 // caller's message, which every provider takes anywhere.
@@ -633,8 +638,9 @@ func toolOutcome(cancelled, failed, refused, answered bool) string {
 // what answers next, so talking over it would be talking to nobody. A transfer asked for
 // in a reply to a tool does not either, so a broken one cannot keep the line open by
 // retrying itself. Other tools chain, a lookup leading to the lookup it needed, and are
-// always followed: a result nobody speaks is the answer lost. A voice call that has
-// chained maxToolRounds times is made to answer instead (respondAfterTool).
+// always followed: a result nobody speaks is the answer lost. A conversation that has
+// chained maxToolRounds times, or maxTextToolRounds in writing, is made to answer instead
+// (respondAfterTool).
 func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 	switch {
 	case requested.Call.Name == toolPress:

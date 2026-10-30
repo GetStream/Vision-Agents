@@ -1982,7 +1982,11 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.generating = true
 	a.toolReply = false
 	a.toolRounds++
-	answers := !a.options.Text && a.toolRounds >= maxToolRounds
+	limit := maxToolRounds
+	if a.options.Text {
+		limit = maxTextToolRounds
+	}
+	answers := a.toolRounds >= limit
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()

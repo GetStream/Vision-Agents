@@ -1667,6 +1667,52 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 	s.Contains(capped.Instructions, "answer the caller now")
 }
 
+func (s *AgentSuite) TestAWrittenConversationThatKeepsChainingToolsIsMadeToAnswer() {
+	// A model that answers every result by reaching for another tool would run tools, each
+	// one billed, until a spend limit stopped it. The reply at the cap is offered no tool.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"It ships tomorrow."}
+	call := llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.toolRounds = maxTextToolRounds - 1
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "late-round", Call: call})
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the result at the cap was never answered")
+	s.Require().Len(s.model.requests(), 1)
+	capped := s.model.requests()[0]
+	s.Empty(capped.Tools, "the capped reply has nothing to reach for")
+	s.Contains(capped.Instructions, "answer the caller now")
+}
+
+func (s *AgentSuite) TestAWrittenConversationChainsFurtherThanAVoiceCall() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"It ships tomorrow."}
+	call := llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.toolRounds = maxToolRounds - 1
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "late-round", Call: call})
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the result was never answered")
+	s.Require().Len(s.model.requests(), 1)
+	chained := s.model.requests()[0]
+	s.NotEmpty(chained.Tools, "a reader waits on no hold line, so the chain goes on past a call's cap")
+	s.NotContains(chained.Instructions, "answer the caller now")
+}
+
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
 	s.ownsTools("order 12 ships tomorrow")
 	s.join(false)
