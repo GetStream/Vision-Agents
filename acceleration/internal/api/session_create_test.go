@@ -5,7 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -724,25 +724,31 @@ func (s *SessionCreateSuite) TestAForkOfAConversationPastARefusedTurnCarriesItWi
 	opened := s.serverClient.createSession(request)
 	answered := s.answerTo(opened.Id, "Where is order 3825?")
 	s.Empty(s.answerTo(opened.Id, guardedInjection), "the guarded model refuses the turn")
+	stored, err := s.store.StoredSession(context.Background(), s.customerID(), opened.Id)
+	s.Require().NoError(err)
+	// The fork reads what Chat holds once the refused reply is written there.
+	s.Require().Eventually(func() bool {
+		var page struct {
+			Messages []conversation.Message `json:"messages"`
+		}
+		s.serverClient.do(http.MethodGet, "/v1/agents/conversations/"+url.PathEscape(stored.ConversationID)+
+			"/messages?agent_id="+stored.AgentID, nil, &page)
+		return len(page.Messages) == 4 && page.Messages[3].Refused && page.Messages[3].Saved
+	}, settleFor, 20*time.Millisecond, "the refused reply was never written to Chat")
 
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+opened.Id+"/transcript", nil, &read))
+	var said []string
+	for _, line := range read {
+		said = append(said, line.Text)
+	}
+	s.Equal([]string{"Where is order 3825?", answered, guardedInjection}, said)
 	var forked Session
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{}, &forked))
-
 	s.Equal("user: Where is order 3825?\nassistant: "+answered+"\nuser: "+agent.WithheldInput+"\nuser: And order 4472?",
 		s.answerTo(forked.Id, "And order 4472?"))
-	// The conversation is written to Chat behind the turns.
-	var said []string
-	s.Eventually(func() bool {
-		var read []TranscriptMessage
-		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
-			"/v1/agents/calls/"+opened.Id+"/transcript", nil, &read))
-		said = nil
-		for _, line := range read {
-			said = append(said, line.Text)
-		}
-		return slices.Equal(said, []string{"Where is order 3825?", answered, guardedInjection})
-	}, settleFor, 20*time.Millisecond, "the transcript never held the conversation")
 }
 
 // historySession is a conversation in writing on the model that recites what it was handed.
