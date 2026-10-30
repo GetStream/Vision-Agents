@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -127,6 +129,9 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 		raw, _ := json.Marshal(transcriptResult{Text: transcript.Text, Language: transcript.Language, Words: wordsOf(transcript.Words), Speakers: transcript.Speakers, Subtitles: subtitles, Summary: transcript.Summary, Entities: entitiesOf(transcript.Entities), AudioDurationMs: transcript.AudioDurationMs})
 		return &transcribeRecordingResponse{Body: transcriptionOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
 	}
+	if err := callbackComplaint(ctx, job.Callback); err != nil {
+		return nil, err
+	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
 	}
@@ -226,6 +231,9 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		}
 		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs, Voice: audio.Voice})
 		return &recordSpeechResponse{Body: speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))}, nil
+	}
+	if err := callbackComplaint(ctx, job.Callback); err != nil {
+		return nil, err
 	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
@@ -358,7 +366,7 @@ func (s *Server) callBack(ctx context.Context, url string, body any) {
 	}
 	request.Header.Set("Content-Type", "application/json")
 
-	response, err := http.DefaultClient.Do(request)
+	response, err := s.callbackHTTP.Do(request)
 	if err != nil {
 		s.logger.Error("could not deliver a recording callback", "url", url, "error", err)
 		return
@@ -367,6 +375,28 @@ func (s *Server) callBack(ctx context.Context, url string, body any) {
 	if response.StatusCode >= http.StatusBadRequest {
 		s.logger.Error("a recording callback was refused", "url", url, "status", response.Status)
 	}
+}
+
+// errPrivateCallback refuses a callback the router would never post to. One answer for every
+// refusal, as for a guardrail webhook: a name that does not resolve is not told apart from one
+// that resolves to a private address.
+var errPrivateCallback = invalidRequest("callback must be a public https URL; the router cannot reach a callback on a private network, loopback or link-local address")
+
+// callbackComplaint refuses a callback on a private network, loopback or link-local address
+// when the job is asked for, rather than saving one every post to fails (callBack posts
+// through egress.NewClient). Only the host is checked: the path and query are the caller's.
+func callbackComplaint(ctx context.Context, callback string) error {
+	if callback == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(callback)
+	if err == nil {
+		err = egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, User: endpoint.User, Host: endpoint.Host}).String())
+	}
+	if err != nil {
+		return errPrivateCallback
+	}
+	return nil
 }
 
 // transcriptResult is a finished transcript as it is stored. It has its own field names
