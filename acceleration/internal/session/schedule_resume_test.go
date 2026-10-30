@@ -88,7 +88,7 @@ func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentPausesIsLeftPaused
 		Arguments: `{"id":"` + task.ID + `","action":"pause"}`})
 	s.Require().NoError(err)
 
-	resumed, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
+	resumed, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
 	s.Require().NoError(err)
 	s.Zero(resumed, "the user asked the agent to pause it")
 	stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
@@ -110,6 +110,34 @@ func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentResumesLosesTheMov
 	s.Require().NoError(err)
 	s.Require().Equal(store.ScheduledTaskActive, stored.State)
 	s.False(stored.MovePaused, "the user decided what it does here")
+}
+
+// A snooze or a reschedule moves the run and leaves the pause to the move, so the cut-over
+// still resumes the task, at the time the agent moved it to.
+func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentMovesIsStillResumedByTheCutOver() {
+	for _, args := range []string{`"action":"snooze","in":"PT2H"`, `"action":"reschedule","in":"PT3H"`} {
+		s.Run(args, func() {
+			runner, task := s.pausedInTheSecondPass()
+			s.movePaused(task)
+
+			parts, err := runner.Run(s.ctx, llm.ToolCall{ID: uuid.NewString(), Name: "update_scheduled_task",
+				Arguments: `{"id":"` + task.ID + `",` + args + `}`})
+			s.Require().NoError(err)
+			moved, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
+			s.Require().NoError(err)
+			s.Require().NotNil(moved.NextRunAt)
+			s.Require().False(task.NextRunAt.Equal(*moved.NextRunAt), "the agent moved it: %s", parts[0].Text)
+
+			resumed, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
+			s.Require().NoError(err)
+			s.Equal(int64(1), resumed, "the user only moved it")
+			stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
+			s.Require().NoError(err)
+			s.Equal(store.ScheduledTaskActive, stored.State)
+			s.Require().NotNil(stored.NextRunAt)
+			s.True(moved.NextRunAt.Equal(*stored.NextRunAt))
+		})
+	}
 }
 
 // pausedInTheSecondPass is a runner for a user of a new agent config, and a
