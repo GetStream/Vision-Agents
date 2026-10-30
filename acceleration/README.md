@@ -2357,8 +2357,8 @@ The default `--source-auth jwt` is for a source behind Stream's gateway, such as
 A scheduled task active on the source is imported paused, and so is a campaign running there,
 since the source goes on delivering them until the move is cut over. Each is marked as paused by
 the move; a change carried later sets the mark again from the source's state, so one the user
-paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark,
-and so does deleting the task's agent config; any other edit keeps it.
+paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
+any other edit keeps it.
 
 Cut over once SDKs point here:
 
@@ -2372,7 +2372,9 @@ Cut over once SDKs point here:
    ```
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
-at the next run the source had not delivered, and lists the marked campaigns. A campaign rings
+at the next run the source had not delivered, and lists the marked campaigns. A marked task whose
+agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
+and the command prints how many it left that way. A campaign rings
 only from the router that started it, so start each one here with
 `POST /v1/agents/campaigns/{id}/start`.
 

@@ -244,11 +244,14 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 
 // resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
-	resumed, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
+	resumed, skipped, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "resumed %d scheduled tasks\n", resumed)
+	if skipped > 0 {
+		fmt.Fprintf(out, "left %d scheduled tasks paused: their agent config is deleted or missing here\n", skipped)
+	}
 	for _, id := range campaigns {
 		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
 	}

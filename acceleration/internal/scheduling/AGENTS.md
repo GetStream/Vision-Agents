@@ -279,8 +279,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
   --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have.
   A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
-  a task the move paused included, and so does deleting its config (`PauseScheduledTasksForConfig`);
-  any other edit keeps it. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
+  a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
+  missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
+  task again whatever happened to its config here. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
   `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
   `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes

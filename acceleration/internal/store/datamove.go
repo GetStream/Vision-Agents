@@ -598,37 +598,63 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 // the source kept moving while it delivered, so nothing it delivered is delivered again; one
 // that came due meanwhile is the worker's to deliver or miss, as after any outage.
 //
-// It returns how many tasks it resumed and the campaigns that were running there. Those it
-// leaves paused and marked: a campaign rings only from the router that starts it, so each is
-// started here (POST /v1/agents/campaigns/{id}/start), and any change of its state here clears
-// the mark (setCampaignState). Running it again resumes nothing twice.
-func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (int64, []string, error) {
-	result, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
-		Set("state = ?", ScheduledTaskActive).
-		Set("move_paused = false").
-		Set("updated_at = now()").
-		Where("customer_id = ?", customerID).
-		Where("move_paused").
-		// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
-		Where("state = ?", ScheduledTaskPaused).
-		Exec(ctx)
+// A marked task whose agent config is deleted or missing here has nothing to run on, as the
+// API's resume refuses it (errUnknownConfig): it stays paused and loses the mark. The check is
+// made here rather than when the config is deleted, since a later import marks the task again
+// whenever the source changes it. The config row is locked FOR SHARE, as refuseDeletedConfig
+// does, so a delete landing meanwhile either is seen or finds the task active and pauses it.
+//
+// It returns how many tasks it resumed, how many it left paused that way, and the campaigns
+// that were running there. Those it leaves paused and marked: a campaign rings only from the
+// router that starts it, so each is started here (POST /v1/agents/campaigns/{id}/start), and
+// any change of its state here clears the mark (setCampaignState). Running it again resumes
+// nothing twice.
+func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped int64, campaigns []string, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("state = ?", ScheduledTaskActive).
+			Set("move_paused = false").
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
+			Where("state = ?", ScheduledTaskPaused).
+			Where("EXISTS (SELECT 1 FROM agent_configs AS ac WHERE ac.customer_id = st.customer_id AND ac.id = st.config_id AND ac.deleted_at IS NULL FOR SHARE)").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		}
+		if resumed, err = result.RowsAffected(); err != nil {
+			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		}
+		result, err = tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("move_paused = false").
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			// The update above resumed every other one.
+			Where("state = ?", ScheduledTaskPaused).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		}
+		if skipped, err = result.RowsAffected(); err != nil {
+			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		}
+		if err := tx.NewSelect().Model((*Campaign)(nil)).
+			Column("id").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			Order("id").
+			Scan(ctx, &campaigns); err != nil {
+			return fmt.Errorf("store: moved campaigns: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, nil, stack.Wrap(fmt.Errorf("store: resume moved scheduled tasks: %w", err))
+		return 0, 0, nil, stack.Wrap(err)
 	}
-	resumed, err := result.RowsAffected()
-	if err != nil {
-		return 0, nil, stack.Wrap(fmt.Errorf("store: resume moved scheduled tasks: %w", err))
-	}
-	var campaigns []string
-	if err := s.db.NewSelect().Model((*Campaign)(nil)).
-		Column("id").
-		Where("customer_id = ?", customerID).
-		Where("move_paused").
-		Order("id").
-		Scan(ctx, &campaigns); err != nil {
-		return 0, nil, stack.Wrap(fmt.Errorf("store: moved campaigns: %w", err))
-	}
-	return resumed, campaigns, nil
+	return resumed, skipped, campaigns, nil
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text

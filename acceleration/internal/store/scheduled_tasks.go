@@ -1137,15 +1137,6 @@ func (s *Store) PauseScheduledTasksForConfig(ctx context.Context, customerID, co
 		if err != nil {
 			return fmt.Errorf("store: pause scheduled tasks for config: %w", err)
 		}
-		// A task a data move paused is not the cut-over's to resume once its config is gone.
-		if _, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
-			Set("move_paused = false").
-			Where("customer_id = ?", customerID).
-			Where("config_id = ?", configID).
-			Where("move_paused").
-			Exec(ctx); err != nil {
-			return fmt.Errorf("store: pause scheduled tasks for config: %w", err)
-		}
 		// A run made by hand is left to the delivery that made it, which
 		// always records its outcome.
 		if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).

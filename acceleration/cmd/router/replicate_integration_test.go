@@ -61,7 +61,10 @@ func (s *ReplicateResumeSuite) TearDownSuite() {
 }
 
 func (s *ReplicateResumeSuite) SetupTest() {
-	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE scheduled_tasks, campaigns CASCADE")
+	_, err := s.store.DB().ExecContext(s.ctx, "TRUNCATE scheduled_tasks, campaigns, agent_configs CASCADE")
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', 'acme', 'a', 'be brief')")
 	s.Require().NoError(err)
 }
 
@@ -137,4 +140,16 @@ func (s *ReplicateResumeSuite) TestResumeNamesTheCampaignsToStartHere() {
 	s.Equal("resumed 1 scheduled tasks\n"+
 		"campaign "+campaign.ID+" was running where it came from: start it here with POST /v1/agents/campaigns/"+campaign.ID+"/start\n",
 		out.String())
+}
+
+func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForADeletedConfig() {
+	s.imported("st-active", store.ScheduledTaskActive)
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme", "config-1"))
+
+	var out bytes.Buffer
+	s.Require().NoError(resumeMove(s.ctx, s.store, "acme", &out))
+
+	s.Equal("resumed 0 scheduled tasks\n"+
+		"left 1 scheduled tasks paused: their agent config is deleted or missing here\n", out.String())
+	s.Equal(store.ScheduledTaskPaused, s.state("st-active"))
 }
