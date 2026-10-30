@@ -55,7 +55,7 @@ func (s *IdleTimeoutSuite) TestEveryServerClosesIdleConnections() {
 				return true
 			}
 			servers[name]++
-			s.Contains([]string{"idleTimeout", "proxy.IdleTimeout()"}, idleTimeoutOf(fset, literal),
+			s.Contains([]string{"idleTimeout", "proxy.KeepAliveTimeout()"}, idleTimeoutOf(fset, literal),
 				"%s sets no IdleTimeout of the router's", fset.Position(literal.Pos()))
 			return true
 		})

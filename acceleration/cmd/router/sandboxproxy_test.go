@@ -507,14 +507,15 @@ func servesProxy(address string) bool {
 	return response.StatusCode == http.StatusMethodNotAllowed
 }
 
-// TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout is the router proxy's keep-alive limit: a
-// sandbox connection that sends no next request is closed, where base held it open for ever.
-// The wait is bounded by 5 s, past the 200 ms timeout and short of the 10 s header timeout.
-func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
-	const idle = 200 * time.Millisecond
+// TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout is the router proxy's keep-alive
+// limit: a sandbox connection that sends no next request is closed, where base held it open for
+// ever, and not at the tunnels' shorter idle timeout. The wait is bounded by 5 s, past the 1 s
+// keep-alive timeout and short of the 10 s header timeout.
+func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
+	const keepAlive = time.Second
 	caCert, caKey := newCA(t)
-	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: idle,
-		Logger: slog.New(slog.DiscardHandler)})
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: keepAlive / 5,
+		KeepAliveTimeout: keepAlive, Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 	address := freeAddress(t)
 	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
@@ -540,13 +541,13 @@ func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
 	_, err = reader.ReadByte()
 
 	require.ErrorIs(t, err, io.EOF, "the idle connection was not closed")
-	require.GreaterOrEqual(t, time.Since(answered), idle)
+	require.GreaterOrEqual(t, time.Since(answered), keepAlive)
 }
 
-// TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault: a router that sets nothing
-// gives the server the proxy's own default, the 90 s of egress/proxy.go:47 on base 131c510ab,
-// which a tunnel to a grant already had.
-func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing.T) {
+// TestTheProxyServerHoldsAnIdleConnectionForFourMinutesByDefault: a router that sets nothing
+// gives the server the proxy's own keep-alive default, egress/proxy.go keepAliveTimeout, longer
+// than libcurl's 118 s, the longest idle limit of a client in the sandbox.
+func TestTheProxyServerHoldsAnIdleConnectionForFourMinutesByDefault(t *testing.T) {
 	caCert, caKey := newCA(t)
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
@@ -558,7 +559,7 @@ func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing
 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
-	require.Equal(t, 90*time.Second, (<-served).IdleTimeout)
+	require.Equal(t, 4*time.Minute, (<-served).IdleTimeout)
 }
 
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
