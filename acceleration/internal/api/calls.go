@@ -290,12 +290,12 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createCallTokenResponse{Body: CallToken{ApiKey: bound.Identity.APIKey,
+	return &createCallTokenResponse{Body: CallToken{ApiKey: apiKey,
 		Token:     token,
 		UserId:    userID,
 		UserName:  userName,
@@ -382,12 +382,12 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createChatTokenResponse{Body: ChatToken{ApiKey: bound.Identity.APIKey,
+	return &createChatTokenResponse{Body: ChatToken{ApiKey: apiKey,
 		Token:       token,
 		UserId:      userID,
 		UserName:    userName,
