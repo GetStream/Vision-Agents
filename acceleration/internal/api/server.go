@@ -289,6 +289,9 @@ type Options struct {
 	RunsPerApp int64
 	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
 	ImageHTTP *http.Client
+	// CallbackHTTP posts a finished recording to its callback. Absent is egress.NewClient,
+	// which reaches only public https addresses; tests pass one that reaches their receiver.
+	CallbackHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -414,6 +417,8 @@ type Server struct {
 	runsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
+	// callbackHTTP posts a finished recording to its callback.
+	callbackHTTP *http.Client
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -600,6 +605,12 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if server.imageHTTP == nil {
 		// No proxy, which would dial on the client's behalf where the check cannot see.
 		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
+	}
+	server.callbackHTTP = options.CallbackHTTP
+	if server.callbackHTTP == nil {
+		// The URL is the caller's, so the post may reach only a public address, checked at
+		// each dial and redirect.
+		server.callbackHTTP = egress.NewClient(callbackTimeout, nil)
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}

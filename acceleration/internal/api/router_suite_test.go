@@ -438,6 +438,9 @@ type RouterSuite struct {
 	// importLineLimit is the longest line an import reads, for a suite to set before it starts
 	// the harness. Zero is the router's own.
 	importLineLimit int
+	// callbackHTTP is what a finished recording is posted to its callback with, for a suite
+	// whose receiver listens on loopback. Nil reaches only public hosts.
+	callbackHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
 
@@ -752,6 +755,7 @@ func (s *RouterSuite) SetupSuite() {
 		RunsPerApp:            s.runsPerApp,
 		ImageHTTP:             s.imageHTTP,
 		ImportLineLimit:       s.importLineLimit,
+		CallbackHTTP:          s.callbackHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
