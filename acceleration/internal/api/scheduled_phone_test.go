@@ -387,6 +387,40 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnanswere
 	s.Equal(scheduling.ReasonNotAnswered, *run.Error, "how the call went, not that it was placed")
 }
 
+// A worker that rang, and stopped before it settled the run, may have carried the task
+// out on the call: the worker taking the run over texts nothing after it (AI-2021).
+func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNotTextedToo() {
+	s.retryLate()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"phone", "sms"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Require().Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Equal(scheduling.ReasonRungAlready, *run.Error)
+	s.Empty(run.DeliveredTo)
+	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
+}
+
+// A call whose end the run records went unanswered, so the next channel carries the task.
+func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel() {
+	s.retryLate()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"phone", "sms"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(context.Background(), task.CustomerID,
+		s.runsOf(task)[0].ID, "the-earlier-call", scheduling.ReasonNotAnswered))
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Equal(store.ScheduledTaskRunDelivered, run.State)
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(s.numberRungFor(task)))
+}
+
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall() {
 	s.shortCalls(2*time.Second, 10*time.Second)
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
