@@ -15,6 +15,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -195,7 +196,31 @@ func (s *PluginsSuite) TestAnEndUsersLoginIsFinishedWithTheAgentsClient() {
 	s.Equal(http.StatusOK, status)
 	alices, err := s.store.UserPluginConnection(s.T().Context(), s.customerID(), agent.Id, "alice", "google_calendar")
 	s.Require().NoError(err)
+	s.Require().NoError(session.OpenPluginLogin(s.sealer, &alices))
 	s.Equal("alices-token", alices.AccessToken)
+}
+
+// A finished login's tokens are stored sealed: a reader of the database finds neither in it.
+func (s *PluginsSuite) TestAFinishedLoginStoresNoTokenInTheClear() {
+	agent := s.data.createAgentConfig()
+	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "alices-token", "refresh_token": "alices-refresh", "expires_in": 3600})
+	}))
+	defer tokens.Close()
+	state := s.utils.uuid()
+	s.Require().NoError(s.store.UpsertPluginConnection(s.T().Context(), &store.PluginConnection{
+		CustomerID: s.customerID(), ConfigID: agent.Id, PluginID: "google_calendar", UserID: "alice",
+		OAuthState: state, CodeVerifier: "verifier", ClientID: "client", TokenEndpoint: tokens.URL,
+	}))
+
+	status, _ := s.unauthenticatedClient.call(http.MethodGet, plugins.CallbackPath+"?state="+state+"&code=the-code", nil)
+
+	s.Require().Equal(http.StatusOK, status)
+	var stored []string
+	s.Require().NoError(s.store.DB().NewRaw(
+		"SELECT access_token || refresh_token FROM agent_plugin_connections WHERE config_id = ? AND user_id = 'alice'",
+		agent.Id).Scan(s.T().Context(), &stored))
+	s.Equal([]string{""}, stored)
 }
 
 func (s *PluginsSuite) TestAPluginEachEndUserConnectsIsNotConnectedByTheApp() {
@@ -296,6 +321,7 @@ func (s *PluginsSuite) TestAnEndUsersLoginIsTheirsAloneAndSendsThemBackToTheConv
 	alices, err := s.store.UserPluginConnection(ctx, s.customerID(), agent.Id, "alice", "google_calendar")
 	s.Require().NoError(err)
 	s.Equal(store.PluginConnected, alices.Status)
+	s.Require().NoError(session.OpenPluginLogin(s.sealer, &alices))
 	s.Equal("alices-token", alices.AccessToken)
 	_, err = s.store.UserPluginConnection(ctx, s.customerID(), agent.Id, "bob", "google_calendar")
 	s.Error(err, "nobody else holds Alice's login")
@@ -590,7 +616,7 @@ func (s *PluginsSuite) TestAnAppLoginNamingAPluginBesideNessyIsRefused() {
 	s.Nil(s.storedPlugins(agent.Id))
 	conn := s.appLogin(agent.Id, "linear")
 	s.Equal(store.PluginFailed, conn.Status)
-	s.Empty(conn.AccessToken)
+	s.False(conn.HoldsToken())
 }
 
 // Logins that name no new plugin are finished as before: the app's of a plugin named
@@ -666,7 +692,7 @@ func (s *PluginsSuite) TestAnAppLoginIsRefusedWhenNessyIsBoundDuringItsExchange(
 	s.Nil(s.storedPlugins(agent.Id))
 	conn := s.appLogin(agent.Id, "linear")
 	s.Equal(store.PluginFailed, conn.Status)
-	s.Empty(conn.AccessToken)
+	s.False(conn.HoldsToken())
 }
 
 // An app login and a config update that binds nessy, sent at once, never leave the plugin

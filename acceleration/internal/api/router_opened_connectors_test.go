@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -304,6 +305,7 @@ func (s *RouterOpenedConnectorsSuite) subscribed(connector string, grant map[str
 		login.UserID = *userID
 	}
 	s.sentry.name(login.AccessToken, config.Name)
+	s.Require().NoError(session.SealPluginLogin(s.sealer, &login))
 	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &login))
 	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.Id)
 	s.Require().NoError(err)

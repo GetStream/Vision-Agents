@@ -436,6 +436,11 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errNoConfigs)
 		return
 	}
+	// Checked before the code is exchanged, so no token is minted that could not be kept.
+	if s.secrets == nil {
+		writeError(w, notConfigured("this deployment has no key to seal a plugin login with: set auth.kek"))
+		return
+	}
 
 	conn, err := s.store.PluginConnectionByState(r.Context(), state)
 	if err != nil {
@@ -504,7 +509,7 @@ func (s *Server) finishPluginLogin(w http.ResponseWriter, r *http.Request) {
 	conn.Status = store.PluginConnected
 	conn.OAuthState = ""
 	conn.CodeVerifier = ""
-	if err := s.store.SavePluginConnection(r.Context(), &conn); err != nil {
+	if err := session.SavePluginLogin(r.Context(), s.store, s.secrets, &conn); err != nil {
 		writeFailure(w, r, err)
 		return
 	}

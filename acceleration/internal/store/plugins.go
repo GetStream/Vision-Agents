@@ -33,10 +33,14 @@ func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnecti
 	if err == nil {
 		conn.ID = existing.ID
 		conn.CreatedAt = existing.CreatedAt
-		_, err := s.db.NewUpdate().Model(conn).
-			Column("instance_url", "access_token", "refresh_token", "expires_at", "status",
-				"oauth_state", "code_verifier", "client_id", "token_endpoint", "updated_at",
-				"deleted_at").
+		row, err := storedLogin(conn)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.NewUpdate().Model(row).
+			Column("instance_url", "access_token", "refresh_token", "access_token_sealed",
+				"refresh_token_sealed", "kek_version", "expires_at", "status", "oauth_state",
+				"code_verifier", "client_id", "token_endpoint", "updated_at", "deleted_at").
 			Where("id = ?", conn.ID).
 			Exec(ctx)
 		if err != nil {
@@ -50,7 +54,11 @@ func (s *Store) UpsertPluginConnection(ctx context.Context, conn *PluginConnecti
 
 	conn.ID = newID()
 	conn.CreatedAt = now
-	if _, err := s.db.NewInsert().Model(conn).Exec(ctx); err != nil {
+	row, err := storedLogin(conn)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.NewInsert().Model(row).Exec(ctx); err != nil {
 		return stack.Wrap(fmt.Errorf("store: create plugin connection: %w", err))
 	}
 	return nil
@@ -106,7 +114,7 @@ func (s *Store) ConnectedPlugins(ctx context.Context, customerID, configID strin
 	}
 	ready := make([]PluginConnection, 0, len(conns))
 	for _, conn := range conns {
-		if conn.Status == PluginConnected && conn.AccessToken != "" {
+		if conn.Status == PluginConnected && conn.HoldsToken() {
 			ready = append(ready, conn)
 		}
 	}
@@ -127,9 +135,14 @@ func (s *Store) SavePluginConnection(ctx context.Context, conn *PluginConnection
 		return stack.Wrap(errors.New("store: a plugin connection id is required"))
 	}
 	conn.UpdatedAt = time.Now().UTC()
-	result, err := s.db.NewUpdate().Model(conn).
-		Column("instance_url", "access_token", "refresh_token", "expires_at", "status",
-			"oauth_state", "code_verifier", "client_id", "token_endpoint", "updated_at").
+	row, err := storedLogin(conn)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.NewUpdate().Model(row).
+		Column("instance_url", "access_token", "refresh_token", "access_token_sealed",
+			"refresh_token_sealed", "kek_version", "expires_at", "status", "oauth_state",
+			"code_verifier", "client_id", "token_endpoint", "updated_at").
 		Where("id = ?", conn.ID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
@@ -156,6 +169,8 @@ func (s *Store) DeletePluginConnection(ctx context.Context, customerID, configID
 		Set("deleted_at = ?", time.Now().UTC()).
 		Set("access_token = ?", "").
 		Set("refresh_token = ?", "").
+		Set("access_token_sealed = NULL").
+		Set("refresh_token_sealed = NULL").
 		Set("oauth_state = ?", "").
 		Set("code_verifier = ?", "").
 		Where("customer_id = ?", customerID).
@@ -395,6 +410,22 @@ func (s *Store) pluginConnection(ctx context.Context, customerID, configID, user
 		return PluginConnection{}, stack.Wrap(fmt.Errorf("store: plugin connection: %w", err))
 	}
 	return conn, nil
+}
+
+// errUnsealedPluginSecret is a plugin login or event subscription handed to the store with a
+// token or a secret in the clear and nothing sealed for it.
+var errUnsealedPluginSecret = errors.New("store: a plugin login's tokens and an event subscription's secret are stored sealed")
+
+// storedLogin is conn as the store writes it, its tokens sealed and never in the clear. A
+// token with nothing sealed for it is refused, so no write can store one in the clear.
+func storedLogin(conn *PluginConnection) (*PluginConnection, error) {
+	if conn.AccessToken != "" && len(conn.AccessTokenSealed) == 0 ||
+		conn.RefreshToken != "" && len(conn.RefreshTokenSealed) == 0 {
+		return nil, stack.Wrap(errUnsealedPluginSecret)
+	}
+	row := *conn
+	row.AccessToken, row.RefreshToken = "", ""
+	return &row, nil
 }
 
 func unknownPluginConnection(id string) error {

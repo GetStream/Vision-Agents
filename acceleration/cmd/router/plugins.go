@@ -150,6 +150,7 @@ func migratePlugins(ctx context.Context, settings config.Config, logger *slog.Lo
 		PublicEndpoint:  egress.ValidatePublicHTTPSURL,
 		Clients:         clients,
 		PluginClients:   session.PluginClients(pgStore, secrets),
+		LoginSecrets:    secrets,
 		Getenv:          os.Getenv,
 		Logger:          logger,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {

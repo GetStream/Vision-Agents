@@ -45,8 +45,8 @@ build. Those two ports are also what the standalone `va-pg` and `va-redis` conta
 stop those first if they are running.
 
 `.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
-`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
-saved, and changing it leaves the stored ones unreadable.
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret or plugin login
+can be saved, and changing it leaves the stored ones unreadable.
 
 Logs: `docker compose logs -f router`.
 

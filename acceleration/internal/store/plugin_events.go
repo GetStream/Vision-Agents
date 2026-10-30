@@ -25,7 +25,7 @@ func (s *Store) PluginLogins(ctx context.Context, customerID, configID, pluginID
 		Where("config_id = ?", configID).
 		Where("plugin_id = ?", pluginID).
 		Where("status = ?", PluginConnected).
-		Where("access_token <> ''").
+		Where("(access_token <> '' OR access_token_sealed IS NOT NULL)").
 		Where("deleted_at IS NULL").
 		Order("created_at").
 		Scan(ctx)
@@ -99,17 +99,20 @@ func (s *Store) SavePluginEventSubscription(ctx context.Context, sub *PluginEven
 	if sub.Arguments == nil {
 		sub.Arguments = map[string]any{}
 	}
+	if sub.Secret != "" && len(sub.SecretSealed) == 0 {
+		return errUnsealedPluginSecret
+	}
 
 	if sub.ID == "" {
 		sub.ID = newID()
 		sub.CreatedAt = now
-		if _, err := s.db.NewInsert().Model(sub).Exec(ctx); err != nil {
+		if _, err := s.db.NewInsert().Model(storedSubscription(sub)).Exec(ctx); err != nil {
 			return fmt.Errorf("store: create plugin event subscription: %w", err)
 		}
 		return nil
 	}
-	_, err := s.db.NewUpdate().Model(sub).
-		Column("secret", "remote_id", "refresh_before", "status", "error", "updated_at").
+	_, err := s.db.NewUpdate().Model(storedSubscription(sub)).
+		Column("secret", "secret_sealed", "kek_version", "remote_id", "refresh_before", "status", "error", "updated_at").
 		Where("id = ?", sub.ID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)
@@ -119,11 +122,19 @@ func (s *Store) SavePluginEventSubscription(ctx context.Context, sub *PluginEven
 	return nil
 }
 
+// storedSubscription is sub as the store writes it, its secret sealed and never in the clear.
+func storedSubscription(sub *PluginEventSubscription) *PluginEventSubscription {
+	row := *sub
+	row.Secret = ""
+	return &row
+}
+
 // DeletePluginEventSubscription drops a subscription, so deliveries to it are refused.
 func (s *Store) DeletePluginEventSubscription(ctx context.Context, id string) error {
 	_, err := s.db.NewUpdate().Model((*PluginEventSubscription)(nil)).
 		Set("deleted_at = ?", time.Now().UTC()).
 		Set("secret = ?", "").
+		Set("secret_sealed = NULL").
 		Where("id = ?", id).
 		Where("deleted_at IS NULL").
 		Exec(ctx)

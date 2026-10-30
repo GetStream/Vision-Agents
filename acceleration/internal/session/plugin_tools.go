@@ -42,6 +42,10 @@ func attachPlugins(ctx context.Context, spec Spec, db *store.Store, pluginAuth *
 			logger.Warn("not loading plugin connections", "config", spec.ConfigID, "error", err)
 		}
 		for _, conn := range conns {
+			if err := OpenPluginLogin(loginSecrets(pluginAuth), &conn); err != nil {
+				logger.Warn("not using a plugin login that does not open", "plugin", conn.PluginID, "config", spec.ConfigID, "error", err)
+				continue
+			}
 			if _, listed := plugins.Lookup(conn.PluginID); !listed {
 				logins[conn.PluginID] = conn
 				continue
@@ -248,7 +252,7 @@ func Renewal(db *store.Store, renewer *plugins.Auth, conn *store.PluginConnectio
 		err := renewToken(ctx, db, renewer, conn, logger)
 		if errors.Is(err, plugins.ErrRefreshRefused) {
 			conn.Status = store.PluginFailed
-			if saveErr := db.SavePluginConnection(ctx, conn); saveErr != nil {
+			if saveErr := SavePluginLogin(ctx, db, loginSecrets(renewer), conn); saveErr != nil {
 				logger.Warn("could not mark a plugin login failed", "plugin", conn.PluginID, "error", saveErr)
 			}
 		}
@@ -270,10 +274,18 @@ func renewToken(ctx context.Context, db *store.Store, renewer *plugins.Auth, con
 	conn.AccessToken = refreshed.AccessToken
 	conn.RefreshToken = refreshed.RefreshToken
 	conn.ExpiresAt = refreshed.ExpiresAt
-	if err := db.SavePluginConnection(ctx, conn); err != nil {
+	if err := SavePluginLogin(ctx, db, loginSecrets(renewer), conn); err != nil {
 		logger.Warn("could not store a refreshed plugin token", "plugin", conn.PluginID, "error", err)
 	}
 	return nil
+}
+
+// loginSecrets is the key the logins made through a seal their tokens with, nil for none.
+func loginSecrets(a *plugins.Auth) *auth.Sealer {
+	if a == nil {
+		return nil
+	}
+	return a.Secrets
 }
 
 // userPlugins runs the plugins the caller connects with their own account, in front of
@@ -409,6 +421,10 @@ func (r *userPluginRunner) connect(ctx context.Context, plugin plugins.Plugin) (
 	}
 
 	conn, err := r.db.UserPluginConnection(ctx, r.customerID, r.configID, r.userID, plugin.ID)
+	if err == nil {
+		// A login that does not open is asked for again, as one never made is.
+		err = OpenPluginLogin(r.auth.Secrets, &conn)
+	}
 	if err != nil || conn.Status != store.PluginConnected || conn.AccessToken == "" ||
 		plugin.ByURL && conn.InstanceURL != plugin.URL {
 		prompt, err := r.authorize(ctx, plugin)

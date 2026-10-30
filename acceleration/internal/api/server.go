@@ -568,6 +568,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
 			Clients:      session.PluginClients(options.Store, options.Secrets),
+			Secrets:      options.Secrets,
 		},
 		pluginEvents: options.PluginEvents,
 		channels:     options.Channels,

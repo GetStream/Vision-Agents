@@ -182,6 +182,9 @@ When the router cannot read an organization's channel counters or the calls it h
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### Plugin logins and plugin event secrets are stored encrypted
+
+A plugin login's access and refresh tokens, and the secret a plugin event subscription's deliveries are signed with, are stored sealed under the deployment's key encryption key (`ROUTER_AUTH_KEK`), as a plugin's client secret already is, and are no longer kept in the clear. A login or a subscription stored before keeps working and is sealed the next time it is written. A deployment with no key refuses to finish a plugin login (`400 not_configured` at the callback) and subscribes to no plugin events, as it already refuses a plugin client secret. A data export leaves the sealed tokens out, as it left the clear ones out.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
