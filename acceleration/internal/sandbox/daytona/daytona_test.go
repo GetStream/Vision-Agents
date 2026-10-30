@@ -183,6 +183,11 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		if r.Context().Err() != nil {
+			// The client gave up: Daytona stores nothing it did not take whole, so an abandoned
+			// upload never lands after the next one.
+			return
+		}
 		data, _ := io.ReadAll(file)
 		p.files[r.URL.Query().Get("path")] = data
 		p.steps = append(p.steps, "upload")
@@ -888,6 +893,8 @@ func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
 	s.platform.slowUpload = 0
 	s.platform.mu.Unlock()
 	s.NoError(box.Write(s.ctx, "f.txt", []byte("y")), "the next write gets in")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
 	s.Equal([]byte("y"), s.platform.files["f.txt"])
 }
 
