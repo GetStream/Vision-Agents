@@ -42,10 +42,21 @@ const (
 	// handshakeTimeout bounds a sandbox's TLS handshake and each request's headers in a
 	// tunnel: http.DefaultTransport's TLSHandshakeTimeout (net/http/transport.go).
 	handshakeTimeout = 10 * time.Second
-	// idleTimeout closes a tunnel no request has used for it, and a tunnel to an allowed domain
-	// that has carried no byte for it: http.DefaultTransport's IdleConnTimeout
-	// (net/http/transport.go).
+	// idleTimeout closes a tunnel to an allowed domain that has carried no byte for it:
+	// http.DefaultTransport's IdleConnTimeout (net/http/transport.go).
 	idleTimeout = 90 * time.Second
+	// keepAliveTimeout closes a connection to the proxy, or to a grant's tunnel, that sends no
+	// next request. It outlasts the idle limit of every client in the sandbox that pools one,
+	// so the client closes it first: a server that closes it as the client reuses it fails a
+	// request the client may not replay, such as a POST read in Go (net/http/transport.go,
+	// shouldRetryRequest). The longest is libcurl's (curl, git), 118 s
+	// (https://curl.se/libcurl/c/CURLOPT_MAXAGE_CONN.html), and 4 min is twice it. Go's
+	// http.DefaultTransport keeps 90 s (net/http/transport.go, IdleConnTimeout), httpx 5 s
+	// (httpx/_config.py, Limits) and Node's undici 4 s (lib/dispatcher/client.js,
+	// keepAliveTimeout). urllib3 (requests) keeps a connection with no limit and checks that it
+	// is open before it reuses it (urllib3/connectionpool.py, _get_conn): no server value
+	// removes that race, and a longer one makes it rarer.
+	keepAliveTimeout = 4 * time.Minute
 	// headerTimeout ends a request whose host sends no response header in time: nginx's
 	// proxy_read_timeout default
 	// (https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_read_timeout).
@@ -81,9 +92,10 @@ type Options struct {
 	// public addresses only.
 	Dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	Logger *slog.Logger
-	// HandshakeTimeout, IdleTimeout, HeaderTimeout and DryRunTimeout replace handshakeTimeout,
-	// idleTimeout, headerTimeout and dryRunTimeout when set, for tests.
-	HandshakeTimeout, IdleTimeout, HeaderTimeout, DryRunTimeout time.Duration
+	// HandshakeTimeout, IdleTimeout, KeepAliveTimeout, HeaderTimeout and DryRunTimeout replace
+	// handshakeTimeout, idleTimeout, keepAliveTimeout, headerTimeout and dryRunTimeout when set,
+	// for tests.
+	HandshakeTimeout, IdleTimeout, KeepAliveTimeout, HeaderTimeout, DryRunTimeout time.Duration
 	// Now replaces time.Now when set, for tests: it dates a certificate and tells when a kept
 	// one is renewed.
 	Now func() time.Time
@@ -100,7 +112,7 @@ type Proxy struct {
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	logger    *slog.Logger
 
-	handshakeTimeout, idleTimeout, dryRunTimeout time.Duration
+	handshakeTimeout, idleTimeout, keepAliveTimeout, dryRunTimeout time.Duration
 
 	now func() time.Time
 	// leaves holds each host's certificate until it is half of leafValidity old, so a handshake
@@ -149,7 +161,8 @@ func New(options Options) (*Proxy, error) {
 	return &Proxy{store: options.Store, tokens: options.Tokens, ca: pair.Leaf, caKey: caKey, leafKey: leafKey,
 		transport: outbound{next: transport, headerTimeout: cmp.Or(options.HeaderTimeout, headerTimeout)}, dial: dial, logger: options.Logger,
 		handshakeTimeout: cmp.Or(options.HandshakeTimeout, handshakeTimeout), idleTimeout: cmp.Or(options.IdleTimeout, idleTimeout),
-		dryRunTimeout: cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
+		keepAliveTimeout: cmp.Or(options.KeepAliveTimeout, keepAliveTimeout),
+		dryRunTimeout:    cmp.Or(options.DryRunTimeout, dryRunTimeout), now: now, leaves: leaves{byHost: map[string]keptLeaf{}}}, nil
 }
 
 // ServeHTTP opens a tunnel to port 443 of a host the sandbox's grants or allowed domains cover,
@@ -255,10 +268,10 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 	_ = upstream.Close()
 }
 
-// IdleTimeout is how long a connection to the proxy may sit with no request before the server
-// closes it: the one a tunnel is given.
-func (p *Proxy) IdleTimeout() time.Duration {
-	return p.idleTimeout
+// KeepAliveTimeout is how long a connection to the proxy may sit with no request before the
+// server closes it: the one a grant's tunnel is given.
+func (p *Proxy) KeepAliveTimeout() time.Duration {
+	return p.keepAliveTimeout
 }
 
 // idleTunnel is the idle deadline of a blind tunnel's two ends. Each byte either end sends moves
@@ -315,7 +328,7 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 	server := &http.Server{
 		Handler:           p.inner(t),
 		ReadHeaderTimeout: p.handshakeTimeout,
-		IdleTimeout:       p.idleTimeout,
+		IdleTimeout:       p.keepAliveTimeout,
 		// What it logs is the sandbox's side of the tunnel, a failed handshake or a panic in
 		// inner.
 		ErrorLog: slog.NewLogLogger(p.logger.Handler(), slog.LevelInfo),
