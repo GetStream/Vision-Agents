@@ -142,7 +142,8 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   a retry, whatever would stop that retry's call. A call placed whose end the run does not
   record (delivered, or cut off with the worker) is `already_called`, and no channel after
   `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
-  next channel to carry the task.
+  next channel to carry the task. A call taken whose end a failed store write never recorded
+  (the give-back of a call not placed, or the `not_answered` reason) is the same.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
