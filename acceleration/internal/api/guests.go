@@ -231,6 +231,10 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 			failures = append(failures, err)
 			continue
 		}
+		if err := refuseChannelOutside(ctx, bound.Client, customerID, channel); err != nil {
+			failures = append(failures, err)
+			continue
+		}
 		_, err = bound.Client.Chat().UpdateChannel(ctx, chatlog.ChannelType, channel,
 			&getstream.UpdateChannelRequest{
 				AddMembers: []getstream.ChannelMemberRequest{{UserID: userID}},
