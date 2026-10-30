@@ -1205,6 +1205,12 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		return &scriptedLLM{refuses: fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)}, nil
 	})
 
+	// A model that recites what it was handed and refuses a request quoting guardedInjection
+	// as the prompt injection screen does, for a conversation past a refused turn.
+	reasoning.Register("guarded", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{recites: true, refusesQuoting: guardedInjection}, nil
+	})
+
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
 	reasoning.Register("slow", func(routing.Spec) (llmrouter.Provider, error) {
