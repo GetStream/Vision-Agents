@@ -2654,7 +2654,7 @@ func (a *Agent) handle(event llm.Event) {
 			// A refusal is an outcome of the input, one any caller can bring about at will,
 			// not a failure of the agent: it is reported as one, and logged below error.
 			a.logger.Info("a reply was refused as a prompt injection", "turn", typed.ResponseID, "error", typed.Err)
-			a.emitter.Send(Error{Err: typed.Err, Context: "llm"})
+			a.emitter.Send(Error{Err: typed.Err, Context: "llm", TurnID: typed.ResponseID})
 			return
 		}
 		a.fail(typed.Err, "llm")
@@ -2814,7 +2814,7 @@ func (a *Agent) finish(response llm.Response) {
 		// The screen judges only what came after the model last spoke, so a reply recorded
 		// here would leave the refused input behind it, read by every later request and
 		// judged by none.
-		a.history = withheld(a.history)
+		a.history = Withheld(a.history)
 	case said != "" || len(calls) > 0:
 		// A reply that only called a tool is still a turn the model took, and it has to be
 		// recorded with the calls on it: the result sent back answers one of them, and a
@@ -2885,17 +2885,17 @@ func (a *Agent) finish(response llm.Response) {
 	a.followUp()
 }
 
-// withheldInput stands in the history for input the prompt injection screen refused.
-const withheldInput = "[withheld: this read as a prompt injection]"
+// WithheldInput stands in the history for input the prompt injection screen refused.
+const WithheldInput = "[withheld: this read as a prompt injection]"
 
-// withheld is history with what the prompt injection screen judged, the turns and tool
-// results since the model last spoke, replaced by withheldInput. A tool result keeps its
+// Withheld is history with what the prompt injection screen judged, the turns and tool
+// results since the model last spoke, replaced by WithheldInput. A tool result keeps its
 // place, because the call on the history before it still needs an answer.
-func withheld(history []llm.Message) []llm.Message {
+func Withheld(history []llm.Message) []llm.Message {
 	out := slices.Clone(history)
 	for i := len(out) - 1; i >= 0 && out[i].Role != llm.Assistant; i-- {
 		if out[i].Role == llm.User || out[i].Role == llm.ToolResult {
-			out[i].Content, out[i].Parts = withheldInput, nil
+			out[i].Content, out[i].Parts = WithheldInput, nil
 		}
 	}
 	return out

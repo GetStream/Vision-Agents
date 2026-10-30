@@ -102,9 +102,10 @@ func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.
 
 // connecting is the session's sandbox while one of its grants is late: each run's result names
 // the late grants whose user has not connected them (Result.Unconnected), as the model reads
-// a tool's result more surely than its description, and, once, those whose token is still on
-// its way (Result.Connected). In a written session the run also shows the user the consent
-// of each one unconnected (offerConsent), as many models never call list_tools for them.
+// a tool's result more surely than its description, those connected on a connection that
+// cannot bind them (Result.Reconnect), and, once, those whose token is still on its way
+// (Result.Connected). In a written session the run also shows the user the consent of each
+// one unconnected (offerConsent), as many models never call list_tools for them.
 type connecting struct {
 	sandbox.Sandbox
 	d *dispatcher
@@ -134,7 +135,8 @@ func (c *connecting) Connected() []string {
 
 // Run reads the logins before and after the run. A grant connected before it was bound by its
 // BeforeRun, and is opened. One connected only during the run is named as connected, not as
-// unconnected, and not opened: the next run's BeforeRun binds it, and names it again.
+// unconnected, and not opened: the next run's BeforeRun binds it, and names it again. One
+// connected on a connection boundLate refuses is never opened, so every run names it.
 func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sandbox.Result, error) {
 	before := map[string]bool{}
 	for _, grant := range c.d.grants {
@@ -159,13 +161,14 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 			}
 			continue
 		}
+		if _, bound := c.d.boundLate(ctx, grant); !bound {
+			result.Reconnect = append(result.Reconnect, grant)
+			continue
+		}
 		if before[grant.Binding] {
 			c.opened[grant.Binding] = true
 		}
-		if !c.delayed {
-			continue
-		}
-		if _, bound := c.d.boundLate(ctx, grant); bound {
+		if c.delayed {
 			result.Connected = append(result.Connected, grant.Binding)
 		}
 	}
@@ -174,7 +177,7 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 
 // loggedIn is whether the login has opened the binding. A connection whose revision gives the
 // sandbox nothing, or another env var or hosts, is logged in and still unbound (boundLate): a
-// login cannot bind it, a reconnect on the latest revision can.
+// login cannot bind it, a reconnect on the latest revision can, from the next session.
 func (l *login) loggedIn() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

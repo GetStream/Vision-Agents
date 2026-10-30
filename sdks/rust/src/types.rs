@@ -882,7 +882,7 @@ pub struct AgentResponse {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub said: ::std::option::Option<::std::string::String>,
     pub session_id: ::std::string::String,
-    ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+    ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
     pub status: AgentResponseStatus,
 }
 ///`AgentResponseItem`
@@ -992,7 +992,7 @@ pub struct AgentResponsePage {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
 }
-///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1014,6 +1014,8 @@ pub enum AgentResponseStatus {
     Failed,
     #[serde(rename = "cancelled")]
     Cancelled,
+    #[serde(rename = "refused")]
+    Refused,
 }
 impl ::std::fmt::Display for AgentResponseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1022,6 +1024,7 @@ impl ::std::fmt::Display for AgentResponseStatus {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Refused => f.write_str("refused"),
         }
     }
 }
@@ -1033,6 +1036,7 @@ impl ::std::str::FromStr for AgentResponseStatus {
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
+            "refused" => Ok(Self::Refused),
             _ => Err("invalid value".into()),
         }
     }

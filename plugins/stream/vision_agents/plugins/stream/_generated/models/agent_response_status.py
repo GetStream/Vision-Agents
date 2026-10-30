@@ -5,6 +5,7 @@ class AgentResponseStatus(StrEnum):
     CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
+    REFUSED = "refused"
     RUNNING = "running"
 
     def __str__(self) -> str:

@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -874,7 +875,107 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantU
 	s.True(finished)
 	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "reconnect to use sandbox access")
-	s.Equal(sandbox.Result{}, result, "connected, so not to be connected again, and not bound")
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result, "connected, so not to be connected again, and not bound")
+}
+
+// TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun: under either broker, a login that
+// cannot bind the grant names it on every run after, and never as just connected.
+func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun() {
+	for _, broker := range []string{daytona.BrokerName, egress.BrokerName} {
+		s.Run(broker, func() {
+			s.SetupTest()
+			s.daytonaAPI()
+			if broker == egress.BrokerName {
+				address := os.Getenv("ROUTER_REDIS_ADDR")
+				if address == "" {
+					s.T().Skip("ROUTER_REDIS_ADDR is not set")
+				}
+				redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+				s.Require().NoError(err)
+				s.T().Cleanup(redis.Close)
+				s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+				s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
+					CACert: []byte(proxyCA)}
+			}
+			mine := s.pending("alice", "primary")
+			s.sandboxRevision()
+			box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+			_, err := s.call(d, "crm__list_tools", `{}`)
+			s.Require().NoError(err)
+
+			s.connect(mine, "primary")
+			_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+			first, err := box.Run(s.ctx, "print(1)", nil)
+			s.Require().NoError(err)
+			second, err := box.Run(s.ctx, "print(1)", nil)
+
+			s.Require().NoError(err)
+			s.True(finished)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, first)
+			s.Equal(first, second, "no run of this session binds it")
+		})
+	}
+}
+
+// TestALoginOnAnOlderRevisionFinishedWhileCodeRunsIsToldToReconnect: the login lands during
+// the code-run request on a connection pinned before the revision that gives the sandbox
+// access. The run it finished during says reconnect, not "was just connected: wait and run
+// the code again", which no run of this session can make true.
+func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionFinishedWhileCodeRunsIsToldToReconnect() {
+	api := s.daytonaAPI()
+	mine := s.pending("alice", "primary")
+	s.sandboxRevision()
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	var once sync.Once
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/process/code-run") {
+			once.Do(func() {
+				s.connect(mine, "primary")
+				_, _, _ = d.loginFinished(s.ctx, "attempt-alice", mine)
+			})
+		}
+		api.serve(w, r)
+	})
+
+	during, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, during)
+}
+
+// TestAReconnectDuringTheSessionBindsNoRunOfIt: the user reconnects on the latest revision
+// with a new token, as the reconnect line asks. The grant was fixed when the login opened,
+// so no later run of this session binds that token and every run still says reconnect; the
+// next session does.
+func (s *SandboxGrantsSuite) TestAReconnectDuringTheSessionBindsNoRunOfIt() {
+	api := s.daytonaAPI()
+	mine := s.pending("alice", "primary")
+	s.sandboxRevision()
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	first, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	stored, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf("second")}})
+	s.Require().NoError(err)
+	s.setState(mine, func(state *core.CredentialState) {
+		state.DefinitionRevision, state.Credentials, state.Status = s.revision, stored, store.ConnectionConnected
+	})
+	second, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	third, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(finished)
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, first)
+	s.Equal(first, second, "no run of this session binds it")
+	s.Equal(first, third, "no run of this session binds it")
+	s.NotEqual(tokenOf("second"), api.value("CRM_TOKEN"))
 }
 
 // TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound: revision 3 names other hosts
@@ -883,7 +984,9 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantU
 func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound() {
 	for name, block := range map[string]string{
 		"hosts": "  env: CRM_TOKEN\n  hosts: [api.other.example]\n",
-		"env":   "  env: OTHER_TOKEN\n  hosts: [api.crm.example, \"*.crm.example\"]\n",
+		// As many hosts as the grant has, one of them another: a compare of the counts alone passes it.
+		"swapped host": "  env: CRM_TOKEN\n  hosts: [api.crm.example, \"*.other.example\"]\n",
+		"env":          "  env: OTHER_TOKEN\n  hosts: [api.crm.example, \"*.crm.example\"]\n",
 	} {
 		s.Run(name, func() {
 			s.SetupTest()
@@ -904,7 +1007,7 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUn
 
 			s.Require().NoError(err)
 			s.True(finished)
-			s.Equal(sandbox.Result{}, result)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result)
 			env := box.(sandbox.Granted).Grants()[0].Env
 			s.NotEqual(tokenOf("primary"), api.value(env))
 			s.Contains(s.logs.String(), "reconnect to use sandbox access")
@@ -1066,6 +1169,74 @@ func (s *SandboxGrantsSuite) TestALoginFinishingWhileCodeRunsBindsOnce() {
 	s.Subset([]string{"crm"}, told)
 	s.Equal(sandbox.Result{}, after, "and none after the one that bound it")
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
+}
+
+// overlapping is a sandbox whose first Run waits for a second Run to be called before it goes
+// on. The Daytona sandbox runs one at a time, so a second Run called while the first is
+// running waits at its gate, after connecting.Run has looked at the logins.
+type overlapping struct {
+	sandbox.Sandbox
+	calls  atomic.Int32
+	second chan struct{}
+	// overlapped is whether the second call came while the first waited.
+	overlapped chan bool
+}
+
+func (o *overlapping) Run(ctx context.Context, code string, outputs []string) (sandbox.Result, error) {
+	switch o.calls.Add(1) {
+	case 1:
+		select {
+		case <-o.second:
+			o.overlapped <- true
+		// Only a deadline for a second run that never comes, which fails below.
+		case <-time.After(10 * time.Second):
+			o.overlapped <- false
+		}
+	case 2:
+		close(o.second)
+	}
+	return o.Sandbox.Run(ctx, code, outputs)
+}
+
+// TestOnlyOneOfTwoOverlappingRunsAfterTheBindSaysItWasJustConnected: the first run after the
+// login is held until a second run is called. Both found the binding connected and not yet
+// opened, and only the one that finishes first opens it and says so; the other finds it opened.
+func (s *SandboxGrantsSuite) TestOnlyOneOfTwoOverlappingRunsAfterTheBindSaysItWasJustConnected() {
+	s.daytonaAPI()
+	s.sandboxRevision()
+	mine := s.pending("alice", "primary")
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	// A run before the login, so that the two below do not both have to make the sandbox.
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	s.Require().True(finished)
+	held := &overlapping{Sandbox: box.(*connecting).Sandbox, second: make(chan struct{}), overlapped: make(chan bool, 1)}
+	box.(*connecting).Sandbox = held
+
+	results := make(chan sandbox.Result, 2)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			result, err := box.Run(s.ctx, "print(1)", nil)
+			errs <- err
+			results <- result
+		}()
+	}
+	var told []string
+	for range 2 {
+		s.Require().NoError(<-errs)
+		told = append(told, (<-results).Connected...)
+	}
+
+	s.True(<-held.overlapped, "the second run was called while the first waited")
+	s.Equal([]string{"crm"}, told, "exactly one of the two runs says it was just connected")
+	after, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{}, after)
 }
 
 // TestTheProxyBrokerBindsALateGrantOnceTheLoginFinishes: the proxy's record holds the late
