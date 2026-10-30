@@ -144,12 +144,16 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 	s.T().Cleanup(func() { _ = held.Close() })
 	ports := s.freePorts(base, len(listeners))
 	addresses := map[string]string{}
+	var given []string
 	for i, listener := range listeners {
 		*listener.setting = fmt.Sprintf("127.0.0.1:%d", ports[i])
 		other, taken := addresses[*listener.setting]
 		s.Require().False(taken, "%s and %s were given one address, %s", other, listener.name, *listener.setting)
 		addresses[*listener.setting] = listener.name
+		given = append(given, *listener.setting)
 	}
+	// A table row that points at the wrong setting leaves another one empty or set twice.
+	s.Require().Equal(given, []string{settings.Addr, settings.Node.Listen, settings.PprofAddr, settings.MetricsAddr}, "a row points at the wrong setting")
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- run(settings, slog.New(slog.DiscardHandler)) }()
@@ -175,6 +179,9 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			defer conn.Close() //nolint:errcheck // the test is ending
 			reader := bufio.NewReader(conn)
 
+			// A listener that accepts but is never served would hang the read below; the same 20 s
+			// as the idle read further down.
+			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(20 * time.Second)))
 			_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: x\r\n\r\n", listener.path)
 			s.Require().NoError(err)
 			response, err := http.ReadResponse(reader, nil)
@@ -193,7 +200,7 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		})
 	}
 
-	// A listener that failed to bind ends run; the others may still have answered above.
+	// A bind failure of the API or peer listener ends run; pprof and metrics retry instead, so their subtests check the body.
 	select {
 	case err := <-stopped:
 		stopped <- err // the cleanup reads it, and must not signal a router that has ended
