@@ -822,8 +822,15 @@ func (s *DataMoveSuite) TestTheCutOverResumesOnlyTheTasksTheMovePaused() {
 	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-completed")
 	s.Equal(ScheduledTaskCompleted, state)
 
+	// The user pauses it here once it is theirs; a second cut-over leaves it to them.
+	task, err := s.destination.ScheduledTask(s.ctx, "moved", "st-active")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.destination.SaveScheduledTask(s.ctx, &task))
 	again, _ := s.resume("moved")
-	s.Zero(again, "a second cut-over resumes nothing")
+	s.Zero(again)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
 }
 
 func (s *DataMoveSuite) TestATaskTheUserPausedAtTheSourceDuringTheMoveStaysPaused() {
