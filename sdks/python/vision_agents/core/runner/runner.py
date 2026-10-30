@@ -325,6 +325,7 @@ class Runner:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(options.cors_allow_origins),
+            allow_origin_regex=options.cors_allow_origin_regex,
             allow_credentials=options.cors_allow_credentials,
             allow_methods=list(options.cors_allow_methods),
             allow_headers=list(options.cors_allow_headers),

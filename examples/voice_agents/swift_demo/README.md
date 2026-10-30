@@ -57,6 +57,9 @@ takes the secret of the Stream app the router runs in, and `Demo.streamAPIKey` t
 STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
 ```
 
+It listens on `127.0.0.1:8099`, since it signs a token for any user it is asked for. For a
+phone on the network, pass `-addr :8099` and put your Mac's address in `Demo.backendURL`.
+
 Then open `app/SwiftDemo.xcodeproj` in Xcode 27 and run it on a simulator. Ask about an order
 in the Chat tab or tap talk in the Voice tab. Xcode 27 because the app shows the conversation
 with Stream Chat's AI components (`StreamChatAI`), which need it to add with SPM. The app takes

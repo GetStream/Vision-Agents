@@ -413,6 +413,15 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### `Runner.serve` answers only this machine and its pages by default
+
+`ServeOptions` no longer allows every origin with credentials, nor every caller. A server started with no options now:
+
+- Answers CORS only for pages on this machine (`localhost`, `127.0.0.1` and `[::1]`, any port), through the new `cors_allow_origin_regex`, with `cors_allow_origins` empty and `cors_allow_credentials` off.
+- Refuses a caller on another machine with `403`. Every permission (`can_start_session`, `can_close_session`, `can_view_session`, `can_view_metrics`) defaults to the new `allow_local`.
+
+A local frontend and a local `serve` work as before. A server deployed with `--host 0.0.0.0` passes its own checks, or `allow_all` from `vision_agents.core.runner` to let everyone in. `cors_allow_origins=["*"]`, `cors_allow_credentials=True` and `allow_all` for each permission restore the old behaviour.
+
 ### A Dart tool's `run` returns a `ToolOutput`
 
 `AgentTool.run` in the Dart SDK returns a `ToolOutput` rather than a `String`, as Swift's and Kotlin's `run` do, so a tool that shows pictures is the same type as one that answers in words. The `AgentTool(...)` constructor still takes a handler returning a `String` and wraps it, but is no longer `const`; `AgentTool.withPictures` is. Code that called `tool.run(arguments)` itself reads `.text` from what it returns (FLU-1126).
