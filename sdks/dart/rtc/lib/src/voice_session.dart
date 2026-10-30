@@ -175,18 +175,26 @@ final class VoiceSession {
     if (call == null) {
       return;
     }
+    // Stopped before Stream Video turns the camera off, not after: a look under way would
+    // otherwise find the camera off first and hand the agent what it had already taken.
+    final wasLooking = !enabled && _state.value.isCameraEnabled;
+    if (!enabled) {
+      _stopLooking();
+    }
     final result = await call.setCameraEnabled(
       enabled: enabled,
       constraints: const video.CameraConstraints(facingMode: video.FacingMode.environment),
     );
     if (_failed(result)) {
+      // The camera is still on, so the agent can still look through it.
+      if (wasLooking) {
+        _look(call);
+      }
       return;
     }
     _state.value = _state.value._with(isCameraEnabled: enabled);
     if (enabled) {
       _look(call);
-    } else {
-      _stopLooking();
     }
   }
 

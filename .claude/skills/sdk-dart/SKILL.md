@@ -184,7 +184,8 @@ Results are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
   does; a `tool_cancel` drops the answer, as for the app's tools. Core reads `at_ms` and `limit`
   (1 to 8), sends the pictures oldest first as `camera-n`, and answers an empty list or a throw
   with the nothing-recent words.
-- `VoiceSession` sets `camera` while its camera is on, and `stop`s and clears it on camera off,
+- `VoiceSession` sets `camera` while its camera is on, and `stop`s and clears it on camera off
+  (before Stream Video turns it off, so a look under way cannot finish on the pictures it took),
   `leave` and `end`. Stream Video 1.6 has no Dart hook on outgoing frames, so `CameraShots` takes
   a screenshot of the call's own track when the agent asks: `limit` pictures asked for 0.5 s apart, each
   the camera's next frame at full size (a JPEG on Android, a PNG on iOS), scaled to 1024 px and
