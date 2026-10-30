@@ -167,7 +167,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### An id reused once its utterance has finished counts against credit
 
-On `/v1/tts/stream`, on a voice that speaks each sentence as its own request (Gemini, Fish, Speechify), a `speak` frame for an id whose utterance has already finished is now held against credit before it is sent, as a new id is, and its row bills the characters sent. It is refused once the account has no credit left, as a new id is. Before, it was spoken with nothing held, so it passed a credit limit, and was billed what the voice counted (AI-2190).
+On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or whose final text was already sent (as after a barge-in), is now a new utterance on every voice: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
 
 ### A file `run_code` hands back is read only up to its limit
 
