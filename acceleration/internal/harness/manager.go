@@ -925,6 +925,11 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	for _, binding := range result.Connected {
 		said += "\n\n" + binding + justConnected
 	}
+	for _, grant := range result.Reconnect {
+		said += fmt.Sprintf("\n\nIf this code got 401 from %s, the user's %s connection is on an older version of its connector: "+
+			"ask the user to reconnect %s; running the code again in this session will not help.",
+			strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
+	}
 	return said, published
 }
 

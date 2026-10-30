@@ -46,6 +46,10 @@ type Result struct {
 	// the last run, whose token reaches code some seconds after the run began.
 	Unconnected []Grant
 	Connected   []string
+	// Reconnect are the late grants whose user connected a connection saved on a connector
+	// revision that gives the sandbox no access, or another env var or hosts, so no run gets
+	// their token until the user reconnects it on the latest revision.
+	Reconnect []Grant
 }
 
 // File is something the code wrote that is wanted outside the sandbox.

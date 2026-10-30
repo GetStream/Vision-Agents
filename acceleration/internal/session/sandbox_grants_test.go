@@ -874,7 +874,46 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantU
 	s.True(finished)
 	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "reconnect to use sandbox access")
-	s.Equal(sandbox.Result{}, result, "connected, so not to be connected again, and not bound")
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result, "connected, so not to be connected again, and not bound")
+}
+
+// TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun: under either broker, a login that
+// cannot bind the grant names it on every run after, and never as just connected.
+func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun() {
+	for _, broker := range []string{daytona.BrokerName, egress.BrokerName} {
+		s.Run(broker, func() {
+			s.SetupTest()
+			s.daytonaAPI()
+			if broker == egress.BrokerName {
+				address := os.Getenv("ROUTER_REDIS_ADDR")
+				if address == "" {
+					s.T().Skip("ROUTER_REDIS_ADDR is not set")
+				}
+				redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+				s.Require().NoError(err)
+				s.T().Cleanup(redis.Close)
+				s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+				s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
+					CACert: []byte(proxyCA)}
+			}
+			mine := s.pending("alice", "primary")
+			s.sandboxRevision()
+			box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+			_, err := s.call(d, "crm__list_tools", `{}`)
+			s.Require().NoError(err)
+
+			s.connect(mine, "primary")
+			_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+			first, err := box.Run(s.ctx, "print(1)", nil)
+			s.Require().NoError(err)
+			second, err := box.Run(s.ctx, "print(1)", nil)
+
+			s.Require().NoError(err)
+			s.True(finished)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, first)
+			s.Equal(first, second, "a reconnect is the only way to bind it")
+		})
+	}
 }
 
 // TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound: revision 3 names other hosts
@@ -904,7 +943,7 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUn
 
 			s.Require().NoError(err)
 			s.True(finished)
-			s.Equal(sandbox.Result{}, result)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result)
 			env := box.(sandbox.Granted).Grants()[0].Env
 			s.NotEqual(tokenOf("primary"), api.value(env))
 			s.Contains(s.logs.String(), "reconnect to use sandbox access")
