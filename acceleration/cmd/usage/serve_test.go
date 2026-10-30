@@ -211,11 +211,8 @@ func (s *ServeSuite) TestEveryListenerClosesAnIdleConnection() {
 	// 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS (49152-65535),
 	// so the service's own Postgres connections do not take a port before serve listens on it.
 	// The process id spreads parallel packages over the range (as cmd/router/idletimeout_test.go).
-	first := 20000 + (os.Getpid()%2000)*6
-	settings := settings{
-		Addr: s.freeAddressFrom(first), MetricsAddr: s.freeAddressFrom(first + 1),
-		PostgresDSN: s.dsn, IngestToken: "token",
-	}
+	apiAddr, metricsAddr := s.freeAddressPair(20000 + (os.Getpid()%2000)*6)
+	settings := settings{Addr: apiAddr, MetricsAddr: metricsAddr, PostgresDSN: s.dsn, IngestToken: "token"}
 	s.start(settings)
 
 	listeners := []struct{ name, addr, path string }{
@@ -248,19 +245,37 @@ func (s *ServeSuite) TestEveryListenerClosesAnIdleConnection() {
 	}
 }
 
-// freeAddressFrom is the first local address from port up to 32767 that nothing listens on.
-func (s *ServeSuite) freeAddressFrom(port int) string {
-	for ; port < 32768; port++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		opened, err := net.Listen("tcp", addr)
+// TestFreeAddressPairDiffers holds the first candidate port, which pushes the API address on to
+// the next port. The metrics address must still differ from it: scanning from the same start
+// would have both addresses land on that next port.
+func (s *ServeSuite) TestFreeAddressPairDiffers() {
+	port := s.freePort(20000 + (os.Getpid()%2000)*6)
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	s.Require().NoError(err)
+	defer held.Close() //nolint:errcheck // the test is ending
+	apiAddr, metricsAddr := s.freeAddressPair(port)
+	s.NotEqual(apiAddr, metricsAddr)
+}
+
+// freeAddressPair is two different local addresses that nothing listens on, found by scanning
+// from port up to 32767 and wrapping to 20000. The second scan starts after the first address.
+func (s *ServeSuite) freeAddressPair(port int) (string, string) {
+	apiPort := s.freePort(port)
+	return fmt.Sprintf("127.0.0.1:%d", apiPort), fmt.Sprintf("127.0.0.1:%d", s.freePort(apiPort+1))
+}
+
+func (s *ServeSuite) freePort(from int) int {
+	for i := 0; i < 32768-20000; i++ {
+		port := 20000 + (from-20000+i)%(32768-20000)
+		opened, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			continue
 		}
 		s.Require().NoError(opened.Close())
-		return addr
+		return port
 	}
 	s.FailNow("no free port in 20000-32767")
-	return ""
+	return 0
 }
 
 // dialWhenListening connects to addr once something listens there: serve starts the metrics
