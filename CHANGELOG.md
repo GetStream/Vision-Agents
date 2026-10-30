@@ -168,6 +168,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A call is reviewed when the review model thinks first
 
 A call's review, and a simulation's ruling, now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
+### A file `run_code` hands back is read only up to its limit
+
+The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
 
 ### A response refused by the prompt injection screen acts on nothing
 
