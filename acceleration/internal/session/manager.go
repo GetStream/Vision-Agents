@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -162,6 +163,10 @@ type ManagerOptions struct {
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
 	SandboxSecretPrefix string
+	// GuardrailHTTP posts a webhook guardrail's checks. Nil is the guardrail's own default,
+	// egress's client, which dials public addresses alone; tests pass one that reaches their
+	// local receiver.
+	GuardrailHTTP *http.Client
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -1147,6 +1152,17 @@ func (o Owner) Reaches(other Owner) bool {
 		(other.Kind == auth.KindServer && o.Kind.Verified() && o.UserID != "")
 }
 
+// reachedKinds is the kinds of caller whose sessions under this owner's user id the owner
+// Reaches: always its own, and a backend's when the owner is somebody a backend may open a
+// session for. Never empty, so it always narrows.
+func (o Owner) reachedKinds() []string {
+	kinds := []string{string(o.Kind)}
+	if o.Reaches(Owner{CustomerID: o.CustomerID, UserID: o.UserID, Kind: auth.KindServer}) {
+		kinds = append(kinds, string(auth.KindServer))
+	}
+	return kinds
+}
+
 // Get returns a session its owner may have. Two customers cannot see each other's and
 // neither can two people, so an id that exists but belongs to somebody else is reported
 // as not existing at all: a refusal would confirm it was real.
@@ -1305,6 +1321,9 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 			return nil, nil
 		}
 		filter.UserID = owner.UserID
+		// The kind is narrowed too, in the query rather than after it so a page is still
+		// full: a row is listed on exactly the terms its session is reached by id.
+		filter.CallerKinds = owner.reachedKinds()
 	}
 
 	found := make([]Found, 0, filter.Limit)
@@ -1772,6 +1791,7 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 		LLM:        m.options.LLM,
 		Secret:     stream.Secret.Reveal(),
 		APIKey:     ownKey(spec.CustomerID, stream),
+		HTTPClient: m.options.GuardrailHTTP,
 		Logger:     m.logger,
 	})
 }

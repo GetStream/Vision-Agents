@@ -2569,7 +2569,7 @@ export type paths = {
         /**
          * Hold a voice conversation over the socket itself, with no call
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON objects carrying a `type`.
-         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `call` are server-side only. A `call` is refused from a backend too, with an `error` frame carrying `code` and `error_type`: the socket carries the audio, so the session joins no Stream call.
+         *     The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an optional `sample_rate`, from 8000 to 192000, and 16000 when left out. A rate outside that range is refused with an `error` frame carrying `code` `invalid_request`. `call_id` may be left out: the router makes one up for the records. A `text` session is refused, because the socket carries audio. A field that `createSession` refuses from an end user's device is refused here too: `history` and `call` are server-side only. A `call` is refused from a backend too, with an `error` frame carrying `code` and `error_type`: the socket carries the audio, so the session joins no Stream call.
          *     The server answers `session`, with the `Session` and the `sample_rate` in use. Then binary frames are PCM16 mono at that rate in both directions: the caller's audio in, and the agent's speech out at the pace it would be heard on a call. A `cleared` frame says speech already sent was thrown away because the caller cut in. Tool calls and every other event go over the session's events socket, as they do for a call.
          *     A refused start is an `error` frame with `error`, the message, and the socket closes. An `error` frame for a field refused from a device also carries `code` and `error_type`, the `code` and `type` that `createSession` answers the same field with, and so does a session refused for money: `account_suspended` (`permission`), or `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`).
          *     The session lasts as long as the socket. Closing the socket, or sending `stop`, ends the conversation. A conversation that ends closes the socket.
@@ -2847,6 +2847,26 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["queryAudit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/chat/internal/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a message Stream Chat delivers
+         * @description Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+         */
+        readonly post: operations["receiveChatDelivery"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4022,26 +4042,6 @@ export type paths = {
         readonly get: operations["getAgentStats"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/stats/rollup": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Aggregate request rows into a rollup table
-         * @description Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-         */
-        readonly post: operations["runRollup"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6130,7 +6130,7 @@ export type components = {
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly tts?: string;
             /**
-             * @description Who the agent joins the call as.
+             * @description The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
              * @default vision-agent
              */
             readonly user_id?: string;
@@ -8681,6 +8681,7 @@ export type components = {
             readonly tts?: string;
             /** @description What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only. */
             readonly usage?: components["schemas"]["CallUsage"];
+            /** @description The name the agent joined the call as. It is not the owner of the session. */
             readonly user_id: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
@@ -17110,6 +17111,60 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
+    readonly receiveChatDelivery: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The message is queued, or was already delivered, or is not one to act on */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The signed body is not a message event naming its app, or is a new message without an id */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is not signed by Stream */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Deliveries are not configured, or the app is not served here */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The delivery is too large */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The router does not know its own Stream app yet, or could not queue the message; Stream retries */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly classify: {
         readonly parameters: {
             readonly query?: never;
@@ -19909,40 +19964,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentStats"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly runRollup: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["RollupRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The rollup completed */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["RollupResult"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

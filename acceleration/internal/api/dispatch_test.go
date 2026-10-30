@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -52,6 +54,47 @@ func (s *DispatchSuite) TestAWorkerWithNoRoomForACallIsRefused() {
 	_, status := s.serverClient.watch("/v1/dispatch?capacity=0")
 
 	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestAWorkerTakingOneCallAtATimeIsTakenIn() {
+	s.opensWith("/v1/dispatch?capacity=1")
+
+	s.Len(s.dispatch.Workers(s.customerID()), 1)
+}
+
+func (s *DispatchSuite) TestAWorkerTakingTheMostCallsAWorkerCanIsTakenIn() {
+	s.opensWith(fmt.Sprintf("/v1/dispatch?capacity=%d", maxCapacity))
+
+	s.Len(s.dispatch.Workers(s.customerID()), 1)
+}
+
+func (s *DispatchSuite) TestACapacityAboveTheMostAWorkerCanHoldIsRefusedNamingTheLimit() {
+	status, message := s.serverClient.refusal(fmt.Sprintf("/v1/dispatch?capacity=%d", maxCapacity+1))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(message, strconv.Itoa(maxCapacity), "a worker refused should learn what it may ask for")
+	s.Empty(s.dispatch.Workers(s.customerID()))
+}
+
+func (s *DispatchSuite) TestTheLargestCapacityANumberCanSayIsRefused() {
+	_, status := s.serverClient.watch(fmt.Sprintf("/v1/dispatch?capacity=%d", math.MaxInt64))
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestACapacityPastWhatANumberCanSayIsRefused() {
+	_, status := s.serverClient.watch("/v1/dispatch?capacity=9223372036854775808")
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *DispatchSuite) TestAWorkerAfterARefusedCapacityIsStillTakenIn() {
+	_, _ = s.serverClient.watch(fmt.Sprintf("/v1/dispatch?capacity=%d", math.MaxInt64))
+
+	worker := s.worker()
+	s.assign(dispatch.Call{CallID: "call-1"})
+
+	s.Equal("call-1", s.next(worker)["call_id"])
 }
 
 func (s *DispatchSuite) TestWorkAWorkerCannotAlreadyBeHoldingIsRefused() {

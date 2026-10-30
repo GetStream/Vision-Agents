@@ -557,7 +557,7 @@ func (s *SandboxGrantsSuite) TestADeletedConnectionIsWithdrawnBeforeTheNextRun()
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.False(api.offered("CRM_TOKEN"))
+	s.Equal("va_withdrawn", api.value("CRM_TOKEN"), "Daytona's secret holds the stand-in until Close")
 	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
 }
 
@@ -579,12 +579,12 @@ func (s *SandboxGrantsSuite) TestABindingRemovedMidSessionIsWithdrawnBeforeTheNe
 	_, err = box.Run(s.ctx, "print(1)", nil)
 
 	s.Require().NoError(err)
-	s.False(api.offered("CRM_TOKEN"))
+	s.Equal("va_withdrawn", api.value("CRM_TOKEN"), "Daytona's secret holds the stand-in until Close")
 	s.Contains(s.logs.String(), "credential is withdrawn from the sandbox")
 	s.rebind(config, binding)
 	_, err = box.Run(s.ctx, "print(1)", nil)
 	s.Require().NoError(err)
-	s.False(api.offered("CRM_TOKEN"))
+	s.Equal("va_withdrawn", api.value("CRM_TOKEN"))
 }
 
 // TestABindingTheConfigNoLongerHoldsAsOpenedGivesNoCredential: each way the config can stop

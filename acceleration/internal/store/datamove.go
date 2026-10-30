@@ -47,6 +47,10 @@ type dataTable struct {
 	// two deployments. Such a row is imported without its id, and is written once: importing
 	// it again, or a row the destination already holds under it, changes nothing.
 	across string
+	// vouched are the columns this deployment sets on its own word, such as users.minted: the
+	// router handed that guest out. An import leaves them to the local default, since a row
+	// the customer sends is the customer's word, not this deployment's.
+	vouched []string
 }
 
 // rollup is a table of counts per key that every shard keeps its own rows of, so an export of
@@ -74,13 +78,14 @@ func (t dataTable) rollup() bool {
 // under this deployment's key and their callbacks are this deployment's URL. And
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
-// either; and channel_thread_waiting, replies in flight for minutes. And
-// connector_invocations and connector_audit, with connector_audit_credentials and
+// either; and channel_thread_waiting and channel_thread_inbound, messages in flight for
+// minutes. And connector_invocations and connector_audit, with connector_audit_credentials and
 // connector_invocation_arguments: this deployment's record of what it did with credentials
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the
 // connection where it moved to records its client again. And connector_connection_validations:
-// the next validate where it moved to records its result again.
+// the next validate where it moved to records its result again. And chat_inbound, Stream
+// Chat messages in flight for minutes.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
@@ -103,7 +108,7 @@ var dataTables = []dataTable{
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
-	{name: "users", customer: "customer_id"},
+	{name: "users", customer: "customer_id", vouched: []string{"minted"}},
 	{name: "scheduled_tasks", customer: "customer_id"},
 	{name: "scheduled_task_runs", customer: "customer_id"},
 	{name: "calls", customer: "customer_id", shard: true},
@@ -493,7 +498,7 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		return err
 	}
 
-	columns := shape.insertable()
+	columns := shape.insertable(spec)
 	if spec.across != "" {
 		// The id is the destination's to draw: the source's may be one of its own rows'.
 		columns = slices.DeleteFunc(columns, func(column string) bool { return spec.isKey(shape, column) })
@@ -973,18 +978,12 @@ ORDER BY a.attnum`, table)
 
 // insertable is every column an import writes: the whole row but the secrets, which are
 // left to the local default so a connection arrives needing to be authorized again
-// rather than arriving with somebody else's token in it.
-func (s shape) insertable() []string {
+// rather than arriving with somebody else's token in it, and but the table's vouched
+// columns, which only this deployment sets.
+func (s shape) insertable(table dataTable) []string {
 	columns := make([]string, 0, len(s.columns))
 	for _, column := range s.columns {
-		secret := false
-		for _, name := range secretColumns {
-			if column == name {
-				secret = true
-				break
-			}
-		}
-		if !secret {
+		if !slices.Contains(secretColumns, column) && !slices.Contains(table.vouched, column) {
 			columns = append(columns, column)
 		}
 	}

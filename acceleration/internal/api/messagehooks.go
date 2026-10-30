@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -56,7 +57,19 @@ type messageEvent struct {
 		// answered (photos). Read by photos, one at a time, so an attachment of a shape
 		// nothing here expects costs only itself, not the message's text.
 		Attachments json.RawMessage `json:"attachments"`
+		// Bridged is channelbridge.BridgedField, which the channel bridge sets on a message it
+		// wrote and hands to the agent itself (bridged). Raw, so a value of another type,
+		// which anyone writing in the app can set, costs only itself.
+		Bridged json.RawMessage `json:"stream_agents_bridged"`
 	} `json:"message"`
+}
+
+// bridged is whether the channel bridge wrote the message: its custom field
+// channelbridge.BridgedField is JSON true. Any other value, or none, is a message somebody
+// else wrote.
+func (e messageEvent) bridged() bool {
+	var bridged bool
+	return json.Unmarshal(e.Message.Bridged, &bridged) == nil && bridged
 }
 
 // messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
@@ -136,8 +149,14 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		// Every message in the app arrives here; only one written to an agent is worth
 		// recording as delivered.
+		if addressed(event) && s.awaitingOwnApp(r.Context(), origin, eventType) {
+			// Stream retries, and by then the deployment will know which app is its own.
+			writeStreamWaiting(w)
+			return
+		}
 		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
-			s.routeArrivingMessage(r, origin, payload, event)
+			origin.handOver = s.replayed(r, payload)
+			s.routeArrivingMessage(r.Context(), origin, event)
 		}
 	} else {
 		s.logger.Debug("ignoring a message event", "type", eventType)
@@ -181,34 +200,42 @@ func addressed(event messageEvent) bool {
 // routeArrivingMessage answers a message from the session running on its channel, or hands
 // it to a worker to start one.
 //
-// The body is carried in rather than read again because the session may be running on
-// another node, which has to be handed the delivery exactly as Stream signed it.
-func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body []byte, event messageEvent) {
+// The session may be running on another node, which origin hands the message to. settled is
+// false when nothing took the message and a later try may: the queue's worker tries again.
+func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, event messageEvent) (settled bool) {
 	// A thread channel holds an external thread, such as a Slack thread, which the Router
 	// answers itself: nobody watches it to hand the message to a worker.
-	thread, linked, err := s.linkedThread(r.Context(), origin, event.ChannelID)
+	thread, linked, err := s.linkedThread(ctx, origin, event.ChannelID)
 	if err != nil {
 		s.logger.Error("not answering a message in a channel that may hold an external thread",
 			"channel", event.ChannelID, "error", err)
-		return
+		return false
 	}
 	if linked {
-		go s.answerThread(origin, thread, event)
-		return
+		// The worker that wrote it hands it to the agent (AnswerQueued): settled here.
+		if event.bridged() {
+			s.logger.Info("leaving a message the channel bridge wrote to its worker", "channel", thread.ChannelID, "message", event.Message.ID)
+			return true
+		}
+		origin.answer(func() { s.answerThread(origin, thread, event) })
+		return true
 	}
 	// Only a linked thread answers a photo sent without text (addressed).
 	if event.Message.Text == "" {
-		return
+		return true
 	}
 	if s.sessions != nil {
 		// A session running on a channel of the same name in another app is somebody
 		// else's conversation.
 		if found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns); running {
 			if found.Spec().PersistConversation {
-				return
+				return true
+			}
+			if answer, settled := s.answerOnce(ctx, origin, event); !answer {
+				return settled
 			}
 			if found.Spec().DispatchText {
-				_, err := s.dispatchText(r.Context(), found, dispatch.Message{
+				_, err := s.dispatchText(ctx, found, dispatch.Message{
 					ChannelType: event.ChannelType,
 					ChannelID:   event.ChannelID,
 					Custom:      customOf(event.ChannelCustom),
@@ -220,39 +247,55 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 				if err != nil {
 					s.logger.Error("nobody could answer an arriving message",
 						"channel", event.ChannelID, "session", found.ID(), "error", err)
+					if errors.Is(err, node.ErrNoReply) {
+						// The other node may have placed it before its reply was lost: queued
+						// again, it would be placed twice.
+						s.logger.Warn("a queued chat inbound message another node may have placed is left settled",
+							"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
+					} else {
+						s.unanswered(ctx, origin)
+					}
 				}
-				return
+				return err == nil
 			}
-			// On its own goroutine because a model call takes seconds and Stream is
-			// waiting on this delivery. The answer goes back to the channel rather than
-			// in a response, so there is nothing here to wait for.
-			go s.answerMessage(found, event)
-			return
+			// The answer goes back to the channel rather than in a response, so there is
+			// nothing here to wait for.
+			origin.answer(func() { s.answerMessage(found, event) })
+			return true
 		}
 	}
 
-	if s.forwardedMessage(r, body, event) {
-		return
+	if elsewhere, taken := s.forwardedMessage(ctx, origin, event); elsewhere {
+		return taken
 	}
 
 	if s.store == nil || s.dispatch == nil {
-		return
+		return true
 	}
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found := s.ownerOf(r.Context(), origin, event)
-	if !found {
-		return
+	customerID, configID, found, err := s.ownerOf(ctx, origin, event)
+	if err != nil {
+		return false
 	}
-	if !s.mayWrite(r.Context(), origin, customerID) {
+	if !found {
+		return true
+	}
+	if may, err := s.mayStillWrite(ctx, origin, customerID); !may {
+		if err != nil && origin.queued {
+			s.logger.Error("not starting work for a customer whose app could not be read",
+				"channel", event.ChannelID, "customer", customerID, "error", err)
+			return false
+		}
+		// A hook is not tried again, so it ends here as it always has.
 		s.logger.Info("not starting work in the deployment's app for a customer no longer writing there",
 			"channel", event.ChannelID, "customer", customerID)
-		return
+		return true
 	}
 
-	if s.forwardedToWorkers(r, body, customerID) {
-		return
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+		return taken
 	}
 
 	message := dispatch.Message{
@@ -268,18 +311,23 @@ func (s *Server) routeArrivingMessage(r *http.Request, origin hookOrigin, body [
 		At:          time.Now().UTC(),
 	}
 
+	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
+		return settled
+	}
 	worker, err := s.dispatch.AssignMessage(customerID, message)
 	if err != nil {
 		// Somebody has written to an agent that nothing is going to answer, which is the
 		// most useful error this service can report.
 		s.logger.Error("nobody could answer an arriving message",
 			"channel", event.ChannelID, "customer", customerID, "error", err)
-		return
+		s.unanswered(ctx, origin)
+		return false
 	}
 	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
 		"config", configID, "worker", worker.ID, "stream_app", origin.app)
+	return true
 }
 
 // ConfigField is the custom field on an agent channel naming the agent config that answers
@@ -306,21 +354,29 @@ const ConfigField = "agent_config_id"
 //
 // Both are looked for only within the app the hook came from: the channel's last call has to
 // have been in that app, and a config the channel names has to be the app's own customer's.
-func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool) {
-	if previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID); err == nil &&
-		(origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, true
+//
+// err is a read that failed, which a later try may get through: the queue's worker tries again.
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool, err error) {
+	previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID)
+	if err == nil && (origin.deployment || previous.CustomerID == origin.customer) {
+		return previous.CustomerID, previous.ConfigID, true, nil
+	}
+	// A hook answers from what the channel declares when its last call could not be read, as it
+	// always has. A queued delivery is tried again instead, so it is answered by the agent that
+	// actually ran there.
+	if origin.queued && err != nil && !errors.Is(err, store.ErrNoCall) && !errors.Is(err, store.ErrAmbiguousHook) {
+		s.logger.Error("could not read the last call on a queued message's channel", "channel", event.ChannelID, "error", err)
+		return "", "", false, err
 	}
 
 	declared, _ := event.ChannelCustom[ConfigField].(string)
 	if declared == "" {
 		s.logger.Debug("no agent has ever run on an arriving message's channel, and it names no config",
 			"channel", event.ChannelID, "field", ConfigField)
-		return "", "", false
+		return "", "", false, nil
 	}
 
 	var config store.AgentConfig
-	var err error
 	if owner, scoped := s.configOwnerOf(origin); scoped {
 		config, err = s.store.AgentConfig(ctx, owner, declared)
 	} else {
@@ -331,14 +387,14 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 	if errors.Is(err, store.ErrNoAgentConfig) {
 		s.logger.Info("an arriving message's channel names a config nobody in its app holds",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "customer", origin.customer)
-		return "", "", false
+		return "", "", false, nil
 	}
 	if err != nil {
 		s.logger.Error("could not read the config an arriving message's channel names",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
-		return "", "", false
+		return "", "", false, err
 	}
-	return config.CustomerID, config.ID, true
+	return config.CustomerID, config.ID, true, nil
 }
 
 // configOwnerOf is the only customer whose configs a channel in the hook's app may name: the

@@ -104,7 +104,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	if message, ok := configComplaint(*request.Body); !ok {
+	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
@@ -206,7 +206,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	if message, ok := configComplaint(*request.Body); !ok {
+	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
 
@@ -614,7 +614,7 @@ func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string,
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
 // checked here rather than left to the transcriber, because a list nobody can serve is
 // worth hearing about while the config is being written and not once a call is running.
-func configComplaint(request AgentConfigRequest) (string, bool) {
+func configComplaint(ctx context.Context, request AgentConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "an agent config needs a name", false
 	}
@@ -636,7 +636,7 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := harnessOf(request.Harness); !ok {
 		return fmt.Sprintf("there is no harness called %q", *request.Harness), false
 	}
-	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
+	if complaint, ok := guardrailComplaint(ctx, request.Guardrail); !ok {
 		return complaint, false
 	}
 	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
@@ -1288,12 +1288,29 @@ func visibleToolsComplaint(patterns *[]string) (string, bool) {
 // It is read here, as it is written, rather than when a call starts: a policy that will
 // not parse is a config that screens nothing, and finding that out at the first turn means
 // finding it out from an agent that answered a question it was meant to refuse.
-func guardrailComplaint(policy *string) (string, bool) {
+//
+// A session posts a webhook only to a public address (egress.NewClient), so one on a private
+// network, loopback or link-local address is refused here rather than saved to fail every
+// check. The path and query are the endpoint's own and are not checked.
+func guardrailComplaint(ctx context.Context, policy *string) (string, bool) {
 	if policy == nil || strings.TrimSpace(*policy) == "" {
 		return "", true
 	}
-	if _, err := guardrail.Parse(*policy); err != nil {
+	parsed, err := guardrail.Parse(*policy)
+	if err != nil {
 		return err.Error(), false
+	}
+	if parsed.Kind != guardrail.KindWebhook {
+		return "", true
+	}
+	endpoint, err := url.Parse(parsed.URL)
+	if err == nil {
+		err = egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, User: endpoint.User, Host: endpoint.Host}).String())
+	}
+	if err != nil {
+		// One answer for every refusal, as for MCP servers and connectors: a name that does not
+		// resolve is not told apart from one that resolves to a private address.
+		return "guardrail: url must be a public https URL; the router cannot reach a webhook on a private network, loopback or link-local address", false
 	}
 	return "", true
 }

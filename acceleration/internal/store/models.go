@@ -1942,6 +1942,10 @@ type SessionFilter struct {
 	AgentID   string
 	Project   string
 	Modality  string
+	// CallerKinds, when set, admits only the sessions opened by one of these kinds of
+	// caller. A user id is only worth what proved it, so an end user is narrowed by both
+	// halves of who they are, the same as a session they reach by id.
+	CallerKinds []string
 	// State is SessionRunning or SessionClosed.
 	State string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
@@ -2087,7 +2091,10 @@ type User struct {
 	// Kind is what the credential proved them to be, UserKindGuest or
 	// UserKindAuthenticated. Only a guest may be claimed.
 	Kind string `bun:"kind,notnull"`
-	Name string `bun:"name,notnull"`
+	// Minted says the router handed this guest out (RecordGuest). A guest the users recorder
+	// wrote from a guest token is not: an app signs those itself, for any id it likes.
+	Minted bool   `bun:"minted,notnull"`
+	Name   string `bun:"name,notnull"`
 	// Timezone is the IANA zone the user was last explicitly known to be in,
 	// which a scheduled task resolves to when nothing nearer names one. Empty
 	// when nobody has ever said.

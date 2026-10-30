@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -163,6 +164,70 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 	s.ErrorIs(stream.Err(), refusal)
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.IsType(ResponseFailed{}, events[len(events)-2])
+	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(asksToLookUpAnOrder).Screen(verdict)
+
+	s.drain(stream)
+
+	s.Equal([]ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}, stream.Response().ToolCalls)
+}
+
+// asksToLookUpAnOrder is a provider writing a whole call.
+func asksToLookUpAnOrder(w *ResponseWriter) {
+	w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
+}
+
+func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"},
+		&scripted{chunks: []chunk{asksToLookUpAnOrder}, err: errUnauthorized})
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAResponseThatTimedOutIsEstimatedOnTheCallsItDropped() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{asksToLookUpAnOrder,
+		func(w *ResponseWriter) { w.TimedOut() }}, err: context.DeadlineExceeded})
+
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Empty(response.ToolCalls, "a response that timed out asks for nothing")
+	s.Equal(pricing.Quantities{pricing.InputTokens: 1, pricing.OutputTokens: 7},
+		Estimate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}, response),
+		"the provider billed the call it wrote: lookup_order is 3 tokens, its arguments 4")
+}
+
+func (s *LLMSuite) TestAResponseItsProviderFailedSettlesWithNoCalls() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Fail(errUnauthorized, "stream", false) })
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAnIncompleteResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Incomplete("max_output_tokens") })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
+}
+
+func (s *LLMSuite) TestACancelledResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Cancelled() })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
 }
 
 func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {

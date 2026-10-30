@@ -176,6 +176,52 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A guest who turns out to be a full user is no longer re-minted as a guest
+
+A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).
+
+### A session list holds only the sessions the caller reaches by id
+
+`POST /v1/agents/sessions/query`, a list or a text search, answers an end user with ended and live sessions on the same terms as `GET /v1/agents/sessions/{id}`: the user id and the kind of caller both match, or a backend opened the session for a signed-in or guest user of that id. An anonymous caller is no longer listed the stored sessions of a verified user, a guest or a backend's session by naming the same user id, and a signed-in user and a guest of one id each list only their own. The rows are narrowed in the query, so a page is still full. A backend's list is unchanged (AI-1863).
+
+### Sandbox code tells a withdrawn credential from a failing host under Daytona
+
+Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
+### A call is reviewed when the review model thinks first
+
+A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
+### A session's Daytona sandbox goes when the run it was closed during ends
+
+A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
+
+### A file `run_code` hands back is read only up to its limit
+
+The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
+
+### A response refused by the prompt injection screen acts on nothing
+
+With `prompt_injection` on, a response the screen refuses runs none of the tool calls it asked for, written as calls or as tags, and the input it refused is no longer read by the model: in the agent's history it stands as `[withheld: this read as a prompt injection]`, and no reply is recorded after it. The next turn is screened and answered on its own. A response that fails for any other reason also settles with no tool calls (`tool_calls` empty on the `/stream` socket's `complete` frame); the caller's turn is kept as before (AI-1855, AI-1856).
+
+### A guardrail webhook is posted only to a public https address
+
+A `type: webhook` guardrail's `url` must be `https`, and its host must resolve only to public addresses. Creating, replacing, patching or syncing an agent config refuses any other url with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A session posts the check through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public url are kept as written. A config saved earlier is not rewritten: one with a plain `http` webhook url now refuses every session, and one with a private `https` url still starts, but every check of its webhook fails and the turn is answered as on any other webhook failure (AI-1859).
+
+### The stats rollup takes the ops key and writes whole buckets
+
+`runRollup` recomputes every app's rollups, so it is Stream's maintenance job and not an app's: it moves from `POST /v1/stats/rollup` to `POST /v1/ops/stats/rollup`, reached with the ops key (`X-Ops-Key`) and no app (AI-1735). The Go, JavaScript and Python clients drop it; Ruby's and Rust's call the new path. Its window is widened to whole buckets (the start of the hour or day holding `from` to the end of the one holding `to`), so a window that starts or ends inside a bucket recomputes all of it rather than replacing its totals with part of them.
+
+### A dispatch worker's capacity is at most 1024
+
+`GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).
+
+### The session socket takes only a bounded sample rate
+
+`/v1/agents/socket` takes a start frame's `sample_rate` only from 8000 to 192000, and 16000 when it is left out or 0, as before. A rate outside that range, a negative one included, is refused before a session is made, with an `error` frame carrying `code` and `error_type` `invalid_request`, and the socket closes with 1008. Before, any positive rate was taken and every frame of the caller's audio was resampled from it (AI-1852).
+
+### Call and chat tokens in a shared Stream app are bound to the customer
+
+In a Stream app the router shares between customers, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint a token only for their default listener or reader, or for one of the customer's own guests; any other `user_id` is refused with `400`. `chat-token` refuses an agent channel the router opened for another customer, and stamps a channel it opens with the calling customer. A customer acting in its own Stream app names any `user_id`, as before (AI-1851).
+
 ### A Flutter app's own tools run against a local proxy router
 
 A router in `proxy` mode without `ROUTER_AUTH_PROXY_DECLARES_KIND`, as every example runs, now reads a caller's auth type from the `stream-auth-type` query parameter, which is how a socket can send it when the `Stream-Auth-Type` header is absent, as `jwt` or `anonymous` only and never `server`. The Dart SDK sends `stream-auth-type=jwt` on a socket opened by customer id, so the socket is the device that created the session and the router asks it to run that device's tools, on iOS, Android, macOS and the web. Before, the header-less socket was taken for a backend and every tool the app declared failed at once, `nobody connected runs lookup_order`. The `api_key` and `noauth` modes, and a proxy that declares kinds, are unchanged (#1426).

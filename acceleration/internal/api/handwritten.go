@@ -244,7 +244,9 @@ func documentHandWritten(api huma.API) {
 		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Text frames are JSON " +
 			"objects carrying a `type`.\n" +
 			"The client's first frame is `start`, with `session` (a `CreateSessionRequest`) and an " +
-			"optional `sample_rate`, 16000 when left out. `call_id` may be left out: the router makes " +
+			"optional `sample_rate`, from 8000 to 192000, and " +
+			"16000 when left out. A rate outside that range is refused with an `error` frame carrying `code` " +
+			"`invalid_request`. `call_id` may be left out: the router makes " +
 			"one up for the records. A `text` session is refused, because the socket carries audio. " +
 			"A field that `createSession` refuses from an end user's device is refused here too: " +
 			"`history` and `call` are server-side only. A `call` is refused from a backend too, " +
@@ -376,7 +378,7 @@ func documentHandWritten(api huma.API) {
 			"callers, so anything that can open this socket can answer for the whole app. The auth " +
 			"type's query parameter never names a backend, so it cannot make a browser's socket one.",
 		Parameters: []*huma.Param{
-			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Default: 4}},
+			{Name: "capacity", In: "query", Description: "How much work this worker takes at once, calls and messages together.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(maxCapacity), Default: defaultCapacity}},
 			{Name: "active", In: "query", Description: "How much work this worker is still running from before it reconnected, which the router " +
 				"counts against its capacity until each piece is reported `done`. Sending this at all, " +
 				"even as 0, is what says the worker reports `done`; one that leaves it out is held only " +
@@ -770,6 +772,30 @@ func documentHandWritten(api huma.API) {
 			"401": {Description: "The call is not signed by Telnyx"},
 			"404": {Description: "Telnyx calls are not configured"},
 			"413": {Description: "The call is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveChatDelivery",
+		Method:      http.MethodPost,
+		Path:        chatInboundPath,
+		Summary:     "Receive a message Stream Chat delivers",
+		Description: "Where Stream Chat delivers each message written in an agent channel. The router " +
+			"queues the message and answers 200 once the queue holds it; a worker answers it after " +
+			"that, as the message webhook would, and a message the webhook or an earlier delivery " +
+			"already brought is not queued again. The body is the message.new event with " +
+			"the app_id it was written in. Unauthenticated because Stream is not a customer: each " +
+			"delivery is signed as Standard Webhooks signs with a public key (webhook-id, " +
+			"webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over " +
+			"id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key " +
+			"is enough. A deployment with no delivery key answers 404.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The message is queued, or was already delivered, or is not one to act on"},
+			"400": {Description: "The signed body is not a message event naming its app, or is a new message without an id"},
+			"401": {Description: "The delivery is not signed by Stream"},
+			"404": {Description: "Deliveries are not configured, or the app is not served here"},
+			"413": {Description: "The delivery is too large"},
+			"503": {Description: "The router does not know its own Stream app yet, or could not queue the message; Stream retries"},
 		},
 	})
 	document.AddOperation(&huma.Operation{
