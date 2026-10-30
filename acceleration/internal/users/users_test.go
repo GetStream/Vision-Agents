@@ -171,6 +171,19 @@ func (s *UsersSuite) TestAGuestAnotherReplicaWroteIsAGuestNoLongerOnAFullToken()
 	s.Equal(store.UserKindAuthenticated, kind, "the guest key in redis is no answer to a full token")
 }
 
+func (s *UsersSuite) TestAGuestWhoseKeyAnOlderReplicaWroteIsAGuestNoLongerOnAFullToken() {
+	// A replica from before the key held a kind wrote "1", which is no full-token write.
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+	s.Require().NoError(s.first.redis.Do(s.ctx,
+		s.first.redis.B().Set().Key(key(app, "guest-1")).Value("1").Build()).Error())
+
+	s.Require().NoError(s.other.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindAuthenticated, kind, "an older replica's key is no answer to a full token")
+}
+
 func (s *UsersSuite) TestAGuestWhoCallsAsAGuestAgainStaysAGuest() {
 	app := s.app()
 	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
