@@ -448,7 +448,7 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 		zone = task.Timezone
 	}
 	parsed, err := scheduling.Parse(scheduling.Input{
-		At: value(written.At), In: value(written.In),
+		At: scheduling.StoredClock(value(written.At), task.StartLocal), In: value(written.In),
 		Repeat: value(written.Repeat), Until: value(written.Until),
 		Timezone: zone,
 	}, now)

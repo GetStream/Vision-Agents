@@ -1996,6 +1996,91 @@ func (s *ScheduledTasksSuite) TestAnEditThatSendsTheStartBackKeepsCountingFromIt
 	s.Equal(left, s.upcomingOf(stored), "one of the three has already passed")
 }
 
+// editSchedule PATCHes a schedule onto the task and reloads it.
+func (s *ScheduledTasksSuite) editSchedule(user *testClient, id string, schedule ScheduledTaskSchedule) store.ScheduledTask {
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+id,
+		UpdateScheduledTaskRequest{Schedule: &schedule}, &updated))
+	return s.taskReloaded(store.ScheduledTask{ID: id})
+}
+
+func (s *ScheduledTasksSuite) TestAnEditToAnotherTimeOnTheStoredDateCountsFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+	stored, err := time.Parse("2006-01-02T15:04", start)
+	s.Require().NoError(err)
+	later := stored.Add(30 * time.Minute)
+
+	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(later.Format("2006-01-02T15:04")),
+		Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Timezone: pointerTo("UTC")})
+
+	want := []time.Time{left[0].Add(30 * time.Minute), left[1].Add(30 * time.Minute), left[1].AddDate(0, 0, 1).Add(30 * time.Minute)}
+	s.Equal(want, s.upcomingOf(reloaded), "a new time of day on the stored date is a new start: three from now")
+}
+
+func (s *ScheduledTasksSuite) TestAnEditResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+
+	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(start[len("2006-01-02T"):]),
+		Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Until: pointerTo(left[0].AddDate(0, 1, 0).Format("2006-01-02")), Timezone: pointerTo("UTC")})
+
+	s.Equal(start, reloaded.StartLocal.UTC().Format("2006-01-02T15:04"), "the same time of day is not a new time")
+	s.Equal(left, s.upcomingOf(reloaded), "one of the three has already passed")
+}
+
+func (s *ScheduledTasksSuite) TestAnEditToAnotherTimeOfDayCountsFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+	later := left[0].Add(30 * time.Minute)
+
+	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(later.Format("15:04")),
+		Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Timezone: pointerTo("UTC")})
+
+	s.NotEqual(start, reloaded.StartLocal.UTC().Format("2006-01-02T15:04"))
+	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2)}, s.upcomingOf(reloaded),
+		"a different time of day is a new start: three from now")
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, start, left := s.countingTaskWithOnePassed(user, config)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","at":"` + start[len("2006-01-02T"):] +
+			`","until":"` + left[0].AddDate(0, 1, 0).Format("2006-01-02") + `"}`})
+	s.say(user, opened.Id, "stop it after a month")
+	s.NotContains(s.ranResult(watching), `"error"`)
+
+	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Equal(start, stored.StartLocal.UTC().Format("2006-01-02T15:04"), "the same time of day is not a new time")
+	s.Equal(left, s.upcomingOf(stored), "one of the three has already passed")
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentMovingToAnotherTimeOfDayCountsFromNow() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, _, left := s.countingTaskWithOnePassed(user, config)
+	later := left[0].Add(30 * time.Minute)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","at":"` + later.Format("15:04") + `"}`})
+	s.say(user, opened.Id, "half an hour later")
+	s.NotContains(s.ranResult(watching), `"error"`)
+
+	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2)}, s.upcomingOf(stored),
+		"a different time of day is a new start: three from now")
+}
+
 func (s *ScheduledTasksSuite) TestTheAgentSendingTheStoredStartBackKeepsCountingFromIt() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
