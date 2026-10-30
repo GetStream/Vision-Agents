@@ -11,7 +11,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -63,6 +65,22 @@ func (s *TitleSuite) TestAModelThatThinksBeforeItNamesStillWritesTheWholeTitle()
 
 	s.Require().NoError(err)
 	s.Equal("Add push to an Android app", named.Title)
+}
+
+func (s *TitleSuite) TestAConversationWithARefusedTurnIsNamedWithItWithheld() {
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	// A forked conversation is named on its parent's turns as well as its own.
+	earlier := spokenOf(HistoryOf([]store.Exchange{{ResponseID: "first", Said: injected, Refused: true}}))
+
+	_, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", []spoken{{text: injected}})
+	s.Require().ErrorIs(err, policy.ErrPromptInjection, "the refused line quoted as it was said is refused again")
+
+	named, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", append(earlier, refusedCall()...))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
 }
 
 func (s *TitleSuite) TestNoTitleIsNotOne() {

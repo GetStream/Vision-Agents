@@ -304,7 +304,7 @@ type AgentResponse struct {
 	Id         string              `json:"id"`
 	Said       *string             `json:"said,omitempty" doc:"What the person asked, which is the first item of every response."`
 	SessionId  string              `json:"session_id"`
-	Status     AgentResponseStatus `json:"status" doc:"cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts." enum:"running,completed,failed,cancelled"`
+	Status     AgentResponseStatus `json:"status" doc:"cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld." enum:"running,completed,failed,cancelled,refused"`
 }
 
 // AgentResponseStatus is the AgentResponseStatus schema.
@@ -315,6 +315,7 @@ const (
 	AgentResponseStatusCancelled AgentResponseStatus = "cancelled"
 	AgentResponseStatusCompleted AgentResponseStatus = "completed"
 	AgentResponseStatusFailed    AgentResponseStatus = "failed"
+	AgentResponseStatusRefused   AgentResponseStatus = "refused"
 	AgentResponseStatusRunning   AgentResponseStatus = "running"
 )
 
@@ -326,6 +327,8 @@ func (e AgentResponseStatus) Valid() bool {
 	case AgentResponseStatusCompleted:
 		return true
 	case AgentResponseStatusFailed:
+		return true
+	case AgentResponseStatusRefused:
 		return true
 	case AgentResponseStatusRunning:
 		return true

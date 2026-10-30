@@ -232,6 +232,10 @@ A session that closed while code still ran in its sandbox had the sandbox delete
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
 
+### A refused turn stays withheld after a rewind, a fork, the call review and the title
+
+A turn the prompt injection screen refused is recorded with status `refused` (`GET /v1/agents/sessions/{id}/responses`), not `failed`. A rewind or a fork carries what it asked forward as `[withheld: this read as a prompt injection]`, as the live agent does, with no answer after it. The call review and the conversation title quote it the same way, so the screen no longer refuses them and the review no longer fails with an error. A turn that failed for any other reason is recorded and carried forward as before (AI-2307).
+
 ### A refusal by the prompt injection screen reads as a refusal
 
 A response the prompt injection screen refused while the model was still answering settled as `cancelled`, as if its caller had closed it. It now fails as refused: the session socket's and the `/stream` socket's `error` frame carries `code: prompt_injection`, the `/stream` socket's `complete` has status `failed`, and `model_call` reads `error_code: refused`. A refusal does not count against the provider's health, uptime or latency, and what the provider generated is still billed. The refused turn's `responded` has empty text: neither what streamed before the verdict nor what a voice says for the lost reply is recorded as the agent's answer, and nothing the agent was still holding of the reply is spoken or sent after the verdict. A run (`POST /v1/agents/runs`) whose input the screen refused answers a 400 `prompt_injection`, not a 503 `model_failed` a caller would retry. A response its caller closed still reads `cancelled` (AI-2308).

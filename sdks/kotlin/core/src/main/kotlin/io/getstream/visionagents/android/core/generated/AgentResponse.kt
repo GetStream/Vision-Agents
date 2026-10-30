@@ -39,7 +39,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param createdAt 
  * @param id 
  * @param sessionId 
- * @param status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+ * @param status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
  * @param error 
  * @param finishedAt 
  * @param said What the person asked, which is the first item of every response.
@@ -57,7 +57,7 @@ internal data class AgentResponse (
     @SerialName(value = "session_id")
     val sessionId: kotlin.String,
 
-    /* cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. */
+    /* cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld. */
     @SerialName(value = "status")
     val status: AgentResponse.Status,
 
@@ -74,9 +74,9 @@ internal data class AgentResponse (
 ) {
 
     /**
-     * cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+     * cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
      *
-     * Values: running,completed,failed,cancelled,unknown_default_open_api
+     * Values: running,completed,failed,cancelled,refused,unknown_default_open_api
      */
     @Serializable(with = StatusSerializer::class)
     internal enum class Status(val value: kotlin.String) {
@@ -84,6 +84,7 @@ internal data class AgentResponse (
         @SerialName(value = "completed") completed("completed"),
         @SerialName(value = "failed") failed("failed"),
         @SerialName(value = "cancelled") cancelled("cancelled"),
+        @SerialName(value = "refused") refused("refused"),
         @SerialName(value = "unknown_default_open_api") unknown_default_open_api("unknown_default_open_api");
     }
 
