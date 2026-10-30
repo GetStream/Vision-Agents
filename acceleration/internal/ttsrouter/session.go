@@ -39,8 +39,8 @@ type Session struct {
 	// which its row is recorded under.
 	reserved map[string]uuid.UUID
 	// finished is the most recent utterances settled, oldest first in finishedOrder. More
-	// text for one of them is dropped by the provider (an interrupted utterance takes no
-	// more), so it is not counted. Only the last finishedKept are kept: text that comes that
+	// text for one of them is dropped by a streaming provider (an interrupted utterance takes
+	// no more), so it is not counted. Only the last finishedKept are kept: text that comes that
 	// late, or an id reused after it fell out, is counted as an utterance of its own.
 	finished      map[string]struct{}
 	finishedOrder []string
@@ -111,7 +111,9 @@ func (s *Session) Synthesize(request tts.Request) error {
 	characters := int64(utf8.RuneCountInString(request.Text))
 	s.mu.Lock()
 	reserved, speaking := s.reserved[request.ID]
-	if _, done := s.finished[request.ID]; done {
+	// A voice that takes each sentence as its own request speaks text for a settled id as a
+	// new sentence, so it is counted and reserved as one; only a streaming voice drops it.
+	if _, done := s.finished[request.ID]; done && s.provider.Streaming() {
 		characters = 0
 	} else {
 		// Counted before it is sent, so a completion that comes straight back finds it.

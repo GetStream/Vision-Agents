@@ -3,6 +3,7 @@
 package ttsrouter
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,18 +16,21 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy/policytest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 // reservingSession is a session over a stub voice whose every character costs $1, for an
-// organization with credit micros, reserving through the real enforcer.
-func reservingSession(t *testing.T, money *policytest.Money, credit int64) (*Session, *stubTTS, routing.Owner) {
+// organization with credit micros, reserving through the real enforcer. perSentence makes it a
+// voice that takes each sentence as its own request.
+func reservingSession(t *testing.T, money *policytest.Money, credit int64, perSentence bool) (*Session, *stubTTS, routing.Owner) {
 	t.Helper()
 	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model", Price: routing.Price{PerMillionChars: 1_000_000}}
 	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 	owner := money.Owner(t, credit)
 	provider := newStubTTS()
+	provider.perSentence = perSentence
 	session := newSession(provider, config, owner, money.Recorder(routing.TTS, prices), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	t.Cleanup(func() { _ = session.Close() })
 	return session, provider, owner
@@ -34,7 +38,7 @@ func reservingSession(t *testing.T, money *policytest.Money, credit int64) (*Ses
 
 func TestClosingASessionReleasesWhatItsUtterancesHeld(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
-	session, _, owner := reservingSession(t, money, 1_000_000)
+	session, _, owner := reservingSession(t, money, 1_000_000, false)
 
 	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a"}))
 	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits, "its one character is held")
@@ -47,7 +51,7 @@ func TestClosingASessionReleasesWhatItsUtterancesHeld(t *testing.T) {
 
 func TestClosingASessionNobodyReadsStillReleasesWhatItHeld(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
-	session, provider, owner := reservingSession(t, money, 1_000_000)
+	session, provider, owner := reservingSession(t, money, 1_000_000, false)
 	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a"}))
 	// The caller stopped reading: the provider's events fill every buffer between them.
 	sent := make(chan struct{})
@@ -69,7 +73,7 @@ func TestClosingASessionNobodyReadsStillReleasesWhatItHeld(t *testing.T) {
 
 func TestTextTheVoiceRefusedIsNoLongerHeld(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
-	session, provider, owner := reservingSession(t, money, 2_000_000)
+	session, provider, owner := reservingSession(t, money, 2_000_000, false)
 	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a"}))
 	require.NoError(t, money.Spend(t, owner), "$1 of $2 is held")
 
@@ -80,4 +84,59 @@ func TestTextTheVoiceRefusedIsNoLongerHeld(t *testing.T) {
 	provider.refuse = errors.New("still down")
 	require.Error(t, session.Synthesize(tts.Request{ID: "u1", Text: "cd"}))
 	require.NoError(t, money.Spend(t, owner))
+}
+
+// spoken passes on the sentence's start and end as a per-sentence voice reports them, and
+// waits until the session has settled it.
+func spoken(t *testing.T, session *Session, provider *stubTTS, id string, characters int64) {
+	t.Helper()
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: id, At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: id, Characters: characters})
+	for event := range session.Events() {
+		if complete, ok := event.(tts.SynthesisComplete); ok && complete.SynthesisID == id {
+			return
+		}
+	}
+	t.Fatal("the session closed before the sentence settled")
+}
+
+func TestAnIdReusedAfterItsSentenceFinishedHoldsItsText(t *testing.T) {
+	money := policytest.Start(t, "ttsrouter_reserve")
+	session, provider, owner := reservingSession(t, money, 3_000_000, true)
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a", Final: true}))
+	spoken(t, session, provider, "u1", 1)
+	require.NoError(t, money.Spend(t, owner), "$1 of $3 is spent")
+
+	// The voice speaks it as a new sentence, so its 7 characters are held as a fresh id's are:
+	// there is room for it, and none for anything after it.
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "bcdefgh", Final: true}))
+	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits, "the reused id's 7 characters are held")
+	require.ErrorIs(t, session.Synthesize(tts.Request{ID: "u2", Text: "i", Final: true}), policy.ErrNoCredits)
+	require.Len(t, provider.said, 2, "the sentence refused for credit is never sent")
+}
+
+func TestAnIdReusedAfterItsSentenceFinishedIsBilledOnceForWhatWasSent(t *testing.T) {
+	money := policytest.Start(t, "ttsrouter_reserve")
+	session, provider, owner := reservingSession(t, money, 9_000_000, true)
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a", Final: true}))
+	spoken(t, session, provider, "u1", 1)
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "bcdefgh", Final: true}))
+	require.Len(t, provider.said, 2, "the reused id is spoken")
+	// The adapter counts 9; the row bills the 7 handed to it.
+	spoken(t, session, provider, "u1", 9)
+
+	var rows []store.Request
+	require.Eventually(t, func() bool {
+		rows = nil
+		require.NoError(t, money.Store.DB().NewSelect().Model(&rows).Where("customer_id = ?", owner.CustomerID).Order("id").Scan(context.Background()))
+		return len(rows) == 2
+	}, 5*time.Second, 10*time.Millisecond)
+	require.EqualValues(t, 1, rows[0].Characters)
+	require.EqualValues(t, 7, rows[1].Characters, "the reused id is billed what was sent")
+	require.NotEqual(t, rows[0].UsageID, rows[1].UsageID, "each sentence is its own unit of work")
+
+	// $8 of $9 is spent and nothing is still held for it, so one more character is the last.
+	require.NoError(t, money.Spend(t, owner))
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u3", Text: "j", Final: true}))
+	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits)
 }
