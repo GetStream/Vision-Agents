@@ -23,6 +23,8 @@ import (
 // 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
 // The error code "seven twenty", said where no case was mentioned, is not a case. An ID
 // written in told, the instructions the operator gave the agent, is the operator's to give.
+// So is one the caller wrote out whole with letters and digits in it ("signed in as
+// QX7Z42").
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -86,7 +88,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
 			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
-		}) || holdsValue(told, wanted) {
+		}) || holdsValue(told, wanted) || wroteID(history, text) {
 			continue
 		}
 		returned := false
@@ -106,6 +108,26 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		}
 	}
 	return "", "", nil, false
+}
+
+// wroteID reports whether the caller wrote value out as a whole word that mixes letters and
+// digits, such as QX7Z42. A value like that is an identifier, not a number they happened to
+// say, so it is theirs to give without naming what it is an ID of; whether it is the right
+// kind of ID is the tool's to answer. A bare number still has to be said with what it is,
+// and so does an ID read out by speech, which the transcriber rarely writes as one word.
+func wroteID(history []llm.Message, value string) bool {
+	wanted := alphanumeric(value)
+	if !hasLetterAndDigit(wanted) {
+		return false
+	}
+	return slices.ContainsFunc(history, func(message llm.Message) bool {
+		return message.Role == llm.User && holdsValue(message.Content, wanted)
+	})
+}
+
+// hasLetterAndDigit reports whether text holds at least one letter and one digit.
+func hasLetterAndDigit(text string) bool {
+	return strings.IndexFunc(text, unicode.IsLetter) >= 0 && strings.IndexFunc(text, unicode.IsDigit) >= 0
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
