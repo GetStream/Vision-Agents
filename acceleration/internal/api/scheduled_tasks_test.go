@@ -1895,7 +1895,7 @@ func (s *ScheduledTasksSuite) movePaused(id string) {
 
 // cutOver is `router replicate --resume` for the suite's customer: how many tasks it resumed.
 func (s *ScheduledTasksSuite) cutOver() int64 {
-	resumed, _, err := s.store.ResumeMovedRows(context.Background(), s.customerID())
+	resumed, _, _, err := s.store.ResumeMovedRows(context.Background(), s.customerID())
 	s.Require().NoError(err)
 	return resumed
 }
