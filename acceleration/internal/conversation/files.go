@@ -57,9 +57,10 @@ func (c *Conversation) PublishPhotos(ctx context.Context, images []llm.ImagePart
 // upload stores a file on the conversation's channel as uploader.
 func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader string) (sandbox.Attachment, error) {
 	name := filepath.Base(file.Name)
-	if name == "." || name == string(filepath.Separator) || len(file.Data) == 0 {
+	if name == "." || name == ".." || name == string(filepath.Separator) || len(file.Data) == 0 {
 		return sandbox.Attachment{}, errors.New("conversation: a file needs a name and something in it")
 	}
+	file.MIME = inert(file.MIME)
 	// The Chat client uploads from a path, and names the upload after it.
 	dir, err := os.MkdirTemp("", "agent-file-")
 	if err != nil {
@@ -96,6 +97,21 @@ func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader s
 		return sandbox.Attachment{}, errors.New("conversation: Chat stored the file without saying where")
 	}
 	return sandbox.Attachment{Name: name, MIME: file.MIME, URL: *url, Size: len(file.Data)}, nil
+}
+
+// inert is the media type a file is stored and attached under: its own, unless a browser
+// opening it would render it as a page or run it, as HTML, SVG, XML and JavaScript are. The
+// file's bytes are whatever the agent's code or a caller wrote, so one of those is stored as
+// a download, application/octet-stream, and never through the image endpoint.
+func inert(media string) string {
+	kind := strings.ToLower(strings.TrimSpace(strings.SplitN(media, ";", 2)[0]))
+	switch {
+	case kind == "text/html", kind == "text/javascript", kind == "application/javascript",
+		kind == "text/ecmascript", kind == "application/ecmascript",
+		strings.HasSuffix(kind, "/xml"), strings.HasSuffix(kind, "+xml"):
+		return "application/octet-stream"
+	}
+	return media
 }
 
 // MergeFiles adds files to a reply, a later file of the same name replacing the earlier.

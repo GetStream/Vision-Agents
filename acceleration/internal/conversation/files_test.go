@@ -47,6 +47,53 @@ func TestAFileThatIsNotAnImageIsUploadedAsAFile(t *testing.T) {
 	require.Equal(t, "file", db.uploads[0].endpoint)
 }
 
+func TestAFileNamedForTheDirectoryAboveIsNotUploaded(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
+	require.NoError(t, err)
+
+	_, err = c.Publish(context.Background(), sandbox.File{Name: "/home/daytona/..", MIME: "text/plain", Data: []byte("text")})
+
+	require.ErrorContains(t, err, "a file needs a name")
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Empty(t, db.uploads)
+}
+
+func TestAPageTheAgentWroteIsUploadedAsADownload(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
+	require.NoError(t, err)
+
+	shown, err := c.Publish(context.Background(), sandbox.File{Name: "report.html", MIME: "text/html; charset=utf-8", Data: []byte("<script>1</script>")})
+
+	require.NoError(t, err)
+	require.Equal(t, "application/octet-stream", shown.MIME)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Equal(t, "file", db.uploads[0].endpoint)
+}
+
+func TestAnSVGIsUploadedAsADownloadAndNotAsAnImage(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
+	require.NoError(t, err)
+
+	shown, err := c.Publish(context.Background(), sandbox.File{Name: "chart.svg", MIME: "image/svg+xml", Data: []byte("<svg/>")})
+
+	require.NoError(t, err)
+	require.Equal(t, "application/octet-stream", shown.MIME)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Equal(t, "file", db.uploads[0].endpoint, "an SVG went through the image endpoint")
+}
+
 func TestAnEmptyFileIsNotUploaded(t *testing.T) {
 	db, client := newChat(t)
 	s := NewForChat(client)
