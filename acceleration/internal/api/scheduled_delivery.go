@@ -756,8 +756,7 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// What the task carries is the row's, whatever the payload says.
-	delivery.ConfigID, delivery.APIKey = task.ConfigID, task.APIKey
-	delivery.UsageCategories, delivery.Channels = task.UsageCategories, task.Channels
+	delivery.ConfigID, delivery.Channels = task.ConfigID, task.Channels
 	ctx := routing.WithScheduledTurn(r.Context())
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {

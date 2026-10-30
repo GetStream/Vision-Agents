@@ -1700,6 +1700,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		HookSecret:        suiteStreamSecret,
 		ChatInboundKeys:   s.chatInboundKeys,
 		Secrets:           keyring,
+		Channels:          s.inbound,
 		// The node's phone service is the suite's: the call hook a peer hands over answers
 		// the same database.
 		Phone:  s.router.phone,

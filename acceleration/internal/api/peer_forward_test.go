@@ -161,6 +161,29 @@ func (s *ScheduledTasksSuite) TestAPeerNamingChannelsTheStoredTaskLacksDeliversI
 	}))
 }
 
+func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		number := s.lineNumber()
+		s.seedSMSLine(number)
+		config := s.agentWithScheduling(func(r *AgentConfigRequest) {
+			r.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
+		})
+		s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+			CustomerID: s.customerID(), ConfigID: config, Kind: "sms", Address: writer, UserID: task.UserID,
+		}))
+		task.ConfigID = config
+		task.Channels = []string{"sms"}
+	}, nil)
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
+	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 }, 10*time.Second, 50*time.Millisecond,
+		"the stored task's text never went out")
+}
+
 func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
 	other, _ := s.otherRouter(nil)
 
