@@ -292,6 +292,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.Scheduling = &declared
 	}
+	body.Calls = declareCalls(settings.Calls)
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
@@ -311,6 +312,49 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 //
 // An entry whose connection the app does not have is left out and returned, so the rest of
 // the agent still syncs, unless the entry is required: a session needs that one.
+// declareCalls always fills the whole block, so a sync resets what a file leaves out.
+func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
+	if calls == nil {
+		calls = &CallSettings{}
+	}
+	endCall := calls.EndCall
+	if endCall == nil {
+		endCall = &EndCallSettings{}
+	}
+	press := calls.Press
+	if press == nil {
+		press = &CallToolSettings{}
+	}
+	transfer := calls.Transfer
+	if transfer == nil {
+		transfer = &TransferSettings{}
+	}
+	destinations := make([]acceleration.TransferDestination, 0, len(transfer.Destinations))
+	for _, destination := range transfer.Destinations {
+		declared := acceleration.TransferDestination{Name: destination.Name, Number: destination.Number, Warm: &destination.Warm}
+		if destination.When != "" {
+			declared.When = &destination.When
+		}
+		destinations = append(destinations, declared)
+	}
+	declared := &acceleration.AgentCalls{
+		EndCall:  &acceleration.EndCallSettings{Enabled: enabledOr(endCall.Enabled, false)},
+		Press:    &acceleration.PressSettings{Enabled: enabledOr(press.Enabled, true)},
+		Transfer: &acceleration.TransferSettings{Enabled: enabledOr(transfer.Enabled, true), Destinations: &destinations},
+	}
+	if endCall.When != "" {
+		declared.EndCall.When = &endCall.When
+	}
+	return declared
+}
+
+func enabledOr(enabled *bool, fallback bool) *bool {
+	if enabled == nil {
+		return &fallback
+	}
+	return enabled
+}
+
 func connectorBindings(ctx context.Context, client *acceleration.ClientWithResponses, settings Settings) (*[]acceleration.AgentConnectorBinding, []missingConnection, error) {
 	if settings.Connectors == nil {
 		return nil, nil, nil

@@ -2134,6 +2134,33 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionEndReason.
+const (
+	AgentHangup SessionEndReason = "agent_hangup"
+	Hangup      SessionEndReason = "hangup"
+	Start       SessionEndReason = "start"
+	Transferred SessionEndReason = "transferred"
+	Unanswered  SessionEndReason = "unanswered"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndReason enum.
+func (e SessionEndReason) Valid() bool {
+	switch e {
+	case AgentHangup:
+		return true
+	case Hangup:
+		return true
+	case Start:
+		return true
+	case Transferred:
+		return true
+	case Unanswered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionModality.
 const (
 	SessionModalityText  SessionModality = "text"
@@ -2980,6 +3007,13 @@ type AddTrunkNumberRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 }
 
+// AgentCalls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+type AgentCalls struct {
+	EndCall  *EndCallSettings  `json:"end_call,omitempty"`
+	Press    *PressSettings    `json:"press,omitempty"`
+	Transfer *TransferSettings `json:"transfer,omitempty"`
+}
+
 // AgentChanges What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
 type AgentChanges struct {
 	// Items The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since.
@@ -3003,6 +3037,9 @@ type AgentChannels struct {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -3091,6 +3128,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -3174,6 +3214,9 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -5444,6 +5487,15 @@ type EffectiveQuota struct {
 	TokensSetBy QuotaLevel `json:"tokens_set_by"`
 }
 
+// EndCallSettings defines model for EndCallSettings.
+type EndCallSettings struct {
+	// Enabled Offer the tool. Omitted is off.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// When When the agent should end the call, in the caller's terms.
+	When *string `json:"when,omitempty"`
+}
+
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
 
@@ -6828,6 +6880,12 @@ type PressDigitsRequest struct {
 	Vendor string `json:"vendor"`
 }
 
+// PressSettings defines model for PressSettings.
+type PressSettings struct {
+	// Enabled Offer the tool. Omitted is on.
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // Price What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 type Price struct {
 	// Byok Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false.
@@ -7871,6 +7929,9 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
+	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
 	ForkedFrom *string `json:"forked_from,omitempty"`
 	Id         string  `json:"id"`
@@ -7972,6 +8033,9 @@ type SessionConnectorBinding struct {
 	// Name The binding's alias in the agent config.
 	Name string `json:"name"`
 }
+
+// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+type SessionEndReason string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {
@@ -8814,6 +8878,9 @@ type SyncAgentRequest struct {
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
 	BaseChange *string `json:"base_change,omitempty"`
 
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -9258,6 +9325,30 @@ type TransferCallRequest struct {
 
 	// To The human being brought onto the call.
 	To string `json:"to"`
+}
+
+// TransferDestination defines model for TransferDestination.
+type TransferDestination struct {
+	// Name What the agent calls this destination, such as Sales.
+	Name string `json:"name"`
+
+	// Number The number to transfer to, in E.164 form.
+	Number string `json:"number"`
+
+	// Warm Announce the caller to the person answering before connecting them.
+	Warm *bool `json:"warm,omitempty"`
+
+	// When When the agent should transfer here, in the caller's terms.
+	When *string `json:"when,omitempty"`
+}
+
+// TransferSettings defines model for TransferSettings.
+type TransferSettings struct {
+	// Destinations The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+	Destinations *[]TransferDestination `json:"destinations,omitempty"`
+
+	// Enabled Offer the tool. Omitted is on.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // TtsOptions How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
