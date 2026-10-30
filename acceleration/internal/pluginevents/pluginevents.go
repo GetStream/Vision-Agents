@@ -342,14 +342,16 @@ func (s *Service) connection(ctx context.Context, config store.AgentConfig, logi
 }
 
 // Receive answers one delivery to a subscription's callback: the challenge a server checks
-// the callback with, or an event, which opens a conversation.
+// the callback with, or an event, which opens a conversation. Whoever posts to the callback
+// is not yet known, so a failure of the router's own is logged and answered without detail.
 func (s *Service) Receive(ctx context.Context, token string, header http.Header, body []byte) Reply {
 	sub, err := s.store.PluginEventSubscriptionByToken(ctx, token)
 	if errors.Is(err, store.ErrUnknownPluginEventSubscription) {
 		return Reply{Status: http.StatusGone, Body: failure("no such subscription")}
 	}
 	if err != nil {
-		return Reply{Status: http.StatusInternalServerError, Body: failure(err.Error())}
+		s.logger.Error("could not read a plugin event subscription", "error", err)
+		return Reply{Status: http.StatusInternalServerError, Body: failure("something went wrong")}
 	}
 	if err := webhook.Verify(sub.Secret, header, body, time.Now()); err != nil {
 		return Reply{Status: http.StatusUnauthorized, Body: failure(err.Error())}
@@ -385,7 +387,8 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	}
 	fresh, err := s.store.ClaimPluginEvent(ctx, sub.ID, delivered.EventID)
 	if err != nil {
-		return Reply{Status: http.StatusInternalServerError, Body: failure(err.Error())}
+		s.logger.Error("could not claim a plugin event", "subscription", sub.ID, "error", err)
+		return Reply{Status: http.StatusInternalServerError, Body: failure("something went wrong")}
 	}
 	// A retry of an event already taken is acknowledged without opening a second
 	// conversation, or the server would go on retrying it.
