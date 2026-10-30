@@ -179,6 +179,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A socket's token stays out of the JS and Dart SDKs' errors, and out of the URL on Node
 
 A JS socket the router refused said so with its whole URL, which carries the token (a server token, with `apiSecret`) in its query, so the token reached the app's logs and error reports. It now names the URL without its query. On Node the token is no longer in the URL at all: `openSocket` sends it as `Authorization: Bearer`, and behind the proxy `api_key` and `stream-auth-type: jwt` go as headers with it, as on a request. A browser, and a `webSocket` passed in, still put it in the query, since a browser WebSocket sets no headers. The Dart SDK's `TransportException` for a socket that did not open no longer repeats the URL's query.
+### An id reused once its utterance has finished counts against credit
+
+On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
+
 ### A text or call whose limits cannot be checked is not sent
 
 When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
