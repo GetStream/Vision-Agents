@@ -168,6 +168,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### Sandbox code tells a withdrawn credential from a failing host under Daytona
 
 Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
+### A session's Daytona sandbox goes when the run it was closed during ends
+
+A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
 
 ### A file `run_code` hands back is read only up to its limit
 
