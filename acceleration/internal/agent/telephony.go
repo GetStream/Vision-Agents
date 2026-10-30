@@ -191,30 +191,75 @@ const didNotWork = "That did not work: "
 // is a second order. And a call that may have changed something (changedState) ends the
 // match, a read because what it read may no longer be so, a write because it may have been
 // undone or used up by the call in between.
+//
+// A repeat already answered this way ran nothing: it is read as the result it was answered
+// with, so the next repeat is told that result once rather than inside another alreadyCalled,
+// and it changed nothing.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []string) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
 	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
-		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
-			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
-			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
+		content, repeat := strings.CutPrefix(history[i].Content, alreadyCalled)
+		if history[i].Role != llm.ToolResult || failedResult(content) ||
+			undoneResult(content) || strings.Contains(content, notRun) ||
+			call.Name == sandbox.ToolName && harness.RunAgain(content, connected) {
 			continue
 		}
 		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == history[i].ToolCallID && same(asked)
 			}) {
-				return history[i].Content, true
+				return content, true
 			}
 		}
 		// A call is taken as a change unless its name says it only reads, which can only
 		// cost a call that was not needed.
-		if changedState(history, i) {
+		if !repeat && changedState(history, i) {
 			return "", false
 		}
 	}
 	return "", false
+}
+
+// firstCall is the first of two or more identical calls one reply made: the same tool with
+// the same arguments. Each call of a reply runs on its own, so a repeat would run while the
+// first is still running, before answeredSinceCaller has a result to answer it from, and
+// an order would be placed twice. Only the first runs; each repeat waits for what it
+// returned and is answered with that (alreadyCalled). result is set before done is closed.
+type firstCall struct {
+	done   chan struct{}
+	result string
+}
+
+// sameCallsLocked records which of the calls one reply made repeat an earlier one of them,
+// the same tool with arguments that differ at most in spacing and key order. It runs before
+// any of them is handed over, so a first call that comes back at once still answers the
+// repeats after it. Calls in separate replies are left to answeredSinceCaller. A
+// speech-to-speech model hands its calls over one at a time, under a response id that can
+// span its tool rounds, so they are not grouped here. The caller holds the lock.
+func (a *Agent) sameCallsLocked(calls []llm.ToolCall) {
+	for i, call := range calls {
+		// The earliest identical call, which is never itself a repeat.
+		first := slices.IndexFunc(calls[:i], func(earlier llm.ToolCall) bool {
+			return earlier.Name == call.Name && sameArguments(earlier.Arguments, call.Arguments)
+		})
+		// A call that shares its id with the first would wait for itself.
+		if first < 0 || calls[first].ID == call.ID {
+			continue
+		}
+		if a.firstCalls == nil {
+			a.firstCalls = map[string]*firstCall{}
+		}
+		if a.repeatsOf == nil {
+			a.repeatsOf = map[string]*firstCall{}
+		}
+		id := calls[first].ID
+		if a.firstCalls[id] == nil {
+			a.firstCalls[id] = &firstCall{done: make(chan struct{})}
+		}
+		a.repeatsOf[call.ID] = a.firstCalls[id]
+	}
 }
 
 // routerStatuses are the statuses only the router answers a connector call it held back with
@@ -453,6 +498,9 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 }
 
 func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requested harness.ToolRequested) {
+	// result is what the model is told, and what any repeat of this call in its reply is
+	// answered with once it is (firstCall), however the call ended.
+	var result string
 	defer func() {
 		cancel()
 		a.mu.Lock()
@@ -460,6 +508,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolContexts, requested.Call.ID)
 		delete(a.toolTurns, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
+		delete(a.repeatsOf, requested.Call.ID)
+		if first := a.firstCalls[requested.Call.ID]; first != nil {
+			first.result = result
+			close(first.done)
+			delete(a.firstCalls, requested.Call.ID)
+		}
 		a.mu.Unlock()
 	}()
 	began := time.Now()
@@ -472,6 +526,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.emitter.Send(started)
 	requested.Call.TurnID = requested.TurnID
 	hold := a.holdOnInterrupt(ctx, requested.Call)
+	a.mu.Lock()
+	first := a.repeatsOf[requested.Call.ID]
+	a.mu.Unlock()
 	var parts []llm.ContentPart
 	var files []sandbox.Attachment
 	var left bool
@@ -485,7 +542,16 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	record := a.record()
 	// What the operator told the agent is theirs to give too: an ID or number written in it.
 	told := a.told()
-	if requested.Call.Name == confirmTool && a.offersConfirm() {
+	if first != nil {
+		// The same call earlier in this reply is the one that runs. A confirmation too: a
+		// second one would find its call taken and could answer another still waiting.
+		select {
+		case <-first.done:
+			parts = llm.TextParts(alreadyCalled + first.result)
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	} else if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
 	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call, a.connected()); repeated {
@@ -530,7 +596,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if err != nil {
 		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. Tell the caller, in your own words.", err))
 	}
-	result := llm.TextOf(parts)
+	result = llm.TextOf(parts)
 	a.mu.Lock()
 	if hold == nil {
 		hold = a.toolHolds[requested.Call.ID]
