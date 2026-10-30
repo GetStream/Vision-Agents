@@ -6,6 +6,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
+// ThinkingRoom is what a capped request adds to its answer's own budget, for a model that
+// thinks before it answers: MaxOutputTokens counts the thinking too, so a cap sized for the
+// answer alone can run out before the answer is written. The most Claude Opus 5.5 was seen
+// thinking on one turn on staging, 2,734 tokens, fits with room to spare.
+const ThinkingRoom = 4000
+
 // ResponseParams is one response to generate.
 //
 // The whole conversation is passed every time rather than held by the provider, because

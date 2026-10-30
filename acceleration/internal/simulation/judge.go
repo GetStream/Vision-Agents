@@ -17,7 +17,9 @@ import (
 // nobody is waiting for it, and the point of it is the judgement.
 const defaultJudgeTarget = "llm-judge"
 
-// judgeTimeout bounds the ruling, and judgeTokens bounds what it may write.
+// judgeTimeout bounds the ruling, and judgeTokens bounds the answer it may write. A model
+// that thinks first is given llm.ThinkingRoom on top, since its thinking counts against the
+// same cap.
 const (
 	judgeTimeout = 90 * time.Second
 	judgeTokens  = 500
@@ -75,7 +77,7 @@ func rule(
 		ID:              id,
 		Instructions:    judgeInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: asked}},
-		MaxOutputTokens: judgeTokens,
+		MaxOutputTokens: judgeTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
@@ -85,6 +87,11 @@ func rule(
 	response, err := llm.Collect(stream)
 	if err != nil {
 		return verdict{}, err
+	}
+	// A ruling the cap cut off is part of one, which reads as broken JSON: say what cut it.
+	if response.Status == llm.StatusIncomplete {
+		return verdict{}, fmt.Errorf("simulation: the ruling stopped early (%s) after %d output tokens, %d of them thinking",
+			response.IncompleteReason, response.Usage.OutputTokens, response.Usage.OutputTokensDetails.ReasoningTokens)
 	}
 	return parseVerdict(response.OutputText)
 }
