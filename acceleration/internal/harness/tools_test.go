@@ -63,6 +63,15 @@ func (s *ToolsSuite) TestOnlyAModelWithToolsIsToldHowToUseThem() {
 	s.Equal(textUsePolicy+" "+sayDo, testTools().TextPrompt())
 }
 
+func (s *ToolsSuite) TestTheAgentAsksOnlyForWhatTheCallerAloneKnows() {
+	// Who the caller is, how to reach them and their own choices are theirs to give; a value a
+	// tool returned, or a message they asked the agent to write, is not something to ask for.
+	s.Contains(sayDo, `(no "John Doe"): ask for it`)
+	s.Contains(sayDo, "who they are, how to reach them, an account or a choice that is theirs")
+	s.Contains(sayDo, "A value a tool result gave, or text the caller asked you to write, is yours to use")
+	s.NotContains(sayDo, "detail the caller has not given")
+}
+
 func (s *ToolsSuite) TestAWrittenConversationFillsNoPauseBeforeACall() {
 	// In writing every sentence before a call stays on the page, so a chain of calls opened
 	// the answer with one hold phrase per link. What the instructions have the agent say

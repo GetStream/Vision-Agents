@@ -171,14 +171,20 @@ const textUsePolicy = "Call a tool as soon as every argument it requires is know
 // the same breath leaves a correction the caller makes a moment later out of the call.
 //
 // What to read back, and how, is left to the operator's instructions.
+//
+// The rule against filling an argument in is about what only the caller knows. Read as any
+// value the caller has not said, it had the model ask a person for a price a tool had just
+// returned, or for the words of a message they had asked it to write.
 const sayDo = "Never say something is done unless a tool result in this conversation shows " +
 	"it, nor that you are doing it unless you call its tool in that same reply; if you have " +
 	"not called that tool, call it now. Never tell the caller what a tool would find without " +
 	"its result in this conversation: call it first. " +
 	"Never write a pause to stand for a tool's work and go on as if it had answered: call " +
 	"the tool and end your reply there. " +
-	"Never fill an argument with a name, number or detail the caller has not given (no " +
-	"\"John Doe\"): ask for it. " +
+	"Never make up a detail only the caller can give, such as who they are, how to reach " +
+	"them, an account or a choice that is theirs (no \"John Doe\"): ask for it. A value a " +
+	"tool result gave, or text the caller asked you to write, is yours to use: do not ask " +
+	"for it. " +
 	"Never guess an id: pass one only as a tool result gave it, and if you have not seen " +
 	"it, first call the tool that lists them. " +
 	"When the caller takes back something they said (\"actually\", \"no, make that\", \"oh " +
