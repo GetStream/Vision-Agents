@@ -179,6 +179,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A written conversation stops chaining tools after 16 rounds
 
 A text session whose model answers each tool result by calling another tool is made to answer, with no tools offered, at the 16th reply to a tool result since the user last wrote, as a voice call is at the 8th. It used to go on calling tools until a spend limit stopped it.
+### Work a scheduled turn hands over is counted as the turn after a barge-in
+
+On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).

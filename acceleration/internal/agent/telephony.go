@@ -438,6 +438,10 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 		a.toolTurns = map[string]string{}
 	}
 	a.toolTurns[requested.Call.ID] = requested.TurnID
+	if a.toolScheduled == nil {
+		a.toolScheduled = map[string]bool{}
+	}
+	a.toolScheduled[requested.Call.ID] = a.scheduled || requested.TurnID != "" && requested.TurnID == a.scheduledReply
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -464,6 +468,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolCancels, requested.Call.ID)
 		delete(a.toolContexts, requested.Call.ID)
 		delete(a.toolTurns, requested.Call.ID)
+		delete(a.toolScheduled, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
@@ -521,7 +526,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	delete(a.toolUpdates, requested.Call.ID)
-	charged := a.chargedLocked(ctx)
+	charged := a.chargedLocked(ctx, a.toolScheduled[requested.Call.ID])
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
