@@ -570,6 +570,21 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelWhatARevokedGrantLooksLike() {
 	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{})).Description, "revoked", "no grant, no line")
 }
 
+// TestRunCodeTellsTheModelARequiredGrantIsNotLate: a required grant is connected when the sandbox
+// starts (Prepare refuses one that is also Late), so a 401 for it means revoked, never "not
+// connected yet".
+func (s *SecretsSuite) TestRunCodeTellsTheModelARequiredGrantIsNotLate() {
+	required := githubGit
+	required.Required = true
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, required)).Description
+
+	s.Contains(description, " A 401 from api.github.com, github.com, or a 403 from the proxy, means the "+
+		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
+	s.NotContains(description, "not connected")
+	s.NotContains(description, "wait 20 seconds")
+}
+
 // githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
 var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
 	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}

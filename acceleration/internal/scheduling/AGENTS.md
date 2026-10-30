@@ -139,7 +139,11 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 - **A call rings once, on an SMS number, never more than 15 min late, and only with ring and
   call limit left in the occurrence (S5).** Too late is `missed` without a call; nobody
   answering is `not_answered`, final, kept on the run for a worker that takes it over and for
-  a retry, whatever would stop that retry's call.
+  a retry, whatever would stop that retry's call. A call placed whose end the run does not
+  record (delivered, or cut off with the worker) is `already_called`, and no channel after
+  `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
+  next channel to carry the task. A call taken whose end a failed store write never recorded
+  (the give-back of a call not placed, or the `not_answered` reason) is the same.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
@@ -148,6 +152,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsNotAnswered`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNotTextedToo`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel`,
+  `TestScheduledTasksSuite/TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed`,
   `TestStoreSuite/TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver`,
   `TestScheduledTasksSuite/TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered`,
   `TestScheduledTasksSuite/TestARetryAQuarterHourLateAfterAnUnansweredCallIsNotAnswered`,
@@ -277,7 +284,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
-  paused task stays; its old runs do not. `TestStoreSuite/TestPrune*` in
+  paused task stays; its old runs do not. Each delete reads its table by an index
+  (`scheduled_task_runs_finished_idx`, `scheduled_tasks_pruned_idx`), and the delete's state test must
+  imply the tasks index's predicate (`TestPruneReadsItsIndexes`). `TestStoreSuite/TestPrune*` in
   `internal/store/scheduled_tasks_prune_test.go`.
 
 ## Run the tests

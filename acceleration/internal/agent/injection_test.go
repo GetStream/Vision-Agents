@@ -209,12 +209,12 @@ func (s *AgentSuite) TestWithheldInputKeepsNoneOfItsWordsOrPictures() {
 		{Role: llm.ToolResult, ToolCallID: "call-2", Content: "The sign says: open until six."},
 	}
 
-	kept := withheld(history)
+	kept := Withheld(history)
 
 	s.Equal(history[:2], kept[:2], "what came before the model last spoke was screened already")
 	s.Equal([]llm.Message{
-		{Role: llm.ToolResult, ToolCallID: "call-1", Content: withheldInput},
-		{Role: llm.ToolResult, ToolCallID: "call-2", Content: withheldInput},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: WithheldInput},
+		{Role: llm.ToolResult, ToolCallID: "call-2", Content: WithheldInput},
 	}, kept[2:], "every result the screen judged together is withheld")
 	s.NotEmpty(history[2].Parts, "the history handed in was changed")
 }
@@ -259,6 +259,9 @@ func (s *AgentSuite) TestAWrittenReplyRefusedMidAnswerIsNotReportedAsTheAnswer()
 	failed, ok := firstOf[Error](s.reported())
 	s.Require().True(ok, "the refusal was never reported")
 	s.ErrorIs(failed, policy.ErrPromptInjection)
+	ended, _ := firstOf[Responded](s.reported())
+	s.NotEmpty(ended.TurnID)
+	s.Equal(ended.TurnID, failed.TurnID, "the refusal names the turn refused, the one row closed as refused")
 	s.Equal([]string{""}, s.answered(), "what streamed before the verdict was reported as the answer")
 }
 

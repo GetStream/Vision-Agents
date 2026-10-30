@@ -1024,9 +1024,9 @@ namespace GetStream.VisionAgents.Models
         public string SessionId { get; set; } = default!;
 
         /// <summary>
-        /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+        /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
         /// <br/>
-        /// <br/>One of `running`, `completed`, `failed`, `cancelled`.
+        /// <br/>One of `running`, `completed`, `failed`, `cancelled`, `refused`.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("status")]
         public string Status { get; set; } = default!;

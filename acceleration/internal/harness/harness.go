@@ -209,8 +209,8 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
-	// charged marks whether a scheduled task fired the last turn (chargedAs), so the work
-	// it hands to the subagent is counted as the turn is.
+	// charged marks who sent the last turn and whether a scheduled task fired it (chargedAs),
+	// so the work it hands to the subagent is counted as the turn is.
 	charged context.Context
 	// stored is what the provider has already read of this conversation, when it keeps
 	// what it generates.

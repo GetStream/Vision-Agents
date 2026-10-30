@@ -183,6 +183,7 @@ const (
 	AgentResponseStatusCancelled AgentResponseStatus = "cancelled"
 	AgentResponseStatusCompleted AgentResponseStatus = "completed"
 	AgentResponseStatusFailed    AgentResponseStatus = "failed"
+	AgentResponseStatusRefused   AgentResponseStatus = "refused"
 	AgentResponseStatusRunning   AgentResponseStatus = "running"
 )
 
@@ -194,6 +195,8 @@ func (e AgentResponseStatus) Valid() bool {
 	case AgentResponseStatusCompleted:
 		return true
 	case AgentResponseStatusFailed:
+		return true
+	case AgentResponseStatusRefused:
 		return true
 	case AgentResponseStatusRunning:
 		return true
@@ -3376,11 +3379,11 @@ type AgentResponse struct {
 	Said      *string `json:"said,omitempty"`
 	SessionId string  `json:"session_id"`
 
-	// Status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+	// Status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 	Status AgentResponseStatus `json:"status"`
 }
 
-// AgentResponseStatus cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+// AgentResponseStatus cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 type AgentResponseStatus string
 
 // AgentResponseItem defines model for AgentResponseItem.

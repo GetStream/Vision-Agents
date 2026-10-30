@@ -165,8 +165,9 @@ func newManager(
 	return m
 }
 
-// Create delegates a piece of work and returns its task id. Work a scheduled turn asked
-// for, ctx marked so, is counted as that turn is (chargedAs); the work outlives it.
+// Create delegates a piece of work and returns its task id. Work a turn asked for is
+// counted as that turn is (chargedAs): on the sender it names, and as scheduled when a
+// scheduled task fired it. The work outlives the turn.
 //
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
@@ -232,10 +233,13 @@ func (m *manager) Create(
 	return created.id, nil
 }
 
-// chargedAs returns ctx marked as scheduled when a scheduled task fired the turn asked
-// (llmrouter Session.charged). Nothing else of asked is kept, its cancellation least of
-// all: delegated work outlives the turn that asked for it.
+// chargedAs returns ctx marked with who sent the turn asked, and as scheduled when a
+// scheduled task fired it (llmrouter Session.charged). Nothing else of asked is kept, its
+// cancellation least of all: delegated work outlives the turn that asked for it.
 func chargedAs(ctx, asked context.Context) context.Context {
+	if sender, ok := routing.CallerFrom(asked); ok {
+		ctx = routing.WithCaller(ctx, sender)
+	}
 	if routing.ScheduledTurn(asked) {
 		ctx = routing.WithScheduledTurn(ctx)
 	}
@@ -924,6 +928,12 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	}
 	for _, binding := range result.Connected {
 		said += "\n\n" + binding + justConnected
+	}
+	for _, grant := range result.Reconnect {
+		said += fmt.Sprintf("\n\nIf this code got 401 from %s, the user's %s connection is on an older version of its connector, which gives code no access: "+
+			"ask the user to reconnect %s. The reconnect takes effect only from their next session, "+
+			"so running the code again in this session will not help, even after they reconnect.",
+			strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	return said, published
 }
