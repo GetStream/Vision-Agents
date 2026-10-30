@@ -172,3 +172,24 @@ func (s *ReplicateSourceSuite) TestAnUnknownSourceAuthIsRefused() {
 
 	s.Require().ErrorContains(err, "--source-auth is jwt or server")
 }
+
+func (s *ReplicateSourceSuite) TestTheCutOverNeedsNoSource() {
+	options, err := parseReplicate([]string{"--resume", "--as", "acme"})
+
+	s.Require().NoError(err)
+	s.Require().True(options.resume)
+	s.Require().Equal("acme", options.as)
+	s.Require().Nil(options.source)
+}
+
+func (s *ReplicateSourceSuite) TestTheCutOverNeedsTheAppTheRowsLandedUnder() {
+	_, err := parseReplicate([]string{"--resume"})
+
+	s.Require().ErrorContains(err, "--resume --as <app id>")
+}
+
+func (s *ReplicateSourceSuite) TestTheCutOverRefusesToCatchUpFromTheSourceFirst() {
+	_, err := parseReplicate([]string{"--resume", "--as", "acme", "--from", "http://source", "--api-key", sourceKey, "--api-secret", sourceSecret})
+
+	s.Require().ErrorContains(err, "--resume --as <app id>")
+}
