@@ -410,7 +410,7 @@ func (s *BrokerContract) TestARefusedRefreshIsAnErrorWithoutTheToken() {
 }
 
 // TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried: a revoked connection's credential
-// the provider would not delete fails the run, stays held, and goes on the next run or Close.
+// the provider would not update fails the run, stays held, and goes on the next run or Close.
 // A live egress sends a revoked connection's credential to no request even then.
 func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried() {
 	subject := s.subject("session-1")
