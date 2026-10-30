@@ -2004,6 +2004,15 @@ type Exchange struct {
 	Refused bool
 }
 
+// Reply is what one reply a conversation's transcript wrote did: its answer and tool_result
+// items, in the order they happened.
+type Reply struct {
+	Items []AgentResponseItem
+	// Refused is a response the prompt injection screen refused, whose tool results since
+	// its last answer are what the screen judged and are not to be replayed.
+	Refused bool
+}
+
 // The kinds of item a response is made of.
 const (
 	// ItemSaid is what the person asked, which opens every response.

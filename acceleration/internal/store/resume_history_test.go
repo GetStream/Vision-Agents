@@ -42,7 +42,7 @@ func (s *StoreSuite) TestAReplyIsFoundByTheTurnItsTranscriptWasWrittenUnder() {
 	s.Require().NoError(err)
 	s.Require().Len(replies, 1)
 	kinds := []string{}
-	for _, item := range replies["turn-2"] {
+	for _, item := range replies["turn-2"].Items {
 		kinds = append(kinds, item.Kind)
 	}
 	s.Equal([]string{ItemAnswer, ItemToolResult, ItemAnswer}, kinds)
