@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A call the model writes twice in one reply runs once
+
+When one reply of the model asked for the same tool with the same arguments more than once, spacing and key order aside, every copy ran, so an order was placed or a message sent twice. Now only the first runs. Each copy after it waits for that result and is answered with it, opening `You already made this exact call`. Its `tool_started` and `tool_ran` are still sent, with that answer as `result`. A tool that needs the caller's yes asks once. Different calls in one reply still run together, and a call repeated in a later reply follows the same rules as before. A call repeated a third time is now told the first result, not the second answer wrapped in another. Speech-to-speech models are unchanged.
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
