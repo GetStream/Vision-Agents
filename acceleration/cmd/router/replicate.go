@@ -22,6 +22,7 @@ import (
 )
 
 const replicateUsage = `usage: router replicate --from <url> --api-key <key> --api-secret <secret> [flags]
+       router replicate --resume --as <app id>
 
   --from        the deployment to copy from, for example https://accelerate-benchmark.gcp.stream-io-api.com
   --api-key     a server-side key there, vak_live_...
@@ -29,6 +30,9 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --as          the app id the rows land under here. Defaults to the one they had
   --poll        how often to ask for changes once the copy is done
   --once        stop as soon as there is nothing left to catch up on
+  --resume      the cut-over, once the deployment copied from no longer delivers: resume
+                the scheduled tasks the copy paused because they were active there, and
+                name the campaigns that were running there, to start here
 `
 
 // tokenLifetime is how long the token this command signs for itself is good for. It is
@@ -49,15 +53,30 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	as := flags.String("as", "", "the app id the rows land under here")
 	poll := flags.Duration("poll", 2*time.Second, "how often to ask for changes")
 	once := flags.Bool("once", false, "stop once there is nothing left to catch up on")
+	resume := flags.Bool("resume", false, "resume what the copy paused")
 	if err := flags.Parse(args); err != nil {
 		return err
-	}
-	if *from == "" || *key == "" || *secret == "" {
-		return errors.New(replicateUsage)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *resume {
+		// The cut-over reads only this deployment: one that also caught up first would read
+		// the source's own last writes, a pause made there to stop it delivering among them.
+		if *as == "" || *from != "" {
+			return errors.New(replicateUsage)
+		}
+		pgStore, err := openStore(ctx, settings)
+		if err != nil {
+			return err
+		}
+		defer pgStore.Close()
+		return resumeMove(ctx, pgStore, *as, os.Stdout)
+	}
+	if *from == "" || *key == "" || *secret == "" {
+		return errors.New(replicateUsage)
+	}
 
 	pgStore, err := openStore(ctx, settings)
 	if err != nil {
@@ -178,7 +197,8 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 
 		if page.CaughtUp {
 			if once {
-				fmt.Printf("caught up at cursor %d. Point your SDKs here, then run this once more to pick up the last writes.\n", cursor)
+				fmt.Printf("caught up at cursor %d. Point your SDKs here, then run this once more to pick up the last writes. "+
+					"Once the deployment copied from stops delivering, run it with --resume --as %s.\n", cursor, customerID)
 				return nil
 			}
 			fmt.Printf("caught up at cursor %d\n", cursor)
@@ -191,6 +211,19 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 		case <-ticker.C:
 		}
 	}
+}
+
+// resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
+func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
+	resumed, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "resumed %d scheduled tasks\n", resumed)
+	for _, id := range campaigns {
+		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
+	}
+	return nil
 }
 
 // exportLine is a line of the export, which is either a row or the cursor that ends it.
