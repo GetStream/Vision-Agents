@@ -221,13 +221,14 @@ func (d *deployment) get(ctx context.Context, path string, query map[string]stri
 	if err != nil {
 		return nil, err
 	}
-	if len(query) > 0 {
-		values := request.URL.Query()
-		for name, value := range query {
-			values.Set(name, value)
-		}
-		request.URL.RawQuery = values.Encode()
+	values := request.URL.Query()
+	for name, value := range query {
+		values.Set(name, value)
 	}
+	// The Stream gateway in front of a hosted router reads the key from the query string,
+	// not from X-Api-Key; a router reached directly reads it from either.
+	values.Set(auth.APIKeyParam, d.key)
+	request.URL.RawQuery = values.Encode()
 
 	token, err := auth.ServerToken(d.secret, tokenLifetime)
 	if err != nil {
