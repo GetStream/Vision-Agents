@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A rescheduled task runs its whole COUNT from now
+
+`PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
+
 ### Work a user's turn delegates is counted on that user's day
 
 In a session a backend opened, a user types a turn. The reply was counted on that user's daily limit, but the work the turn delegated (a skill, vision, the summary of a long conversation) was counted on the backend, which has no limit. It is now counted on the user as the reply is, so once the user's day is spent the work is refused with the daily-limit error. A turn a scheduled task fired is still the customer's (AI-2000).
