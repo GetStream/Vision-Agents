@@ -5,14 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 src=$(mktemp -d)/src.tgz
-COPYFILE_DISABLE=1 tar czf "$src" --exclude='out' --exclude='*.wav' performance_benchmark benchmark sdks/go
+COPYFILE_DISABLE=1 tar czf "$src" --exclude='out' --exclude='*.wav' performance_benchmark sdks/go
 kubectl -n perfbench cp "$src" perfbench:/src.tgz
 kubectl -n perfbench exec perfbench -- bash -c '
 set -e
-apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pkg-config libopus-dev libopusfile-dev libsoxr-dev >/dev/null
 curl -sSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.35.0/bin/linux/$(dpkg --print-architecture)/kubectl" && chmod +x /usr/local/bin/kubectl
 rm -rf /w && mkdir -p /w && cd /w && tar xzf /src.tgz
-cd performance_benchmark && GOWORK=off CGO_ENABLED=1 go build -tags webrtc -o /usr/local/bin/perfbench ./cmd/perfbench
+cd performance_benchmark && GOWORK=off go build -tags webrtc -o /usr/local/bin/perfbench ./cmd/perfbench
 SA=/var/run/secrets/kubernetes.io/serviceaccount; C=gke_stream-gcp-2026-v2_us-east1_us-east1-acceleration
 kubectl config set-cluster in --server=https://kubernetes.default.svc --certificate-authority=$SA/ca.crt >/dev/null
 kubectl config set-credentials sa --token=$(cat $SA/token) >/dev/null

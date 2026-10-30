@@ -185,6 +185,35 @@ func (p *Phone) Detach(ctx context.Context, number string) error {
 	return nil
 }
 
+// SetAgent has the agent config named agent (a name or an id) answer the number's calls,
+// so no worker is needed. A number that is not attached, or one attached to a call of its
+// own, is refused.
+func (p *Phone) SetAgent(ctx context.Context, number, agent string) (acceleration.PhoneNumber, error) {
+	var updated acceleration.PhoneNumber
+
+	set, err := p.client.SetPhoneNumberAgentWithResponse(ctx, number, acceleration.SetNumberAgentRequest{Agent: &agent})
+	if err != nil {
+		return updated, fmt.Errorf("stream: giving %s the agent %s: %w", number, agent, err)
+	}
+	result, err := answer(set.JSON200, set.HTTPResponse, set.Body)
+	if err != nil {
+		return updated, err
+	}
+	return *result, nil
+}
+
+// RemoveAgent stops the agent answering the number's calls. The number is kept.
+func (p *Phone) RemoveAgent(ctx context.Context, number string) error {
+	removed, err := p.client.RemovePhoneNumberAgentWithResponse(ctx, number)
+	if err != nil {
+		return fmt.Errorf("stream: removing the agent from %s: %w", number, err)
+	}
+	if removed.StatusCode() != http.StatusNoContent {
+		return refusal(removed.HTTPResponse, removed.Body)
+	}
+	return nil
+}
+
 // OutboundCall is the terms a call is placed on.
 type OutboundCall struct {
 	// From is one of the customer's own numbers, which is what the person sees.

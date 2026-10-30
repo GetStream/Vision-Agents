@@ -108,6 +108,7 @@ func TestTelnyxSandboxSuite(t *testing.T) {
 const sandboxRecipient = "+13125550001"
 
 func (s *TelnyxSandboxSuite) SetupSuite() {
+	s.database = "telnyx_sandbox"
 	s.sandbox = dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 1}
 	s.telnyxLine.SetupSuite()
 }
@@ -122,7 +123,9 @@ func (s *TelnyxSandboxSuite) TestAPersonOutsideTheSandboxReachesNoAgent() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, "+13125550099", "Hi"), time.Now()))
 
 	channel := s.threadChannel("+13125550099")
+	s.settled()
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.telnyx().sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Zero(s.episodes(), "a message the gate holds back opens no card")
 }
 
 // A sandbox recipient is answered until the day's one message is sent; a reply after it is
@@ -141,6 +144,7 @@ func (s *TelnyxSandboxSuite) TestARecipientIsAnsweredUntilTheDailyLimit() {
 	s.Require().Eventually(func() bool { return s.answers(channel) == 2 }, settleFor, 10*time.Millisecond)
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "third"), time.Now()))
 
+	s.settled()
 	s.Never(func() bool { return len(s.telnyx().sent()) > 1 }, dropped, 20*time.Millisecond)
 	for _, message := range s.chat.Stored(channel) {
 		s.NotEqual("third", message["text"], "the message past the limit reaches no agent")
@@ -155,17 +159,19 @@ func (s *TelnyxSandboxSuite) TestAKeywordIsAnsweredPastTheSandbox() {
 	s.Equal(telnyxHelp, s.took(1)[0].text)
 }
 
-// A gate that fails to read after the keywords is answered 500 and the message is unclaimed,
-// so the delivery Telnyx sends again reaches the agent: it is not dropped as one already taken.
-func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadReachesTheAgentWhenTelnyxDeliversItAgain() {
+// A gate that fails to read after the keywords fails the worker's attempt, not the delivery, so
+// the next attempt, once the gate reads again, writes the message for the agent, once.
+func (s *TelnyxSandboxSuite) TestAMessageWhoseSandboxCannotBeReadIsWrittenOnceTheGateReadsAgain() {
 	restore := s.gateOnClosedStore()
-	body := s.received(s.line, sandboxRecipient, "Hi")
 
-	s.Equal(http.StatusInternalServerError, s.deliver(body, time.Now()))
+	s.Equal(http.StatusOK, s.deliver(s.received(s.line, sandboxRecipient, "Hi"), time.Now()))
+	s.failedOnce()
 	restore()
-	s.Equal(http.StatusOK, s.deliver(body, time.Now()))
 
-	s.Equal("Hi", s.written(s.threadChannel(sandboxRecipient), 1)[0]["text"])
+	s.settled()
+	stored := s.chat.Stored(s.threadChannel(sandboxRecipient))
+	s.Require().Len(stored, 1)
+	s.Equal("Hi", stored[0]["text"])
 }
 
 // A reply the provider refuses is not a message sent, so it is not counted against the day's
@@ -189,9 +195,13 @@ func (s *TelnyxSandboxSuite) TestAReplyTelnyxRefusesIsNotCountedAgainstTheDailyL
 	s.False(refused.Load())
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
 	s.Require().Eventually(refused.Load, settleFor, 10*time.Millisecond, "Telnyx was not asked to send the first reply")
-	bridge, ok := s.bridge.(*channelbridge.Bridge)
-	s.Require().True(ok)
-	bridge.Close() // the first reply is over
+	// The first reply is over once the bridge let go of its claim, as it does for a refusal. Not
+	// Close, which would stop the bridge's inbound worker for the suite's later tests.
+	s.Require().Eventually(func() bool {
+		count, err := s.store.DB().NewSelect().Table("channel_thread_messages").
+			Where("channel_id = ? AND kind = ?", channel, store.ClaimReply).Count(context.Background())
+		return err == nil && count == 0
+	}, settleFor, 10*time.Millisecond, "the refused reply kept its claim")
 	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 1))
 
 	s.Equal("Noted.", s.took(1)[0].text)
@@ -209,11 +219,15 @@ func (s *TelnyxSandboxSuite) answers(channel string) int {
 }
 
 // holdSandbox puts the test's app under a sandbox for the test: the harness built its gate
-// with none, and the bridge holds the same gate.
+// with none, and the bridge holds the same gate. It puts the gate back once the test's turns
+// and replies ended (turnsEnded), as a reply still sending reads it (Bridge.sent).
 func (s *RouterSuite) holdSandbox(sandbox dlc.Sandbox) {
 	original := *s.gate
 	*s.gate = *dlc.NewGate(s.store, s.live.Redis(), sandbox, nil)
-	s.T().Cleanup(func() { *s.gate = original })
+	s.T().Cleanup(func() {
+		s.turnsEnded()
+		*s.gate = original
+	})
 }
 
 // Slack has no opt-out channel and no gate: a sandboxed customer's Slack user, who is no

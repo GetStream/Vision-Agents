@@ -1,4 +1,0 @@
-# for faster iterations
-restaurant.coherence
-healthcare.coherence
-telecom.coherence

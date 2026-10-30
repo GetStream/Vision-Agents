@@ -40,9 +40,14 @@ public struct SessionOptions: Sendable {
     /// here, and what it learns here is kept for their next session. Nil remembers nothing, and
     /// an incognito session never does.
     public var memory: Memory?
-    /// The user's IANA zone, such as `TimeZone.current.identifier`, which the device knows and
-    /// the router does not. The agent reads dates in it, and it is remembered as the user's for
-    /// the scheduled tasks that follow.
+    /// The user's IANA zone, such as `Europe/Amsterdam`, which the device knows and the router
+    /// does not. The agent reads dates in it, and it is remembered as the user's for the
+    /// scheduled tasks that follow.
+    ///
+    /// It starts as this device's zone, `TimeZone.current` as it is when the options are made.
+    /// A device zone with no IANA name, such as a bare offset like `GMT+0100`, starts it as nil
+    /// instead, since the router refuses a zone it does not know and the session with it. Set it
+    /// to name another zone, which is sent as it is, or to nil to send none.
     public var timezone: String?
     /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
     /// the name you gave it. Prefix it with `custom:` to mean only yours.
@@ -59,7 +64,20 @@ public struct SessionOptions: Sendable {
     public var returnURL: URL?
 
     public init(agent: String? = nil) {
+        self.init(agent: agent, deviceZone: TimeZone.current.identifier)
+    }
+
+    /// Options whose zone starts as `deviceZone` rather than this device's, for a test.
+    init(agent: String?, deviceZone: String) {
         self.agent = agent
+        timezone = Self.ianaZone(deviceZone)
+    }
+
+    /// `identifier` when it reads as an IANA zone, a region and a place such as
+    /// `Europe/Amsterdam` or UTC under either of its names, and nil when it does not. A device can
+    /// name its zone by an offset instead, which is no zone the router knows.
+    static func ianaZone(_ identifier: String) -> String? {
+        identifier.contains("/") || identifier == "UTC" || identifier == "GMT" ? identifier : nil
     }
 
     /// What a session remembers about the user `setUser` named. It is always theirs: a device

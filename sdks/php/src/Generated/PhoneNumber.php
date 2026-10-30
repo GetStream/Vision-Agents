@@ -18,6 +18,8 @@ final readonly class PhoneNumber
         public int $monthlyCostMicros,
         public \DateTimeImmutable $purchasedAt,
         public string $vendor,
+        // The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+        public ?string $agentConfigId = null,
         public ?\DateTimeImmutable $releasedAt = null,
         // The customer's own SIP trunk calls from this number are dialled through. Present only for vendor sip_trunk.
         public ?string $sipTrunkId = null,
@@ -41,6 +43,7 @@ final readonly class PhoneNumber
             monthlyCostMicros: Json::int($data, 'monthly_cost_micros'),
             purchasedAt: Json::date($data, 'purchased_at'),
             vendor: Json::string($data, 'vendor'),
+            agentConfigId: array_key_exists('agent_config_id', $data) && $data['agent_config_id'] !== null ? Json::string($data, 'agent_config_id') : null,
             releasedAt: array_key_exists('released_at', $data) && $data['released_at'] !== null ? Json::date($data, 'released_at') : null,
             sipTrunkId: array_key_exists('sip_trunk_id', $data) && $data['sip_trunk_id'] !== null ? Json::string($data, 'sip_trunk_id') : null,
             streamTrunkId: array_key_exists('stream_trunk_id', $data) && $data['stream_trunk_id'] !== null ? Json::string($data, 'stream_trunk_id') : null,
@@ -62,6 +65,9 @@ final readonly class PhoneNumber
         $out['monthly_cost_micros'] = $this->monthlyCostMicros;
         $out['purchased_at'] = Json::dateValue($this->purchasedAt);
         $out['vendor'] = $this->vendor;
+        if ($this->agentConfigId !== null) {
+            $out['agent_config_id'] = $this->agentConfigId;
+        }
         if ($this->releasedAt !== null) {
             $out['released_at'] = Json::dateValue($this->releasedAt);
         }

@@ -56,6 +56,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -91,7 +96,7 @@ def sync_detailed(
     """Delete an agent config
 
      Calls that already ran under it keep naming it, so the config stops being usable rather than stops
-    having existed.
+    having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -124,7 +129,7 @@ def sync(
     """Delete an agent config
 
      Calls that already ran under it keep naming it, so the config stops being usable rather than stops
-    having existed.
+    having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -152,7 +157,7 @@ async def asyncio_detailed(
     """Delete an agent config
 
      Calls that already ran under it keep naming it, so the config stops being usable rather than stops
-    having existed.
+    having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -183,7 +188,7 @@ async def asyncio(
     """Delete an agent config
 
      Calls that already ran under it keep naming it, so the config stops being usable rather than stops
-    having existed.
+    having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

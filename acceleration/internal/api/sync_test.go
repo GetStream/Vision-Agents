@@ -606,6 +606,18 @@ func (s *SyncSuite) skillNamed(configID, name string) Skill {
 }
 
 // sync applies a directory's declaration.
+func (s *SyncSuite) TestSyncingAGuardrailWebhookOnAPrivateAddressIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": "support", "hash": "v1", "guardrail": webhookGuardrail("https://10.1.2.3/check"),
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "guardrail: url must be a public https URL")
+
+	public := webhookGuardrail("https://8.8.8.8/check") // public, Google DNS
+	s.Equal(public, value(s.sync(map[string]any{"name": "support", "hash": "v2", "guardrail": public}).Config.Guardrail))
+}
+
 func (s *SyncSuite) sync(declaration map[string]any) SyncAgentResult {
 	var result SyncAgentResult
 	s.Require().Equal(http.StatusOK,

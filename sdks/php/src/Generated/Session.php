@@ -19,6 +19,7 @@ final readonly class Session
         public string $id,
         public SessionModality|string $modality,
         public SessionState|string $state,
+        // The name the agent joined the call as. It is not the owner of the session.
         public string $userId,
         // The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config...
         public ?string $agent = null,

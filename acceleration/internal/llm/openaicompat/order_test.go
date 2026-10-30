@@ -8,8 +8,8 @@ import (
 )
 
 func TestResultsAreMovedStraightAfterTheirCall(t *testing.T) {
-	call := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "verify_identity"}}}
-	spoke := llm.Message{Role: llm.User, Content: "New member ID is XYZ987654."}
+	call := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "confirm_caller"}}}
+	spoke := llm.Message{Role: llm.User, Content: "New member ID is LMN204816."}
 	result := llm.Message{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":true}`}
 
 	assert.Equal(t, []llm.Message{call, result, spoke}, StrictToolOrder([]llm.Message{call, spoke, result}))

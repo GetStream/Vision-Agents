@@ -109,7 +109,8 @@ type Call struct {
 	// default call the people are already on. Both empty is agent:<session id>.
 	CallType string
 	CallID   string
-	// UserID is who the agent joins the call as.
+	// UserID is the name the agent joins the call as. It is not the owner of the session:
+	// the owner is the caller, from its auth.
 	UserID string
 	// UserName is the agent's display name in the call.
 	UserName string

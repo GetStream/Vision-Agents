@@ -406,6 +406,8 @@ class Accelerated(OmniLLM):
             }
             request.tags = tags
 
+        if call.timezone:
+            request.timezone = call.timezone
         if call.memory_filter:
             request.memory = self._memory(call.memory_filter)
         return request

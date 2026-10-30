@@ -32,11 +32,35 @@ class AgentSessionTest {
         answer = { if (it.path.endsWith("/responses")) Reply(202, ASKED) else Reply(201, SESSION) }
     }
     private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val deviceZone = deviceZoneId
 
     @AfterTest
     fun stop() {
+        deviceZoneId = deviceZone
         agents.close()
         router.close()
+    }
+
+    @Test
+    fun `an agent's chat is opened in the device's zone`() = runBlocking {
+        deviceZoneId = { "Asia/Kolkata" }
+
+        val chat = agents.agent("docs").chat(SessionOptions(title = "Billing"))
+
+        val created = router.requests.single { it.method == "POST" && it.path == "/v1/agents/sessions" }
+        assertEquals(JsonPrimitive("Asia/Kolkata"), Json.parseToJsonElement(created.body).jsonObject["timezone"])
+        chat.close()
+    }
+
+    @Test
+    fun `an agent's voice session that asks for no zone is opened without one`() = runBlocking {
+        deviceZoneId = { "Asia/Kolkata" }
+
+        val voice = agents.agent("docs").voice(SessionOptions(timezone = null))
+
+        val created = router.requests.single { it.method == "POST" && it.path == "/v1/agents/sessions" }
+        assertEquals(setOf("agent", "start_voice"), Json.parseToJsonElement(created.body).jsonObject.keys)
+        voice.close()
     }
 
     @Test

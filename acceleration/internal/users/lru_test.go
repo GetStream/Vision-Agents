@@ -91,6 +91,23 @@ func (s *SeenSuite) TestAUserReadAgainOutlivesOneAddedBefore() {
 	s.False(cache.Get("app", "1"))
 }
 
+func (s *SeenSuite) TestAUserIsReadBackWithWhatTheyWereHeldWith() {
+	cache := newSeen(3)
+	cache.Keep("app", "0", "guest", time.Time{})
+	cache.Add("app", "1")
+	cache.Add("app", "2")
+
+	held, found := cache.Value("app", "0")
+	cache.Add("app", "3")
+
+	s.True(found)
+	s.Equal("guest", held)
+	_, kept := cache.Value("app", "0")
+	s.True(kept, "reading a user's value is using them")
+	_, kept = cache.Value("app", "1")
+	s.False(kept)
+}
+
 func (s *SeenSuite) TestABusyAppTakesTheRoomAQuietOneIsNotUsing() {
 	cache := newSeen(10)
 	cache.Add("quiet", "jlahey")

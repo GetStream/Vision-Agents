@@ -254,8 +254,10 @@ _ = try await agents.scheduledTasks.update(page.items[0].id, next: .in("PT15M"))
 _ = try await agents.scheduledTasks.pause(page.items[0].id)
 ```
 
-A task runs on the user's clock, so open sessions with `options.timezone =
-TimeZone.current.identifier`, which the router remembers as the user's.
+A task runs on the user's clock. A session is opened in the device's zone, `TimeZone.current`,
+which the router remembers as the user's; `options.timezone` names another, and nil sends none.
+A device whose zone has no IANA name, only an offset, sends none rather than one the router
+would refuse.
 
 ### Guests
 

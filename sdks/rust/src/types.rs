@@ -1185,6 +1185,9 @@ pub struct AttachNumberRequest {
 ///`AttachedNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AttachedNumber {
+    ///The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_config_id: ::std::option::Option<::std::string::String>,
     pub route_id: ::std::string::String,
     ///Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
     pub sip_uri: ::std::string::String,
@@ -4289,7 +4292,7 @@ pub struct CreateSessionRequest {
     ///Omit it and the config decides, or en-low-latency when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
-    ///Who the agent joins the call as.
+    ///The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -7612,6 +7615,9 @@ impl ::std::convert::TryFrom<::std::string::String> for PhoneCapability {
 ///`PhoneNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PhoneNumber {
+    ///The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_config_id: ::std::option::Option<::std::string::String>,
     pub capabilities: ::std::vec::Vec<PhoneCapability>,
     pub country: ::std::string::String,
     pub e164: ::std::string::String,
@@ -9920,6 +9926,7 @@ pub struct Session {
     ///What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub usage: ::std::option::Option<CallUsage>,
+    ///The name the agent joined the call as. It is not the owner of the session.
     pub user_id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
@@ -10608,6 +10615,16 @@ pub struct SessionVideo {
     ///Track or processor source. Omitted requires one unambiguous available source.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
+}
+///`SetNumberAgentRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SetNumberAgentRequest {
+    ///The name of the agent config that answers the number. Give this or config_id.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent: ::std::option::Option<::std::string::String>,
+    ///The id of the agent config that answers the number. Give this or agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<::std::string::String>,
 }
 ///The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -11360,7 +11377,7 @@ pub struct Speech {
 ///`SpeechRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SpeechRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -12678,7 +12695,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TranscriptionMode {
 ///`TranscriptionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct TranscriptionRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.

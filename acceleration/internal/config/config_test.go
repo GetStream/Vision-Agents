@@ -628,6 +628,34 @@ func (s *ConfigSuite) TestAManageKeyOfItsOwnIsTaken() {
 	s.Equal("the-manage-key", config.Auth.ManageKey)
 }
 
+func (s *ConfigSuite) TestTheInboundKeysAreACommaSeparatedListAndExported() {
+	s.T().Setenv("ROUTER_CHAT_INBOUND_KEYS", "current-key=, previous-key=,")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"current-key=", "previous-key="}, config.Chat.InboundKeys)
+	s.Equal("current-key=,previous-key=", os.Getenv("ROUTER_CHAT_INBOUND_KEYS"))
+}
+
+func (s *ConfigSuite) TestTheInboundKeysAreASequenceInAFile() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("chat:\n  inbound_keys: [current-key=, previous-key=]\n"), 0o600))
+
+	config, _, err := Load(path)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"current-key=", "previous-key="}, config.Chat.InboundKeys)
+	s.Equal("current-key=,previous-key=", os.Getenv("ROUTER_CHAT_INBOUND_KEYS"), "what a file sets reaches the environment")
+}
+
+func (s *ConfigSuite) TestNoInboundKeysIsTheDefault() {
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Nil(config.Chat.InboundKeys)
+}
+
 func (s *ConfigSuite) TestAUsageServiceWithoutItsTokenIsRefused() {
 	s.T().Setenv("ROUTER_USAGE_URL", "http://usage:8070")
 

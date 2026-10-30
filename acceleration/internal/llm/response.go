@@ -43,9 +43,14 @@ type Response struct {
 	ReasoningText string
 	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
 	// response may carry both these and text: a model told to keep the caller company
-	// while it acts will say something and call a tool in the same breath.
+	// while it acts will say something and call a tool in the same breath. A failed
+	// response has none.
 	ToolCalls []ToolCall
-	Usage     Usage
+	// DroppedToolCalls are the whole calls a failed response wrote, which it no longer asks
+	// for. No caller runs them; they are kept so the response's cost, when its provider never
+	// said what it used, still counts what the model wrote.
+	DroppedToolCalls []ToolCall
+	Usage            Usage
 	// UsageReported is true when the provider said what the response used, zero included.
 	// A response cut short often carries none, and neither does an adapter that forgot to
 	// ask: its cost is then estimated rather than taken as nothing.

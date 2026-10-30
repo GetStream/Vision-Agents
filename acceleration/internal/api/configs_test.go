@@ -689,6 +689,80 @@ func (s *ConfigsSuite) TestAPublicMCPServerKeepsThePathAndQueryItWasGiven() {
 	s.Equal([]McpServer{{Name: "wwsd", Url: "https://8.8.8.8/mcp?workspace=wwsd"}}, value(created.McpServers))
 }
 
+// webhookGuardrail is a guardrail.md asking the server at url.
+func webhookGuardrail(url string) string {
+	return "---\ntype: webhook\nurl: " + url + "\n---\nMy server decides."
+}
+
+// privateWebhookURLs are guardrail webhooks a session could never post to, since it dials
+// only public addresses, with what refuses each: egress's check, or the https rule of a
+// policy. A path and a query, the endpoint's own, are kept on each.
+var privateWebhookURLs = map[string]string{
+	"https://10.1.2.3/check":            "must be a public https URL", // Private-Use, RFC 1918
+	"https://100.101.102.103/check":     "must be a public https URL", // Shared Address Space, RFC 6598
+	"https://[fd7a:115c:a1e0::1]/check": "must be a public https URL", // Unique-Local, RFC 4193
+	"https://127.0.0.1:8443/check?a=1":  "must be a public https URL", // Loopback, RFC 1122 section 3.2.1.3
+	"https://169.254.169.254/check":     "must be a public https URL", // Link Local, RFC 3927: the cloud metadata server
+	"https://[fe80::1]/check":           "must be a public https URL", // Link-Local Unicast, RFC 4291
+	"https://localhost/check":           "must be a public https URL", // resolves to loopback, RFC 6761 section 6.3
+	"https://2130706433/check":          "must be a public https URL", // 127.0.0.1 written as one number
+	"https://hooks.acme.invalid/check":  "must be a public https URL", // never resolves, RFC 6761 section 6.4
+	"https://user:pass@8.8.8.8/check":   "must be a public https URL", // userinfo, which egress never sends
+	"https:///check":                    "must be a public https URL", // no host
+	"https://hooks acme.com/check":      "must be a public https URL", // a host url.Parse refuses
+	"http://8.8.8.8/check":              "not an https url",           // plain http, which egress never sends
+}
+
+func (s *ConfigsSuite) TestAGuardrailWebhookOnAPrivateAddressIsRefused() {
+	for url, complaint := range privateWebhookURLs {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "support", "guardrail": webhookGuardrail(url)})
+
+		s.Equal(http.StatusBadRequest, status, url)
+		s.Contains(failure, complaint, url)
+	}
+}
+
+func (s *ConfigsSuite) TestAGuardrailWebhookRefusalDoesNotTellAnUnresolvableNameFromAPrivateOne() {
+	refusals := map[string]bool{}
+	for _, url := range []string{"https://hooks.acme.invalid/check", "https://localhost/check", "https://10.1.2.3/check"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "support", "guardrail": webhookGuardrail(url)})
+		s.Equal(http.StatusBadRequest, status, url)
+		refusals[failure] = true
+	}
+
+	s.Len(refusals, 1, "every refusal reads the same")
+}
+
+func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateGuardrailWebhook() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	policy := webhookGuardrail("https://169.254.169.254/check")
+
+	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "guardrail": policy})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "guardrail: url must be a public https URL")
+
+	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"guardrail": policy})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "guardrail: url must be a public https URL")
+}
+
+func (s *ConfigsSuite) TestAPublicGuardrailWebhookIsKeptAsWritten() {
+	// Unchanged from before public addresses were required: the path and the query are the
+	// endpoint's own.
+	policy := webhookGuardrail("https://8.8.8.8/check?tenant=acme") // public, Google DNS
+	created := s.createConfig(map[string]any{"name": "support", "guardrail": policy})
+	s.Equal(policy, value(created.Guardrail))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"guardrail": webhookGuardrail("https://[2001:4860:4860::8888]/check")}, &patched))
+	s.Equal(webhookGuardrail("https://[2001:4860:4860::8888]/check"), value(patched.Guardrail))
+}
+
 func (s *ConfigsSuite) TestAConfigStoredWithAPrivateMCPServerStillReads() {
 	config := store.AgentConfig{CustomerID: s.customerID(), Name: "concierge", Mode: "text",
 		MCPServers: []store.MCPServer{{Name: "wwsd", URL: privateMCPURLs[1]}}}

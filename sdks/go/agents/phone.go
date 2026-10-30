@@ -57,8 +57,13 @@ func (a *Agent) WaitForCall(ctx context.Context, number string) (*Session, error
 	if err != nil {
 		return nil, err
 	}
-	if _, err := telephony.Attach(ctx, number); err != nil {
+	attached, err := telephony.Attach(ctx, number)
+	if err != nil {
 		return nil, err
+	}
+	// The router answers these calls itself, so no dispatch would ever arrive.
+	if attached.AgentConfigId != nil {
+		return nil, fmt.Errorf("agents: %s is answered by agent config %s; remove the agent to answer it with a worker", number, *attached.AgentConfigId)
 	}
 	backend, err := a.options.LLM.Backend()
 	if err != nil {

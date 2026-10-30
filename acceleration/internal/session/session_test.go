@@ -1180,7 +1180,7 @@ func (s *SessionSuite) TestAForkReadFromRecordsStartsFromThatHistory() {
 func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept() {
 	s.manages()
 	created := s.writes(Spec{Incognito: true, History: []persistent.HistoryLine{
-		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "user", Text: "Where is order 3825?"},
 		{Role: "assistant", Text: "It ships on Friday."},
 		{Role: "user", Text: "Thanks."},
 	}})
@@ -1189,7 +1189,7 @@ func (s *SessionSuite) TestATextSessionAsksTheModelWithTheHistoryTheCallerKept()
 
 	s.eventually(func() bool { return len(s.model.requests()) > 0 }, "the model was never asked")
 	s.Equal([]string{
-		"user: Where is order 4471?",
+		"user: Where is order 3825?",
 		"assistant: It ships on Friday.",
 		"user: Thanks.",
 		"user: When does it ship?",
@@ -1202,7 +1202,7 @@ func (s *SessionSuite) TestACallAnswersFromTheHistoryTheCallerKeptAndRecordsOnly
 	s.records = &stubTranscript{}
 	s.manages()
 	created := s.joins(Spec{CallID: "call-1", History: []persistent.HistoryLine{
-		{Role: "user", Text: "Where is order 4471?"},
+		{Role: "user", Text: "Where is order 3825?"},
 		{Role: "assistant", Text: "It ships on Friday."},
 	}})
 
@@ -1210,7 +1210,7 @@ func (s *SessionSuite) TestACallAnswersFromTheHistoryTheCallerKeptAndRecordsOnly
 
 	s.Require().NoError(err)
 	s.Equal([]string{
-		"user: Where is order 4471?",
+		"user: Where is order 3825?",
 		"assistant: It ships on Friday.",
 		"user: and to another address?",
 	}, handed(s.model.requests()[0]))

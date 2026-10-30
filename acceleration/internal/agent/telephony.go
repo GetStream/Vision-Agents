@@ -178,34 +178,40 @@ const alreadyCalled = "You already made this exact call and it returned the foll
 const didNotWork = "That did not work: "
 
 // answeredSinceCaller returns the result of an identical call, the same tool with the same
-// arguments, already answered since the caller last spoke. After a result Gemma often asks
-// for the same call again, and run twice a dispatch or a booking is made twice. A call that
-// failed may be tried again, since what failed may not fail twice, and so may one whose result
-// says nothing was done (undoneResult), and code whose result tells the model to run it again
-// now that the user connected what it needed (harness.RunAgain, connected being the bindings
-// the user has connected): answered from that result, the repeat after the user connected got
-// the 401 from before.
+// arguments, already answered since the caller last spoke, while no call since may have
+// changed something. A model handed a result may ask for the same call again, and run twice
+// an order or a booking is made twice. A call that failed may be tried again, since what
+// failed may not fail twice, and so may one whose result says nothing was done
+// (undoneResult), and code whose result tells the model to run it again now that the user
+// connected what it needed (harness.RunAgain, connected being the bindings the user has
+// connected): answered from the earlier result, it would repeat the failure the user has
+// since fixed.
 //
-// A call that changes something is matched across the whole call: Nemotron booked a table,
-// heard "Yes, please go ahead" and booked it again, and the second booking failed against the
-// first.
+// Once the caller speaks, the same call is theirs to ask for again: a second identical order
+// is a second order. And a call that may have changed something (changedState) ends the
+// match, a read because what it read may no longer be so, a write because it may have been
+// undone or used up by the call in between.
 func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []string) (string, bool) {
 	same := func(other llm.ToolCall) bool {
 		return other.Name == call.Name && fillsIn(other.Arguments, call.Arguments)
 	}
-	changes := !readsOnly(call.Name)
-	for i := len(history) - 1; i >= 0 && (changes || history[i].Role != llm.User); i-- {
+	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
 		if history[i].Role != llm.ToolResult || failedResult(history[i].Content) ||
 			undoneResult(history[i].Content) || strings.Contains(history[i].Content, notRun) ||
 			call.Name == sandbox.ToolName && harness.RunAgain(history[i].Content, connected) {
 			continue
 		}
-		for j := i - 1; j >= 0 && (changes || history[j].Role != llm.User); j-- {
+		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == history[i].ToolCallID && same(asked)
 			}) {
 				return history[i].Content, true
 			}
+		}
+		// A call is taken as a change unless its name says it only reads, which can only
+		// cost a call that was not needed.
+		if changedState(history, i) {
+			return "", false
 		}
 	}
 	return "", false
@@ -243,17 +249,20 @@ func undoneResult(content string) bool {
 	return slices.Contains(sharedStatuses, status) && hasMessage && len(body) == 2
 }
 
-// refusedBefore returns the answer of an identical call the tool already refused on this
-// call ({"ok": false}, {"error": ...}), as opposed to one that could not be made. Nemotron
-// sent verify_account the PIN it had misheard three times over and was refused each time;
-// only what the caller says next can change the answer.
+// refusedBefore returns the answer of an identical call the tool already refused since the
+// caller last spoke ({"ok": false}, {"error": ...}). Sent again with nothing new from the
+// caller, the same values get the same answer. Once the caller has spoken they may have
+// confirmed the values or put right what the tool needed, so the call is theirs to make again.
+// A call that could not be made, or that failed for a reason of the moment (transientResult),
+// was not refused at all.
 func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
-	for i := len(history) - 1; i >= 0; i-- {
+	for i := len(history) - 1; i >= 0 && history[i].Role != llm.User; i-- {
 		result := history[i]
-		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) || !failedResult(result.Content) {
+		if result.Role != llm.ToolResult || strings.HasPrefix(result.Content, didNotWork) ||
+			!failedResult(result.Content) || transientResult(result.Content) {
 			continue
 		}
-		for j := i - 1; j >= 0; j-- {
+		for j := i - 1; j >= 0 && history[j].Role != llm.User; j-- {
 			if slices.ContainsFunc(history[j].ToolCalls, func(asked llm.ToolCall) bool {
 				return asked.ID == result.ToolCallID && asked.Name == call.Name && sameArguments(asked.Arguments, call.Arguments)
 			}) {
@@ -264,18 +273,74 @@ func refusedBefore(history []llm.Message, call llm.ToolCall) (string, bool) {
 	return "", false
 }
 
+// changedState reports whether history[i] is the result of a call that may have changed
+// something: it succeeded, and its tool is not one whose name says it only reads.
+func changedState(history []llm.Message, i int) bool {
+	result := history[i]
+	if result.Role != llm.ToolResult || failedResult(result.Content) || undoneResult(result.Content) {
+		return false
+	}
+	for j := i - 1; j >= 0; j-- {
+		for _, asked := range history[j].ToolCalls {
+			if asked.ID == result.ToolCallID {
+				return !readsOnly(asked.Name)
+			}
+		}
+	}
+	return false
+}
+
+// transientWords are what a tool's error says when it failed for a reason of the moment
+// rather than because of the values it was sent.
+var transientWords = []string{"timeout", "timed out", "rate limit", "too many requests",
+	"service unavailable", "temporarily unavailable"}
+
+// transientResult reports whether a failed tool result says the same call may succeed if made
+// again: an HTTP status that says so (llm.TransientStatus) under "status", "status_code" or
+// "code", at the top or inside "error", or an error message in transientWords.
+func transientResult(content string) bool {
+	var body map[string]any
+	if json.Unmarshal([]byte(content), &body) != nil {
+		return false
+	}
+	fields := []map[string]any{body}
+	var messages []string
+	switch failure := body["error"].(type) {
+	case string:
+		messages = append(messages, failure)
+	case map[string]any:
+		fields = append(fields, failure)
+		if message, ok := failure["message"].(string); ok {
+			messages = append(messages, message)
+		}
+	}
+	if message, ok := body["message"].(string); ok {
+		messages = append(messages, message)
+	}
+	for _, field := range fields {
+		for _, key := range []string{"status", "status_code", "code"} {
+			if status, ok := field[key].(float64); ok && status == float64(int(status)) && llm.TransientStatus(int(status)) {
+				return true
+			}
+		}
+	}
+	return slices.ContainsFunc(messages, func(message string) bool {
+		message = strings.ToLower(message)
+		return slices.ContainsFunc(transientWords, func(word string) bool { return strings.Contains(message, word) })
+	})
+}
+
 // alreadyRefused opens the answer to a call repeated after the tool refused it.
 // It opens with didNotWork so that it backs no claim.
 const alreadyRefused = didNotWork + "you already made this exact call with these values and it was refused: "
 
 // tryOtherValues closes it.
-const tryOtherValues = ". Do not call it again with the same values. Read them back to the caller, " +
-	"digit by digit, and ask which one is wrong."
+const tryOtherValues = ". Do not call it again with the same values before the caller says more."
 
-// fillsIn reports whether a later call's arguments are an earlier call's with at most the
-// text arguments it left empty or out filled in, and the others it left out given their
-// zero value. create_reservation went out without the phone, then again with it and
-// "high_chair": false, and the second booking failed against the first.
+// fillsIn reports whether a later call's arguments are an earlier call's, with a key left out
+// taken to be the same as one sent with no value: null or blank text. Any value the earlier
+// call did not have makes a different call: a date added to a booking asks for that date,
+// and even false or zero may not be what the tool does when the key is left out.
 func fillsIn(earlier, later string) bool {
 	if sameArguments(earlier, later) {
 		return true
@@ -285,21 +350,22 @@ func fillsIn(earlier, later string) bool {
 		return false
 	}
 	for key, value := range before {
-		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
-			continue
-		}
-		if !reflect.DeepEqual(value, after[key]) {
+		if !reflect.DeepEqual(value, after[key]) && !(empty(value) && empty(after[key])) {
 			return false
 		}
 	}
 	for key, value := range after {
-		if _, ok := before[key]; !ok {
-			if _, text := value.(string); !text && !reflect.ValueOf(value).IsZero() {
-				return false
-			}
+		if _, ok := before[key]; !ok && !empty(value) {
+			return false
 		}
 	}
 	return true
+}
+
+// empty reports whether an argument has no value: absent, null or blank text.
+func empty(value any) bool {
+	text, isText := value.(string)
+	return value == nil || isText && strings.TrimSpace(text) == ""
 }
 
 // sameArguments compares two calls' arguments as JSON, so spacing and key order do not count.
@@ -320,8 +386,8 @@ const leftBlank = "%s was not run: %s left empty. Take them from what the caller
 	"call it again, or ask the caller for them."
 
 // blankRequired returns the arguments a tool's schema requires that a call left out or empty.
-// Made to call, Qwen fills the schema with whatever it has, and verify_account went out
-// with the PIN alone although the caller had just given the last four and the address.
+// A model made to call fills the schema with whatever it has, and can leave out a value the
+// caller has already given.
 func blankRequired(tool harness.Tool, arguments string) []string {
 	required, _ := tool.Parameters["required"].([]any)
 	if len(required) == 0 {
@@ -417,6 +483,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
 	record := a.record()
+	// What the operator told the agent is theirs to give too: an ID or number written in it.
+	told := a.told()
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
@@ -424,15 +492,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(alreadyCalled + earlier)
 	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
-	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools())); unfound {
+	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
-	} else if key, known, missing := missingID(record, requested.Call, a.availableTools()); missing {
-		parts = llm.TextParts(unfoundIDResult(key, "", known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
-	} else if key, empty := emptyNamed(requested.Call, a.availableTools()); empty {
-		parts = llm.TextParts(emptyResult(requested.Call.Name, key))
-	} else if key, value, heard, unheard := unheardNumber(record, requested.Call); unheard {
+	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
 		parts = llm.TextParts(misspelledResult(name, spelled))
@@ -464,8 +528,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		}
 	}
 	if err != nil {
-		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. If it names a step one of your "+
-			"tools does, call that tool and try again; otherwise tell the caller, in your own words.", err))
+		parts = llm.TextParts(fmt.Sprintf(didNotWork+"%s. Tell the caller, in your own words.", err))
 	}
 	result := llm.TextOf(parts)
 	a.mu.Lock()

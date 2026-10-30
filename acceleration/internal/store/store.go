@@ -599,9 +599,11 @@ func notCancelled(prefix string) string {
 
 // Rollup aggregates the requests in [from, to) into the rollup tables for the given
 // granularity, both the provider breakdown and the cost-tag breakdown, and returns how
-// many buckets were written across the two. It is idempotent: re-running it recomputes
-// the buckets it touches, so a missed run is fixed by running it again over the same
-// window.
+// many buckets were written across the two. The window is widened to whole buckets, from
+// the start of the one holding from to the end of the one holding the last instant before
+// to, because a bucket is written whole: summed over part of it, it would replace the
+// totals of the rest. It is idempotent: re-running it recomputes the buckets it touches,
+// so a missed run is fixed by running it again over the same window.
 func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	if !granularity.Valid() {
 		return 0, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
@@ -619,6 +621,15 @@ func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to ti
 		return 0, err
 	}
 	return providers + tags, nil
+}
+
+// wholeBuckets is a rollup's WHERE on column: the whole buckets [from, to) touches, taking
+// from and to as its two parameters. Postgres keeps timestamps to the microsecond, so to
+// less one is the window's last instant.
+func wholeBuckets(granularity Granularity, column string) string {
+	return fmt.Sprintf("%[1]s >= date_trunc('%[2]s', ?::timestamptz) AND %[1]s < "+
+		"date_trunc('%[2]s', ?::timestamptz - interval '1 microsecond') + interval '1 %[2]s'",
+		column, granularity.truncateUnit())
 }
 
 func (s *Store) rollupProviders(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
@@ -650,7 +661,7 @@ SELECT
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s),
     PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s)
 FROM requests
-WHERE started_at >= ? AND started_at < ?
+WHERE %[4]s
 GROUP BY modality, customer_id, provider, model, bucket
 ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     audio_ms_total = EXCLUDED.audio_ms_total,
@@ -664,7 +675,7 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.table(), granularity.truncateUnit(), notCancelled(""))
+		granularity.table(), granularity.truncateUnit(), notCancelled(""), wholeBuckets(granularity, "started_at"))
 
 	// Each shard rolls up the requests it recorded, into its own rollups.
 	result, err := s.shard.ExecContext(ctx, query, from, to)
@@ -712,7 +723,7 @@ SELECT
     PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s)
 FROM requests AS r
 CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
-WHERE r.started_at >= ? AND r.started_at < ?
+WHERE %[4]s
 GROUP BY r.modality, r.customer_id, tag.key, tag.value, bucket
 ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     audio_ms_total = EXCLUDED.audio_ms_total,
@@ -726,7 +737,7 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."))
+		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."), wholeBuckets(granularity, "r.started_at"))
 
 	result, err := s.shard.ExecContext(ctx, query, from, to)
 	if err != nil {
@@ -1626,6 +1637,7 @@ func releaseNumber(ctx context.Context, db bun.IDB, customerID, e164 string, at 
 	result, err := db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("released_at = ?", at).
 		Set("attached_at = NULL").
+		Set("config_id = NULL").
 		Set("sip_trunk_id = NULL").
 		Set("bridge_uri = NULL").
 		Set("bridge_username = NULL").
@@ -1661,7 +1673,11 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164 string, attac
 		return stack.Wrap(errors.New("store: a trunk id is required"))
 	}
 
-	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+	update := s.db.NewUpdate().Model((*PhoneNumber)(nil))
+	if attached.ConfigID != "" {
+		update.Set("config_id = ?", attached.ConfigID)
+	}
+	result, err := update.
 		Set("stream_trunk_id = ?", attached.TrunkID).
 		Set("stream_route_id = ?", nullable(attached.RouteID)).
 		Set("stream_app_pk = ?", nullablePin(attached.StreamAppPK)).
@@ -1697,6 +1713,8 @@ type NumberAttachment struct {
 	StreamAppPK int64
 	CallType    string
 	CallID      string
+	// ConfigID is the agent the number keeps answering with. Empty leaves its agent as it is.
+	ConfigID string
 	// BridgeURI and BridgeUsername are the trunk's address, kept whenever a number is attached.
 	// The sealed password is empty for a service with no key to seal it under.
 	BridgeURI                string
@@ -1804,6 +1822,79 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		return PhoneNumber{}, stack.Wrap(errors.New("store: a customer and a number are required"))
 	}
 	return heldNumber(ctx, s.db.NewSelect(), customerID, e164)
+}
+
+// SetNumberAgent makes a config answer an attached number's calls, replacing any it had.
+func (s *Store) SetNumberAgent(ctx context.Context, customerID, e164, configID string) error {
+	if customerID == "" || e164 == "" || configID == "" {
+		return stack.Wrap(errors.New("store: a customer, a number and a config are required"))
+	}
+	// Only an attached number has an agent, and a detach can land between the caller's
+	// read and this write.
+	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("config_id = ?", configID).
+		Where("customer_id = ?", customerID).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Where("attached_at IS NOT NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set number agent: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set number agent: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds attached", e164, customerID)})
+	}
+	return nil
+}
+
+// ClearNumberAgent sends a number's calls back to dispatch. A number with no agent is left
+// as it is.
+func (s *Store) ClearNumberAgent(ctx context.Context, customerID, e164 string) error {
+	if customerID == "" || e164 == "" {
+		return stack.Wrap(errors.New("store: a customer and a number are required"))
+	}
+	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("config_id = NULL").
+		Where("customer_id = ?", customerID).
+		Where("e164 = ?", e164).
+		Where("released_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: clear number agent: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: clear number agent: %w", err))
+	}
+	if affected == 0 {
+		return stack.Wrap(numberNotHeld{fmt.Sprintf("store: %s is not a number %s holds", e164, customerID)})
+	}
+	return nil
+}
+
+// NumbersAnsweredBy returns the numbers a config answers, sorted.
+func (s *Store) NumbersAnsweredBy(ctx context.Context, customerID, configID string) ([]string, error) {
+	if customerID == "" || configID == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a config are required"))
+	}
+	var numbers []string
+	err := s.db.NewSelect().Model((*PhoneNumber)(nil)).
+		Column("e164").
+		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
+		Where("released_at IS NULL").
+		// A router from before agents on numbers detaches without clearing the agent.
+		Where("attached_at IS NOT NULL").
+		Order("e164").
+		Scan(ctx, &numbers)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: numbers answered by: %w", err))
+	}
+	return numbers, nil
 }
 
 // heldNumber is one number a customer holds, read by query.

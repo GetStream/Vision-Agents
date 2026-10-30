@@ -130,6 +130,11 @@ class SessionOptions:
         return_url: The app's own page a login or step-up the conversation asks for goes
             back to, with connection_id and status added to its query; its origin is the page
             that opens the consent's launch_url. Empty sends them back to the dashboard.
+        timezone: The person's IANA zone, such as ``Europe/Amsterdam``, which a device knows
+            and the router does not. The agent tells the date and the hour in it, and for a
+            user the caller may name it is remembered as theirs for the scheduled tasks and
+            sessions that follow. Empty leaves the user's stored zone, then the agent
+            config's default, to decide. An unknown zone is refused.
         interim: Also report what the caller is part way through saying.
         decisions: Report the router's own routing decisions. Off here by default, because it
             is the router explaining itself several times a second.
@@ -150,6 +155,7 @@ class SessionOptions:
     user_id: str = ""
     connector_bindings: Optional[dict[str, str]] = None
     return_url: str = ""
+    timezone: str = ""
 
     interim: bool = False
     decisions: bool = False
@@ -382,6 +388,8 @@ class Sessions:
             ]
         if options.return_url:
             request.return_url = options.return_url
+        if options.timezone:
+            request.timezone = options.timezone
         if options.model_overwrites is not None:
             request.model_overwrites = options.model_overwrites
         if options.custom:

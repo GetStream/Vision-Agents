@@ -479,6 +479,12 @@ func (w *ResponseWriter) settle(failure error) {
 	if !w.firstTokenAt.IsZero() {
 		timeToFirstToken = float64(w.firstTokenAt.Sub(w.startedAt).Microseconds()) / 1000
 	}
+	// A failed response asks for nothing: refused by a screen or broken off by its provider,
+	// it is not an answer that stands, and a caller running its calls would act on it anyway.
+	calls, dropped := w.assembled(), []ToolCall(nil)
+	if w.status == StatusFailed {
+		calls, dropped = nil, calls
+	}
 
 	w.emit(ResponseCompleted{Response: Response{
 		ID:                 w.options.ResponseID,
@@ -487,7 +493,8 @@ func (w *ResponseWriter) settle(failure error) {
 		Model:              w.options.Model,
 		OutputText:         w.text.String(),
 		ReasoningText:      w.reasoning.String(),
-		ToolCalls:          w.assembled(),
+		ToolCalls:          calls,
+		DroppedToolCalls:   dropped,
 		Usage:              w.usage,
 		UsageReported:      w.usageReported,
 		TimedOut:           w.timedOut,

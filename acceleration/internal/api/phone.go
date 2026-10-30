@@ -272,9 +272,80 @@ func (s *Server) attachPhoneNumber(ctx context.Context, request *attachPhoneNumb
 		return nil, phoneFailure(s.logger, err)
 	}
 
+	// Attaching never sets the agent, so it is read back for a worker to learn that its
+	// number's calls will not be dispatched to it.
+	held, err := s.store.Number(ctx, customerID, request.E164)
+	if err != nil {
+		return nil, err
+	}
 	return &attachPhoneNumberResponse{Body: AttachedNumber{TrunkId: attached.TrunkID,
-		RouteId: attached.RouteID,
-		SipUri:  attached.Bridge.URI}}, nil
+		RouteId:       attached.RouteID,
+		SipUri:        attached.Bridge.URI,
+		AgentConfigId: phoneNumber(held).AgentConfigId}}, nil
+}
+
+// setPhoneNumberAgent makes an agent config answer a number's calls instead of dispatch.
+func (s *Server) setPhoneNumberAgent(ctx context.Context, request *setPhoneNumberAgentRequest) (*setPhoneNumberAgentResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+
+	held, err := s.store.Number(ctx, customerID, request.E164)
+	if isNumberNotHeld(err) {
+		return nil, notFound(err.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	if held.AttachedAt == nil {
+		return nil, errNumberNotAttached
+	}
+	// Every caller of such a number lands in the one call, where a session per caller
+	// cannot be started.
+	if held.StreamCallID != "" {
+		return nil, errNumberOnItsOwnCall
+	}
+	config, err := s.configFor(ctx, customerID, request.Body.ConfigId, request.Body.Agent)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, invalidRequest("name an agent by config_id or by agent")
+	}
+
+	err = s.store.SetNumberAgent(ctx, customerID, request.E164, config.ID)
+	if isNumberNotHeld(err) {
+		return nil, errNumberNotAttached
+	}
+	if err != nil {
+		return nil, err
+	}
+	held.ConfigID = config.ID
+	return &setPhoneNumberAgentResponse{Body: phoneNumber(held)}, nil
+}
+
+// removePhoneNumberAgent sends a number's calls back to dispatch.
+func (s *Server) removePhoneNumberAgent(ctx context.Context, request *removePhoneNumberAgentRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.phone == nil {
+		return nil, errNoTelephony
+	}
+
+	err := s.store.ClearNumberAgent(ctx, customerID, request.E164)
+	if isNumberNotHeld(err) {
+		return nil, notFound(err.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // detachPhoneNumber stops a number's callers reaching the agent, keeping the number.
@@ -542,6 +613,8 @@ var (
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+	errNumberNotAttached  = conflict("The number is not attached: attach the number first.")
+	errNumberOnItsOwnCall = conflict("Every caller of this number joins one call: attach the number again so each caller gets a session of their own.")
 	errTelephonySuspended = APIError{Type: ErrorTypePermission, Code: codeTelephonySuspended,
 		Message: "This app's telephony is suspended. Contact Stream support."}
 )
@@ -795,6 +868,10 @@ func phoneNumber(held store.PhoneNumber) PhoneNumber {
 		tags := held.Tags
 		number.Tags = &tags
 	}
+	if held.ConfigID != "" {
+		config := held.ConfigID
+		number.AgentConfigId = &config
+	}
 	// A number on a trunk only to place calls is not attached: its callers reach no agent.
 	if held.AttachedAt != nil {
 		trunk := held.StreamTrunkID
@@ -983,6 +1060,32 @@ func (s *Server) registerPhone(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.detachPhoneNumber)
 	huma.Register(api, huma.Operation{
+		OperationID: "setPhoneNumberAgent",
+		Method:      http.MethodPut,
+		Path:        "/v1/phone/numbers/{e164}/agent",
+		Summary:     "Have an agent answer a number's calls",
+		Description: "Each caller gets a session of their own with the agent config, and no call is " +
+			"dispatched to a worker. Replaces the agent the number had. The number must be attached; " +
+			"detaching or releasing it removes its agent.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The agent now answers the number"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
+	}, s.setPhoneNumberAgent)
+	huma.Register(api, huma.Operation{
+		OperationID: "removePhoneNumberAgent",
+		Method:      http.MethodDelete,
+		Path:        "/v1/phone/numbers/{e164}/agent",
+		Summary:     "Send a number's calls back to dispatch",
+		Description: "The number's calls are dispatched to a worker again. Removing the agent of a " +
+			"number that has none changes nothing.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "No agent answers the number"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.removePhoneNumberAgent)
+	huma.Register(api, huma.Operation{
 		OperationID: "placePhoneCall",
 		Method:      http.MethodPost,
 		Path:        "/v1/phone/calls",
@@ -1133,6 +1236,19 @@ type detachPhoneNumberRequest struct {
 	E164 string `path:"e164" doc:"The number in +15551234567 form."`
 }
 
+type setPhoneNumberAgentRequest struct {
+	E164 string                 `path:"e164" doc:"The number in +15551234567 form."`
+	Body *SetNumberAgentRequest `required:"true"`
+}
+
+type setPhoneNumberAgentResponse struct {
+	Body PhoneNumber
+}
+
+type removePhoneNumberAgentRequest struct {
+	E164 string `path:"e164" doc:"The number in +15551234567 form."`
+}
+
 type attachPhoneNumberRequest struct {
 	E164 string `path:"e164"`
 	Body *AttachNumberRequest
@@ -1207,11 +1323,18 @@ type AttachNumberRequest struct {
 	AllowedIps *[]string `json:"allowed_ips,omitempty" doc:"The vendor's signalling addresses, as IPs or CIDR blocks."`
 }
 
+// SetNumberAgentRequest is the SetNumberAgentRequest schema.
+type SetNumberAgentRequest struct {
+	Agent    *string `json:"agent,omitempty" doc:"The name of the agent config that answers the number. Give this or config_id."`
+	ConfigId *string `json:"config_id,omitempty" doc:"The id of the agent config that answers the number. Give this or agent."`
+}
+
 // AttachedNumber is the AttachedNumber schema.
 type AttachedNumber struct {
-	RouteId string `json:"route_id"`
-	SipUri  string `json:"sip_uri" doc:"Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com."`
-	TrunkId string `json:"trunk_id"`
+	AgentConfigId *string `json:"agent_config_id,omitempty" doc:"The agent config that answers the number's calls. Present, no call is dispatched to a worker."`
+	RouteId       string  `json:"route_id"`
+	SipUri        string  `json:"sip_uri" doc:"Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com."`
+	TrunkId       string  `json:"trunk_id"`
 }
 
 // AvailableNumber is the AvailableNumber schema.
@@ -1301,6 +1424,7 @@ func (PhoneCapability) Schema(registry huma.Registry) *huma.Schema {
 
 // PhoneNumber is the PhoneNumber schema.
 type PhoneNumber struct {
+	AgentConfigId     *string            `json:"agent_config_id,omitempty" doc:"The agent config that answers the number's calls. Absent, its calls are dispatched to a worker."`
 	Capabilities      []PhoneCapability  `json:"capabilities" nullable:"false"`
 	Country           string             `json:"country"`
 	E164              string             `json:"e164"`

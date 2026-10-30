@@ -8,8 +8,8 @@ import (
 )
 
 // Coerce rewrites a call's top-level arguments to the types its schema declares, where the
-// model wrote one as another: Gemma passed patio as "True" and a party size as "4", and
-// a tool that checks types refuses the call or reads the string as false. Arguments that do
+// model wrote one as another, such as a boolean as "True" or an integer as "4", which a
+// tool that checks types refuses or reads as false. Arguments that do
 // not parse, and values with no sensible reading, are left as the model wrote them.
 func Coerce(parameters map[string]any, arguments string) string {
 	properties, _ := parameters["properties"].(map[string]any)

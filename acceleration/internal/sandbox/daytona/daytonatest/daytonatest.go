@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"slices"
 	"strings"
 	"sync"
@@ -399,6 +401,24 @@ func (s *Server) toolbox(w http.ResponseWriter, r *http.Request, id, rest string
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(data)
+	case "files/bulk-download":
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		parts := multipart.NewWriter(w)
+		w.Header().Set("Content-Type", parts.FormDataContentType())
+		for _, name := range body.Paths {
+			data, ok := s.files[id][name]
+			disposition := fmt.Sprintf(`form-data; name="file"; filename=%q`, name)
+			if !ok {
+				disposition = `form-data; name="error"`
+				data = []byte(`{"message":"no such file","statusCode":404}`)
+			}
+			part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
+			_, _ = part.Write(data)
+		}
+		_ = parts.Close()
 	default:
 		answer(w, http.StatusNotFound, map[string]any{"message": "no such toolbox route " + rest})
 	}

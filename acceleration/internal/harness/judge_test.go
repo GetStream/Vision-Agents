@@ -132,7 +132,7 @@ func (s *JudgeSuite) TestTheJudgeIsToldACallerWentOnUnanswered() {
 
 func (s *JudgeSuite) TestARequestTheTranscriberHasNotEndedWaitsForTheEnd() {
 	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9})
-	said := FlowTurn{ID: "t1", Participant: "caller", Text: "A table for four this Saturday at seven thirty"}
+	said := FlowTurn{ID: "t1", Participant: "caller", Text: "A table for three this Friday at six fifteen"}
 
 	first := s.ruling(said)
 	said.ID, said.Ended = "t2", true
@@ -199,7 +199,7 @@ func (s *JudgeSuite) TestARecordedMenuIsWaitedOnThoughItIsNotForTheAgent() {
 func (s *JudgeSuite) TestACallerStillGivingWhatTheyPromisedIsWaitedOn() {
 	s.answer(map[string]float64{"addressed_to_agent": 0.95, "finished": 0.9, "listing": 0.9})
 
-	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "My name is Maya Chen."})
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "My name is Ines Moreau."})
 
 	s.Equal(Wait, got.Disposition)
 }
@@ -208,7 +208,7 @@ func (s *JudgeSuite) TestAPlainRequestJevIsUnsureOfIsAnsweredRatherThanQuestione
 	s.answer(map[string]float64{"addressed_to_agent": 0.97, "finished": 0.95, "ambiguous": 0.56})
 
 	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller",
-		Text: "I'd like to move my Thursday appointment to Tuesday morning please.", Ended: true})
+		Text: "I'd like to move my Monday visit to Wednesday afternoon please.", Ended: true})
 
 	s.Equal(Respond, got.Disposition)
 }
@@ -216,7 +216,7 @@ func (s *JudgeSuite) TestAPlainRequestJevIsUnsureOfIsAnsweredRatherThanQuestione
 func (s *JudgeSuite) TestAPauseJevIsUnsureEndsTheThoughtIsWaitedOn() {
 	s.answer(map[string]float64{"addressed_to_agent": 0.96, "finished": 0.62})
 
-	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Maya Chen, born March fourth 1987"})
+	got := s.ruling(FlowTurn{ID: "t1", Participant: "caller", Text: "Ines Moreau, born November twenty third 1979"})
 
 	s.Equal(Wait, got.Disposition)
 }

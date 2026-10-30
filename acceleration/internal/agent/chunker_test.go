@@ -82,9 +82,9 @@ func (s *ChunkerSuite) TestAReplyOpensWithItsFirstClause() {
 	// clause rather than waiting for the sentence to end.
 	var chunker chunker
 
-	s.Equal([]string{"Of course, a table for four on Saturday,"},
-		texts(chunker.Add("Of course, a table for four on Saturday, ")))
-	s.Equal([]string{"at 7:30, on the patio."}, texts(chunker.Add("at 7:30, on the patio.")),
+	s.Equal([]string{"Of course, a table for three on Friday,"},
+		texts(chunker.Add("Of course, a table for three on Friday, ")))
+	s.Equal([]string{"at 6:15, by the window."}, texts(chunker.Add("at 6:15, by the window.")),
 		"after the opening clause the rest of the reply goes by the sentence")
 }
 
@@ -94,7 +94,7 @@ func (s *ChunkerSuite) TestAShortLeadInWaitsForTheSentence() {
 
 func (s *ChunkerSuite) TestANumberIsNotSplitAtItsSeparator() {
 	s.Equal([]string{"The total comes to 1,250 dollars."}, s.stream("The total comes to 1,250 dollars."))
-	s.Equal([]string{"Your table is booked at 7:30 on Saturday."}, s.stream("Your table is booked at 7:30 on Saturday."))
+	s.Equal([]string{"Your table is booked at 6:15 on Friday."}, s.stream("Your table is booked at 6:15 on Friday."))
 }
 
 func (s *ChunkerSuite) TestADecimalDoesNotEndASentenceAtItsPoint() {
@@ -132,7 +132,7 @@ func (s *ChunkerSuite) TestAReplyEndingWithAnIntegerIsReturnedOnFlush() {
 
 func (s *ChunkerSuite) TestEachReplyOpensWithItsOwnClause() {
 	var chunker chunker
-	chunker.Add("Of course, a table for four on Saturday, at 7:30.")
+	chunker.Add("Of course, a table for three on Friday, at 6:15.")
 	chunker.Flush()
 
 	s.Equal([]string{"Let me check the calendar,", "one moment."},

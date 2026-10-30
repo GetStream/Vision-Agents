@@ -28,9 +28,7 @@ const composeNote = "Write only the one short sentence you would say to the call
 // What a composed line is for.
 const (
 	holdPurpose = "You have just started on what they asked and have said nothing yet: " +
-		"tell them what you are doing, so they are not left in silence, and say back the " +
-		"details you are using (a number or ID digit by digit, a name, a time) so they can " +
-		"correct one you misheard."
+		"tell them what you are doing, so they are not left in silence."
 	updatePurpose = "They have heard nothing for a while and what they asked for is still " +
 		"being worked on: tell them it is still going, in terms of what they asked for."
 	idlePurpose = "Nobody has said anything for a while: check whether they are still " +

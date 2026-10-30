@@ -108,6 +108,19 @@ func (s *DataMoveSuite) move(from, to string) int64 {
 	return export.cursor
 }
 
+// moveEdited is move with the rows of one table edited first, as a file the importer wrote
+// itself would carry them.
+func (s *DataMoveSuite) moveEdited(from, to, table string, edit func(map[string]any)) {
+	for _, row := range s.export(from).rows {
+		if row.table == table {
+			edit(row.row)
+		}
+		encoded, err := json.Marshal(row.row)
+		s.Require().NoError(err)
+		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
+	}
+}
+
 type exported struct {
 	cursor int64
 	rows   []exportedRow
@@ -182,6 +195,89 @@ func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
 	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
 		"SELECT access_token FROM agent_plugin_connections").Scan(&token))
 	s.Empty(token)
+}
+
+func (s *DataMoveSuite) TestAPluginLoginAFileSaysIsConnectedIsNoLoginASessionUses() {
+	// The file is the importer's to write, but a login is only usable with a token, which never
+	// comes in with one.
+	config := newID()
+	// bob's own login, and the app's, which every session of the config uses.
+	for _, user := range []string{"bob", ""} {
+		_, err := s.source.DB().ExecContext(s.ctx,
+			"INSERT INTO agent_plugin_connections (id, customer_id, config_id, plugin_id, user_id, status)"+
+				" VALUES (?, 'acme', ?, 'slack', ?, ?)", newID(), config, user, PluginPending)
+		s.Require().NoError(err)
+	}
+
+	s.moveEdited("acme", "moved", "agent_plugin_connections", func(row map[string]any) {
+		row["status"] = PluginConnected
+		row["access_token"] = "a-token-of-the-files"
+	})
+
+	login, err := s.destination.UserPluginConnection(s.ctx, "moved", config, "bob", "slack")
+	s.Require().NoError(err, "the login arrives as its user's")
+	s.Empty(login.AccessToken)
+	ready, err := s.destination.ConnectedPlugins(s.ctx, "moved", config)
+	s.Require().NoError(err)
+	s.Empty(ready)
+	logins, err := s.destination.PluginLogins(s.ctx, "moved", config, "slack")
+	s.Require().NoError(err)
+	s.Empty(logins)
+}
+
+func (s *DataMoveSuite) TestAMoveKeepsWhoItsUsersAre() {
+	// What the router recorded of a user is the customer's data: an account arrives an account,
+	// and a claimed guest arrives claimed by the same account, so nobody else can claim it.
+	s.Require().NoError(s.source.RecordAccount(s.ctx, "acme", "alice"))
+	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Guest"}))
+	_, err := s.source.ClaimGuest(s.ctx, "acme", "guest-1", "alice")
+	s.Require().NoError(err)
+	claimed, err := s.source.Guest(s.ctx, "acme", "guest-1")
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	_, err = s.destination.Guest(s.ctx, "moved", "alice")
+	s.Error(err, "an account is nobody's guest to claim")
+	guest, err := s.destination.Guest(s.ctx, "moved", "guest-1")
+	s.Require().NoError(err)
+	s.Equal("alice", guest.ClaimedBy)
+	s.Require().NotNil(guest.ClaimedAt)
+	s.True(claimed.ClaimedAt.Equal(*guest.ClaimedAt))
+	_, err = s.destination.ClaimGuest(s.ctx, "moved", "guest-1", "mallory")
+	s.ErrorContains(err, "already claimed")
+}
+
+func (s *DataMoveSuite) TestAMovedConnectionKeepsItsOwnerAndWhatItsConsentGranted() {
+	// The owner is who reaches it, and the account is what a reconnect has to match.
+	id := s.seedConnectorConnection(s.source, "acme")
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE connector_connections SET owner_type = ?, owner_id = 'bob', account_id = 'bob-at-acme',"+
+			" granted_scopes = '[\"read\"]' WHERE id = ?", OwnerUser, id)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	listed, err := s.destination.ConnectorConnectionsByOwner(s.ctx, "moved",
+		ConnectionFilter{OwnerType: OwnerUser, OwnerID: "bob"})
+	s.Require().NoError(err)
+	s.Require().Len(listed, 1)
+	s.Equal(id, listed[0].ID)
+	s.Equal("bob-at-acme", listed[0].AccountID)
+	s.Equal([]string{"read"}, listed[0].GrantedScopes)
+}
+
+func (s *DataMoveSuite) TestAMovedModeratorIsStillTheAppsModerator() {
+	id := s.seedAgentConfig(s.source, "acme", "nora")
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE agent_configs SET role = ? WHERE id = ?", RoleAgentModerator, id)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	moderator, found, err := s.destination.AgentConfigByRole(s.ctx, "moved", RoleAgentModerator)
+	s.Require().NoError(err)
+	s.Require().True(found, "the chat worker finds the app's moderator by its role")
+	s.Equal(id, moderator.ID)
 }
 
 func (s *DataMoveSuite) TestImportWritesTheRowsUnderTheImportingCustomer() {

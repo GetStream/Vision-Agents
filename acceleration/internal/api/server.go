@@ -216,6 +216,9 @@ type Options struct {
 	// Without it the Telnyx call webhook answers nothing, since anyone could ask it for a
 	// number's trunk credentials.
 	TelnyxPublicKey ed25519.PublicKey
+	// ChatInboundKeys check that a message delivered to the Stream Chat delivery endpoint
+	// came from Stream (ROUTER_CHAT_INBOUND_KEYS). Without one that endpoint answers 404.
+	ChatInboundKeys []ed25519.PublicKey
 	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
 	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
 	TelnyxConnectionID string
@@ -283,6 +286,9 @@ type Options struct {
 	RunsPerApp int64
 	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
 	ImageHTTP *http.Client
+	// CallbackHTTP posts a finished recording to its callback. Absent is egress.NewClient,
+	// which reaches only public https addresses; tests pass one that reaches their receiver.
+	CallbackHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -340,6 +346,7 @@ type Server struct {
 	proxyDeclaresKind  bool
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
+	chatInboundKeys    []ed25519.PublicKey
 	telnyxConnectionID string
 	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
@@ -380,7 +387,10 @@ type Server struct {
 	// a task due now is claimed now rather than at the worker's next look.
 	// Set by the process wiring (SetSchedulerKick); nil where no worker runs.
 	kickScheduler func()
-	mcpEvents     *mcpevents.Service
+	// kickChatInbound wakes the Stream Chat delivery worker after the endpoint queues one.
+	// Set by the process wiring (SetChatInboundKick); nil where no worker runs.
+	kickChatInbound func()
+	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
@@ -403,6 +413,8 @@ type Server struct {
 	runsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
+	// callbackHTTP posts a finished recording to its callback.
+	callbackHTTP *http.Client
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -518,6 +530,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
+		chatInboundKeys:    options.ChatInboundKeys,
 		telnyxConnectionID: options.TelnyxConnectionID,
 		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
@@ -584,6 +597,12 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		// No proxy, which would dial on the client's behalf where the check cannot see.
 		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
 	}
+	server.callbackHTTP = options.CallbackHTTP
+	if server.callbackHTTP == nil {
+		// The URL is the caller's, so the post may reach only a public address, checked at
+		// each dial and redirect.
+		server.callbackHTTP = egress.NewClient(callbackTimeout, nil)
+	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
 	}
@@ -631,6 +650,12 @@ func (s *Server) SetSchedulerKick(kick func()) {
 	}
 }
 
+// SetChatInboundKick hands the server the Stream Chat delivery worker's wake-up, so a delivery
+// the endpoint queues is answered now rather than at the worker's next look.
+func (s *Server) SetChatInboundKick(kick func()) {
+	s.kickChatInbound = kick
+}
+
 // kickScheduled wakes the scheduled-task worker, when this process runs one.
 func (s *Server) kickScheduled() {
 	if s.kickScheduler != nil {
@@ -671,6 +696,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/import", s.importData)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
+	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
 	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
@@ -684,6 +710,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
+	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
@@ -1185,7 +1212,9 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 // Only a verified caller is recorded. An anonymous one goes by a name nobody checked, so
 // a table filled with those names would be a table of what callers asked to be called. A
 // backend naming one of its users is recorded as an authenticated user, because a caller
-// holding the secret could mint that user a token and so has nothing to gain by lying.
+// holding the secret could mint that user a token and so has nothing to gain by lying; but
+// a backend may name a guest of its own, so only the user's own full token turns a guest's
+// row into an account's.
 //
 // A failure is logged rather than returned. Writing down who called is not what the
 // caller asked for, and refusing the request they did ask for because of it would be the
@@ -1194,14 +1223,18 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 	if s.users == nil || principal.UserID == "" {
 		return
 	}
-	kind := store.UserKindAuthenticated
+	var err error
 	switch principal.Kind {
-	case auth.KindGuest:
-		kind = store.UserKindGuest
 	case auth.KindAnonymous:
 		return
+	case auth.KindAuthenticated:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindAuthenticated)
+	case auth.KindGuest:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindGuest)
+	default:
+		err = s.users.Named(ctx, principal.AppID, principal.UserID)
 	}
-	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
+	if err != nil {
 		s.logger.Error("could not record an end user",
 			"customer", principal.AppID, "user", principal.UserID, "error", err)
 	}
@@ -1878,11 +1911,9 @@ func toolStatsOf(usage store.ToolUsage) ToolStats {
 	}
 }
 
-// runRollup aggregates request rows into a rollup table.
+// runRollup aggregates every customer's request rows into a rollup table. It is a
+// maintenance job over the whole deployment, so it takes the ops key and no customer.
 func (s *Server) runRollup(ctx context.Context, request *runRollupRequest) (*runRollupResponse, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
-		return nil, errMissingCustomer
-	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
@@ -2176,14 +2207,17 @@ func (s *Server) registerServer(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "runRollup",
 		Method:      http.MethodPost,
-		Path:        "/v1/stats/rollup",
+		Path:        "/v1/ops/stats/rollup",
 		Summary:     "Aggregate request rows into a rollup table",
-		Description: "Covers every modality and customer in the window. Idempotent: re-running it over the " +
-			"same window recomputes those buckets, so a missed run is fixed by running it again.",
+		Description: "Covers every modality and customer in the window, widened to whole buckets. " +
+			"Idempotent: re-running it over the same window recomputes those buckets, so a missed run " +
+			"is fixed by running it again.\n\nStream staff only: it needs the ops key.",
+		Tags:     []string{staffTag},
+		Security: opsSecurity,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The rollup completed"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized},
 	}, s.runRollup)
 }
 

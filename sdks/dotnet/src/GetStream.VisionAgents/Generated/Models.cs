@@ -1406,6 +1406,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AttachedNumber
     {
 
+        /// <summary>
+        /// The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("route_id")]
         public string RouteId { get; set; } = default!;
 
@@ -5119,7 +5125,7 @@ namespace GetStream.VisionAgents.Models
         public string? Tts { get; set; } = default!;
 
         /// <summary>
-        /// Who the agent joins the call as.
+        /// The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string? UserId { get; set; } = default!;
@@ -8266,6 +8272,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class PhoneNumber
     {
+
+        /// <summary>
+        /// The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_config_id")]
+        public string? AgentConfigId { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("capabilities")]
         public System.Collections.Generic.List<string> Capabilities { get; set; } = new System.Collections.Generic.List<string>();
@@ -11511,6 +11523,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("usage")]
         public CallUsage? Usage { get; set; } = default!;
 
+        /// <summary>
+        /// The name the agent joined the call as. It is not the owner of the session.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string UserId { get; set; } = default!;
 
@@ -12046,6 +12061,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string? Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SetNumberAgentRequest
+    {
+
+        /// <summary>
+        /// The name of the agent config that answers the number. Give this or config_id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent")]
+        public string? Agent { get; set; } = default!;
+
+        /// <summary>
+        /// The id of the agent config that answers the number. Give this or agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -12809,7 +12851,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A URL the finished job is POSTed to, so a caller does not have to poll.
+        /// A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("callback")]
         public string? Callback { get; set; } = default!;
@@ -14456,7 +14498,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+        /// A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("callback")]
         public string? Callback { get; set; } = default!;

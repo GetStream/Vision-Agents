@@ -139,17 +139,41 @@ func (r *Recorder) Close() {
 	}
 }
 
-// Seen records that an app acted for a user, and does nothing for one already written
-// down.
+// Seen records that an app acted for a user, as the kind their own token proved them to
+// be, and does nothing for one already written down from a sighting that settles it.
 //
 // The kind is what the credential proved them to be, so only a verified caller belongs
 // here: an anonymous one goes by a name nobody checked, and recording it would fill the
 // table with whatever names were asked for.
+//
+// A user's own full token is the one sighting that changes a row already there
+// (store.RecordAccount), so it is settled only by having been written: one held from a
+// guest token, or from a backend naming them, is written again.
 func (r *Recorder) Seen(ctx context.Context, customerID, userID, kind string) error {
-	if customerID == "" || userID == "" || kind == "" {
+	if kind == "" {
 		return nil
 	}
-	if r.seen.Get(customerID, userID) {
+	return r.record(ctx, customerID, userID, kind)
+}
+
+// Named records a user a backend said it acts for, as an authenticated user when there is
+// no row yet. A backend may name any user, a guest of its own included, so this proves
+// nothing about which kind they are and changes no row already there.
+func (r *Recorder) Named(ctx context.Context, customerID, userID string) error {
+	return r.record(ctx, customerID, userID, named)
+}
+
+// named is what a user a backend named is held with: there is a row, of a kind this does
+// not know.
+const named = "named"
+
+// record writes a sighting down unless one held for the user settles it, and holds the
+// user with the sighting.
+func (r *Recorder) record(ctx context.Context, customerID, userID, sighting string) error {
+	if customerID == "" || userID == "" {
+		return nil
+	}
+	if held, found := r.seen.Value(customerID, userID); found && settles(held, sighting) {
 		return nil
 	}
 
@@ -161,8 +185,8 @@ func (r *Recorder) Seen(ctx context.Context, customerID, userID, kind string) er
 		// so the answer there is the same as a miss.
 		found, err := r.redis.DoCache(ctx, r.redis.B().Get().Key(name).Cache(), r.ttl).ToString()
 		switch {
-		case err == nil && found != "":
-			r.seen.Add(customerID, userID)
+		case err == nil && found != "" && settles(found, sighting):
+			r.seen.Keep(customerID, userID, found, time.Time{})
 			return nil
 		case err != nil && !rueidis.IsRedisNil(err):
 			r.logger.Error("could not read a user from redis, writing postgres",
@@ -170,20 +194,35 @@ func (r *Recorder) Seen(ctx context.Context, customerID, userID, kind string) er
 		}
 	}
 
-	user := &store.User{CustomerID: customerID, ID: userID, Kind: kind}
-	if err := r.db.RecordUser(ctx, user); err != nil {
+	var err error
+	switch sighting {
+	case store.UserKindAuthenticated:
+		err = r.db.RecordAccount(ctx, customerID, userID)
+	case named:
+		err = r.db.RecordUser(ctx, &store.User{CustomerID: customerID, ID: userID, Kind: store.UserKindAuthenticated})
+	default:
+		err = r.db.RecordUser(ctx, &store.User{CustomerID: customerID, ID: userID, Kind: sighting})
+	}
+	if err != nil {
 		return err
 	}
 
 	if r.redis != nil {
-		set := r.redis.B().Set().Key(name).Value("1").Ex(r.ttl).Build()
+		set := r.redis.B().Set().Key(name).Value(sighting).Ex(r.ttl).Build()
 		if err := r.redis.Do(ctx, set).Error(); err != nil {
 			r.logger.Error("could not cache a user in redis",
 				"customer", customerID, "user", userID, "error", err)
 		}
 	}
-	r.seen.Add(customerID, userID)
+	r.seen.Keep(customerID, userID, sighting, time.Time{})
 	return nil
+}
+
+// settles reports whether a user held with held needs no write for sighting. Only a user's
+// own full token changes a row already there, so only having written that settles it; any
+// other sighting is settled by the row being there at all.
+func settles(held, sighting string) bool {
+	return sighting != store.UserKindAuthenticated || held == store.UserKindAuthenticated
 }
 
 // Email records the address a backend said a user signs in with (store.SetUserEmail), and

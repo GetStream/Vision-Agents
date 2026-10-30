@@ -2,8 +2,7 @@
 //
 // It is the demo for all three modalities at once. Every turn goes through the routers, so
 // the same failover, health and billing that a direct API call gets applies to a
-// conversation. The Opus path is cgo, so pkg-config, libopus, libopusfile and libsoxr must
-// be installed to build this.
+// conversation.
 package main
 
 import (

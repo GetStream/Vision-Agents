@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,6 +91,58 @@ func (s *LifecycleSuite) box(lifecycle sandbox.Lifecycle, labels map[string]stri
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box
+}
+
+// stalled is a broker whose BeforeRun waits until let is closed, so a run holds its sandbox
+// for as long as a test needs.
+type stalled struct {
+	entered chan struct{}
+	let     chan struct{}
+	once    sync.Once
+}
+
+// release lets the run go on.
+func (b *stalled) release() { b.once.Do(func() { close(b.let) }) }
+
+func (b *stalled) Prepare(context.Context, []sandbox.Grant) (sandbox.Mount, error) {
+	return sandbox.Mount{}, nil
+}
+
+func (b *stalled) BeforeRun(ctx context.Context) error {
+	b.entered <- struct{}{}
+	select {
+	case <-b.let:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *stalled) Close(context.Context) error { return nil }
+
+// busy is a sandbox on lifecycle with a run inside it until the broker's let is closed. Close
+// gives up waiting for that run after half a second, which a create on the test's Daytona takes
+// far less than.
+func (s *LifecycleSuite) busy(lifecycle sandbox.Lifecycle) (*Sandbox, *stalled) {
+	broker := &stalled{entered: make(chan struct{}, 1), let: make(chan struct{})}
+	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(), Lifecycle: lifecycle, Meter: s.meter,
+		Broker: broker, Timeout: 500 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+	s.Require().NoError(err)
+	ran := make(chan error, 1)
+	go func() {
+		_, err := box.Run(s.ctx, "print(1)", nil)
+		ran <- err
+	}()
+	s.T().Cleanup(func() {
+		broker.release()
+		s.NoError(<-ran, "the run itself")
+	})
+	select {
+	case <-broker.entered:
+	case err := <-ran:
+		s.Require().NoError(err, "the run ended before it held the sandbox")
+	}
+	return box, broker
 }
 
 func (s *LifecycleSuite) run(box *Sandbox) {
@@ -228,18 +282,78 @@ func (s *LifecycleSuite) TestASandboxInAFailedStateIsDeletedAndMadeAgain() {
 	}
 }
 
-func (s *LifecycleSuite) TestAnOrphanIsLeftWhenCloseGivesUpWaiting() {
-	box := s.box(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, nil)
-	s.run(box)
-	box.gate <- struct{}{}
-	box.timeout = 100 * time.Millisecond
+func (s *LifecycleSuite) TestASandboxIsDeletedWhenTheRunItsCloseGaveUpOnEnds() {
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: time.Hour})
 
-	s.ErrorIs(box.Close(), context.DeadlineExceeded, "work still holds the sandbox")
-	s.Empty(s.daytona.Deleted())
-	box.done()
+	s.ErrorIs(box.Close(), context.DeadlineExceeded, "the run still holds the sandbox")
+	s.Empty(s.daytona.Deleted(), "nothing is deleted under a run")
+	run.release()
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted as the run ended, long before it idled")
+}
+
+func (s *LifecycleSuite) TestASandboxNotDeletedWhenTheRunItsCloseGaveUpOnEndsIsDeletedOnceIdle() {
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour})
+	s.Error(box.Close())
+	s.daytona.RefuseDeletes(true)
+	run.release()
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned")
+	s.daytona.RefuseDeletes(false)
 
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
-	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted by its own timer once the work ended and it idled")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted once it idled, by its own timer")
+	// The warning is written before the gate is let go, so by the timer's delete it is there.
+	s.Contains(s.logs.String(), `msg="could not close a sandbox once the run its Close gave up on ended"`)
+}
+
+func (s *LifecycleSuite) TestAnOrphanIsDeletedOnceIdleWhenTheDeleteAfterItsRunOutlastedTheIdleStop() {
+	deletes := &stallingDeletes{}
+	broker := &stalled{entered: make(chan struct{}, 1), let: make(chan struct{})}
+	// The delete after the run stalls for the whole 500 ms Timeout, past the 300 ms IdleStop, so
+	// the timer the run armed fires while that delete holds the sandbox.
+	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(),
+		Lifecycle: sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, Meter: s.meter, Broker: broker,
+		Timeout: 500 * time.Millisecond, HTTPClient: &http.Client{Transport: deletes}, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+	s.Require().NoError(err)
+	ran := make(chan error, 1)
+	go func() {
+		_, err := box.Run(s.ctx, "print(1)", nil)
+		ran <- err
+	}()
+	<-broker.entered
+
+	s.Error(box.Close())
+	deletes.stall.Store(true)
+	broker.release()
+	s.NoError(<-ran)
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted by its timer, armed again after the stalled delete")
+}
+
+// stallingDeletes passes requests to the test's Daytona, but holds the first delete after stall
+// is set until its request gives up.
+type stallingDeletes struct{ stall atomic.Bool }
+
+func (t *stallingDeletes) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodDelete && t.stall.CompareAndSwap(true, false) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+func (s *LifecycleSuite) TestASandboxIsDeletedWhenItsRunEndsAsCloseGivesUp() {
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: time.Hour})
+	ending := time.AfterFunc(box.timeout, run.release)
+	defer ending.Stop()
+
+	_ = box.Close()
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted whether Close or the run's end got there first")
 }
 
 func (s *LifecycleSuite) TestAnIdleSandboxIsBilledAsStoppedThenGone() {

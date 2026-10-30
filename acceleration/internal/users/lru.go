@@ -19,9 +19,10 @@ const DefaultCapacity = 10_000
 // holds nothing and a busy one gets the room, which is what a cache of a fixed total size
 // means.
 //
-// No row is kept beside the key, only the one value a write was made with (an email), since
-// the only question asked of this is whether that write was already made, and keeping the
-// row as well would be keeping a copy of Postgres that nothing reads.
+// No row is kept beside the key, only the one value a write was made with (an email, or the
+// sighting a user was recorded from), since the only question asked of this is whether that
+// write was already made, and keeping the row as well would be keeping a copy of Postgres
+// that nothing reads.
 type seen struct {
 	capacity int
 
@@ -54,6 +55,19 @@ func newSeen(capacity int) *seen {
 // Get reports whether a user is held, and marks them as the most recently used.
 func (s *seen) Get(app, id string) bool {
 	return s.Holds(app, id, "", time.Time{})
+}
+
+// Value returns what a user is held with, and marks them as the most recently used.
+func (s *seen) Value(app, id string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	element, found := s.apps[app][id]
+	if !found {
+		return "", false
+	}
+	s.order.MoveToFront(element)
+	return element.Value.(entry).value, true
 }
 
 // Add holds a user, evicting the least recently used one across every app when the cache

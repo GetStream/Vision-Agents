@@ -67,6 +67,8 @@ class RemoteCall:
         memory_filter: Which memories this call may recall, keyed by scope.
         phone: Set when the call is a phone call, so the pipeline can end it when nobody
             answers.
+        timezone: The IANA zone of the person this conversation is with, such as
+            ``Europe/Lisbon``. Empty leaves it to what the pipeline knows about them.
     """
 
     call_type: str
@@ -78,6 +80,7 @@ class RemoteCall:
     cost_tracking: Optional[dict[str, str]] = None
     memory_filter: Optional[dict[str, str]] = None
     phone: Optional[RemotePhone] = None
+    timezone: str = ""
 
 
 @dataclass

@@ -1,15 +1,21 @@
 package channelbridge
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // BridgeSuite is what the bridge decides before it reaches a store or Stream Chat. Its whole
@@ -177,4 +183,79 @@ func (s *BridgeSuite) TestAHeldCommandsReplyGoesToItsHolderAndClearsTheEntry() {
 		s.Fail("the holder did not receive the reply")
 	}
 	s.Empty(b.held)
+}
+
+// threadChannel is a thread channel id as take makes one: 43 characters.
+const threadChannel = threadChannelPrefix + "0b7c8f4e-2a51-4c1e-9d3f-6a2b8e1c7d90"
+
+// A provider id of the characters Stream Chat took is in the message id as it is, after the
+// thread channel: a Slack ts, a Telnyx or Linq UUID, a WhatsApp wamid without padding.
+func (s *BridgeSuite) TestAProviderIDIsReadableInItsMessageID() {
+	for _, id := range []string{"1793125611.816139", "40385f64-5717-4562-b3fc-2c963f66afa6", "wamid.HBgLMTY1MDUxNzY1NDMVAgARGBI5QTNDQTVCM0Q0Q0Q2RTY3RTcA"} {
+		s.Equal(threadChannel+"-"+id, inboundMessageID(threadChannel, id))
+	}
+}
+
+// The same provider id in two thread channels is two messages: Stream Chat keeps a message id
+// unique in the whole app.
+func (s *BridgeSuite) TestTheSameProviderIDInTwoThreadsIsTwoMessageIDs() {
+	other := threadChannelPrefix + "1c8d9f5a-3b62-4d2f-8e4a-7b3c9f2d8ea1"
+	s.NotEqual(inboundMessageID(threadChannel, "1793125611.816139"), inboundMessageID(other, "1793125611.816139"))
+}
+
+// A wamid with base64's padding, or + or /, which Stream Chat was not tried with, and an id
+// too long for 255 characters are hashed: within the limit, and still one id each.
+func (s *BridgeSuite) TestAProviderIDStreamChatMightRefuseIsHashed() {
+	ids := []string{
+		"wamid.HBgLMTY1MDM4NzQzOTkVAgASGBQzQTRBNjU5OUFFRTAzODEwMTQ0RgA=",
+		"wamid.HBgL+TY1/DM4",
+		"",
+		strings.Repeat("a", maxMessageID-len(threadChannel)),
+		strings.Repeat("a", 1000),
+		threadChannel + "=x",
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		message := inboundMessageID(threadChannel, id)
+		s.Equal(threadChannel+"=", message[:len(threadChannel)+1], id)
+		s.Len(message, len(threadChannel)+1+64, id)
+		s.False(seen[message], id)
+		seen[message] = true
+	}
+}
+
+// The longest readable provider id fits the 255 characters exactly.
+func (s *BridgeSuite) TestTheLongestReadableIDFillsTheLimit() {
+	id := strings.Repeat("a", maxMessageID-len(threadChannel)-1)
+
+	s.Equal(threadChannel+"-"+id, inboundMessageID(threadChannel, id))
+	s.Len(inboundMessageID(threadChannel, id), maxMessageID)
+}
+
+// Stream Chat's answer to a second SendMessage with the same id, however it is wrapped.
+func (s *BridgeSuite) TestADuplicateMessageIDIsAlreadyWritten() {
+	duplicate := &getstream.StreamError{StatusCode: http.StatusBadRequest, Code: 4,
+		Message: `SendMessage failed with error: "a message with ID thread-1-m already exists"`}
+
+	s.True(alreadyWritten(duplicate))
+	s.True(alreadyWritten(stack.Wrap(fmt.Errorf("omnichannel: write the card: %w", duplicate))))
+}
+
+// Every other refusal, and the same words in an error Stream Chat did not send, is a failure.
+func (s *BridgeSuite) TestAnyOtherRefusalIsNotAlreadyWritten() {
+	for name, err := range map[string]error{
+		"no error":         nil,
+		"another code":     &getstream.StreamError{StatusCode: http.StatusBadRequest, Code: 16, Message: "a message with ID m already exists"},
+		"another status":   &getstream.StreamError{StatusCode: http.StatusTooManyRequests, Code: 4, Message: "a message with ID m already exists"},
+		"another input":    &getstream.StreamError{StatusCode: http.StatusBadRequest, Code: 4, Message: "message.id must be a maximum of 255 characters in length"},
+		"a channel exists": &getstream.StreamError{StatusCode: http.StatusBadRequest, Code: 4, Message: "a channel with ID c already exists"},
+		"no message id":    &getstream.StreamError{StatusCode: http.StatusBadRequest, Code: 4, Message: "a message with ID m"},
+		"not from Stream":  errors.New("a message with ID m already exists"),
+	} {
+		s.False(alreadyWritten(err), name)
+	}
+}
+
+func (s *BridgeSuite) TestTheInboundRetriesAreTwoTenThirtySecondsTwoAndTenMinutes() {
+	s.Equal([]time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second, 2 * time.Minute, 10 * time.Minute}, defaultInboundRetries)
 }

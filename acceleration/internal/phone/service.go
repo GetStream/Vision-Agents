@@ -725,7 +725,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		if err == nil {
 			attached := Attached{TrunkID: line.TrunkID, RouteID: line.RouteID, Bridge: line.Bridge}
 			// The line stays when this fails: the number's calls go out on it.
-			if err := s.finishAttach(ctx, provider, attachment, pin, attached); err != nil {
+			if err := s.finishAttach(ctx, provider, attachment, pin, attached, held.ConfigID); err != nil {
 				return Attached{}, err
 			}
 			return attached, nil
@@ -792,7 +792,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 	attached := Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge}
-	if err := s.finishAttach(ctx, provider, attachment, pin, attached); err != nil {
+	if err := s.finishAttach(ctx, provider, attachment, pin, attached, held.ConfigID); err != nil {
 		return Attached{}, err
 	}
 	committed = true
@@ -800,10 +800,12 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 }
 
 // finishAttach tells the vendor to send the number's calls to its trunk, and records that
-// they go there.
-func (s *Service) finishAttach(ctx context.Context, provider Provider, attachment Attachment, pin int64, attached Attached) error {
+// they go there. configID is the agent the number had: taking it off its old trunk cleared
+// it, and attaching again never takes away an agent someone set.
+func (s *Service) finishAttach(ctx context.Context, provider Provider, attachment Attachment, pin int64, attached Attached, configID string) error {
 	record := store.NumberAttachment{
 		TrunkID: attached.TrunkID, RouteID: attached.RouteID, StreamAppPK: pin, CallType: defaultCallType,
+		ConfigID: configID,
 	}
 	// The address is not secret and a repeat attach answers it. A vendor that asks per call
 	// where to send a caller needs the password then. Without a key it is not kept, rather

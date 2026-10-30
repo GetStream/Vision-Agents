@@ -451,6 +451,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .set_number_agent_request import SetNumberAgentRequest
 from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
@@ -1018,6 +1019,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SetNumberAgentRequest",
     "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",

@@ -3510,7 +3510,9 @@ type AttachNumberRequest struct {
 
 // AttachedNumber defines model for AttachedNumber.
 type AttachedNumber struct {
-	RouteId string `json:"route_id"`
+	// AgentConfigId The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+	AgentConfigId *string `json:"agent_config_id,omitempty"`
+	RouteId       string  `json:"route_id"`
 
 	// SipUri Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
 	SipUri  string `json:"sip_uri"`
@@ -5104,7 +5106,7 @@ type CreateSessionRequest struct {
 	// Tts Omit it and the config decides, or en-low-latency when there is no config.
 	Tts *string `json:"tts,omitempty"`
 
-	// UserId Who the agent joins the call as.
+	// UserId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
 	UserId   *string       `json:"user_id,omitempty"`
 	UserName *string       `json:"user_name,omitempty"`
 	Video    *SessionVideo `json:"video,omitempty"`
@@ -6501,6 +6503,8 @@ type PhoneCapability string
 
 // PhoneNumber defines model for PhoneNumber.
 type PhoneNumber struct {
+	// AgentConfigId The agent config that answers the number's calls. Absent, its calls are dispatched to a worker.
+	AgentConfigId     *string           `json:"agent_config_id,omitempty"`
 	Capabilities      []PhoneCapability `json:"capabilities"`
 	Country           string            `json:"country"`
 	E164              string            `json:"e164"`
@@ -7917,7 +7921,9 @@ type Session struct {
 	Tts *string `json:"tts,omitempty"`
 
 	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
-	Usage  *CallUsage    `json:"usage,omitempty"`
+	Usage *CallUsage `json:"usage,omitempty"`
+
+	// UserId The name the agent joined the call as. It is not the owner of the session.
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
 
@@ -8152,6 +8158,15 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SetNumberAgentRequest defines model for SetNumberAgentRequest.
+type SetNumberAgentRequest struct {
+	// Agent The name of the agent config that answers the number. Give this or config_id.
+	Agent *string `json:"agent,omitempty"`
+
+	// ConfigId The id of the agent config that answers the number. Give this or agent.
+	ConfigId *string `json:"config_id,omitempty"`
 }
 
 // SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
@@ -8457,7 +8472,7 @@ type Speech struct {
 
 // SpeechRequest defines model for SpeechRequest.
 type SpeechRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -9207,7 +9222,7 @@ type TranscriptionMode string
 
 // TranscriptionRequest defines model for TranscriptionRequest.
 type TranscriptionRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -10705,6 +10720,9 @@ type PressPhoneDigitsJSONRequestBody = PressDigitsRequest
 // BuyPhoneNumberJSONRequestBody defines body for BuyPhoneNumber for application/json ContentType.
 type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
 
+// SetPhoneNumberAgentJSONRequestBody defines body for SetPhoneNumberAgent for application/json ContentType.
+type SetPhoneNumberAgentJSONRequestBody = SetNumberAgentRequest
+
 // AttachPhoneNumberJSONRequestBody defines body for AttachPhoneNumber for application/json ContentType.
 type AttachPhoneNumberJSONRequestBody = AttachNumberRequest
 
@@ -10764,9 +10782,6 @@ type ResetLimitUsageJSONRequestBody = LimitResetInput
 
 // UpdateLimitJSONRequestBody defines body for UpdateLimit for application/json ContentType.
 type UpdateLimitJSONRequestBody = LimitChange
-
-// RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
-type RunRollupJSONRequestBody = RollupRequest
 
 // TranscribeRecordingJSONRequestBody defines body for TranscribeRecording for application/json ContentType.
 type TranscribeRecordingJSONRequestBody = TranscriptionRequest
@@ -11405,7 +11420,7 @@ type ClientInterface interface {
 
 	// DeleteAgentConfig Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -13086,6 +13101,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveChatDelivery Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
 	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -13331,6 +13353,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemovePhoneNumberAgent Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetPhoneNumberAgent Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DetachPhoneNumber Stop a number taking calls, keeping it
 	//
@@ -13987,24 +14034,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollupWithBody Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollup Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSpend What the calling customer spent, grouped
 	//
@@ -14796,7 +14825,7 @@ func (c *Client) CreateAgentConfig(ctx context.Context, body CreateAgentConfigJS
 
 // DeleteAgentConfig Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with DELETE /v1/agents/configs/{id} (the `DeleteAgentConfig` operationId).
@@ -18246,6 +18275,23 @@ func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody,
 	return c.Client.Do(req)
 }
 
+// ReceiveChatDelivery Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *Client) ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveChatDeliveryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ClassifyWithBody Ask a classifier typed questions about a piece of text
 //
 // The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -18762,6 +18808,61 @@ func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumb
 // Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleasePhoneNumberRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemovePhoneNumberAgent Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *Client) RemovePhoneNumberAgent(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemovePhoneNumberAgentRequest(c.Server, e164)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgentWithBody Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgentWithBody(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequestWithBody(c.Server, e164, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetPhoneNumberAgent Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *Client) SetPhoneNumberAgent(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetPhoneNumberAgentRequest(c.Server, e164, body)
 	if err != nil {
 		return nil, err
 	}
@@ -20128,44 +20229,6 @@ func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, req
 // Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 func (c *Client) GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentStatsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollupWithBody Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollup Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -27908,6 +27971,33 @@ func NewQueryAuditRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewReceiveChatDeliveryRequest constructs an http.Request for the ReceiveChatDelivery method
+func NewReceiveChatDeliveryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/chat/internal/messages")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewClassifyRequest calls the generic Classify builder with application/json body
 func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -28847,6 +28937,87 @@ func NewReleasePhoneNumberRequest(server string, e164 string) (*http.Request, er
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRemovePhoneNumberAgentRequest constructs an http.Request for the RemovePhoneNumberAgent method
+func NewRemovePhoneNumberAgentRequest(server string, e164 string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetPhoneNumberAgentRequest calls the generic SetPhoneNumberAgent builder with application/json body
+func NewSetPhoneNumberAgentRequest(server string, e164 string, body SetPhoneNumberAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetPhoneNumberAgentRequestWithBody(server, e164, "application/json", bodyReader)
+}
+
+// NewSetPhoneNumberAgentRequestWithBody constructs an http.Request for the SetPhoneNumberAgent method, with any body, and a specified content type
+func NewSetPhoneNumberAgentRequestWithBody(server string, e164 string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "e164", e164, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/numbers/%s/agent", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -31266,46 +31437,6 @@ func NewGetAgentStatsRequest(server string, params *GetAgentStatsParams) (*http.
 	return req, nil
 }
 
-// NewRunRollupRequest calls the generic RunRollup builder with application/json body
-func NewRunRollupRequest(server string, body RunRollupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRunRollupRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRunRollupRequestWithBody constructs an http.Request for the RunRollup method, with any body, and a specified content type
-func NewRunRollupRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/stats/rollup")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetSpendRequest constructs an http.Request for the GetSpend method
 func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, error) {
 	var err error
@@ -32703,7 +32834,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteAgentConfigWithResponse Delete an agent config
 	//
-	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+	// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -34558,6 +34689,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
 
+	// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error)
+
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
 	// The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -34825,6 +34965,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumberWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*ReleasePhoneNumberResponse, error)
+
+	// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+	//
+	// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+	RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
+
+	// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+	//
+	// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+	SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error)
 
 	// DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
 	//
@@ -35543,24 +35710,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStatsWithResponse(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*GetAgentStatsResponse, error)
-
-	// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
-
-	// RunRollupWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
 
 	// GetSpendWithResponse What the calling customer spent, grouped
 	//
@@ -38462,6 +38611,8 @@ type DeleteAgentConfigResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -38495,6 +38646,11 @@ func (r DeleteAgentConfigResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteAgentConfigResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteAgentConfigResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -52350,6 +52506,47 @@ func (r QueryAuditResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveChatDeliveryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveChatDeliveryResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveChatDeliveryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveChatDeliveryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveChatDeliveryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveChatDeliveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ClassifyResponse200Headers the declared response headers of an HTTP 200 response for Classify
 type ClassifyResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -54134,6 +54331,222 @@ func (r ReleasePhoneNumberResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReleasePhoneNumberResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RemovePhoneNumberAgentResponse204Headers the declared response headers of an HTTP 204 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// RemovePhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for RemovePhoneNumberAgent
+type RemovePhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type RemovePhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *RemovePhoneNumberAgentResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *RemovePhoneNumberAgentResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RemovePhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RemovePhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemovePhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemovePhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemovePhoneNumberAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetPhoneNumberAgentResponse200Headers the declared response headers of an HTTP 200 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// SetPhoneNumberAgentResponse402Headers the declared response headers of an HTTP 402 response for SetPhoneNumberAgent
+type SetPhoneNumberAgentResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type SetPhoneNumberAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PhoneNumber
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SetPhoneNumberAgentResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *SetPhoneNumberAgentResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON200() *PhoneNumber {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SetPhoneNumberAgentResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SetPhoneNumberAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetPhoneNumberAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetPhoneNumberAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetPhoneNumberAgentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -59462,107 +59875,6 @@ func (r GetAgentStatsResponse) ContentType() string {
 	return ""
 }
 
-// RunRollupResponse200Headers the declared response headers of an HTTP 200 response for RunRollup
-type RunRollupResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// RunRollupResponse402Headers the declared response headers of an HTTP 402 response for RunRollup
-type RunRollupResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type RunRollupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RollupResult
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *RunRollupResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *RunRollupResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RunRollupResponse) GetJSON200() *RollupResult {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r RunRollupResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r RunRollupResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r RunRollupResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r RunRollupResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r RunRollupResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r RunRollupResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r RunRollupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RunRollupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RunRollupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RunRollupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetSpendResponse200Headers the declared response headers of an HTTP 200 response for GetSpend
 type GetSpendResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -61619,7 +61931,7 @@ func (c *ClientWithResponses) CreateAgentConfigWithResponse(ctx context.Context,
 
 // DeleteAgentConfigWithResponse Delete an agent config
 //
-// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+// Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed. A config that a phone number answers with is refused with a 409 naming the numbers.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -64540,6 +64852,21 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 	return ParseQueryAuditResponse(rsp)
 }
 
+// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *ClientWithResponses) ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error) {
+	rsp, err := c.ReceiveChatDelivery(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveChatDeliveryResponse(rsp)
+}
+
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 //
 // The decision_model modality, reachable on its own rather than only inside a guardrail. Every question is put to the decision model at once and each comes back as a typed answer with the distribution behind it: the probability a noul is true, which option of a choice fits, where a score lands. There is no generated text, so there is nothing to stream: routed, failed over and billed like search, one request one stat row.
@@ -64974,6 +65301,51 @@ func (c *ClientWithResponses) ReleasePhoneNumberWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseReleasePhoneNumberResponse(rsp)
+}
+
+// RemovePhoneNumberAgentWithResponse Send a number's calls back to dispatch
+//
+// The number's calls are dispatched to a worker again. Removing the agent of a number that has none changes nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/phone/numbers/{e164}/agent (the `RemovePhoneNumberAgent` operationId).
+func (c *ClientWithResponses) RemovePhoneNumberAgentWithResponse(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*RemovePhoneNumberAgentResponse, error) {
+	rsp, err := c.RemovePhoneNumberAgent(ctx, e164, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemovePhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithBodyWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithBodyWithResponse(ctx context.Context, e164 string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgentWithBody(ctx, e164, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
+}
+
+// SetPhoneNumberAgentWithResponse Have an agent answer a number's calls
+//
+// Each caller gets a session of their own with the agent config, and no call is dispatched to a worker. Replaces the agent the number had. The number must be attached; detaching or releasing it removes its agent.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/phone/numbers/{e164}/agent (the `SetPhoneNumberAgent` operationId).
+func (c *ClientWithResponses) SetPhoneNumberAgentWithResponse(ctx context.Context, e164 string, body SetPhoneNumberAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPhoneNumberAgentResponse, error) {
+	rsp, err := c.SetPhoneNumberAgent(ctx, e164, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetPhoneNumberAgentResponse(rsp)
 }
 
 // DetachPhoneNumberWithResponse Stop a number taking calls, keeping it
@@ -66118,36 +66490,6 @@ func (c *ClientWithResponses) GetAgentStatsWithResponse(ctx context.Context, par
 		return nil, err
 	}
 	return ParseGetAgentStatsResponse(rsp)
-}
-
-// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollupWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
-}
-
-// RunRollupWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollup(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
 }
 
 // GetSpendWithResponse What the calling customer spent, grouped
@@ -69565,6 +69907,13 @@ func ParseDeleteAgentConfigResponse(rsp *http.Response) (*DeleteAgentConfigRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -85808,6 +86157,50 @@ func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
 	return response, nil
 }
 
+// ParseReceiveChatDeliveryResponse parses an HTTP response from a ReceiveChatDeliveryWithResponse call
+func ParseReceiveChatDeliveryResponse(rsp *http.Response) (*ReceiveChatDeliveryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveChatDeliveryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
 // ParseClassifyResponse parses an HTTP response from a ClassifyWithResponse call
 func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -87833,6 +88226,261 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 		response.Headers204 = &headers
 	case rsp.StatusCode == 402:
 		var headers ReleasePhoneNumberResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemovePhoneNumberAgentResponse parses an HTTP response from a RemovePhoneNumberAgentWithResponse call
+func ParseRemovePhoneNumberAgentResponse(rsp *http.Response) (*RemovePhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemovePhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers RemovePhoneNumberAgentResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers RemovePhoneNumberAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetPhoneNumberAgentResponse parses an HTTP response from a SetPhoneNumberAgentWithResponse call
+func ParseSetPhoneNumberAgentResponse(rsp *http.Response) (*SetPhoneNumberAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetPhoneNumberAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PhoneNumber
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SetPhoneNumberAgentResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers SetPhoneNumberAgentResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -94073,125 +94721,6 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetAgentStatsResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseRunRollupResponse parses an HTTP response from a RunRollupWithResponse call
-func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RunRollupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RollupResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers RunRollupResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers RunRollupResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

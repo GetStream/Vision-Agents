@@ -26,7 +26,8 @@ class TranscriptionRequest:
             and what anything longer than a clip should use; inline bytes save a caller with a short local file from having
             to host it somewhere first.
         callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll. The body is the
-            same Transcription this returns.
+            same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-
+            local address is refused with a 400.
         config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
             that one field of it.
         inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The

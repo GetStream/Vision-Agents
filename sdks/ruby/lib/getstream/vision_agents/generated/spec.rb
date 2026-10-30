@@ -1328,6 +1328,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "receiveChatDelivery" => {
+          method: :post, path: "/v1/chat/internal/messages",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveConnectionEvent" => {
           method: :post, path: "/v1/connectors/mcp-events/{token}",
           path_params: %w[token].freeze, query: [].freeze,
@@ -1372,6 +1378,12 @@ module GetStream
         }.freeze,
         "releasePhoneNumber" => {
           method: :delete, path: "/v1/phone/numbers/{e164}",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "removePhoneNumberAgent" => {
+          method: :delete, path: "/v1/phone/numbers/{e164}/agent",
           path_params: %w[e164].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
@@ -1431,7 +1443,7 @@ module GetStream
           socket: false, client_accessible: false
         }.freeze,
         "runRollup" => {
-          method: :post, path: "/v1/stats/rollup",
+          method: :post, path: "/v1/ops/stats/rollup",
           path_params: [].freeze, query: [].freeze,
           body: "RollupRequest", body_required: true,
           socket: false, client_accessible: false
@@ -1488,6 +1500,12 @@ module GetStream
           method: :put, path: "/v1/ops/customers/{customer_id}/connectors/{id}/provider-app",
           path_params: %w[customer_id id].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "setPhoneNumberAgent" => {
+          method: :put, path: "/v1/phone/numbers/{e164}/agent",
+          path_params: %w[e164].freeze, query: [].freeze,
+          body: "SetNumberAgentRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "setPluginClient" => {
@@ -1802,7 +1820,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AttachedNumber" => {
-          properties: %w[route_id sip_uri trunk_id].freeze,
+          properties: %w[agent_config_id route_id sip_uri trunk_id].freeze,
           required: %w[route_id sip_uri trunk_id].freeze, open: false
         }.freeze,
         "AuditChange" => {
@@ -2434,7 +2452,7 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
-          properties: %w[capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
+          properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
           required: %w[capabilities country e164 monthly_cost_micros purchased_at vendor].freeze, open: false
         }.freeze,
         "PhoneSandbox" => {
@@ -2771,6 +2789,10 @@ module GetStream
         }.freeze,
         "SessionVideo" => {
           properties: %w[max_frames source].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "SetNumberAgentRequest" => {
+          properties: %w[agent config_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SetPluginClientRequest" => {

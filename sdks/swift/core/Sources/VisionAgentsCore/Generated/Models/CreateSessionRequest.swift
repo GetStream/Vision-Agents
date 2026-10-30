@@ -73,7 +73,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let tools: [SessionTool]?
     /// Omit it and the config decides, or en-low-latency when there is no config.
     let tts: String?
-    /// Who the agent joins the call as.
+    /// The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     let userId: String?
     let userName: String?
     let video: SessionVideo?
