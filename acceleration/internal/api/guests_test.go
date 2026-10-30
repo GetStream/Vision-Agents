@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"testing"
@@ -215,6 +216,34 @@ func (s *GuestsSuite) TestAClaimLeavesWhatAnAnonymousNamesakeSaidWhereItWas() {
 	left, err := s.store.ScheduledTask(context.Background(), s.customerID(), task)
 	s.Require().NoError(err)
 	s.Equal(guestID, left.UserID, "the namesake's task is not moved")
+}
+
+func (s *GuestsSuite) TestAClaimDoesNotLetTheAccountIntoAnotherAppsChannel() {
+	// A session row comes in through the import as the file writes it, so it can name a
+	// channel the router stamped for another app. The claim joins the account to the
+	// channels of the sessions it moved, and that one is not the app's.
+	otherUser := s.data.createUser()
+	foreign := s.transcriptOf(s.talkedAs(otherUser))
+	own := s.talkedAs(s.data.createUser())
+	var raw string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT row_to_json(a)::text FROM agent_sessions AS a WHERE id = ?", own).
+		Scan(context.Background(), &raw))
+	row := map[string]any{}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &row))
+
+	s.useApp(s.data.createApp())
+	guest, account := s.recordGuest(), "acct-"+s.utils.uuid()
+	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", foreign
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
+	honest := s.talked(guest)
+
+	s.claim(guest, account)
+
+	s.NotContains(s.chat.Members(foreign), account, "the other app's channel is not the account's to join")
+	s.Contains(s.chat.Members(s.transcriptOf(honest)), account, "the app's own conversation still is")
 }
 
 // recordGuest is a guest of the suite's app, written the way minting one writes it. Minting
