@@ -455,14 +455,11 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 	if err != nil {
 		return scheduleFailure(err)
 	}
-	task.StartLocal, task.Timezone, task.RRule = parsed.StartLocal, parsed.Timezone, parsed.Repeat
-	task.UntilDate = nil
-	if !parsed.Until.IsZero() {
-		until := parsed.Until
-		task.UntilDate = &until
-	}
 	if task.State == store.ScheduledTaskActive || task.State == store.ScheduledTaskPaused {
-		next, ok := parsed.Next(now)
+		// A start that has passed moves to the next occurrence, its COUNT counted
+		// from there, as a create does. That moves parsed.StartLocal, so the task
+		// takes it after.
+		next, ok := parsed.FromNow(now)
 		if !ok {
 			return scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 				Message: "that schedule has no occurrence left; its last one has passed"})
@@ -471,6 +468,12 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 			return scheduleFailure(err)
 		}
 		task.NextRunAt = &next
+	}
+	task.StartLocal, task.Timezone, task.RRule = parsed.StartLocal, parsed.Timezone, parsed.Repeat
+	task.UntilDate = nil
+	if !parsed.Until.IsZero() {
+		until := parsed.Until
+		task.UntilDate = &until
 	}
 	return nil
 }

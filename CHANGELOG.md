@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A rescheduled task runs its whole COUNT from now
+
+`PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
