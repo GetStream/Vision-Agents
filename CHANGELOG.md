@@ -165,6 +165,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Sandbox code tells a withdrawn credential from a failing host under Daytona
+
+Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
 ### A call is reviewed when the review model thinks first
 
 A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
