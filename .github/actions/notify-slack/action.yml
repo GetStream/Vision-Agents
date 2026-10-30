@@ -66,7 +66,7 @@ runs:
             ]
           }' > /tmp/slack-payload.json
     - name: Post failure notification
-      uses: slackapi/slack-github-action@v2.1.1
+      uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a # v2.1.1
       with:
         webhook: ${{ inputs.slack-webhook-url }}
         webhook-type: incoming-webhook

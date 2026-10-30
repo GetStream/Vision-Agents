@@ -162,6 +162,12 @@ class TestAccelerated:
         return pipeline
 
     @pytest.fixture
+    def stream_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A Stream key and secret for the edge's client, which nothing here sends."""
+        monkeypatch.setenv("STREAM_API_KEY", "test-key")
+        monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+
+    @pytest.fixture
     def call(self) -> RemoteCall:
         return RemoteCall(
             call_type="default",
@@ -755,6 +761,7 @@ class TestAccelerated:
         finally:
             await pipeline.leave_remote()
 
+    @pytest.mark.usefixtures("stream_credentials")
     async def test_capture_is_task_scoped_and_keeps_frame_time(
         self, router: Router, joined: stream.Accelerated
     ):
