@@ -901,9 +901,9 @@ func (c Config) validateUsage() error {
 // none. The sandbox may reach that address alone, through Daytona's network allow list, which
 // takes IP ranges, so it has no DNS to look a name up with, and no IPv6 route (live probe,
 // 2026-10-22). The address must be public: a sandbox reaches no loopback, private (RFC 1918),
-// link-local (169.254/16, the metadata address too), unspecified or broadcast address, and the
-// range would let it reach that address of the provider's network. The port is 1 to 65535, and
-// the URL has no path, query or fragment.
+// link-local (169.254/16, the metadata address too), unspecified or broadcast address, nor one
+// of reservedRanges, and the range would let it reach that address of the provider's network.
+// The port is 1 to 65535, and the URL has no path, query or fragment.
 func ProxyURL(raw string) (*url.URL, bool) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" ||
@@ -911,11 +911,29 @@ func ProxyURL(raw string) (*url.URL, bool) {
 		return nil, false
 	}
 	address, err := netip.ParseAddr(parsed.Hostname())
-	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() ||
+		slices.ContainsFunc(reservedRanges, func(reserved netip.Prefix) bool { return reserved.Contains(address) }) {
 		return nil, false
 	}
 	port, err := strconv.Atoi(parsed.Port())
 	return parsed, err == nil && port >= 1 && port <= 65535
+}
+
+// reservedRanges are the IPv4 ranges IsGlobalUnicast and IsPrivate let through that IANA's IPv4
+// Special-Purpose Address Registry (RFC 6890,
+// https://www.iana.org/assignments/iana-ipv4-special-registry) marks not globally reachable or
+// deprecated: no host a proxy runs on has an address in them. egress.IsPublic refuses them too,
+// and also the documentation ranges (RFC 5737), which are left in here so a test can stand in a
+// public address with one.
+var reservedRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "This network", RFC 791 section 3.2: a source, never a destination
+	netip.MustParsePrefix("100.64.0.0/10"), // Shared Address Space, RFC 6598: a carrier's NAT
+	// IETF Protocol Assignments, RFC 6890 section 2.1. Its two globally reachable addresses,
+	// 192.0.0.9 and 192.0.0.10 (RFC 7723, RFC 8155), are anycast services, not a proxy.
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"), // 6to4 Relay Anycast, deprecated by RFC 7526
+	netip.MustParsePrefix("198.18.0.0/15"),  // Benchmarking, RFC 2544
+	netip.MustParsePrefix("240.0.0.0/4"),    // Reserved, RFC 1112 section 4
 }
 
 // validateProxyListenFD refuses an inherited proxy socket the router would not serve: one
