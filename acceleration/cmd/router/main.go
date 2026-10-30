@@ -106,6 +106,31 @@ import (
 // Sentry reads as "no release" rather than as an error.
 var release string
 
+// idleTimeout is how long the API, peer, pprof and metrics servers hold a keep-alive
+// connection that sends no next request. It must outlast the idle timeout of every
+// client that pools connections to them, or that client reuses a connection the router
+// has just closed and a request that cannot be replayed fails. The clients:
+//   - the stream-accelerate gateway sets no ReverseProxy.Transport (GetStream/chat
+//     projects/stream-accelerate/proxy.go), so it pools with http.DefaultTransport's
+//     IdleConnTimeout, 90 s (net/http/transport.go:55). The router's Service is a
+//     ClusterIP (chat infra/charts/accelerate/values.yaml, service.type): no pooling;
+//   - Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
+//     config/http_config.go:55) and scrapes every 15 s (chat values.yaml,
+//     monitoring.serviceMonitor.interval). The Datadog agent's check leaves
+//     persist_connections at its default, false (DataDog/integrations-core
+//     datadog_checks_base/utils/http.py, STANDARD_FIELDS), so it opens a new connection per
+//     scrape and pools none;
+//   - peers talk gRPC over h2c, which this timeout does not reach: x/net v0.58.0
+//     http2/server_wrap.go:109 gives the h2 server the http2.Server's own idle timeout,
+//     zero in node.Serve, not the http.Server's.
+//
+// 10 min is twice the longest, Prometheus'. A response still being written, such as
+// the SSE log stream, is not idle: net/http arms the deadline once a response is
+// finished (net/http/server.go:2163), and a hijacked websocket is out of it.
+//
+// A variable so a test can shorten it; nothing else assigns it.
+var idleTimeout = 10 * time.Minute
+
 const (
 	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
 	// keys are authKEKEnvVar with a _V<n> suffix, and authKEKVersionEnvVar says which one
@@ -1515,7 +1540,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 	listening := make(chan error, 3)
 	serve := func(httpServer *http.Server, listener net.Listener) {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -1535,7 +1560,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 		logger.Info("listening for peers", "address", peers.Addr().String(), "setting", "node.listen")
 		go serve(peerServer, peers)
 	}
@@ -1548,7 +1573,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	defer stopSandboxProxy()
 
 	if settings.PprofAddr != "" {
-		go servePprof(settings.PprofAddr, logger)
+		go servePprof(settings.PprofAddr, idleTimeout, logger)
 	}
 	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
 	defer stopMetrics()
@@ -1698,8 +1723,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 }
 
 // servePprof serves the runtime profiles on an address of their own, with lock contention
-// and blocking sampled so the mutex and block profiles have something in them.
-func servePprof(addr string, logger *slog.Logger) {
+// and blocking sampled so the mutex and block profiles have something in them. The idle
+// timeout is read by the caller, as the server is built on a goroutine of its own.
+func servePprof(addr string, idleTimeout time.Duration, logger *slog.Logger) {
 	runtime.SetMutexProfileFraction(100)
 	runtime.SetBlockProfileRate(int(time.Millisecond))
 	mux := http.NewServeMux()
@@ -1709,7 +1735,7 @@ func servePprof(addr string, logger *slog.Logger) {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
-	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 	// A router taking over from one still draining its calls finds the address held until
 	// that one ends, so it keeps trying rather than going without.
 	for {
