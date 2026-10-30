@@ -11,8 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -95,10 +97,13 @@ func newSession(
 }
 
 // ProcessAudio streams audio to the selected provider, and drops it once the provider has
-// failed for good.
+// failed for good. Audio the session's lease no longer pays for is refused (unpaid).
 func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	if s.failed.Load() {
 		return nil
+	}
+	if err := s.unpaid(); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	provider, config := s.provider, s.config
@@ -113,6 +118,21 @@ func (s *Session) ProcessAudio(pcm stt.PcmData, participant stt.Participant) err
 		return nil
 	}
 	return err
+}
+
+// unpaid is why the session may not take more audio: its lease was refused, and a transcriber
+// bills all the audio it is sent. Money that ran out closes the session, and every frame after
+// answers the same refusal. Money that could not be checked (holds not shared, a balance unread)
+// refuses the frame and keeps the session, which takes audio again once a renewal lands.
+func (s *Session) unpaid() error {
+	err := s.lease.Err()
+	if err == nil {
+		return nil
+	}
+	if !policy.Transient(err) {
+		_ = s.Close()
+	}
+	return stack.Wrap(err)
 }
 
 // toldOf reports whether the caller hears of provider's failure, or of the next model

@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Speech-to-text stops when its money runs out
+
+A transcription re-checks the money it set aside as it streams, as a speech-to-speech conversation does: once a renewal is refused for lack of credit or a spend limit, every frame after is refused and the session closes, and while the money cannot be checked a frame is refused and the session kept.
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
