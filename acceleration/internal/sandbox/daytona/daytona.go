@@ -622,19 +622,21 @@ func (s *Sandbox) arm() {
 	s.timer = time.AfterFunc(time.Until(at), func() { s.lapse(epoch) })
 }
 
-// lapse moves the sandbox along its lifecycle when its timer fires. Work that holds the gate
-// arms the timer again once it is done, so a timer that finds the gate held does nothing.
+// lapse moves the sandbox along its lifecycle when its timer fires. A timer that finds the gate
+// held waits for it: the work holding it arms the timer before it lets the gate go, so a timer
+// due by then fires while the gate is still held, and one that gave up would never fire again.
+// A timer that was replaced while it waited arms nothing: whoever replaced it armed the current one.
 func (s *Sandbox) lapse(epoch int) {
-	select {
-	case s.gate <- struct{}{}:
-	default:
+	s.gate <- struct{}{}
+	if epoch != s.epoch {
+		<-s.gate
 		return
 	}
 	defer func() {
 		s.arm()
 		<-s.gate
 	}()
-	if epoch != s.epoch || s.box == nil || s.gone {
+	if s.box == nil || s.gone {
 		return
 	}
 	now := time.Now()
@@ -828,7 +830,7 @@ func (s *Sandbox) Close() error {
 // closeLater waits for the work a Close gave up on to end, then closes as that Close would have:
 // the sandbox goes as soon as it is free rather than once it idles, and one Daytona would not
 // delete is an orphan, for its timer, armed again here as any work that held the gate arms it,
-// to delete once it idles: a timer that fired while this delete held the gate did nothing.
+// to delete once it idles.
 func (s *Sandbox) closeLater() {
 	s.gate <- struct{}{}
 	defer func() {
