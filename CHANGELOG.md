@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A session's Daytona sandbox goes when the run it was closed during ends
+
+A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
+
 ### A file `run_code` hands back is read only up to its limit
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
