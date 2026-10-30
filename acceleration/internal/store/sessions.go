@@ -971,6 +971,29 @@ func (s *Store) RecordUser(ctx context.Context, user *User) error {
 	return nil
 }
 
+// RecordAccount stores a user whose own token said they are not a guest. A guest row the
+// app's own guest token wrote for the id becomes an account's: kept a guest's, the account
+// would stay one a guest token is minted for (createGuestUser). A guest the router minted
+// stays a guest, because the token minted for them names no role and so reads as a full
+// user's too; so does a claimed one, whose claim stands.
+func (s *Store) RecordAccount(ctx context.Context, customerID, userID string) error {
+	user := &User{
+		CustomerID: customerID, ID: userID, Kind: UserKindAuthenticated,
+		Custom: map[string]any{}, CreatedAt: time.Now().UTC(),
+	}
+	_, err := s.db.NewInsert().Model(user).
+		On("CONFLICT (customer_id, id) DO UPDATE").
+		Set("kind = EXCLUDED.kind").
+		Where("u.kind = ?", UserKindGuest).
+		Where("u.claimed_by IS NULL").
+		Where("NOT u.minted").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: record account: %w", err))
+	}
+	return nil
+}
+
 // SetUserEmail records the address a server-side caller said a user signs in with. The row
 // is created when there is none; on an existing row only the email moves, never the kind
 // the claim path reads, and an email it already holds is not written again: a backend may

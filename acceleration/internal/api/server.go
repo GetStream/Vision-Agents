@@ -1201,7 +1201,9 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 // Only a verified caller is recorded. An anonymous one goes by a name nobody checked, so
 // a table filled with those names would be a table of what callers asked to be called. A
 // backend naming one of its users is recorded as an authenticated user, because a caller
-// holding the secret could mint that user a token and so has nothing to gain by lying.
+// holding the secret could mint that user a token and so has nothing to gain by lying; but
+// a backend may name a guest of its own, so only the user's own full token turns a guest's
+// row into an account's.
 //
 // A failure is logged rather than returned. Writing down who called is not what the
 // caller asked for, and refusing the request they did ask for because of it would be the
@@ -1210,14 +1212,18 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 	if s.users == nil || principal.UserID == "" {
 		return
 	}
-	kind := store.UserKindAuthenticated
+	var err error
 	switch principal.Kind {
-	case auth.KindGuest:
-		kind = store.UserKindGuest
 	case auth.KindAnonymous:
 		return
+	case auth.KindAuthenticated:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindAuthenticated)
+	case auth.KindGuest:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindGuest)
+	default:
+		err = s.users.Named(ctx, principal.AppID, principal.UserID)
 	}
-	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
+	if err != nil {
 		s.logger.Error("could not record an end user",
 			"customer", principal.AppID, "user", principal.UserID, "error", err)
 	}
