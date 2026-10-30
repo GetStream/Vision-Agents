@@ -34,6 +34,14 @@ var unnamed = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // know.
 const unbound = "va_unbound"
 
+// withdrawn is what a withdrawn grant's secret holds until the sandbox ends. Deleted, the secret
+// would leave its placeholder in the sandbox's env var, and Daytona's egress answers every
+// request carrying it with a 502 «could not reach upstream host», which code cannot tell from
+// the host failing (probe against Daytona's API, 2026-10-29). Holding this, the placeholder
+// reaches the host, which refuses it as it does unbound: code gets the host's 401, as a revoked
+// token gets.
+const withdrawn = "va_withdrawn"
+
 // SecretsOptions are what Secrets needs: Daytona's API, and the session's names and tokens.
 type SecretsOptions struct {
 	APIKey, APIURL string
@@ -62,12 +70,13 @@ type Secrets struct {
 }
 
 // secret is one grant's secret at Daytona, and the credential revision it holds. A late grant's
-// holds unbound until a run after its bind puts its token in.
+// holds unbound until a run after its bind puts its token in; a withdrawn one holds withdrawn
+// from then on.
 type secret struct {
-	grant    sandbox.Grant
-	id, name string
-	revision int
-	unbound  bool
+	grant              sandbox.Grant
+	id, name           string
+	revision           int
+	unbound, withdrawn bool
 }
 
 func NewSecrets(o SecretsOptions) (*Secrets, error) {
@@ -148,46 +157,44 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 func (s *Secrets) BeforeRun(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var kept []*secret
-	for i, held := range s.held {
+	for _, held := range s.held {
+		if held.withdrawn {
+			continue
+		}
 		if held.grant.Late {
 			bound, ok := s.options.Bind(ctx, held.grant)
 			if !ok || !held.grant.Binds(bound) {
-				kept = append(kept, held)
 				continue
 			}
 			held.grant = held.grant.Bound(bound)
 		}
 		token, err := s.options.Tokens(ctx, held.grant)
 		if err != nil && !errors.Is(err, sandbox.ErrNoCredential) {
-			kept = append(kept, held)
 			s.options.Logger.Warn("a connector's credential could not be refreshed for the sandbox; it keeps the one it has",
 				"connector", held.grant.Binding, "secret", held.name, "class", sandbox.ErrorClass(err))
 			continue
 		}
 		if err != nil {
-			// Deleted, the secret's placeholder reaches the provider as itself, which it refuses.
-			if err := s.client.Secret.Delete(ctx, held.id); err != nil {
-				s.held = append(kept, s.held[i:]...)
+			// The secret stays, holding no credential, until Close deletes it.
+			value := withdrawn
+			if _, err := s.client.Secret.Update(ctx, held.id, &types.UpdateSecretParams{Value: &value}); err != nil {
 				return fmt.Errorf("daytona: withdraw secret %s: %w", held.name, err)
 			}
+			held.withdrawn = true
 			s.options.Logger.Warn("a connector's credential is withdrawn from the sandbox", "connector", held.grant.Binding,
 				"secret", held.name, "class", sandbox.ErrorClass(err))
 			continue
 		}
-		kept = append(kept, held)
 		if token.Revision == held.revision && !held.unbound {
 			continue
 		}
 		// Daytona applies an update to every sandbox that uses the secret within 15 seconds
 		// (secrets.md above).
 		if _, err := s.client.Secret.Update(ctx, held.id, &types.UpdateSecretParams{Value: &token.Value}); err != nil {
-			s.held = append(kept, s.held[i+1:]...)
 			return fmt.Errorf("daytona: refresh secret %s: %w", held.name, err)
 		}
 		held.revision, held.unbound = token.Revision, false
 	}
-	s.held = kept
 	return nil
 }
 

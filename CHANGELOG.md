@@ -169,6 +169,12 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 `POST /v1/agents/sessions/query`, a list or a text search, answers an end user with ended and live sessions on the same terms as `GET /v1/agents/sessions/{id}`: the user id and the kind of caller both match, or a backend opened the session for a signed-in or guest user of that id. An anonymous caller is no longer listed the stored sessions of a verified user, a guest or a backend's session by naming the same user id, and a signed-in user and a guest of one id each list only their own. The rows are narrowed in the query, so a page is still full. A backend's list is unchanged (AI-1863).
 
+### Sandbox code tells a withdrawn credential from a failing host under Daytona
+
+Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
+### A call is reviewed when the review model thinks first
+
+A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
 ### A session's Daytona sandbox goes when the run it was closed during ends
 
 A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
