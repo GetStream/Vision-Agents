@@ -75,6 +75,28 @@ func (s *ProxyKindSuite) TestAProxyThatDeclaresNothingKeepsTreatingEveryCallerAs
 	s.Equal(http.StatusForbidden, s.chatToken(router, auth.AuthTypeJWT))
 }
 
+func (s *ProxyKindSuite) TestOnlyAProxyThatDeclaresKindsNamesTheKeyARequestCameWith() {
+	// The key a user token is minted for is believed where the server token it came with
+	// is; anywhere else the header is the caller's own.
+	for _, mode := range []struct {
+		name     string
+		mode     auth.Mode
+		declares bool
+		want     string
+	}{
+		{"proxy that declares kinds", auth.Proxy, true, "key-a"},
+		{"proxy that declares nothing", auth.Proxy, false, ""},
+		{"api key", auth.APIKey, true, ""},
+		{"no auth", auth.NoAuth, true, ""},
+	} {
+		server := &Server{authMode: mode.mode, proxyDeclaresKind: mode.declares}
+		request := httptest.NewRequest(http.MethodPost, "/v1/agents/guests", nil)
+		request.Header.Set(auth.ServerTokenKeyHeader, " key-a ")
+
+		s.Equal(mode.want, server.vouchedKey(request), mode.name)
+	}
+}
+
 // idleInspector is a router with nothing to route, which is all a server needs to start.
 type idleInspector struct{}
 
