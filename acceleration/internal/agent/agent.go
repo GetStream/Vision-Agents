@@ -2804,6 +2804,11 @@ func (a *Agent) finish(response llm.Response) {
 		})
 	}
 	exchange := lastExchange(a.history)
+	// The memories are of the session's one memory user. Once a second person has had a turn
+	// answered, an exchange may be theirs, or draw on what they said, so none is remembered.
+	if len(a.speakers) > 1 {
+		exchange = nil
+	}
 	history := append([]llm.Message(nil), a.history...)
 	currentHarness := a.harness
 	a.mu.Unlock()

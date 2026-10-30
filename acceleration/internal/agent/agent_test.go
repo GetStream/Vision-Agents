@@ -2397,6 +2397,32 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.Equal(llm.Assistant, exchange[1].Role)
 }
 
+// The memories are of one memory user, so once a second person on the call has been
+// answered, nothing more is remembered: not what they said, nor what the first person said
+// after them.
+func (s *AgentSuite) TestNothingIsRememberedOnceASecondPersonHasSpoken() {
+	s.remembers = &stubMemory{}
+	s.join(true)
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	bob := stt.Participant{ID: "bob", Name: "Bob"}
+	s.speak(alice)
+	s.speak(bob)
+
+	s.says(alice, "I moved to Austin")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "alice was never answered")
+	s.quiet()
+	s.says(bob, "I am allergic to peanuts")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "bob was never answered")
+	s.quiet()
+	s.says(alice, "and I work nights")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 3 }, "alice was never answered again")
+	s.Require().NoError(s.agent.Close())
+
+	remembered := s.remembers.remembered()
+	s.Require().Len(remembered, 1, "only the exchange before a second person spoke")
+	s.Equal(llm.Message{Role: llm.User, Content: "I moved to Austin"}, remembered[0][0])
+}
+
 func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 	s.delegates()
 	s.join(true)
