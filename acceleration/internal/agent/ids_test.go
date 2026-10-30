@@ -286,6 +286,28 @@ func TestAListUnderAPluralKeyHoldsThatKeysIDs(t *testing.T) {
 	assert.Equal(t, "", listedID("s"))
 }
 
+func TestAnIDTheCallerWroteOutIsPassedOn(t *testing.T) {
+	// A person types their ID into the chat without saying what it is an ID of.
+	tools := []string{"get_user_id", "get_user_profile", "find_booking"}
+	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "some_tool", Arguments: arguments} }
+	for said, arguments := range map[string]string{
+		"Logging in as USR001, show me my profile":  `{"user_id":"USR001"}`,
+		"Look up my account with id 'USR100145'.":   `{"user_id":"USR100145"}`,
+		"Hi, it's ab-7731 here, what's on my list?": `{"user_id":"AB7731"}`,
+	} {
+		_, _, _, unfound := unfoundID([]llm.Message{{Role: llm.User, Content: said}}, call(arguments), tools, "")
+		assert.False(t, unfound, said)
+	}
+	for said, arguments := range map[string]string{
+		"My card is KTR583027, can you move it to Friday?": `{"booking_id":"KTR583027"}`,
+		"My number is 4471, can you move it to Friday?":    `{"booking_id":"4471"}`,
+		"Logging in as USR001, show me my profile":         `{"user_id":"USR002"}`,
+	} {
+		_, _, _, unfound := unfoundID([]llm.Message{{Role: llm.User, Content: said}}, call(arguments), tools, "")
+		assert.True(t, unfound, said)
+	}
+}
+
 func TestAnIDTheCallerReadOutIsPassedOn(t *testing.T) {
 	// Callers read a user ID out, separators by name, as the transcriber wrote them.
 	tools := []string{"get_user_profile", "get_booking"}
