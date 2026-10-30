@@ -44,16 +44,15 @@ on:
       - '.idea/**'
 
 permissions:
-  actions: write
   contents: read
   pull-requests: read
 
 jobs:
+  # No secrets: unit tests reach no provider, and a pull request's code runs here.
   unit:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'not integration'
-    secrets: inherit
 
   go:
     runs-on: ubuntu-latest
@@ -197,7 +196,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
           tools: composer
@@ -222,11 +221,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: sdks/rust
 
@@ -250,7 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
         with:
           ruby-version: '3.3'
           bundler-cache: true
