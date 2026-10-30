@@ -179,6 +179,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A socket's token stays out of the JS and Dart SDKs' errors, and out of the URL on Node
 
 A JS socket the router refused said so with its whole URL, which carries the token (a server token, with `apiSecret`) in its query, so the token reached the app's logs and error reports. It now names the URL without its query. On Node the token is no longer in the URL at all: `openSocket` sends it as `Authorization: Bearer`, and behind the proxy `api_key` and `stream-auth-type: jwt` go as headers with it, as on a request. A browser, and a `webSocket` passed in, still put it in the query, since a browser WebSocket sets no headers. The Dart SDK's `TransportException` for a socket that did not open no longer repeats the URL's query.
+### Work a scheduled turn hands over is counted as the turn after a barge-in
+
+On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
