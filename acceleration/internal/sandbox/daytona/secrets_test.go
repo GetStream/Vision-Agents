@@ -550,17 +550,23 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 	s.NotContains(description, "x-access-token")
 }
 
-// TestRunCodeTellsTheModelWhatARevokedGrantLooksLike: every grant, late or not, gets the line for
-// a connection revoked or removed, and it promises no retry in this session.
+// TestRunCodeTellsTheModelWhatARevokedGrantLooksLike: a grant connected at the start gets the
+// line for a connection revoked or removed. A late grant's 401 first means "not connected yet",
+// so it gets the revoked sentence only for a 401 or 403 after the user connected and it ran again.
+// Neither promises a retry in this session.
 func (s *SecretsSuite) TestRunCodeTellsTheModelWhatARevokedGrantLooksLike() {
 	late := sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}, Late: true}
 
 	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit, late)).Description
 
-	s.Contains(description, " A 401 from api.github.com, github.com (or a 403 Forbidden on the proxy's CONNECT) means the "+
+	s.Contains(description, " A 401 from api.github.com, github.com, or a 403 from the proxy, means the "+
 		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
-	s.Contains(description, " A 401 from api.linear.app (or a 403 Forbidden on the proxy's CONNECT) means the "+
-		"linear connection was revoked or removed: tell the user to connect linear again; running the code again in this session will not help.")
+	s.Contains(description, " A 401 from api.linear.app means the user has not connected linear yet:")
+	s.Contains(description, "wait 20 seconds and run it once more. If it still gets 401 or 403 after the user connected and you ran it once more, "+
+		"the connection was revoked or removed: tell the user; running it again in this session will not help.")
+	s.NotContains(description, "means the linear connection was revoked")
+	s.NotContains(description, "api.linear.app, or a 403")
+	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit)).Description, "not connected", "a connected grant has no late text")
 	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{})).Description, "revoked", "no grant, no line")
 }
 

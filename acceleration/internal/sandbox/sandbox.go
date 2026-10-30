@@ -183,17 +183,21 @@ func Tool(box Sandbox) llm.Tool {
 			}
 			// A withdrawn grant stays withdrawn until the session ends, so no retry is offered. The
 			// proxy broker refuses its CONNECT with 403 Forbidden, Daytona's secret holds a value the
-			// host rejects with 401.
-			description += fmt.Sprintf(" A 401 from %s (or a 403 Forbidden on the proxy's CONNECT) means the %s connection was "+
-				"revoked or removed: tell the user to connect %s again; running the code again in this session will not help.",
-				hosts, grant.Binding, grant.Binding)
-			if grant.Late {
+			// host rejects with 401. A late grant's 401 is first "not connected yet", so its revoked
+			// sentence comes after the user connected and the code ran once more.
+			if !grant.Late {
+				description += fmt.Sprintf(" A 401 from %s, or a 403 from the proxy, means the %s connection was revoked or removed: "+
+					"tell the user to connect %s again; running the code again in this session will not help.",
+					hosts, grant.Binding, grant.Binding)
+			} else {
 				// Its token reaches code from the next run after the user connects, at once
 				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret
 				// (probe against Daytona's API, 2026-10-25).
 				description += fmt.Sprintf(" A 401 from %s means the user has not connected %s yet: %s__list_tools shows them "+
 					"a button to connect it and waits; if you cannot call it, tell the user they must connect %s. Once they have, "+
 					"run the code again; if it still gets 401, wait 20 seconds and run it once more.", hosts, grant.Binding, grant.Binding, grant.Binding)
+				description += " If it still gets 401 or 403 after the user connected and you ran it once more, the connection was " +
+					"revoked or removed: tell the user; running it again in this session will not help."
 			}
 			if !slices.Contains(grant.Hosts, gitHost) {
 				continue
