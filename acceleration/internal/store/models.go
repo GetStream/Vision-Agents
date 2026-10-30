@@ -1956,7 +1956,10 @@ type AgentSession struct {
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
-	ClosedAt       *time.Time `bun:"closed_at"`
+	ClosedAt *time.Time `bun:"closed_at"`
+	// EndReason is why it ended (session.EndReason), empty while it runs and for one stopped
+	// by its caller.
+	EndReason      string     `bun:"end_reason,notnull"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`

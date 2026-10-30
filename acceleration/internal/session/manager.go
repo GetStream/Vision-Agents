@@ -639,7 +639,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	tools, callers = moderationTools(spec, stream, tools, callers)
-	if line != nil || m.reading(spec) || m.searching(spec) {
+	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
 			return nil, stack.Wrap(err)
@@ -732,7 +732,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
-	created.end = func(reason TimeoutReason) { m.end(created, reason) }
+	created.end = func(reason EndReason) { m.end(created, reason) }
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -782,6 +782,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
+			Ender:              m.ender(created, spec, stream),
+			EndCallWhen:        spec.endCallWhen(),
 			ToolRunner:         runner,
 			Tools:              harness.Tools{Tools: tools},
 			Sandbox:            box,
@@ -942,7 +944,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC())
+			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
@@ -1499,26 +1501,55 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
-func (m *Manager) end(found *Session, reason TimeoutReason) {
-	m.mu.Lock()
-	if held, ok := m.sessions[found.id]; !ok || held != found {
-		m.mu.Unlock()
+func (m *Manager) end(found *Session, reason EndReason) {
+	done, held := m.take(found)
+	if !held {
 		return
+	}
+	defer done()
+	m.release(found.id)
+
+	found.noteEnd(reason)
+	m.logger.Info("ending the session", "session", found.id, "reason", reason)
+	found.abandon()
+}
+
+// hangUp ends found for its agent hanging up. It closes as Close does, so the goodbye is not
+// cut short, and in the background: the agent hangs up from inside its own tool call, and
+// closing the session waits for the agent.
+func (m *Manager) hangUp(found *Session) {
+	done, held := m.take(found)
+	if !held {
+		return
+	}
+	found.noteEnd(EndAgentHangup)
+	go func() {
+		defer done()
+		m.release(found.id)
+		m.logger.Info("ending the session", "session", found.id, "reason", EndAgentHangup)
+		if err := found.Close(); err != nil {
+			m.logger.Warn("could not close the session its agent hung up", "session", found.id, "error", err)
+		}
+	}()
+}
+
+// take stops holding found as it begins to end, reporting whether it was still the session
+// held under its id. done is called once it has closed.
+func (m *Manager) take(found *Session) (done func(), held bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.sessions[found.id]; !ok || current != found {
+		return nil, false
 	}
 	delete(m.sessions, found.id)
 	m.closing++
 	m.ended.Add(1)
-	m.mu.Unlock()
-	defer func() {
+	return func() {
 		m.mu.Lock()
 		m.closing--
 		m.mu.Unlock()
 		m.ended.Done()
-	}()
-	m.release(found.id)
-
-	m.logger.Info("ending the session", "session", found.id, "reason", reason)
-	found.abandon()
+	}, true
 }
 
 // EndUnanswered ends the customer's phone session id if this node holds it and no phone caller
@@ -2102,17 +2133,32 @@ func publisher(conv *persistent.Conversation) sandbox.Publisher {
 // callTools is the built-in tools a config's calls settings leave on. A session opened
 // from code, with no config, keeps all of them.
 func (s Spec) callTools(builtin []harness.Tool) []harness.Tool {
-	if s.ConfigID == "" {
-		return builtin
-	}
 	var kept []harness.Tool
 	for _, tool := range builtin {
-		if tool.Name == "transfer" && !s.Calls.TransferOn() || tool.Name == "press" && !s.Calls.PressOn() {
+		switch {
+		case tool.Name == "end_call" && !s.endsCalls():
+			continue
+		case s.ConfigID == "":
+		case tool.Name == "transfer" && !s.Calls.TransferOn() || tool.Name == "press" && !s.Calls.PressOn():
 			continue
 		}
 		kept = append(kept, tool)
 	}
 	return kept
+}
+
+// endsCalls reports whether the config lets the agent hang up. A session with no config
+// never may.
+func (s Spec) endsCalls() bool {
+	return s.ConfigID != "" && s.Calls.EndCallOn()
+}
+
+// endCallWhen is when the config tells the agent to hang up, empty for the agent's default.
+func (s Spec) endCallWhen() string {
+	if s.Calls.EndCall == nil {
+		return ""
+	}
+	return s.Calls.EndCall.When
 }
 
 // destinations are the places the config lets the agent transfer to. A session that

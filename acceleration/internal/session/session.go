@@ -233,7 +233,9 @@ type Session struct {
 	// call's last leaves still arrive while the session closes.
 	closing bool
 	// end ends this session when its timeout is reached (Manager.end).
-	end func(TimeoutReason)
+	end func(EndReason)
+	// ended is why the session ended, the first reason given (noteEnd).
+	ended EndReason
 	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
 	// whether a phone caller has been in the session's call, and settledOnce whether any run
 	// has settled, which only the first may start a phone session's start timeout from.
@@ -1524,6 +1526,9 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		}
 		if transcript != nil && !typed {
 			transcript.Record(event)
+		}
+		if _, ok := event.(agent.Transferred); ok {
+			s.noteEnd(EndTransferred)
 		}
 		s.observe(run, event)
 		s.remember(event)

@@ -350,6 +350,66 @@ func (s *CallHooksSuite) TestAConfigWithDestinationsOffersThemByNameAndNoNumber(
 	s.ElementsMatch([]any{"Sales", "Support"}, destination["enum"])
 }
 
+// answeredOn is the session of the agent that answers a call to a number whose config
+// talks on llm with these calls settings.
+func (s *CallHooksSuite) answeredOn(llm string, calls *AgentCalls) *session.Session {
+	s.answerable()
+	s.hold("default", s.callID)
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo(llm), Calls: calls,
+	}, &created))
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, created.Id))
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("default"))
+	return s.answered()
+}
+
+// shown reads a session as its backend does.
+func (s *CallHooksSuite) shown(id string) Session {
+	var shown Session
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &shown))
+	return shown
+}
+
+// endedFor waits for the session id to show it ended for reason.
+func (s *CallHooksSuite) endedFor(id string, reason SessionEndReason) {
+	s.Eventually(func() bool {
+		shown := s.shown(id)
+		return shown.State == Ended && shown.EndReason != nil && *shown.EndReason == reason
+	}, settleFor, 50*time.Millisecond, "the session never showed it ended for %s", reason)
+}
+
+// markedEnded reports whether the suite's Stream was asked to end the call for everybody.
+func (s *CallHooksSuite) markedEnded(callType, callID string) bool {
+	for _, request := range s.chat.Requests(suiteStreamKey) {
+		if request.Method == http.MethodPost && strings.HasSuffix(request.Path, "/video/call/"+callType+"/"+callID+"/mark_ended") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *CallHooksSuite) TestAnAgentThatHangsUpEndsThePhoneCall() {
+	on := true
+	found := s.answeredOn("hanging-up/hanging-up-model", &AgentCalls{EndCall: &EndCallSettings{Enabled: &on}})
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+found.ID()+"/respond", SayRequest{Text: "that is all, thanks"}, nil))
+
+	s.Eventually(func() bool { return s.markedEnded("default", s.callID) }, settleFor, 20*time.Millisecond,
+		"the phone call was left up after the agent hung up")
+	s.endedFor(found.ID(), "agent_hangup")
+}
+
+func (s *CallHooksSuite) TestASessionShowsWhyItEnded() {
+	found := s.answeredOn("echo/local-model", nil)
+	s.Nil(s.shown(found.ID()).EndReason, "a running session gave a reason it ended")
+
+	s.Require().True(s.router.sessions.EndUnanswered(s.customerID(), found.ID()))
+
+	s.endedFor(found.ID(), "unanswered")
+}
+
 func (s *CallHooksSuite) TestAnArrivingCallDeliveredTwiceKeepsItsAgentOnTheLine() {
 	s.answerable()
 	s.hold("agent", s.callID)

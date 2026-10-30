@@ -359,8 +359,8 @@ func (s *StoreSuite) TestSearchHonoursTheSameFiltersAsQuery() {
 func (s *StoreSuite) TestClosingASessionKeepsTheFirstTime() {
 	s.opened("one", "app", s.base, nil)
 	first := s.base.Add(time.Hour)
-	s.Require().NoError(s.store.CloseSession(s.ctx, "one", first))
-	s.Require().NoError(s.store.CloseSession(s.ctx, "one", first.Add(time.Hour)))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", first, ""))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", first.Add(time.Hour), ""))
 
 	found, err := s.store.StoredSession(s.ctx, "app", "one")
 	s.Require().NoError(err)
@@ -369,9 +369,19 @@ func (s *StoreSuite) TestClosingASessionKeepsTheFirstTime() {
 	s.Equal(SessionClosed, found.State)
 }
 
+func (s *StoreSuite) TestClosingASessionKeepsTheFirstReason() {
+	s.opened("one", "app", s.base, nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(time.Hour), "transferred"))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(2*time.Hour), "hangup"))
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal("transferred", found.EndReason)
+}
+
 func (s *StoreSuite) TestDescribingASessionLongAfterItEnded() {
 	s.opened("one", "app", s.base, nil)
-	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(time.Hour)))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(time.Hour), ""))
 
 	err := s.store.DescribeSession(s.ctx, "app", "one", "Named later", "by a person", map[string]any{"pinned": true})
 	s.Require().NoError(err)

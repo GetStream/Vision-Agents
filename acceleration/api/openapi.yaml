@@ -7819,6 +7819,10 @@ components:
           type: object
         description:
           type: string
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+          readOnly: true
         forked_from:
           description: The session this one continued from, empty for one opened fresh.
           type: string
@@ -7941,6 +7945,15 @@ components:
         - name
         - connection_id
       type: object
+    SessionEndReason:
+      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.'
+      enum:
+        - agent_hangup
+        - transferred
+        - hangup
+        - start
+        - unanswered
+      type: string
     SessionFilter:
       additionalProperties: false
       description: Which sessions to list. A field not listed here is refused rather than ignored.
