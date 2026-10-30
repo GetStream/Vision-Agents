@@ -103,9 +103,10 @@ def sync_detailed(
     advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
     text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
     models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
-    responses still being generated, which still settle and are still billed for what they produced
-    before being cut off.
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -197,9 +198,10 @@ def sync(
     advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
     text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
     models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
-    responses still being generated, which still settle and are still billed for what they produced
-    before being cut off.
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -286,9 +288,10 @@ async def asyncio_detailed(
     advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
     text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
     models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
-    responses still being generated, which still settle and are still billed for what they produced
-    before being cut off.
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -378,9 +381,10 @@ async def asyncio(
     advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
     text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
     models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons
-    responses still being generated, which still settle and are still billed for what they produced
-    before being cut off.
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,

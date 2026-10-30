@@ -80,12 +80,14 @@ func (s *RecorderSuite) TestAFailureIsCountedUnderItsOutcomeNeverItsCode() {
 
 	s.recordedAs(LLM, s.prices, vendor,
 		Stat{ErrorCode: ErrorCancelled},
+		Stat{ErrorCode: ErrorRefused},
 		Stat{ErrorCode: ErrorTimeout},
 		Stat{ErrorCode: "rate_limited"},
 		Stat{})
 
 	s.Equal(map[string]float64{
 		"modality=llm,model=m,outcome=cancelled": 1,
+		"modality=llm,model=m,outcome=refused":   1,
 		"modality=llm,model=m,outcome=timeout":   1,
 		"modality=llm,model=m,outcome=error":     2,
 	}, traffic(trafficRequests, "provider", vendor.Provider))
