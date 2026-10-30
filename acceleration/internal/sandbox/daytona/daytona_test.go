@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -44,6 +45,8 @@ type platform struct {
 	// answer ended.
 	sized  map[string]int
 	served map[string]int64
+	// cut are the files whose download breaks off halfway, as a dropped connection does.
+	cut map[string]bool
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
 	// commands are every shell command run in the sandbox, with how many runs came before,
@@ -96,7 +99,7 @@ type heldSecret struct {
 
 func newPlatform() *platform {
 	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
-		sized: map[string]int{}, served: map[string]int64{}, secrets: map[string]*heldSecret{}}
+		sized: map[string]int{}, served: map[string]int64{}, cut: map[string]bool{}, secrets: map[string]*heldSecret{}}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	return stub
 }
@@ -227,6 +230,9 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		content = bytes.NewReader(data)
 	} else if size, ok := p.sized[name]; ok {
 		content = io.LimitReader(filler{}, int64(size))
+		if p.cut[name] {
+			content = io.MultiReader(io.LimitReader(filler{}, int64(size/2)), breaker{})
+		}
 	}
 	p.mu.Unlock()
 	wire := &counted{Writer: w}
@@ -235,6 +241,7 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		defer p.mu.Unlock()
 		p.served[name] += wire.n
 	}()
+	var copied error
 	switch {
 	case !bulk && content == nil:
 		w.Header().Set("Content-Type", "application/json")
@@ -242,7 +249,7 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"message":"no such file"}`))
 	case !bulk:
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = io.Copy(wire, content)
+		_, copied = io.Copy(wire, content)
 	default:
 		parts := multipart.NewWriter(wire)
 		w.Header().Set("Content-Type", parts.FormDataContentType())
@@ -252,11 +259,21 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 			content = strings.NewReader(`{"message":"no such file","statusCode":404}`)
 		}
 		part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
-		if _, err := io.Copy(part, content); err == nil {
+		if _, copied = io.Copy(part, content); copied == nil {
 			_ = parts.Close()
 		}
 	}
+	if errors.Is(copied, errBroken) {
+		panic(http.ErrAbortHandler)
+	}
 }
+
+// errBroken is a download breaking off, which breaker reads as.
+var errBroken = errors.New("the connection dropped")
+
+type breaker struct{}
+
+func (breaker) Read([]byte) (int, error) { return 0, errBroken }
 
 // filler reads as an endless run of x.
 type filler struct{}
@@ -340,6 +357,14 @@ func (p *platform) holds(path string, data []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.files[path] = data
+}
+
+// holdsCut puts a file of size bytes of x at path whose download breaks off halfway.
+func (p *platform) holdsCut(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+	p.cut[path] = true
 }
 
 // holdsSized puts a file of size bytes of x at path.
@@ -778,4 +803,14 @@ func (s *DaytonaSuite) TestAFileAskedForTwiceComesBackOnceAndTakesOneSlot() {
 	}
 	s.Equal([]string{"a.txt", "b.txt", "c.txt", "d.txt"}, names)
 	s.Equal([]string{"/tmp/e.txt"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileWhoseDownloadBreaksOffIsMissingRatherThanCutShort() {
+	s.platform.holdsCut("/tmp/report.csv", 1<<20)
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/report.csv"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
 }
