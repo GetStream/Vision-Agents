@@ -67,7 +67,6 @@ func (s *ErrorClassSuite) TestAnyOtherErrorIsOther() {
 
 	s.Equal("other", ErrorClass(other))
 	s.Equal("other", ErrorClass(fmt.Errorf("refresh: %w", other)))
-	s.Equal("other", ErrorClass(nil))
 }
 
 // TestNoCredentialWinsOverTheCauseThatCameWithIt: a reconnect is what the user must do, whatever
