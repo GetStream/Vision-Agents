@@ -58,10 +58,10 @@ var (
 	// same way every time, so it is no 503 a caller retries.
 	errRunCannotSee = APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: "the run has images, and " +
 		"the agent config has no vision skill and a conversation model that takes text alone"}
-	// errRunRefused is a run whose input the prompt injection screen refused. The input
-	// decides it, so it is no 503 a caller retries: the same input is refused again.
+	// errRunRefused is a run whose input, or a tool result it read, the prompt injection screen
+	// refused. The input decides it, so it is no 503 a caller retries: the same input is refused again.
 	errRunRefused = APIError{Type: ErrorTypeInvalidRequest, Code: codePromptInjection,
-		Message: "the run's input reads as a prompt injection, so the agent did not answer it"}
+		Message: "what the run read, its input or a tool result, reads as a prompt injection, so the agent did not answer it"}
 )
 
 // createRun runs an agent config on one input as a headless text session and answers with what
@@ -341,8 +341,8 @@ func (s *Server) registerRuns(api huma.API) {
 			"5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, " +
 			"which retrying the same image does not fix.\n" +
 			"A config that does not start a session, or that cannot see a run's images, is a 400 " +
-			"invalid_config, which retrying does not fix, an input the prompt injection screen refused a " +
-			"400 prompt_injection, which retrying the same input does not fix, a spent budget a 403 " +
+			"invalid_config, which retrying does not fix, an input or tool result the prompt injection " +
+			"screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 " +
 			"budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may " +
 			"have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with " +
 			"Retry-After, a model that failed or said nothing a 503 model_failed, and a run that " +
