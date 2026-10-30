@@ -544,10 +544,12 @@ func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(answered), keepAlive)
 }
 
-// TestTheProxyServerHoldsAnIdleConnectionForFourMinutesByDefault: a router that sets nothing
-// gives the server the proxy's own keep-alive default, egress/proxy.go keepAliveTimeout, longer
-// than libcurl's 118 s, the longest idle limit of a client in the sandbox.
-func TestTheProxyServerHoldsAnIdleConnectionForFourMinutesByDefault(t *testing.T) {
+// TestTheProxyServerOutlastsEverySandboxClientsIdleLimitByDefault: a router that sets nothing
+// gives the server the proxy's own keep-alive default, which a client in the sandbox must reach
+// first, or it reuses a connection the proxy has just closed. Go's is http.DefaultTransport's
+// IdleConnTimeout; libcurl's (curl, git) is 118 s, the longest
+// (https://curl.se/libcurl/c/CURLOPT_MAXAGE_CONN.html).
+func TestTheProxyServerOutlastsEverySandboxClientsIdleLimitByDefault(t *testing.T) {
 	caCert, caKey := newCA(t)
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
@@ -559,7 +561,9 @@ func TestTheProxyServerHoldsAnIdleConnectionForFourMinutesByDefault(t *testing.T
 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
-	require.Equal(t, 4*time.Minute, (<-served).IdleTimeout)
+	keepAlive := (<-served).IdleTimeout
+	require.Greater(t, keepAlive, http.DefaultTransport.(*http.Transport).IdleConnTimeout)
+	require.Greater(t, keepAlive, 118*time.Second)
 }
 
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
