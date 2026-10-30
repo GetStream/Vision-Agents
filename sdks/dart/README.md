@@ -131,19 +131,18 @@ On a call, turn the camera on and the agent can look through it:
 await voice.join(camera: true); // or later: await voice.setCameraEnabled(true);
 ```
 
-The camera is the back lens. While it is on, a picture of the call's own video is taken twice a
-second and the last four seconds are kept. When the agent's `vision` skill needs to see, the
-router asks for what the camera showed at the moment the question was taken
-(`get_video_frames`), and `voice.session` answers with those frames, at most 1024 px on their
-longest side, as JPEGs. Nothing is declared as a tool, so the model is never offered it, and a
-camera turned off forgets what it showed. With the camera off the session does not answer, so a
-video worker in your backend can. The agent needs the `vision` skill, and the call a subagent to
-run it on.
+The camera is the back lens. When the agent's `vision` skill needs to see, the router asks the
+session what the camera shows (`get_video_frames`), and `voice.session` answers with a picture of
+the call's own video taken then, at most 1024 px on its longest side, as a JPEG. An agent set to
+look at several frames gets them half a second apart. Nothing is taken until the agent asks, and
+nothing is declared as a tool, so the model is never offered it. With the camera off the session
+does not answer, so a video worker in your backend can. The agent needs the `vision` skill, and
+the call a subagent to run it on.
 
 Stream Video has no Dart hook on the frames a call sends, so each picture is a screenshot of the
-local camera track (`Call.takeScreenshot`), at the camera's full size; only the few an answer
-sends are scaled and re-encoded. An app with a camera of its own can fill
-`session.cameraFrames` (a `CameraFrames`) itself.
+local camera track at the camera's full size, scaled and re-encoded before it is sent. The Swift,
+Kotlin and JS SDKs keep the last few seconds of frames, so theirs can come from just before the
+question; here they come from just after it.
 
 ### A connector's sign-in
 

@@ -7,7 +7,6 @@ library;
 export 'src/agent_event.dart';
 export 'src/agent_session.dart';
 export 'src/backend.dart';
-export 'src/camera_frames.dart';
 export 'src/command.dart';
 export 'src/conversation.dart';
 export 'src/errors.dart';

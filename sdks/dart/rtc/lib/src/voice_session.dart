@@ -2,7 +2,7 @@ import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 import 'camera_jpeg.dart';
-import 'camera_sampler.dart';
+import 'camera_shots.dart';
 
 const _kind = 'video';
 
@@ -100,8 +100,11 @@ final class VoiceSession {
   final bool _createdLocally;
   final _state = LiveValueController(const VoiceState());
   bool _joining = false;
-  final _frames = CameraFrames(encode: cameraJpeg);
-  CameraSampler? _sampler;
+  late final _shots = CameraShots(_shot, cameraJpeg);
+
+  /// What [session] takes pictures with while the camera is on, kept so it can be told apart
+  /// from one the app set.
+  late final _camera = _shots.look;
 
   LiveValue<VoiceState> get state => _state;
   video.Call? get call => _state.value.call;
@@ -230,39 +233,40 @@ final class VoiceSession {
     );
   }
 
-  /// Samples the call's camera for the agent, and lets [session] answer with what it showed.
+  /// Lets [session] answer the agent with pictures from the call's camera.
   ///
   /// A call left while its camera was being turned on is not looked through.
   void _look(video.Call call) {
     if (!identical(this.call, call)) {
       return;
     }
-    _sampler ??= CameraSampler(() {
-      // Only while the call is sending video: a camera turned off some other way, by Stream
-      // Video's own controls or the app's, has no frame to give.
-      final local = call.state.value.localParticipant;
-      if (local == null || !local.isVideoEnabled) {
-        return null;
-      }
-      final track = call.getTrack(local.trackIdPrefix, video.SfuTrackType.video);
-      if (track == null) {
-        return null;
-      }
-      return (
-        track: track.mediaTrack.id,
-        take: () async => (await track.captureScreenshot())?.asUint8List(),
-      );
-    }, _frames);
-    session.cameraFrames = _frames;
+    session.camera = _camera;
   }
 
   void _stopLooking() {
-    _sampler?.stop();
-    _sampler = null;
-    _frames.clear();
-    if (identical(session.cameraFrames, _frames)) {
-      session.cameraFrames = null;
+    _shots.stop();
+    if (identical(session.camera, _camera)) {
+      session.camera = null;
     }
+  }
+
+  /// The picture to take with the call's camera now, or null when it is not sending video.
+  CameraShot? _shot() {
+    // Only while the call is sending video: a camera turned off some other way, by Stream
+    // Video's own controls or the app's, has no frame to give.
+    final call = this.call;
+    final local = call?.state.value.localParticipant;
+    if (call == null || local == null || !local.isVideoEnabled) {
+      return null;
+    }
+    final track = call.getTrack(local.trackIdPrefix, video.SfuTrackType.video);
+    if (track == null) {
+      return null;
+    }
+    return (
+      track: track.mediaTrack.id,
+      take: () async => (await track.captureScreenshot())?.asUint8List(),
+    );
   }
 
   bool _failed(video.Result<video.None> result) {

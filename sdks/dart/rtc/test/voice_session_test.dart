@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
@@ -141,8 +142,27 @@ void main() {
 
       expect(voice.state.value.isMuted, isFalse);
       expect(voice.state.value.isCameraEnabled, isFalse);
-      expect(voice.session.cameraFrames, isNull);
       await voice.end();
+    });
+
+    test('turning the camera on before joining lends the agent no camera', () async {
+      final voice = await VoiceSession.attach(agents, 'voice-1');
+
+      await voice.setCameraEnabled(true);
+
+      expect(voice.session.camera, isNull);
+      await voice.end();
+    });
+
+    test('hanging up leaves a camera it did not lend the agent', () async {
+      final voice = await VoiceSession.attach(agents, 'voice-1');
+      Future<List<({Uint8List jpeg, DateTime capturedAt})>> other(DateTime at, int limit) async =>
+          const [];
+      voice.session.camera = other;
+
+      await voice.end();
+
+      expect(voice.session.camera, same(other));
     });
 
     test('leaving a session something else started leaves it running', () async {

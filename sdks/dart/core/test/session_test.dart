@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
@@ -553,18 +554,36 @@ void main() {
       // The moment the router took the question, and its request for frames as `frameOf`
       // writes the vision skill's call.
       final asked = DateTime.utc(2026, 10, 27, 12);
-      String request({String run = 'true', String ids = '"request_id":"","turn_id":""'}) =>
-          '{"type":"tool_call","id":"task-1-capture","name":"get_video_frames",'
-          r'"arguments":"{\"at_ms\":1793102400000,\"limit\":2,\"source\":\"camera\"}",'
-          '$ids,"session_id":"s1","run":$run}';
+      String request({
+        Map<String, Object?>? arguments,
+        bool run = true,
+        String requestId = '',
+        String turnId = '',
+      }) => jsonEncode({
+        'type': 'tool_call',
+        'id': 'task-1-capture',
+        'name': 'get_video_frames',
+        'arguments': jsonEncode(
+          arguments ?? {'at_ms': asked.millisecondsSinceEpoch, 'limit': 2, 'source': 'camera'},
+        ),
+        'request_id': requestId,
+        'turn_id': turnId,
+        'session_id': 's1',
+        'run': run,
+      });
+      ({Uint8List jpeg, DateTime capturedAt}) picture(List<int> bytes, DateTime capturedAt) =>
+          (jpeg: Uint8List.fromList(bytes), capturedAt: capturedAt);
+      String frameIds(Map<String, Object?> result) {
+        final output = result['output']! as List<Object?>;
+        final words = jsonDecode((output.first! as Map)['text'] as String) as Map;
+        return [for (final frame in words['frames'] as List) (frame as Map)['frame_id']].join(',');
+      }
 
-      test('is answered with what the camera showed then, words first, oldest first', () async {
+      test('is answered with the pictures the camera takes, words first', () async {
         final chat = await agents.chat();
-        chat.cameraFrames = CameraFrames()
-          ..record(Uint8List.fromList([1]), asked.subtract(const Duration(milliseconds: 1500)))
-          ..record(Uint8List.fromList([2]), asked.subtract(const Duration(milliseconds: 1000)))
-          ..record(Uint8List.fromList([3]), asked.subtract(const Duration(milliseconds: 500)))
-          ..record(Uint8List.fromList([4]), asked.add(const Duration(seconds: 3)));
+        final before = picture([1], asked.subtract(const Duration(milliseconds: 500)));
+        final after = picture([2], asked);
+        chat.camera = (_, _) async => [before, after];
         final socket = await router.socket();
 
         socket.send(request());
@@ -575,19 +594,26 @@ void main() {
           'output': [
             {
               'type': 'text',
-              'text':
-                  '{"clock":"device_unix_ms","frames":['
-                  '{"captured_at_ms":1793102399000,"frame_id":"camera-2"},'
-                  '{"captured_at_ms":1793102399500,"frame_id":"camera-3"}],"source":"camera"}',
+              'text': jsonEncode({
+                'clock': 'device_unix_ms',
+                'frames': [
+                  {
+                    'captured_at_ms': before.capturedAt.millisecondsSinceEpoch,
+                    'frame_id': 'camera-1',
+                  },
+                  {
+                    'captured_at_ms': after.capturedAt.millisecondsSinceEpoch,
+                    'frame_id': 'camera-2',
+                  },
+                ],
+                'source': 'camera',
+              }),
             },
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:image/jpeg;base64,Ag=='},
-            },
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:image/jpeg;base64,Aw=='},
-            },
+            for (final shown in [before, after])
+              {
+                'type': 'image_url',
+                'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(shown.jpeg)}'},
+              },
           ],
           'error': '',
         });
@@ -596,60 +622,129 @@ void main() {
 
       test("repeats a request's ids, as any tool result does", () async {
         final chat = await agents.chat();
-        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), asked);
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
         final socket = await router.socket();
 
-        socket.send(request(ids: '"request_id":"cmd-1","turn_id":"t1"'));
+        socket.send(request(requestId: 'cmd-1', turnId: 't1'));
 
         final result = await socket.next();
-        expect(result['request_id'], 'cmd-1');
-        expect(result['turn_id'], 't1');
+        expect((result['request_id'], result['turn_id']), ('cmd-1', 't1'));
         await chat.close();
       });
 
-      test('sends each frame as its encoder made it, leaving out one it could not', () async {
+      test('asks the camera for the moment and the number of pictures named', () async {
         final chat = await agents.chat();
-        chat.cameraFrames =
-            CameraFrames(
-                encode: (picture) async => picture.first == 2
-                    ? throw const FormatException('not a picture')
-                    : Uint8List.fromList([9, ...picture]),
-              )
-              ..record(Uint8List.fromList([2]), asked.subtract(const Duration(seconds: 1)))
-              ..record(Uint8List.fromList([3]), asked);
+        (DateTime, int)? asking;
+        chat.camera = (at, limit) async {
+          asking = (at, limit);
+          return const [];
+        };
         final socket = await router.socket();
 
         socket.send(request());
+        await socket.next();
 
-        final output = (await socket.next())['output']! as List<Object?>;
-        expect(output, hasLength(2));
-        expect((output.first! as Map)['text'], contains('"frame_id":"camera-2"'));
-        expect(output.last, {
-          'type': 'image_url',
-          'image_url': {'url': 'data:image/jpeg;base64,CQM='},
-        });
+        final (at, limit) = asking!;
+        expect((at.millisecondsSinceEpoch, limit), (asked.millisecondsSinceEpoch, 2));
+        await chat.close();
+      });
+
+      test('asks for one picture of now when the router names neither', () async {
+        final chat = await agents.chat();
+        (DateTime, int)? asking;
+        chat.camera = (at, limit) async {
+          asking = (at, limit);
+          return const [];
+        };
+        final socket = await router.socket();
+        final sent = DateTime.now();
+
+        socket.send(request(arguments: {}));
+        await socket.next();
+
+        final (at, limit) = asking!;
+        expect(limit, 1);
+        expect(at.isBefore(sent), isFalse);
+        await chat.close();
+      });
+
+      test('asks for at most eight pictures', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        socket.send(request(arguments: {'at_ms': asked.millisecondsSinceEpoch, 'limit': 20}));
+        await socket.next();
+
+        expect(asking, 8);
         await chat.close();
       });
 
       test('takes a moment past what a date holds as now, rather than failing', () async {
         final chat = await agents.chat();
-        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), DateTime.now());
+        DateTime? asking;
+        chat.camera = (at, _) async {
+          asking = at;
+          return const [];
+        };
         final socket = await router.socket();
+        final sent = DateTime.now();
 
-        socket.send(
-          '{"type":"tool_call","id":"task-1-capture","name":"get_video_frames",'
-          r'"arguments":"{\"at_ms\":1e20,\"limit\":1}","run":true}',
-        );
+        socket.send(request(arguments: {'at_ms': 1e20, 'limit': 1}));
+        await socket.next();
 
-        final output = (await socket.next())['output']! as List<Object?>;
-        expect((output.first! as Map)['text'], contains('"frame_id":"camera-1"'));
+        expect(asking!.isBefore(sent), isFalse);
         await chat.close();
       });
 
-      test('says the camera showed nothing recent, as an answer rather than a failure', () async {
+      test('sends the pictures oldest first, however the camera ordered them', () async {
         final chat = await agents.chat();
-        chat.cameraFrames = CameraFrames()
-          ..record(Uint8List.fromList([1]), asked.subtract(const Duration(seconds: 6)));
+        chat.camera = (_, _) async => [
+          picture([2], asked),
+          picture([1], asked.subtract(const Duration(seconds: 1))),
+        ];
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        final output = (await socket.next())['output']! as List<Object?>;
+        expect(output.skip(1), [
+          for (final bytes in [
+            [1],
+            [2],
+          ])
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(bytes)}'},
+            },
+        ]);
+        await chat.close();
+      });
+
+      test('numbers the frames on from one request to the next', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
+        final socket = await router.socket();
+
+        socket.send(request());
+        await socket.next();
+        socket.send(request());
+
+        expect(frameIds(await socket.next()), 'camera-2');
+        await chat.close();
+      });
+
+      test('says the camera showed nothing recent when it took no picture', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => const [];
         final socket = await router.socket();
 
         socket.send(request());
@@ -665,24 +760,90 @@ void main() {
         await chat.close();
       });
 
+      test('says the camera showed nothing recent when it could not look', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => throw StateError('no camera');
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(
+          (await socket.next())['output'],
+          'The camera has shown nothing in the last few seconds; ask them to point it at what '
+          'they mean again.',
+        );
+        await chat.close();
+      });
+
+      test('is not answered once the router cancelled it', () async {
+        final looked = Completer<List<({Uint8List jpeg, DateTime capturedAt})>>();
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        chat.camera = (_, _) => looked.future;
+        final socket = await router.socket();
+        final cancelled = chat.events().firstWhere(
+          (event) => event.kind == AgentEventKind.toolCancel,
+        );
+
+        socket
+          ..send(request())
+          ..send('{"type":"tool_cancel","id":"task-1-capture","request_id":"","turn_id":""}');
+        await cancelled;
+        looked.complete([
+          picture([1], asked),
+        ]);
+        socket.send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test('finishing looking after the session closed sends nothing and throws nothing', () async {
+        final asking = Completer<void>();
+        final looked = Completer<List<({Uint8List jpeg, DateTime capturedAt})>>();
+        final chat = await agents.chat();
+        chat.camera = (_, _) {
+          asking.complete();
+          return looked.future;
+        };
+        final socket = await router.socket();
+
+        socket.send(request());
+        await asking.future;
+        await chat.close();
+        looked.complete([
+          picture([1], asked),
+        ]);
+        await pumpEventQueue();
+
+        // The socket closed before the camera finished, so the close is the last frame.
+        expect(await socket.next(), {'type': 'close'});
+        await socket.done;
+      });
+
       test('is left to whoever the router says runs it', () async {
         final chat = await agents.chat(
           SessionOptions(
             tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
           ),
         );
-        chat.cameraFrames = CameraFrames()..record(Uint8List.fromList([1]), asked);
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
         final socket = await router.socket();
 
         socket
-          ..send(request(run: 'false'))
+          ..send(request(run: false))
           ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
 
         expect((await socket.next())['tool_call_id'], 'c2');
         await chat.close();
       });
 
-      test('with the camera off, is left alone like any tool this app does not have', () async {
+      test('with no camera, is left alone like any tool this app does not have', () async {
         final chat = await agents.chat(
           SessionOptions(
             tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
@@ -698,7 +859,7 @@ void main() {
         await chat.close();
       });
 
-      test("with the camera off, goes to the app's own tool of that name as before", () async {
+      test("with no camera, goes to the app's own tool of that name as before", () async {
         final chat = await agents.chat(
           SessionOptions(
             tools: [

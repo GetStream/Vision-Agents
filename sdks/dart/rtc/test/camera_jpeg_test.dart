@@ -25,25 +25,32 @@ void main() {
       expect((decoded.width, decoded.height), (1024, 576));
     });
 
-    test("makes Android's full-size portrait JPEG one 1024 tall", () {
-      final jpeg = jpegOf(image.encodeJpg(_picture(720, 1280), quality: 100));
+    test("makes Android's full-size portrait JPEG one 1024 tall", () async {
+      final jpeg = await cameraJpeg(image.encodeJpg(_picture(720, 1280), quality: 100));
 
       final decoded = image.JpegDecoder().decode(jpeg)!;
       expect((decoded.width, decoded.height), (576, 1024));
     });
 
-    test('keeps a picture already small enough at its size, as a smaller JPEG', () {
+    test('keeps a picture already small enough at its size', () async {
       final picture = image.encodeJpg(_picture(640, 480), quality: 100);
 
-      final jpeg = jpegOf(picture);
+      final jpeg = await cameraJpeg(picture);
 
       final decoded = image.JpegDecoder().decode(jpeg)!;
       expect((decoded.width, decoded.height), (640, 480));
+    });
+
+    test('makes a picture already small enough a smaller JPEG', () async {
+      final picture = image.encodeJpg(_picture(640, 480), quality: 100);
+
+      final jpeg = await cameraJpeg(picture);
+
       expect(jpeg.length, lessThan(picture.length));
     });
 
-    test('refuses something that is not a picture', () {
-      expect(() => jpegOf(Uint8List.fromList([1, 2, 3])), throwsFormatException);
+    test('refuses something that is not a picture', () async {
+      await expectLater(cameraJpeg(Uint8List.fromList([1, 2, 3])), throwsFormatException);
     });
   });
 }

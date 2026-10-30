@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'agent_event.dart';
 import 'backend.dart';
-import 'camera_frames.dart';
 import 'command.dart';
 import 'conversation.dart';
 import 'errors.dart';
@@ -86,10 +86,14 @@ final class AgentSession {
   /// Also report what somebody is part way through saying, as `hearing` events.
   final bool interim;
 
-  /// What this device's camera showed lately, which answers the router's `get_video_frames`
-  /// while it is set. `VoiceSession` sets it while its camera is on and clears it when the
-  /// camera goes off.
-  CameraFrames? cameraFrames;
+  /// Takes pictures with this device's camera when the agent asks to see, or null to leave
+  /// the asking to somebody else.
+  ///
+  /// The hook `vision_agents_rtc` answers the agent's vision skill through while the call's
+  /// camera is on. It is called with the moment the question was taken and how many pictures
+  /// are wanted, 1 to 8, and returns JPEGs with when each was taken. None at all tells the
+  /// agent the camera has shown nothing recent.
+  Future<List<({Uint8List jpeg, DateTime capturedAt})>> Function(DateTime at, int limit)? camera;
 
   final Backend _backend;
   final Sessions _sessions;
@@ -100,6 +104,7 @@ final class AgentSession {
   final Set<_Subscriber> _subscribers = {};
   final Set<String> _running = {};
   final Set<String> _cancelled = {};
+  int _pictures = 0;
   SessionSocket? _socket;
   StreamSubscription<AgentEvent>? _pump;
 
@@ -342,9 +347,9 @@ final class AgentSession {
   void _answer(ToolCall call, {required bool run}) {
     // The request for frames is this device's only while its camera is on; otherwise a video
     // worker in the backend may own it.
-    if (cameraFrames case final frames? when call.name == CameraFrames.toolName) {
+    if (camera case final camera? when call.name == _cameraTool) {
       if (run) {
-        _show(frames, call);
+        _show(camera, call);
       }
       return;
     }
@@ -361,11 +366,14 @@ final class AgentSession {
     }
   }
 
-  /// Answers the router's request for frames with the ones the camera showed at the moment it
-  /// names: what the frames are, then the frames, oldest first. Nothing recent enough is said
-  /// as the answer rather than as a failure, as the router's own video workers say it, so the
-  /// agent can ask the person to show it again.
-  void _show(CameraFrames frames, ToolCall call) {
+  /// Answers the router's request for frames with pictures [camera] takes: what they are,
+  /// then the pictures, oldest first. A camera with nothing to show is said as the answer
+  /// rather than as a failure, as the router's own video workers say it, so the agent can ask
+  /// the person to show it again. A request the router cancels is not answered.
+  void _show(
+    Future<List<({Uint8List jpeg, DateTime capturedAt})>> Function(DateTime at, int limit) camera,
+    ToolCall call,
+  ) {
     final arguments = call.argumentValues;
     final at = switch (arguments['at_ms']) {
       // Past what a DateTime holds is not a moment the router could have meant.
@@ -373,41 +381,40 @@ final class AgentSession {
       _ => DateTime.now(),
     };
     final limit = switch (arguments['limit']) {
-      final num limit => limit.toInt(),
+      final num limit => limit.toInt().clamp(1, _mostPictures),
       _ => 1,
     };
-    final selected = frames.select(at, limit);
+    _running.add(call.id);
     unawaited(() async {
-      // A picture that cannot be made into a JPEG is left out rather than failing the rest.
-      final encoded = await Future.wait([
-        for (final frame in selected)
-          Future.sync(
-            () => frames.encode(frame.picture),
-          ).then<(CameraFrame, List<int>)?>((jpeg) => (frame, jpeg), onError: (Object _) => null),
-      ]);
-      final shown = encoded.nonNulls.toList();
-      final output = shown.isEmpty
-          ? const ToolOutput(text: _nothingRecent)
-          : ToolOutput(
-              text: jsonEncode({
-                'clock': 'device_unix_ms',
-                'frames': [
-                  for (final (frame, _) in shown)
-                    {
-                      'captured_at_ms': frame.capturedAt.millisecondsSinceEpoch,
-                      'frame_id': 'camera-${frame.id}',
-                    },
-                ],
-                'source': 'camera',
-              }),
-              images: [
-                for (final (_, jpeg) in shown)
-                  AgentImage('data:image/jpeg;base64,${base64Encode(jpeg)}'),
-              ],
-            );
-      if (!isConnected) {
+      List<({Uint8List jpeg, DateTime capturedAt})> pictures;
+      try {
+        pictures = [...await camera(at, limit)]
+          ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+      } catch (_) {
+        // A camera that could not take a picture has shown nothing.
+        pictures = const [];
+      }
+      _running.remove(call.id);
+      if (_cancelled.remove(call.id) || !isConnected) {
         return;
       }
+      final frames = <Map<String, Object>>[];
+      for (final picture in pictures) {
+        _pictures += 1;
+        frames.add({
+          'captured_at_ms': picture.capturedAt.millisecondsSinceEpoch,
+          'frame_id': 'camera-$_pictures',
+        });
+      }
+      final output = pictures.isEmpty
+          ? const ToolOutput(text: _nothingRecent)
+          : ToolOutput(
+              text: jsonEncode({'clock': 'device_unix_ms', 'frames': frames, 'source': 'camera'}),
+              images: [
+                for (final picture in pictures)
+                  AgentImage('data:image/jpeg;base64,${base64Encode(picture.jpeg)}'),
+              ],
+            );
       try {
         _socket?.send(
           ToolResultCommand(
@@ -419,7 +426,7 @@ final class AgentSession {
           ),
         );
       } on SocketClosedException {
-        // The conversation ended while the frames were encoding; there is nobody left to show.
+        // The conversation ended while the camera was looking; there is nobody left to show.
       }
     }());
   }
@@ -480,8 +487,14 @@ final class AgentSession {
   }
 }
 
-/// What the agent is told when the camera has shown nothing recent enough, in the words the
-/// Swift and Kotlin SDKs use.
+/// The tool the router asks for frames with. Answered by the session, never offered to the
+/// model as one of the app's tools.
+const _cameraTool = 'get_video_frames';
+
+/// The most pictures one request for frames is answered with.
+const _mostPictures = 8;
+
+/// What the agent is told when the camera has shown nothing recent enough.
 const _nothingRecent =
     'The camera has shown nothing in the last few seconds; ask them to point it at what they '
     'mean again.';

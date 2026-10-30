@@ -23,7 +23,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  # Runs the camera sampler's half-second clock in a test without waiting for it.
+  # Runs the half second between the camera's pictures in a test without waiting for it.
   fake_async: ^1.3.0
   flutter_lints: ^6.0.0
 
