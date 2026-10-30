@@ -423,13 +423,14 @@ func reported(response llm.Response) routing.Stat {
 // deadline, which most providers then never report but bill all the same, the whole prompt
 // included. A provider that repeats its usage on every chunk has said, and a response cut
 // short keeps that count. A response the provider itself failed is not estimated: a vendor is
-// not taken to bill its own failure.
+// not taken to bill its own failure. One the screen refused is no failure of the vendor's, and
+// is cut short as a cancelled one is.
 func unreported(response llm.Response) bool {
-	if response.UsageReported || (response.Status == llm.StatusFailed && !response.TimedOut) {
+	if response.UsageReported || (response.Status == llm.StatusFailed && !response.TimedOut && !response.Refused) {
 		return false
 	}
 	produced := response.OutputText != "" || response.ReasoningText != "" || len(response.ToolCalls) > 0
-	return produced || response.Status == llm.StatusCancelled || response.TimedOut
+	return produced || response.Status == llm.StatusCancelled || response.TimedOut || response.Refused
 }
 
 // reportedAttributes is what the provider said about how it served the response: the tier,
@@ -455,10 +456,13 @@ func served(response llm.Response) bool {
 	return response.Status != llm.StatusFailed && response.Status != llm.StatusCancelled
 }
 
-// errorCode says why a response did not run to its end: the provider failing it, a deadline
-// running out, or its caller closing the stream first, which is no fault of the provider's. A
-// response that ended as asked has none.
+// errorCode says why a response did not run to its end: the screen refusing it, the provider
+// failing it, a deadline running out, or its caller closing the stream first. Neither a refusal
+// nor a close is the provider's fault. A response that ended as asked has none.
 func errorCode(response llm.Response) string {
+	if response.Refused {
+		return routing.ErrorRefused
+	}
 	if response.TimedOut {
 		return routing.ErrorTimeout
 	}
