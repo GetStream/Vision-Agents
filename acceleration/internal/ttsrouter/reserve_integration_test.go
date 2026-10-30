@@ -4,13 +4,18 @@ package ttsrouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -18,6 +23,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/breeze"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
 )
 
 // reservingSession is a session over a stub voice whose every character costs $1, for an
@@ -33,14 +40,91 @@ func reservingSession(t *testing.T, money *policytest.Money, credit int64, perSe
 // reservingSessionOf is a reservingSession for an owner that already has its credit.
 func reservingSessionOf(t *testing.T, money *policytest.Money, owner routing.Owner, perSentence bool) (*Session, *stubTTS) {
 	t.Helper()
-	config := routing.ProviderConfig{Provider: "stub", Model: "stub-model", Price: routing.Price{PerMillionChars: 1_000_000}}
-	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	require.NoError(t, err)
 	provider := newStubTTS()
 	provider.perSentence = perSentence
+	return reservingSessionOver(t, money, owner, provider), provider
+}
+
+// reservingSessionOver is a session over provider whose every character costs $1, for an owner
+// that already has its credit.
+func reservingSessionOver(t *testing.T, money *policytest.Money, owner routing.Owner, provider tts.TTS) *Session {
+	t.Helper()
+	config := routing.ProviderConfig{Provider: provider.Provider(), Model: provider.Model(), Price: routing.Price{PerMillionChars: 1_000_000}}
+	prices, err := routing.Prices(routing.Config{routing.TTS: {Providers: []routing.ProviderConfig{config}}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
 	session := newSession(provider, config, owner, money.Recorder(routing.TTS, prices), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	t.Cleanup(func() { _ = session.Close() })
-	return session, provider
+	return session
+}
+
+// ownDeployments are the voices served by a deployment of ours, each started over a fake of it
+// at url. The deployment speaks only flushed text and sends no final for a cancel of text it
+// was never asked to say (deploy/breeze-tts-2/model/model.py, deploy/s2-pro/model/model.py).
+var ownDeployments = map[string]func(t *testing.T, url string) tts.TTS{
+	"breeze": func(t *testing.T, url string) tts.TTS {
+		provider, err := breeze.New(breeze.Options{URL: url, APIKey: "test-key", DrainTimeout: 100 * time.Millisecond})
+		require.NoError(t, err)
+		return provider
+	},
+	"s2pro": func(t *testing.T, url string) tts.TTS {
+		provider, err := s2pro.New(s2pro.Options{URL: url, APIKey: "test-key", DrainTimeout: 100 * time.Millisecond})
+		require.NoError(t, err)
+		return provider
+	},
+}
+
+// fakeDeployment starts newProvider against a fake of its deployment and returns the
+// deployment's side of the connection, once the handshake is done.
+func fakeDeployment(t *testing.T, newProvider func(t *testing.T, url string) tts.TTS) (tts.TTS, *websocket.Conn) {
+	t.Helper()
+	conns := make(chan *websocket.Conn, 1)
+	done := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ready"}`)); err != nil {
+			return
+		}
+		conns <- conn
+		<-done
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(done) })
+	provider := newProvider(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/websocket")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, provider.Start(ctx))
+	select {
+	case conn := <-conns:
+		return provider, conn
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the voice did not connect")
+		return nil, nil
+	}
+}
+
+// framesUntilFlush reads what the voice sent the deployment up to its first flush, as
+// type:id:text.
+func framesUntilFlush(t *testing.T, conn *websocket.Conn) []string {
+	t.Helper()
+	var frames []string
+	for {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+		_, raw, err := conn.ReadMessage()
+		require.NoError(t, err)
+		var frame struct{ Type, ID, Text string }
+		require.NoError(t, json.Unmarshal(raw, &frame))
+		frames = append(frames, frame.Type+":"+frame.ID+":"+frame.Text)
+		if frame.Type == "flush" {
+			return frames
+		}
+	}
 }
 
 // rowsOf waits for a customer's want rows and returns them.
@@ -238,6 +322,61 @@ func TestAnIdReusedAfterABargeInCutItsUnfinishedSentenceIsRefusedOnceNoCreditIsL
 
 // A streaming voice speaks text sent after an utterance's final text in that utterance, and
 // completes it once.
+// On a voice of our own deployment, text for an id cut by a barge-in before its final text is
+// dropped there and billed as sent, and the id's text after it is spoken and billed on its own.
+func TestAnUtteranceCutBeforeItsFinalTextIsBilledApartFromTheTextAfterIt(t *testing.T) {
+	for name, newProvider := range ownDeployments {
+		t.Run(name, func(t *testing.T) {
+			money := policytest.Start(t, "ttsrouter_reserve")
+			owner := money.Owner(t, 9_000_000)
+			provider, conn := fakeDeployment(t, newProvider)
+			session := reservingSessionOver(t, money, owner, provider)
+			go func() {
+				for range session.Events() {
+				}
+			}()
+
+			require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "abc"}))
+			require.NoError(t, session.Interrupt())
+			require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "defgh", Final: true}))
+			frames := framesUntilFlush(t, conn)
+			require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"final","id":"u1"}`)))
+
+			rows := rowsOf(t, money, owner, 2)
+			require.EqualValues(t, 3, rows[0].Characters, "the cut text is billed as sent")
+			require.EqualValues(t, 5, rows[1].Characters, "the text after the barge-in is billed in its own completion")
+			require.Equal(t, []string{"text:u1:abc", "cancel:u1:", "text:u1:defgh", "flush:u1:"}, frames,
+				"the deployment drops the cut text before the next text for the id")
+			require.NoError(t, session.Close())
+			// $8 of $9 is spent, so the last $1 is free only if nothing is still held.
+			require.Eventually(t, func() bool { return money.Spend(t, owner) == nil }, 2*time.Second, 10*time.Millisecond,
+				"nothing is held once the session is closed")
+		})
+	}
+}
+
+// On a voice of our own deployment the barge-in ends the sentence, so text for its id after it
+// is a new sentence and is refused once no credit is left.
+func TestAnIdReusedAfterABargeInOnOurOwnDeploymentIsRefusedOnceNoCreditIsLeft(t *testing.T) {
+	for name, newProvider := range ownDeployments {
+		t.Run(name, func(t *testing.T) {
+			money := policytest.Start(t, "ttsrouter_reserve")
+			owner := money.Owner(t, 3_000_000)
+			provider, _ := fakeDeployment(t, newProvider)
+			session := reservingSessionOver(t, money, owner, provider)
+			go func() {
+				for range session.Events() {
+				}
+			}()
+
+			require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "abc"}))
+			require.NoError(t, session.Interrupt())
+			require.ErrorIs(t, session.Synthesize(tts.Request{ID: "u1", Text: "defgh", Final: true}), policy.ErrNoCredits,
+				"the barge-in ended the sentence, so the text after it is a new one")
+		})
+	}
+}
+
 func TestTextAfterAStreamingUtterancesFinalTextIsBilledInItsOneCompletion(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
 	session, provider, owner := reservingSession(t, money, 10_000_000, false)
