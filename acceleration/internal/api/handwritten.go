@@ -90,7 +90,8 @@ func documentHandWritten(api huma.API) {
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, request_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
-			"persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, " +
+			"persistence_error, refused (true on a reply the prompt injection screen refused) and " +
+			"attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
 			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
 			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
