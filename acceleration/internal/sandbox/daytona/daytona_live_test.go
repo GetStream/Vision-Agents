@@ -90,7 +90,7 @@ const runLabel = "stream.run"
 // left. A Close deletes only the sandbox it holds, so one that Daytona put in its error state
 // while making it is found here alone. Daytona's list leaves out only an errored sandbox already
 // being deleted (api-client-go v0.211.2 api_sandbox.go:3800, includeErroredDeleted).
-func sweepRun(t *testing.T, run string) {
+func sweepRun(t require.TestingT, run string) {
 	client, err := sdk.NewClient()
 	require.NoError(t, err)
 	// Each delete waits up to 2 minutes, as TestADeletedSandboxIsMadeAgain's does; a run makes a
@@ -104,6 +104,20 @@ func sweepRun(t *testing.T, run string) {
 		made = append(made, box)
 	}
 	for _, box := range made {
+		// The query filters on the server, so a box that does not carry the labels is not ours to
+		// delete, as the router's sweeper checks too (cmd/router/sandboxes.go, ours).
+		if box.Labels[runLabel] != run || box.Labels["stream.env"] != "live-test" {
+			t.Errorf("sandbox %s came back for run %s with labels %v, left alone", box.ID, run, box.Labels)
+			continue
+		}
+		if box.State == "error" {
+			// DeleteAndWait fails on a sandbox in the error state (sdk-go v0.211.2 sandbox.go:685,
+			// :1264-1267), and Daytona leaves a deleted errored one in it: the final list proves it gone.
+			if err := box.Delete(ctx); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+				t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
+			}
+			continue
+		}
 		if err := box.DeleteAndWait(ctx, 2*time.Minute); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
 			t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
 		}
