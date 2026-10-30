@@ -90,6 +90,24 @@ func TestClosingASessionNobodyReadsStillReleasesWhatItHeld(t *testing.T) {
 	<-sent
 }
 
+func TestClosingASessionReleasesEverySentenceOfAnId(t *testing.T) {
+	money := policytest.Start(t, "ttsrouter_reserve")
+	session, provider, owner := reservingSession(t, money, 9_000_000, true)
+	other, _ := reservingSessionOf(t, money, owner, true)
+	require.NoError(t, other.Synthesize(tts.Request{ID: "o1", Text: "yz"}))
+	// Two sentences of u1, neither completed: the one cut by the barge-in and the one after.
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	require.NoError(t, session.Interrupt())
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "bcdefgh", Final: true}))
+	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits, "$10 is held of $9")
+
+	require.NoError(t, session.Close())
+
+	require.Eventually(t, func() bool { return money.Spend(t, owner) == nil }, 2*time.Second, 10*time.Millisecond,
+		"both sentences' $8 is let go, and only the other session's $2 is still held")
+}
+
 func TestTextTheVoiceRefusedIsNoLongerHeld(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
 	session, provider, owner := reservingSession(t, money, 2_000_000, false)
