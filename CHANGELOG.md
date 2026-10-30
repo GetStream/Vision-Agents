@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A written conversation stops chaining tools after 16 rounds
 
 A text session whose model answers each tool result by calling another tool is made to answer, with no tools offered, at the 16th reply to a tool result since the user last wrote, as a voice call is at the 8th. It used to go on calling tools until a spend limit stopped it.
+### A recording callback is posted only to a public https address
+
+`POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

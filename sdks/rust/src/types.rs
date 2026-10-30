@@ -11377,7 +11377,7 @@ pub struct Speech {
 ///`SpeechRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SpeechRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -12695,7 +12695,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TranscriptionMode {
 ///`TranscriptionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct TranscriptionRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.
