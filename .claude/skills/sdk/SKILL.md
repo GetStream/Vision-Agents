@@ -696,3 +696,5 @@ Every SDK names the session's `timezone` (no spec change). Go: `agents.Options.T
 `openSocketSession`'s description names the start frame's `sample_rate` range (no shape change): 8000 to 192000, 16000 when left out; any other is refused with an `error` frame, `code` `invalid_request`. Python (`plugins/stream`) and JavaScript are regenerated. An SDK that opens the socket must send a rate in this range (AI-1852).
 
 `runRollup` is Stream staff's now (AI-1735): `POST /v1/ops/stats/rollup` with the ops key. Every client is regenerated: Go, JavaScript and Python drop it, Ruby and Rust keep it at the new path. No SDK wrapped it, so nothing else needs to change.
+
+The recording `callback` doc says it must be a public https URL (AI-2298): Go (`stream/router.go`) is updated. .NET (`Router.cs`) and Python (`plugins/stream` `router.py`) need the same doc line.
