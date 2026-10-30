@@ -81,6 +81,11 @@ type Options struct {
 	Text bool
 	// Instructions is the system prompt, sent with every turn.
 	Instructions string
+	// ServerInstructions are what the MCP servers the agent reaches said about using their
+	// tools, sent after Instructions in every turn's system prompt. They are third parties'
+	// words and not the operator's, so an ID or a number in them is not one the operator
+	// gave (told).
+	ServerInstructions string
 	// Timezone is the end user's IANA zone, which every turn's clock line tells the day and
 	// the hour in beside UTC: theirs, or the agent config's default zone when theirs is not
 	// known. Empty when neither is.
@@ -2366,6 +2371,9 @@ func (a *Agent) instructionsFor(people int) string {
 	parts := make([]string, 0, 4)
 	if a.prompt != "" {
 		parts = append(parts, a.prompt)
+	}
+	if a.options.ServerInstructions != "" {
+		parts = append(parts, a.options.ServerInstructions)
 	}
 	if a.recalled != "" {
 		parts = append(parts, a.recalled)

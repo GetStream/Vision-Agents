@@ -783,6 +783,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Telephony:          line,
 			ToolRunner:         runner,
 			Tools:              harness.Tools{Tools: tools},
+			ServerInstructions: spec.ServerInstructions,
 			Sandbox:            box,
 			Publish:            publisher(conv),
 			Tasks:              spec.Tasks,

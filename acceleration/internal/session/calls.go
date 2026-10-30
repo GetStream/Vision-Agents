@@ -134,7 +134,7 @@ func row(created *Session) store.Call {
 		STS:          spec.STSTarget,
 		Subagent:     spec.SubagentTarget,
 		Voice:        spec.Voice,
-		Instructions: spec.prompt(),
+		Instructions: spec.recordedPrompt(),
 	}
 	for _, skill := range created.skills.Skills {
 		call.Skills = append(call.Skills, skill.Name)
