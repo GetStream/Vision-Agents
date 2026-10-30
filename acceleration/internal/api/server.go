@@ -245,6 +245,9 @@ type Options struct {
 	// DataRetention is how long a customer moving away has to finish, which is how long
 	// their changes are recorded for.
 	DataRetention time.Duration
+	// ImportLineLimit is the longest line POST /v1/data/import reads, in bytes. Zero is
+	// maxImportLine.
+	ImportLineLimit int
 	// Auth decides who a request is from. Absent means noauth, which reads the customer
 	// header and takes every caller for that customer's own backend. That is the right
 	// default for a server built in code rather than from configuration — a test, or a
@@ -368,6 +371,7 @@ type Server struct {
 	authenticator      auth.Authenticator
 	authMode           auth.Mode
 	dataRetention      time.Duration
+	importLineLimit    int
 	quota              *quota.Limiter
 	policies           *policy.Enforcer
 	connectors         core.Registry
@@ -474,6 +478,10 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if retention <= 0 {
 		retention = 7 * 24 * time.Hour
 	}
+	importLineLimit := options.ImportLineLimit
+	if importLineLimit <= 0 {
+		importLineLimit = maxImportLine
+	}
 
 	logger := options.Logger
 	if logger == nil {
@@ -543,6 +551,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		authenticator:      authenticator,
 		authMode:           authMode,
 		dataRetention:      retention,
+		importLineLimit:    importLineLimit,
 		quota:              options.Quota,
 		policies:           options.Policies,
 		connectors:         options.Connectors,

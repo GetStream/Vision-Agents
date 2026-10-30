@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 )
@@ -87,6 +91,33 @@ func (s *ForwardedSessionSuite) TestASessionNoNodeIsRunningIsAnsweredHere() {
 
 	s.Equal(http.StatusNotFound, status)
 	s.Equal(errUnknownSession.Message, message)
+}
+
+// The node running the session is the one that authenticates the caller, so the node
+// carrying the request over reads its body before anybody has: no credentials here.
+func (s *ForwardedSessionSuite) TestABodyLargerThanASessionTakesIsRefusedBeforeItIsCarriedOver() {
+	opened := s.onTheOtherNode(CreateSessionRequest{})
+
+	status, _ := s.unauthenticatedClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		SayRequest{Text: strings.Repeat("a", maxForwardedBody)})
+
+	s.Equal(http.StatusRequestEntityTooLarge, status)
+}
+
+func (s *ForwardedSessionSuite) TestNoOperationOnASessionTakesABodyLargerThanAForwardCarries() {
+	checked := 0
+	for path, item := range (&Server{}).newAPI(chi.NewRouter()).OpenAPI().Paths {
+		if !strings.HasPrefix(path, "/v1/agents/sessions/{id}") {
+			continue
+		}
+		for _, operation := range []*huma.Operation{item.Post, item.Put, item.Patch, item.Delete} {
+			if operation != nil {
+				checked++
+				s.LessOrEqual(operation.MaxBodyBytes, int64(maxForwardedBody), operation.Method+" "+path)
+			}
+		}
+	}
+	s.Positive(checked)
 }
 
 // Who may touch a session is decided by the node running it, so this is the test that the

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,6 +22,13 @@ const (
 	defaultChangeLimit = 500
 	maxChangeLimit     = 1000
 )
+
+// maxImportLine is the longest line an import reads, so one line is never held unbounded. A
+// line is one row, which the export reads with to_jsonb, and Postgres keeps no jsonb value
+// longer than 268435455 bytes (JENTRY_OFFLENMASK, src/include/utils/jsonb.h), so this is
+// about the longest line an export writes. The import as a whole is read a line at a time,
+// however long it is.
+const maxImportLine = 256 << 20
 
 // dataLine is one line of an export.
 //
@@ -92,13 +101,14 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 	rows := int64(0)
 	tables := map[string]int64{}
 
-	decoder := json.NewDecoder(r.Body)
-	for {
+	lines := bufio.NewScanner(r.Body)
+	lines.Buffer(nil, s.importLineLimit)
+	for lines.Scan() {
+		if len(bytes.TrimSpace(lines.Bytes())) == 0 {
+			continue
+		}
 		var line dataLine
-		if err := decoder.Decode(&line); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
+		if err := json.Unmarshal(lines.Bytes(), &line); err != nil {
 			writeError(w, invalidRequest("this is not an export: "+err.Error()))
 			return
 		}
@@ -121,6 +131,14 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 		case line.Cursor != nil:
 			cursor = line.Cursor
 		}
+	}
+	if err := lines.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			writeError(w, payloadTooLarge(fmt.Sprintf("a line of an import is at most %d bytes, and this one is longer", s.importLineLimit)))
+			return
+		}
+		writeError(w, invalidRequest("this is not an export: "+err.Error()))
+		return
 	}
 
 	s.logger.Info("imported a customer", "customer", customerID, "rows", rows)
