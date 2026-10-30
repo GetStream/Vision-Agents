@@ -4149,6 +4149,133 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 }
 
+func (s *AgentSuite) TestACallWrittenTwiceInOneReplyRunsOnce() {
+	// Each call of a reply runs on its own, so a model that wrote one call twice had the
+	// second run while the first was still out, before there was a result to answer it from:
+	// one order, placed twice.
+	s.ownsTools("")
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "place_order",
+		Description: "place an order for an item",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"item":     map[string]any{"type": "string"},
+			"quantity": map[string]any{"type": "integer"},
+		}},
+	}}}
+	release := make(chan struct{})
+	s.runner.run = func(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return llm.TextParts(`{"order_id":"o-1"}`), nil
+	}
+	s.join(false)
+	s.model.reply = []string{"Placing it now."}
+	s.model.then = []string{"Your lantern is ordered."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "place_order", Arguments: `{"item":"lantern","quantity":1}`},
+		{ID: "call-2", Name: "place_order", Arguments: `{ "quantity": 1, "item": "lantern" }`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "one lantern, please")
+
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 2 }, "both calls should start")
+	s.Never(func() bool { return len(s.runner.asked()) > 1 }, 150*time.Millisecond, 5*time.Millisecond,
+		"the repeat ran while the first call was still running")
+	close(release)
+
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "both calls should be answered")
+	s.Len(s.runner.asked(), 1, "the same order was placed twice")
+	results := map[string]string{}
+	for _, message := range s.history() {
+		if message.Role == llm.ToolResult {
+			results[message.ToolCallID] = message.Content
+		}
+	}
+	s.Equal(`{"order_id":"o-1"}`, results["call-1"])
+	s.Equal(alreadyCalled+`{"order_id":"o-1"}`, results["call-2"], "the repeat is told what the first returned")
+	s.eventually(func() bool { return s.spokenText("Your lantern is ordered") }, "the result was never said")
+	s.Len(s.model.requests(), 2, "both results are answered in one reply")
+}
+
+func (s *AgentSuite) TestDifferentCallsInOneReplyStillRunAtOnce() {
+	// Only a repeat waits for the call it repeats: two orders looked up in one reply are
+	// looked up together, each answered with its own result.
+	s.ownsTools("")
+	both := make(chan struct{})
+	var once sync.Once
+	s.runner.run = func(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+		if len(s.runner.asked()) == 2 {
+			once.Do(func() { close(both) })
+		}
+		select {
+		case <-both:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return llm.TextParts("found " + call.Arguments), nil
+	}
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Both came back."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"1"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"2"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where are my orders")
+
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "the second call waited for the first")
+	for _, ran := range toolsRanIn(s.reported()) {
+		s.Equal("found "+ran.Arguments, ran.Result, "each call is answered with its own result")
+	}
+}
+
+func (s *AgentSuite) TestARepeatIsToldTheFirstResultOnce() {
+	order := llm.ToolCall{ID: "c1", Name: "place_order", Arguments: `{"item":"lantern"}`}
+	repeat := llm.ToolCall{ID: "c2", Name: order.Name, Arguments: order.Arguments}
+	history := []llm.Message{
+		{Role: llm.User, Content: "One lantern, please."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{order}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"order_id":"o-1"}`},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{repeat}},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: alreadyCalled + `{"order_id":"o-1"}`},
+	}
+	again := llm.ToolCall{ID: "c3", Name: order.Name, Arguments: order.Arguments}
+
+	earlier, repeated := answeredSinceCaller(history, again, nil)
+	s.True(repeated)
+	s.Equal(`{"order_id":"o-1"}`, earlier, "the third call is told the first result, not the second answer inside another")
+
+	failed := slices.Clone(history)
+	failed[2].Content = `{"error":"out of stock"}`
+	failed[4].Content = alreadyCalled + `{"error":"out of stock"}`
+	_, repeated = answeredSinceCaller(failed, again, nil)
+	s.False(repeated, "an order that failed may be tried again, however often it was repeated")
+
+	// A read, then a repeat of the order answered from the first: nothing was placed in
+	// between, so the read still answers.
+	read := llm.ToolCall{ID: "c4", Name: "get_basket", Arguments: `{}`}
+	between := []llm.Message{
+		{Role: llm.User, Content: "One lantern, and what's in my basket?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{order}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"order_id":"o-1"}`},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{read}},
+		{Role: llm.ToolResult, ToolCallID: "c4", Content: `{"items":["lantern"]}`},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{repeat}},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: alreadyCalled + `{"order_id":"o-1"}`},
+	}
+	earlier, repeated = answeredSinceCaller(between, llm.ToolCall{ID: "c5", Name: read.Name, Arguments: read.Arguments}, nil)
+	s.True(repeated, "a repeat answered from the first call changed nothing")
+	s.Equal(`{"items":["lantern"]}`, earlier)
+}
+
 func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {
 	order := llm.ToolCall{ID: "c1", Name: "place_order", Arguments: `{"item":"lantern","quantity":1}`}
 	history := []llm.Message{

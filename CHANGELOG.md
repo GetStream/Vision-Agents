@@ -190,6 +190,9 @@ Saving an agent config or syncing an agent folder answers `400` when `sandbox_op
 ### A turn continued from a stored OpenAI response no longer repeats the last reply
 
 On a model that keeps its responses (OpenAI's Responses API, continued with `previous_response_id`), each continued turn sent the agent's last reply and its tool calls again, though the stored response already held them. The model read its own reply twice, input tokens grew by twice that reply's output on every continued turn, and the model was far more likely to make the same tool call again. A continued turn now sends only what came after the reply, such as the tool results or the caller's next words. A reply the conversation holds differently from how the model wrote it, for example with a skill tag or stage direction taken out or a filler line said for it, is not continued: the whole conversation is sent instead, as it is after a failover.
+### A call the model writes twice in one reply runs once
+
+When one reply of the model asked for the same tool with the same arguments more than once, spacing and key order aside, every copy ran, so an order was placed or a message sent twice. Now only the first runs. Each copy after it waits for that result and is answered with it, opening `You already made this exact call`. Its `tool_started` and `tool_ran` are still sent, with that answer as `result`. A tool that needs the caller's yes asks once. Different calls in one reply still run together, and a call repeated in a later reply follows the same rules as before. A call repeated a third time is now told the first result, not the second answer wrapped in another. Speech-to-speech models are unchanged.
 
 ### A user token works with the key the request was made with
 

@@ -24,6 +24,43 @@ func (s *AgentSuite) TestACallThatNeedsApprovalAsksTheQuestionAsWrittenAndDoesNo
 	s.Len(s.model.requests(), 1, "the question is said as written, without a turn of the model's")
 }
 
+func (s *AgentSuite) TestACallWrittenTwiceInOneReplyAsksForApprovalOnce() {
+	s.agentAsksAndWaits(time.Minute)
+	s.model.reply = []string{"Sure."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"12"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "book order 12")
+
+	s.eventually(func() bool { return s.spokenText("Book order 12?") }, "the question was never said")
+	s.replyWentOut()
+	s.agent.mu.Lock()
+	var waiting []string
+	for id := range s.agent.approvals {
+		waiting = append(waiting, id)
+	}
+	s.agent.mu.Unlock()
+	s.Equal([]string{"call-1"}, waiting, "the caller is asked once, for the first call")
+	var spoken []string
+	for _, request := range s.voice.spoken() {
+		spoken = append(spoken, request.Text)
+	}
+	s.Equal(1, strings.Count(strings.Join(spoken, " "), "Book order 12?"), "the caller was asked twice")
+	history := s.history()
+	repeat := slices.IndexFunc(history, func(message llm.Message) bool {
+		return message.Role == llm.ToolResult && message.ToolCallID == "call-2"
+	})
+	s.Require().GreaterOrEqual(repeat, 0, "the repeat was never answered")
+	answer := history[repeat].Content
+	s.True(strings.HasPrefix(answer, alreadyCalled), answer)
+	s.Contains(answer, "call-1", "the repeat is told the id the question came with")
+	s.never(func() bool { return len(s.runner.asked()) > 0 }, "a call ran before the caller said yes")
+}
+
 func (s *AgentSuite) TestAYesRunsTheCallOnceWithItsOwnID() {
 	s.askedToApprove()
 	var approved atomic.Bool

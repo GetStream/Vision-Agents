@@ -304,6 +304,10 @@ type Agent struct {
 	// toolHolds are the calls still running that an interruption answers with
 	// stillRunning rather than cancels, by call.
 	toolHolds map[string]*toolHold
+	// firstCalls are the calls that a later call of the same reply repeats, and repeatsOf
+	// the first call each such repeat is answered from, both by call (sameCallsLocked).
+	firstCalls map[string]*firstCall
+	repeatsOf  map[string]*firstCall
 	// skillFiles are the files of each skill a written conversation loaded, by skill, and
 	// writtenFiles the ones already put in the sandbox, so run_code writes a skill's
 	// scripts once and again only when the skill has changed, or the sandbox has: they were
@@ -2862,15 +2866,16 @@ func (a *Agent) finish(response llm.Response) {
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
 	if currentHarness != nil && len(calls) > 0 {
-		pending := 0
+		var pending []llm.ToolCall
 		tools := a.availableTools()
 		for _, call := range calls {
 			if _, known := tools.Lookup(call.Name); known {
-				pending++
+				pending = append(pending, call)
 			}
 		}
 		a.mu.Lock()
-		a.pendingTools += pending
+		a.pendingTools += len(pending)
+		a.sameCallsLocked(pending)
 		a.mu.Unlock()
 		currentHarness.Requested(response.ID, calls)
 	}
