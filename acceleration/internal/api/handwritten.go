@@ -59,6 +59,9 @@ func documentHandWritten(api huma.API) {
 			"and where all it had been sent is in the reply's message, when any of it had), " +
 			"`overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +
+			"An `error` frame for a turn the prompt injection screen refused carries `code` " +
+			"`prompt_injection`, and the turn's `responded` has empty text: what streamed before " +
+			"the verdict is not the answer.\n" +
 			"message_start and message_end are offsets in Unicode code points into the text of the Chat " +
 			"message the reply is written into, the one whose turn_id names the turn, from message_start up " +
 			"to message_end. They are left out where the router does not know them.\n" +
@@ -308,7 +311,9 @@ func documentHandWritten(api huma.API) {
 			"replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on " +
 			"`image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does " +
 			"not accept images is refused with an `error` frame naming the model and the modality, " +
-			"before anything is billed. An `interrupt` frame naming `response_ids` abandons " +
+			"before anything is billed. A response the prompt injection screen refused fails with " +
+			"an `error` frame carrying `code` `prompt_injection`, and its `complete` has status " +
+			"`failed`. An `interrupt` frame naming `response_ids` abandons " +
 			"responses still being generated, which still settle and are still billed for what they " +
 			"produced before being cut off.\n" +
 			"Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz " +
