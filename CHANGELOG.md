@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A rescheduled task runs its whole COUNT from now
 
 `PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
+### Work a scheduled turn hands over is counted as the turn after a barge-in
+
+On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
 
 ### A user token works with the key the request was made with
 
