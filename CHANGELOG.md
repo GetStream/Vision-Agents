@@ -179,6 +179,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### An app may have at most 1000 sessions open at once
 
 Every agent session counts against its app's cap, however it was opened (`POST /v1/agents/sessions`, a fork or a reopened conversation, the agent socket, a call to one of the app's numbers, a channel or chat message, a run, a scheduled task, a campaign), and so does every model stream of `/v1/{modality}/stream`, counted in Redis across routers. One over it is refused, over HTTP with a 429 `concurrency_limited` and `Retry-After: 5`; an arriving call over it is hung up, as one nobody can answer is. A session holds its place until it ends, and one on a router that died frees it within a minute. `ROUTER_SESSIONS_CONCURRENT_PER_APP` (`sessions.concurrent_per_app`) sets the cap, `1000` by default; `0` turns it off, and so does a router with no Redis.
+### Work a scheduled turn hands over is counted as the turn after a barge-in
+
+On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
