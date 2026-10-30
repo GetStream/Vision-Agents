@@ -28,7 +28,7 @@ const (
 )
 
 // defaultEndCallWhen is when the agent is told to hang up if the config does not say.
-const defaultEndCallWhen = "End the call once the conversation is finished and the caller needs nothing else."
+const defaultEndCallWhen = "the conversation is finished and the caller needs nothing else."
 
 // endCallStillOpen is the end of what the model is told when the caller spoke before the
 // call ended: it stays open, and only another end_call ends it.
@@ -896,7 +896,9 @@ func (a *Agent) availableTools() harness.Tools {
 			runnable = a.options.Telephony != nil
 		case tool.Name == toolEndCall:
 			runnable = a.options.Ender != nil && !a.options.Text
-			tool.Description = strings.TrimSpace(tool.Description) + " " +
+			// The config's condition is written as a condition, which on its own reads as a
+			// statement of fact.
+			tool.Description = strings.TrimSpace(tool.Description) + " Call it when: " +
 				cmp.Or(strings.TrimSpace(a.options.EndCallWhen), defaultEndCallWhen)
 		case tool.Name == toolLookup:
 			runnable = a.knowledge != nil

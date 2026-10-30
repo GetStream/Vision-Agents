@@ -2033,7 +2033,7 @@ func (s *AgentSuite) TestEndCallDescriptionCarriesTheCondition() {
 
 	tool, offered := s.offeredTool("end_call")
 	s.Require().True(offered)
-	s.Contains(tool.Description, "The caller said bye.")
+	s.Contains(tool.Description, "Call it when: The caller said bye.")
 	s.NotContains(tool.Description, defaultEndCallWhen, "the config's condition replaces the default")
 }
 
@@ -2044,7 +2044,7 @@ func (s *AgentSuite) TestEndCallWithoutAConditionIsGivenTheDefault() {
 
 	tool, offered := s.offeredTool("end_call")
 	s.Require().True(offered)
-	s.Contains(tool.Description, defaultEndCallWhen)
+	s.Contains(tool.Description, "Call it when: "+defaultEndCallWhen)
 }
 
 func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
