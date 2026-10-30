@@ -182,6 +182,9 @@ When the router cannot read an organization's channel counters or the calls it h
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### A config binding a connector that reads private data counts web search and scheduled tasks as sending data out
+
+A config that binds a connector marked `sensitive` (Nessy) is now also refused with `400` when it sets `search` or turns `scheduling` on, beside the bindings, MCP servers, plugins and networked sandbox it was refused with before. A session over such a binding is refused when its request turns web search on or a worker hosts tools for its agent, since neither shows on the stored config.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

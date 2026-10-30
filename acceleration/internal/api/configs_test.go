@@ -2194,6 +2194,31 @@ func (s *ConfigsSuite) TestNessyBesideAConnectorWithNoSourceIsAccepted() {
 	s.Len(value(created.Connectors), 2)
 }
 
+// A web search query is whatever the model writes, sent to the search provider.
+func (s *ConfigsSuite) TestNessyBesideWebSearchIsRefused() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "search": "en-low-latency", "connectors": []map[string]any{sessionNessy("customers")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, and web search can send data out`)
+}
+
+// A scheduled task carries what the model writes into a run later, with nobody there.
+func (s *ConfigsSuite) TestNessyBesideScheduledTasksIsRefused() {
+	s.useInternalApp()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "scheduling": map[string]any{"enabled": true},
+		"connectors": []map[string]any{sessionNessy("customers")},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `and scheduled tasks can send data out`)
+}
+
 // Every tool that sends data out is named, so one answer says all that has to go.
 func (s *ConfigsSuite) TestNessyBesideSeveralOutboundToolsNamesThemAll() {
 	s.useInternalApp()

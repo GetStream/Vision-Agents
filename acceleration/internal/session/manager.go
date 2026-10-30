@@ -638,6 +638,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	tools := append([]harness.Tool(nil), spec.Tools...)
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	if err := m.refuseSensitiveOutbound(ctx, spec, callers != created.tools); err != nil {
+		return nil, err
+	}
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
@@ -1744,6 +1747,42 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 // knowledge store and a namespace to read out of it.
 func (m *Manager) reading(spec Spec) bool {
 	return m.options.Knowledge != nil && spec.KnowledgeNamespace != ""
+}
+
+// refuseSensitiveOutbound refuses a session that binds a connector whose manifest says its
+// tools read private data when the session would also offer a tool that sends data out with no
+// person's approval that its config could not name when it was stored: web search, which a
+// session request may turn on, and the tools a worker hosts for the agent, offered only while
+// one runs (hosted). A model that reads untrusted text could be steered into sending out what
+// it read. The rest is refused when the config is stored (api.SensitiveBindingsComplaint).
+func (m *Manager) refuseSensitiveOutbound(ctx context.Context, spec Spec, hosted bool) error {
+	searching := m.searching(spec)
+	if m.options.Store == nil || !searching && !hosted {
+		return nil
+	}
+	var outbound []string
+	if searching {
+		outbound = append(outbound, "web search")
+	}
+	if hosted {
+		outbound = append(outbound, "the tools a worker hosts for the agent")
+	}
+	for _, binding := range spec.ConnectorBindings {
+		definition, err := m.options.Store.LatestConnectorDefinition(ctx, spec.CustomerID, binding.ConnectorID)
+		// A forced connector delete leaves its bindings behind, and they open nothing.
+		if errors.Is(err, store.ErrNoConnectorDefinition) {
+			continue
+		}
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if definition.Manifest.Sensitive {
+			return stack.Wrap(fmt.Errorf("session: connector binding %q binds %q, whose tools read private data, "+
+				"and %s can send data out with no person's approval", binding.Name, binding.ConnectorID,
+				strings.Join(outbound, " and ")))
+		}
+	}
+	return nil
 }
 
 // searching reports whether this session can find out what is true now. Unlike a handbook

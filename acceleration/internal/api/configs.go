@@ -927,11 +927,16 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 //     sandbox set, whose code calls the connector's whole API;
 //   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
 //     its read-only endpoint;
-//   - a sandbox that may reach the network.
+//   - a sandbox that may reach the network;
+//   - web search, whose query is whatever the model writes, sent to the search provider;
+//   - scheduled tasks, which carry what the model writes into a run later, with the session's
+//     tools and nobody there.
 //
 // Only a binding's require_approval asks a person before a call is sent; the others ask
 // nobody. It reads the config as it is about to be stored. router plugins migrate asks it
-// of a binding it adds (pluginmigrate.Options.Complaint).
+// of a binding it adds (pluginmigrate.Options.Complaint). What only a session knows, the
+// search a session request turns on and the tools a worker hosts, is checked when a session
+// opens (session.Manager.refuseSensitiveOutbound).
 func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
@@ -968,6 +973,12 @@ func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitio
 	}
 	if config.Sandbox != "" && !config.SandboxOptions.Isolated() {
 		outbound = append(outbound, "the sandbox's network access")
+	}
+	if config.Search != "" {
+		outbound = append(outbound, "web search")
+	}
+	if config.Scheduling.Enabled {
+		outbound = append(outbound, "scheduled tasks")
 	}
 	if len(outbound) == 0 {
 		return "", true, nil
