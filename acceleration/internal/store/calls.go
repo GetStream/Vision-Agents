@@ -442,6 +442,11 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID, sessionID s
 	return used, nil
 }
 
+// ErrNoCall is a call id, or an agent id in an app, no call row is found by. A sentinel, as
+// ErrNoAgentConfig is, so a caller can tell a call nobody made from the database failing. The
+// text is the one these errors always had.
+var ErrNoCall = errors.New("store: there is no call")
+
 func unknownCall(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no call %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoCall, id))
 }

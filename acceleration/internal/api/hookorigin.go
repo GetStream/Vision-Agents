@@ -35,6 +35,39 @@ type hookOrigin struct {
 	deployment bool
 	// apiKey is the key whose secret signed it.
 	apiKey string
+	// handOver hands what arrived to the node at an address: a hook's signed request replayed
+	// whole (replayed), or a queued delivery over the peer path (handChatInboundToPeer). Nil on the
+	// node a peer handed it to, which answers it itself.
+	handOver func(ctx context.Context, address string) (*node.ForwardResponse, error)
+	// queued is a delivery the queue's worker holds a lease on, whose answer runs in line, so
+	// the worker records it once it has ended.
+	queued bool
+	// queuedMessage is a queued delivery's Stream message id, here or on the peer it was handed
+	// to, whose answer settles its row first (answerOnce). Empty for a hook.
+	queuedMessage string
+}
+
+// answer runs an answer: in line for a queued delivery, and off the request for a hook,
+// because a model call takes seconds and Stream is waiting on the delivery.
+func (o hookOrigin) answer(answer func()) {
+	if o.queued {
+		answer()
+		return
+	}
+	go answer()
+}
+
+// replayed hands a hook to a peer whole, signature and all, because the node answering it
+// verifies the delivery for itself rather than taking this node's word that it came from
+// Stream. A hook a peer handed here goes nowhere further: two nodes each believing the other
+// answers would pass it back and forth.
+func (s *Server) replayed(r *http.Request, body []byte) func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+	if r.Header.Get(node.ForwardedHeader) != "" {
+		return nil
+	}
+	return func(ctx context.Context, address string) (*node.ForwardResponse, error) {
+		return s.forwarder.Ask(ctx, address, r, body)
+	}
 }
 
 // scope is what rows a hook from this origin may act on: its app's, and for the
@@ -185,19 +218,11 @@ func eventTime(createdAt json.RawMessage) time.Time {
 // firstDelivery reports whether a hook is the first delivery of its event, which is the one
 // acted on: Stream delivers again when it does not hear back in time.
 func (s *Server) firstDelivery(ctx context.Context, origin hookOrigin, eventType string, stamp hookStamp) bool {
-	if s.store == nil {
+	key := deliveryKey(origin, eventType, stamp)
+	if s.store == nil || key == "" {
 		return true
 	}
-	var key string
-	switch {
-	case eventType == getstream.EventTypeMessageNew && stamp.Message.ID != "":
-		key = "message:" + stamp.Message.ID
-	case stamp.CallCid != "":
-		key = "call:" + stamp.CallCid + ":" + stamp.SessionID + ":" + eventType
-	default:
-		return true
-	}
-	first, err := s.store.FirstDelivery(ctx, strconv.FormatInt(origin.app, 10)+":"+key)
+	first, err := s.store.FirstDelivery(ctx, key)
 	if err != nil {
 		// Answering twice is the lesser harm than answering never.
 		s.logger.Warn("could not record a hook delivery", "error", err)
@@ -206,18 +231,63 @@ func (s *Server) firstDelivery(ctx context.Context, origin hookOrigin, eventType
 	return first
 }
 
+// deliveryKey is what a delivery is recorded under (store.FirstDelivery): one key for every
+// delivery of the same event in the same app, whether the webhook or Stream Chat's endpoint
+// (receiveChatInbound) brought it. Empty for an event no key tells apart.
+func deliveryKey(origin hookOrigin, eventType string, stamp hookStamp) string {
+	var key string
+	switch {
+	case eventType == getstream.EventTypeMessageNew && stamp.Message.ID != "":
+		key = "message:" + stamp.Message.ID
+	case stamp.CallCid != "":
+		key = "call:" + stamp.CallCid + ":" + stamp.SessionID + ":" + eventType
+	default:
+		return ""
+	}
+	return strconv.FormatInt(origin.app, 10) + ":" + key
+}
+
+// stale reports whether a verified hook was made too long ago to act on. Deployment mode acts
+// on every delivery, however old, as it always has.
+func (s *Server) stale(eventType string, stamp hookStamp) bool {
+	if s.stream == nil || !s.stream.PerApp() || stamp.fresh(time.Now()) {
+		return false
+	}
+	s.logger.Info("ignoring a stale hook", "type", eventType)
+	return true
+}
+
+// recorded reports whether a delivery of eventType is recorded, so that a second one is not
+// acted on: in app mode every one. Deployment mode acts on every delivery, as it always has,
+// except a new message while Stream Chat delivers messages too (receiveChatInbound): the
+// webhook and the endpoint record it under one key, so only the first of the two answers it.
+func (s *Server) recorded(eventType string) bool {
+	if s.stream != nil && s.stream.PerApp() {
+		return true
+	}
+	return eventType == getstream.EventTypeMessageNew && len(s.chatInboundKeys) > 0
+}
+
+// awaitingOwnApp reports whether a delivery would be recorded before the deployment knows its
+// own app. The endpoint waits for the app (chatInboundOrigin) and records the message under it,
+// so a webhook recorded under no app would not be the same delivery, and both would answer it.
+// A hook a peer handed here was recorded there.
+func (s *Server) awaitingOwnApp(ctx context.Context, origin hookOrigin, eventType string) bool {
+	return origin.deployment && origin.app == 0 && s.recorded(eventType) && !node.Forwarded(ctx) &&
+		s.stream != nil && s.stream.DeploymentAppKnowable()
+}
+
 // acting reports whether a verified hook is one to act on: made recently, and not a
-// delivery already acted on. Deployment mode acts on every delivery, as it always has.
+// delivery already acted on.
 func (s *Server) acting(ctx context.Context, origin hookOrigin, eventType string, payload []byte) bool {
-	if s.stream == nil || !s.stream.PerApp() {
+	if !s.recorded(eventType) {
 		return true
 	}
 	var stamp hookStamp
 	if err := json.Unmarshal(payload, &stamp); err != nil {
 		return true
 	}
-	if !stamp.fresh(time.Now()) {
-		s.logger.Info("ignoring a stale hook", "type", eventType)
+	if s.stale(eventType, stamp) {
 		return false
 	}
 	// The node that handed it over recorded the delivery, so this one is not the second.
@@ -251,9 +321,20 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 // hook from the deployment's own app starts work only for a customer still writing there,
 // never for one whose work there is only to be read.
 func (s *Server) mayWrite(ctx context.Context, origin hookOrigin, customer string) bool {
+	may, _ := s.mayStillWrite(ctx, origin, customer)
+	return may
+}
+
+// mayStillWrite is mayWrite, with the error when it could not tell: an answer from the app
+// that is not settled (streamapp.Settled), such as the deployment's app not known yet, which a
+// later try may get.
+func (s *Server) mayStillWrite(ctx context.Context, origin hookOrigin, customer string) (bool, error) {
 	if !origin.deployment || s.stream == nil || !s.stream.PerApp() {
-		return true
+		return true, nil
 	}
 	_, err := s.stream.ForApp(ctx, customer, origin.app)
-	return err == nil
+	if err != nil && !streamapp.Settled(err) {
+		return false, err
+	}
+	return err == nil, nil
 }

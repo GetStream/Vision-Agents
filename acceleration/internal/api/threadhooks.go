@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -40,8 +42,12 @@ const threadTurnLease = askTimeout + 30*time.Second
 // there too and leaves for the external thread once its final text is stored
 // (conversation.Service.OnFinishedReply).
 //
+//	the bridge's inbound worker wrote it               AnswerQueued, on the worker's attempt
+//	  claim (thread channel, turn, Stream message id)    claimed before: nothing
+//	  the rest below, off the worker's slot
 //	message.new, no source, in agent:thread-<uuid>     receiveMessageEvent
 //	  linkedThread: channel_threads row, this app's
+//	  bridged (channelbridge.BridgedField): nothing      the worker answers it
 //	  answerThread, off the request
 //	    claim (thread channel, turn, Stream message id)    a repeat delivery: nothing
 //	    lease the thread's turn in Postgres                another router's turn: wait
@@ -93,6 +99,48 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 		}
 		return
 	}
+	s.answerClaimed(ctx, origin, thread, event)
+}
+
+// AnswerQueued hands the agent a person's message the channel bridge's inbound worker wrote
+// into thread (channelbridge.Answer), as the message.new Stream Chat sends about it would,
+// which the hook leaves to the worker (bridged). It claims the message's turn on the worker's
+// attempt and returns the turn: answerThread past its claim. A message the hook would not
+// answer (addressed) returns no turn. The origin is the thread's own customer and app, which
+// the worker's write was just let into (channelbridge writeInto, streamapp.Clients.ForApp), so
+// the turn asks mayWrite nothing it did not.
+func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
+	// A router with no LLM router has no sessions (cmd/router buildSessions): its hook answers
+	// no thread channel (linkedThread), and neither does the worker.
+	if s.sessions == nil {
+		return nil, nil
+	}
+	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: thread.ChannelID}
+	event.Message.ID, event.Message.Text, event.Message.User.ID = written.ID, written.Text, written.Author
+	attachments, err := json.Marshal(written.Attachments)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	event.Message.Attachments = attachments
+	// As the hook would: a message with neither text nor a photo, such as a video alone, is
+	// not answered (addressed).
+	if !addressed(event) {
+		return nil, nil
+	}
+	fresh, err := s.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimTurn, written.ID)
+	if err != nil || !fresh {
+		return nil, err
+	}
+	origin := hookOrigin{customer: thread.CustomerID, app: thread.StreamAppPK}
+	return func() {
+		turn, cancel := context.WithTimeout(context.Background(), askTimeout)
+		defer cancel()
+		s.answerClaimed(turn, origin, thread, event)
+	}, nil
+}
+
+// answerClaimed is answerThread past the claim of the message's turn, within ctx.
+func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) {
 	holder := uuid.NewString()
 	if err := s.takeThreadTurn(ctx, thread.ChannelID, holder); err != nil {
 		s.logger.Error("a message in a thread channel waited too long for the thread's turn", "channel", thread.ChannelID, "error", err)
@@ -117,6 +165,7 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 	// which any caller may name (threadConversation).
 	found, running := s.sessions.ByConversationWhere(chatlog.ChannelType+":"+thread.ChannelID, origin.owns)
 	opened := false
+	var err error
 	if !running || !found.Spec().PersistConversation {
 		if found, err = s.threadSession(turn, origin, thread, event); err != nil {
 			if errors.Is(err, errNoConfigBindsLine) {
