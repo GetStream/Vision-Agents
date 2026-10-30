@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"mime"
@@ -269,19 +270,52 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	fetch, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	result := sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}
+	outputs = distinct(outputs)
 	for i, wanted := range outputs {
 		if i == sandbox.MaxFiles {
 			result.Missing = append(result.Missing, outputs[i:]...)
 			break
 		}
-		data, err := s.box.FileSystem.DownloadFile(fetch, wanted, nil)
-		if err != nil || len(data) == 0 || len(data) > sandbox.MaxFileBytes {
+		data := s.download(fetch, wanted)
+		if len(data) == 0 || len(data) > sandbox.MaxFileBytes {
 			result.Missing = append(result.Missing, wanted)
 			continue
 		}
 		result.Files = append(result.Files, sandbox.File{Name: path.Base(wanted), MIME: mediaType(wanted, data), Data: data})
 	}
 	return result, nil
+}
+
+// download reads a file the code wrote, and no more of it than one byte past the largest a run
+// may hand back, so a larger one is never held whole. It is nil when the file cannot be read. The
+// SDK's DownloadFile would read it whole, twice, and leave a copy in a temporary file on the
+// router's disk (sdk-go v0.211.2 pkg/daytona/filesystem.go:236, toolbox-api-client-go v0.211.2
+// client.go:476); its stream does neither.
+func (s *Sandbox) download(ctx context.Context, name string) []byte {
+	stream, err := s.box.FileSystem.DownloadFileStream(ctx, name)
+	if err != nil {
+		return nil
+	}
+	defer stream.Close()
+	data, err := io.ReadAll(io.LimitReader(stream, sandbox.MaxFileBytes+1))
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// distinct is paths with each file once, as first asked for, so a file asked for twice is
+// neither fetched nor handed back twice.
+func distinct(paths []string) []string {
+	var kept []string
+	seen := map[string]bool{}
+	for _, name := range paths {
+		if !seen[path.Clean(name)] {
+			seen[path.Clean(name)] = true
+			kept = append(kept, name)
+		}
+	}
+	return kept
 }
 
 // Write puts a file into the sandbox, making the directories it sits in.

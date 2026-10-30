@@ -6130,7 +6130,7 @@ export type components = {
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly tts?: string;
             /**
-             * @description Who the agent joins the call as.
+             * @description The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
              * @default vision-agent
              */
             readonly user_id?: string;
@@ -8681,6 +8681,7 @@ export type components = {
             readonly tts?: string;
             /** @description What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only. */
             readonly usage?: components["schemas"]["CallUsage"];
+            /** @description The name the agent joined the call as. It is not the owner of the session. */
             readonly user_id: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none. */
