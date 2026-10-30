@@ -142,6 +142,9 @@ type Sandbox struct {
 	mount sandbox.Mount
 	files map[string][]byte
 	setup []string
+	// setUp says the setup commands ran since the last run and the sandbox has not lapsed since,
+	// so what EachRun would start runs already and the next run skips it. Held under the gate.
+	setUp bool
 
 	labels    map[string]string
 	lifecycle sandbox.Lifecycle
@@ -245,10 +248,14 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 				return err
 			}
 		}
+		each := s.mount.EachRun
+		if s.setUp {
+			each, s.setUp = nil, false
+		}
 		// The checks are bounded on their own, so they leave the code its whole run timeout.
 		check, end := context.WithTimeout(ctx, s.check)
 		defer end()
-		for _, command := range s.mount.EachRun {
+		for _, command := range each {
 			checked, err := s.box.Process.ExecuteCommand(check, "sh -c "+quoted(command), options.WithCommandEnv(s.mount.RunEnv))
 			if err != nil {
 				return stack.Wrap(err)
@@ -327,8 +334,12 @@ func (s *Sandbox) Write(ctx context.Context, name string, data []byte) error {
 		return ctx.Err()
 	}
 	return s.use(ctx, func() error {
+		// A hung upload holds the gate, so it is bounded as a check is: a built sandbox's timeout
+		// is the 20 minutes a build may take, and a skill's files are written one by one.
+		write, end := context.WithTimeout(ctx, s.check)
+		defer end()
 		if dir := path.Dir(name); dir != "." {
-			made, err := s.box.Process.ExecuteCommand(ctx, "mkdir -p "+quoted(dir), options.WithCommandEnv(s.mount.RunEnv))
+			made, err := s.box.Process.ExecuteCommand(write, "mkdir -p "+quoted(dir), options.WithCommandEnv(s.mount.RunEnv))
 			if err != nil {
 				return stack.Wrap(err)
 			}
@@ -336,7 +347,7 @@ func (s *Sandbox) Write(ctx context.Context, name string, data []byte) error {
 				return stack.Wrap(fmt.Errorf("daytona: mkdir %s: %s", dir, made.Result))
 			}
 		}
-		return stack.Wrap(s.box.FileSystem.UploadFile(ctx, data, name))
+		return stack.Wrap(s.box.FileSystem.UploadFile(write, data, name))
 	})
 }
 
@@ -385,6 +396,8 @@ func (s *Sandbox) started(ctx context.Context) error {
 		return errors.New("daytona: sandbox is closed")
 	}
 	if s.box != nil && s.lapsed() {
+		// A sandbox Daytona may have stopped has lost what its setup started.
+		s.setUp = false
 		if err := s.revive(ctx); err != nil {
 			return err
 		}
@@ -415,6 +428,7 @@ func (s *Sandbox) started(ctx context.Context) error {
 			return stack.Wrap(fmt.Errorf("daytona: setting the sandbox up: exit code %d: %s", ran.ExitCode, ran.Result))
 		}
 		s.setup = s.setup[1:]
+		s.setUp = true
 	}
 	return nil
 }

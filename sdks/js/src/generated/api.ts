@@ -4635,10 +4635,10 @@ export type components = {
             readonly said?: string;
             readonly session_id: string;
             /**
-             * @description cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+             * @description cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
              * @enum {string}
              */
-            readonly status: "running" | "completed" | "failed" | "cancelled";
+            readonly status: "running" | "completed" | "failed" | "cancelled" | "refused";
         };
         readonly AgentResponseItem: {
             /** Format: date-time */

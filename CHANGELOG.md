@@ -179,10 +179,14 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### Work a user's turn delegates is counted on that user's day
 
 In a session a backend opened, a user types a turn. The reply was counted on that user's daily limit, but the work the turn delegated (a skill, vision, the summary of a long conversation) was counted on the backend, which has no limit. It is now counted on the user as the reply is, so once the user's day is spent the work is refused with the daily-limit error. A turn a scheduled task fired is still the customer's (AI-2000).
+### A Daytona file write that hangs no longer holds the sandbox
+
+Writing a skill's files into a Daytona sandbox before `run_code` is now bounded as the check before a run is: by the sandbox's timeout, at most 60 seconds. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).
 
 ### Sandbox code says to reconnect a connection on an older connector revision
 
 A user who logs in during a chat with a connection saved on a connector revision that gives the sandbox no access, or other hosts, now gets a `run_code` result that tells the model to ask them to reconnect it, where the result said nothing before (AI-1980).
+
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
@@ -235,6 +239,10 @@ A session that closed while code still ran in its sandbox had the sandbox delete
 ### A file `run_code` hands back is read only up to its limit
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
+
+### A refused turn stays withheld after a rewind, a fork, the call review and the title
+
+A turn the prompt injection screen refused is recorded with status `refused` (`GET /v1/agents/sessions/{id}/responses`), not `failed`. A rewind or a fork carries what it asked forward as `[withheld: this read as a prompt injection]`, as the live agent does, with no answer after it. The call review and the conversation title quote it the same way, so the screen no longer refuses them and the review no longer fails with an error. A turn that failed for any other reason is recorded and carried forward as before (AI-2307).
 
 ### A refusal by the prompt injection screen reads as a refusal
 
