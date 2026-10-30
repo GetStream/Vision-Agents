@@ -204,9 +204,18 @@ func (s *ServeSuite) TestTheServiceRecordsServesMetricsAndDrainsOnSignal() {
 // out.
 func (s *ServeSuite) TestEveryListenerClosesAnIdleConnection() {
 	previous, previousMetrics := idleTimeout, metricsIdleTimeout
+	// 300 ms is far under the 20 s read deadline below, so a closed connection shows quickly and
+	// a kept-open one fails the test.
 	idleTimeout, metricsIdleTimeout = 300*time.Millisecond, 300*time.Millisecond
 	s.T().Cleanup(func() { idleTimeout, metricsIdleTimeout = previous, previousMetrics })
-	settings := settings{Addr: s.freeAddress(), MetricsAddr: s.freeAddress(), PostgresDSN: s.dsn, IngestToken: "token"}
+	// 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS (49152-65535),
+	// so the service's own Postgres connections do not take a port before serve listens on it.
+	// The process id spreads parallel packages over the range (as cmd/router/idletimeout_test.go).
+	first := 20000 + (os.Getpid()%2000)*6
+	settings := settings{
+		Addr: s.freeAddressFrom(first), MetricsAddr: s.freeAddressFrom(first + 1),
+		PostgresDSN: s.dsn, IngestToken: "token",
+	}
 	s.start(settings)
 
 	listeners := []struct{ name, addr, path string }{
@@ -239,9 +248,25 @@ func (s *ServeSuite) TestEveryListenerClosesAnIdleConnection() {
 	}
 }
 
+// freeAddressFrom is the first local address from port up to 32767 that nothing listens on.
+func (s *ServeSuite) freeAddressFrom(port int) string {
+	for ; port < 32768; port++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		opened, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		s.Require().NoError(opened.Close())
+		return addr
+	}
+	s.FailNow("no free port in 20000-32767")
+	return ""
+}
+
 // dialWhenListening connects to addr once something listens there: serve starts the metrics
 // listener in a goroutine of its own, so it can still be starting when the API answers.
 func (s *ServeSuite) dialWhenListening(addr string) net.Conn {
+	// 10 s matches the healthz wait in start.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		conn, err := net.DialTimeout("tcp", addr, time.Second)
