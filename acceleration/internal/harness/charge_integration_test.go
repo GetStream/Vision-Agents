@@ -241,6 +241,24 @@ func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpened
 	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the owner's")
 }
 
+func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAsTheyAreKnown() {
+	// The limiter counts a verified user on the customer's bucket and a device caller also
+	// on its address bucket. A sender carried without its Verified mark or address is
+	// counted in other buckets, and the user's day shows less.
+	limiter, err := quota.New(s.redis, quota.Limits{}, userSet{}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	sender := routing.Caller{UserID: s.user.UserID, Verified: true, IP: "203.0.113.7"}
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithCaller(s.ctx, sender), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	status, err := s.limiter.Allow(s.ctx, "acme", sender)
+	s.Require().NoError(err)
+	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the sender's")
+}
+
 func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesAfterAScheduledTurnIsCountedOnTheirDay() {
 	// What a turn is counted as is the turn's own: the mark of the scheduled turn before it
 	// is not kept.

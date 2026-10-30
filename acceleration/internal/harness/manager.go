@@ -165,8 +165,9 @@ func newManager(
 	return m
 }
 
-// Create delegates a piece of work and returns its task id. Work a scheduled turn asked
-// for, ctx marked so, is counted as that turn is (chargedAs); the work outlives it.
+// Create delegates a piece of work and returns its task id. Work a turn asked for is
+// counted as that turn is (chargedAs): on the sender it names, and as scheduled when a
+// scheduled task fired it. The work outlives the turn.
 //
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
