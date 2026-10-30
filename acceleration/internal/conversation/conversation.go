@@ -1113,7 +1113,7 @@ func entries(p Page) []entry {
 			continue
 		}
 		e := entryOf(p, m)
-		if withheld && m.Role == "user" {
+		if withheld {
 			e.message.Content = agent.WithheldInput
 		}
 		if e.message.Content == "" && e.turn == "" {

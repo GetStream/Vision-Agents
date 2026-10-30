@@ -281,7 +281,6 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 			for i := len(lines) - 1; i >= 0 && lines[i].From == fromPerson; i-- {
 				lines[i].Text = agent.WithheldInput
 			}
-			continue
 		}
 		from, text, ok := lineOf(message)
 		if !ok {
