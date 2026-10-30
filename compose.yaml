@@ -1,5 +1,8 @@
 name: vision-agents
 
+# Every port is published on this machine's loopback only: Postgres keeps its default
+# password, Redis has none, and the router may run with no auth. ROUTER_PUBLISH_ADDRESS
+# publishes the router on another address, such as 0.0.0.0 for a phone on the same network.
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,7 +10,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: model_router
     ports:
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "56379:6379"
+      - "127.0.0.1:56379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,7 +45,7 @@ services:
       # The Redis the usage service mirrors spend to, which spend limits read every second.
       ROUTER_USAGE_REDIS_URL: redis://redis:6379
     ports:
-      - "8080:8080"
+      - "${ROUTER_PUBLISH_ADDRESS:-127.0.0.1}:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +80,7 @@ services:
     volumes:
       - ./acceleration/tiers/dev.json:/etc/usage/tiers.json:ro
     ports:
-      - "8070:8070"
+      - "127.0.0.1:8070:8070"
     healthcheck:
       test: ["CMD", "usage", "healthcheck"]
       interval: 5s
@@ -95,7 +98,7 @@ services:
         NEXT_PUBLIC_ROUTER_URL: http://localhost:8080
         NEXT_PUBLIC_CUSTOMER_ID: examples
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - router
 
