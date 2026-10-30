@@ -2092,6 +2092,49 @@ func (s *ScheduledTasksSuite) TestTheAgentMovingToAnotherTimeOfDayCountsFromNow(
 		"a different time of day is a new start: four from now")
 }
 
+// oneShotDueInDays stores a one-shot due days days after the hour that is one
+// to two hours ahead, and returns that hour: the next occurrence of its time of
+// day, which a time-only at names.
+func (s *ScheduledTasksSuite) oneShotDueInDays(user *testClient, config string, days int) (ScheduledTask, time.Time) {
+	created := s.createTask(user, taskRequest(config))
+	hour := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Hour)
+	due := hour.AddDate(0, 0, days)
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("timezone = ?", "UTC").Set("start_local = ?", due).Set("next_run_at = ?", due).
+		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+	return created, hour
+}
+
+func (s *ScheduledTasksSuite) TestATimeOfDayOnAOneShotMovesItToTheNextOccurrence() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, hour := s.oneShotDueInDays(user, config, 3)
+
+	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(hour.Format("15:04")), Timezone: pointerTo("UTC")})
+
+	s.Require().NotNil(reloaded.NextRunAt)
+	s.Equal(hour, reloaded.NextRunAt.UTC(), "a one-shot has no stored time of day to keep: 09:00 is the next 09:00")
+}
+
+func (s *ScheduledTasksSuite) TestTheAgentGivingATimeOfDayToAOneShotMovesItToTheNextOccurrence() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	created, hour := s.oneShotDueInDays(user, config, 3)
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + created.Id + `","action":"reschedule","at":"` + hour.Format("15:04") + `"}`})
+	s.say(user, opened.Id, "make it that time today")
+	s.NotContains(s.ranResult(watching), `"error"`)
+
+	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
+	s.Require().NotNil(stored.NextRunAt)
+	s.Equal(hour, stored.NextRunAt.UTC(), "a one-shot has no stored time of day to keep")
+}
+
 func (s *ScheduledTasksSuite) TestTheAgentSendingTheStoredStartBackKeepsCountingFromIt() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

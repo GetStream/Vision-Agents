@@ -538,7 +538,10 @@ func (r *scheduleRunner) rescheduled(task *store.ScheduledTask, args updateArgs,
 	}
 	switch {
 	case args.At != nil:
-		input.At = scheduling.StoredClock(*args.At, task.StartLocal)
+		input.At = *args.At
+		if input.Repeat != "" {
+			input.At = scheduling.StoredClock(input.At, task.StartLocal)
+		}
 	case args.In != nil:
 		input.In = *args.In
 	default:

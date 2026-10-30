@@ -295,7 +295,8 @@ func FromStored(task store.ScheduledTask) (*Schedule, error) {
 // StoredClock reads a time-of-day at (09:00) that names the stored start's
 // time of day as the stored start itself, so resending it is not a new time.
 // A time-of-day reads as today, which on a recurring task is never the stored
-// date. Any other at is returned as written.
+// date. Any other at is returned as written. Only a repeating schedule reads
+// it so: on a one-shot, a time-of-day moves to its next occurrence.
 func StoredClock(at string, stored time.Time) string {
 	at = strings.TrimSpace(at)
 	for _, layout := range []string{"15:04:05", "15:04"} {
