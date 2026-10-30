@@ -311,8 +311,7 @@ func (s *BrokerContract) TestAConnectionRevokedMidSessionIsWithdrawn() {
 	s.disconnect("github")
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
 
-	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
-	s.False(ok)
+	s.tokenless(subject, ref(mount, "GITHUB_TOKEN"), "a revoked connection's credential is withdrawn")
 	s.Contains(s.logs.String(), `"level":"WARN"`)
 }
 
@@ -328,13 +327,12 @@ func (s *BrokerContract) TestABindingRemovedMidSessionIsWithdrawn() {
 	_, _, ok := subject.Held(ref(mount, "GITHUB_TOKEN"))
 	s.Equal(!subject.Live, ok, "a live egress refuses the next request")
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
-	s.False(ok, "the next run has no token")
+	s.tokenless(subject, ref(mount, "GITHUB_TOKEN"), "the next run has no token")
 
-	s.connect("github", "gho_first", 1)
+	s.connect("github", "gho_second", 2)
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
-	s.False(ok, "a binding put back stays withdrawn")
+	s.tokenless(subject, ref(mount, "GITHUB_TOKEN"), "a binding put back stays withdrawn")
+	s.Require().NoError(s.returned(subject.Broker.Close(s.ctx)))
 	s.Empty(subject.Left())
 }
 
@@ -429,9 +427,7 @@ func (s *BrokerContract) TestAWithdrawalTheProviderRefusesIsAnErrorAndIsRetried(
 
 	subject.Recover()
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-	_, _, ok = subject.Held(ref(mount, "GITHUB_TOKEN"))
-	s.False(ok, "the next run withdraws it")
-	s.Len(subject.Left(), 1)
+	s.tokenless(subject, ref(mount, "GITHUB_TOKEN"), "the next run withdraws it")
 
 	subject.Refuse()
 	s.Error(s.returned(subject.Broker.Close(s.ctx)))
@@ -493,9 +489,11 @@ func (s *BrokerContract) binds(binding string, bound sandbox.Grant) {
 	s.bound[binding] = bound
 }
 
-// unbound checks that a request with the late grant's ref gets no token: the egress has none,
-// or the provider holds a value that was never issued.
-func (s *BrokerContract) unbound(subject Subject, reference, why string) {
+// tokenless checks that a request with a late or withdrawn grant's ref gets no token: the egress
+// has none, or the provider holds a value that was never issued. A provider that keeps
+// references still holds one, so the host, not the provider, answers code: Daytona answers a
+// reference it no longer holds with a 502 code cannot tell from the host failing (AI-1876).
+func (s *BrokerContract) tokenless(subject Subject, reference, why string) {
 	value, _, ok := subject.Held(reference)
 	if subject.Live {
 		s.False(ok, why)
@@ -520,7 +518,7 @@ func (s *BrokerContract) TestALateGrantGetsATokenOnlyOnceBound() {
 
 	reference := ref(mount, "LINEAR_TOKEN")
 	s.Require().NotEmpty(reference)
-	s.unbound(subject, reference, "no token before the bind")
+	s.tokenless(subject, reference, "no token before the bind")
 
 	bound := late("linear", "OTHER_TOKEN")
 	bound.Connection.ConnectionID, bound.Scheme, bound.Hosts = "connection-linear", "bearer", []string{"elsewhere.example.com"}
@@ -574,7 +572,7 @@ func (s *BrokerContract) TestALateGrantGetsNoTokenFromAConnectionItCarries() {
 	s.Require().NoError(s.returned(err))
 	s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
 
-	s.unbound(subject, ref(mount, "LINEAR_TOKEN"), "no token without a bind")
+	s.tokenless(subject, ref(mount, "LINEAR_TOKEN"), "no token without a bind")
 }
 
 // TestABindNamingAnotherGrantLeavesTheLateGrantUnbound: a broker cannot tell whose connection
@@ -597,7 +595,7 @@ func (s *BrokerContract) TestABindNamingAnotherGrantLeavesTheLateGrantUnbound() 
 		other(&bound)
 		s.binds("linear", bound)
 		s.Require().NoError(s.returned(subject.Broker.BeforeRun(s.ctx)))
-		s.unbound(subject, reference, bound.Binding+"/"+bound.Config+"/"+bound.Connector+" binds nothing")
+		s.tokenless(subject, reference, bound.Binding+"/"+bound.Config+"/"+bound.Connector+" binds nothing")
 	}
 
 	bound := late("linear", "LINEAR_TOKEN")

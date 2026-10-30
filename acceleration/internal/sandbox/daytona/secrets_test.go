@@ -274,8 +274,9 @@ func (s *SecretsSuite) TestASecretDaytonaWouldNotDeleteIsDeletedOnTheNextClose()
 }
 
 // TestADaytonaRefusalOnTheWayLosesNoSecret: Daytona refuses once the withdrawal or the update
-// of one of three grants, first, middle or last. The run fails; the grants before it are gone,
-// it and the ones after it stay held; the next run and Close leave nothing at Daytona.
+// of one of three grants, first, middle or last. The run fails; the grants before it hold what
+// the run put in, it and the ones after it what they held; the next run puts it in theirs, and
+// Close leaves nothing at Daytona.
 func (s *SecretsSuite) TestADaytonaRefusalOnTheWayLosesNoSecret() {
 	bindings := []string{"alpha", "bravo", "charlie"}
 	grants := make([]sandbox.Grant, len(bindings))
@@ -309,33 +310,56 @@ func (s *SecretsSuite) TestADaytonaRefusalOnTheWayLosesNoSecret() {
 
 				withdrawn, revision = true, 2
 				platform.mu.Lock()
-				if path == "withdraw" {
-					platform.refuseDelete = bindings[refused]
-				} else {
-					platform.refuseUpdate = bindings[refused]
-				}
+				platform.refuseUpdate = bindings[refused]
 				platform.mu.Unlock()
 				_, err = box.Run(s.ctx, "print(1)", nil)
 				s.Require().Error(err)
-				s.Len(platform.secretNames(), len(bindings)-refused, "the grants before the refused one are gone, it and the ones after it are held")
+				after := map[string]string{"withdraw": "va_withdrawn", "update": "gho_2"}[path]
+				want := map[string]string{}
+				for i, binding := range bindings {
+					want[binding] = "gho_1"
+					if i < refused {
+						want[binding] = "va_withdrawn"
+					}
+				}
+				s.Equal(want, platform.values(bindings), "the grants before the refused one hold the run's, it and the ones after it theirs")
 
 				platform.mu.Lock()
-				platform.refuseDelete, platform.refuseUpdate = "", ""
+				platform.refuseUpdate = ""
 				platform.mu.Unlock()
 				_, err = box.Run(s.ctx, "print(1)", nil)
 				s.Require().NoError(err)
-				if path == "update" {
-					platform.mu.Lock()
-					for _, held := range platform.secrets {
-						s.Equal("gho_2", held.Value, "the refused grant and the ones after it are updated by the next run")
-					}
-					platform.mu.Unlock()
+				for _, binding := range bindings[refused:] {
+					want[binding] = after
 				}
+				s.Equal(want, platform.values(bindings), "the refused grant and the ones after it get theirs on the next run")
 				s.Require().NoError(box.broker.Close(s.ctx))
 				s.Empty(platform.secretNames())
 			})
 		}
 	}
+}
+
+// TestAWithdrawnGrantsSecretHoldsAStandInUntilClose (AI-1876): a run after the connection is
+// revoked puts withdrawn in the secret rather than deleting it, so the sandbox's placeholder
+// reaches the host as a credential it refuses, not Daytona's 502. A reconnect puts nothing back,
+// and Close deletes the secret.
+func (s *SecretsSuite) TestAWithdrawnGrantsSecretHoldsAStandInUntilClose() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.tokenErr = sandbox.ErrNoCredential
+	_, err = s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.token, s.tokenErr = sandbox.Token{Value: "gho_second", Revision: 2}, nil
+	_, err = s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.Equal("va_withdrawn", s.platform.secrets["secret-1"].Value)
+	s.Equal(github.Hosts, s.platform.secrets["secret-1"].Hosts)
+	s.Equal([]string{"POST /api/secret", "POST /api/sandbox", "PATCH /api/secret/secret-1"}, s.platform.history())
+	s.Require().NoError(s.box.broker.Close(s.ctx))
+	s.Empty(s.platform.secretNames())
 }
 
 // TestARequiredGrantWithoutACredentialCreatesNoSandbox: the run fails before Daytona is asked
@@ -588,6 +612,21 @@ func (p *platform) secretNames() []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// values are what the secret of each of bindings holds, by binding.
+func (p *platform) values(bindings []string) map[string]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	values := map[string]string{}
+	for secret := range maps.Values(p.secrets) {
+		for _, binding := range bindings {
+			if strings.Contains(secret.Name, "_"+binding+"_") {
+				values[binding] = secret.Value
+			}
+		}
+	}
+	return values
 }
 
 func (p *platform) history() []string {

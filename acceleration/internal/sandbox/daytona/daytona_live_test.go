@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
@@ -40,6 +41,8 @@ type LiveSuite struct {
 	prefix string
 	// probe is the canary the oracle reads; plain one a real token looks like.
 	probe, plain string
+	// revoked has both connections give sandbox.ErrNoCredential.
+	revoked atomic.Bool
 }
 
 func TestLiveSuite(t *testing.T) {
@@ -56,6 +59,7 @@ func (s *LiveSuite) SetupTest() {
 	s.client = client
 	s.prefix = "devlive_" + random()
 	s.probe, s.plain = `canary"`+random(), "canary"+random()
+	s.revoked.Store(false)
 }
 
 func random() string {
@@ -73,6 +77,9 @@ func (s *LiveSuite) box(session string) *Sandbox {
 	}
 	broker, err := NewSecrets(SecretsOptions{Prefix: s.prefix, Session: session, Logger: slog.Default(),
 		Tokens: func(_ context.Context, g sandbox.Grant) (sandbox.Token, error) {
+			if s.revoked.Load() {
+				return sandbox.Token{}, sandbox.ErrNoCredential
+			}
 			if g.Binding == "probe" {
 				return sandbox.Token{Value: s.probe, Revision: 1}, nil
 			}
@@ -235,4 +242,47 @@ func (s *LiveSuite) TestTheAttacksOnDaytonasEgress() {
 	s.Require().NoError(err)
 	s.Empty(listed.Items)
 	s.T().Logf("results: %v", results)
+}
+
+// withdrawnAttack waits, up to 60 seconds, for httpbin.org to stop seeing the probe canary, and
+// says what a request with the placeholder got last. Daytona applies a secret's update within 15
+// seconds (https://www.daytona.io/docs/en/secrets.md); the rest is margin for a slow sandbox.
+const withdrawnAttack = `
+import json, os, time, urllib.error, urllib.request
+P = os.environ["PROBE_TOKEN"]
+def get(url):
+    try:
+        return urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Bearer " + P}), timeout=30).read().decode()
+    except urllib.error.HTTPError as e:
+        return "ERROR %s: %s" % (e.code, e.read().decode(errors="replace")[:300])
+    except Exception as e:
+        return "ERROR %s: %s" % (type(e).__name__, e)
+for attempt in range(13):
+    echo = get("https://httpbin.org/headers")
+    if "canary" not in echo:
+        break
+    time.sleep(5)
+print(json.dumps({"env": P, "echo": echo}))
+`
+
+// TestAWithdrawnCredentialReachesTheHostWithoutIt (AI-1876): once a run withdraws the probe's
+// credential, code still holds its placeholder, and a request with it reaches the host without
+// the credential, so the host answers it, rather than Daytona's egress answering 502 «could not
+// reach upstream host», which code cannot tell from the host failing.
+func (s *LiveSuite) TestAWithdrawnCredentialReachesTheHostWithoutIt() {
+	box := s.box("live-w")
+	before := s.run(box, "")
+	s.Require().True(substituted(before["oracle"], s.probe), "the probe canary is no longer seen substituted: %s", before["oracle"])
+	s.revoked.Store(true)
+
+	result, err := box.Run(s.ctx, withdrawnAttack, nil)
+	s.Require().NoError(err)
+	s.Require().Zero(result.ExitCode, result.Output)
+	var after seen
+	s.Require().NoError(json.Unmarshal([]byte(result.Output), &after), result.Output)
+	s.T().Logf("withdrawn: %v", after)
+
+	s.Equal(strings.Fields(before["env"])[0], after["env"], "the env var keeps its placeholder")
+	s.False(substituted(after["echo"], s.probe), after["echo"])
+	s.Contains(after["echo"], `"headers"`, "httpbin.org answers, not Daytona's egress")
 }
