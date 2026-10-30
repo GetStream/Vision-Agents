@@ -62,9 +62,17 @@ type asked struct {
 	body    []byte
 }
 
+// webhookReceiver listens on loopback, which the manager's own webhook client refuses, so
+// the manager reaches it through the receiver's client.
 func (s *SessionSuite) webhookReceiver() (*httptest.Server, *asked) {
+	server, seen := s.listeningReceiver()
+	s.manager.options.GuardrailHTTP = server.Client()
+	return server, seen
+}
+
+func (s *SessionSuite) listeningReceiver() (*httptest.Server, *asked) {
 	seen := &asked{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		seen.mu.Lock()
 		seen.headers, seen.body = r.Header.Clone(), body
@@ -76,6 +84,11 @@ func (s *SessionSuite) webhookReceiver() (*httptest.Server, *asked) {
 }
 
 func (s *SessionSuite) screened(customer string, stream streamapp.Identity, url string) {
+	s.Require().NoError(s.screen(customer, stream, url))
+}
+
+// screen asks a session's webhook guardrail at url about one turn.
+func (s *SessionSuite) screen(customer string, stream streamapp.Identity, url string) error {
 	screening, err := s.manager.guardrail(s.ctx, Spec{
 		CustomerID: customer, CallID: "call-1",
 		Guardrail: "---\ntype: webhook\nurl: " + url + "\n---\nAllow everything.",
@@ -83,7 +96,23 @@ func (s *SessionSuite) screened(customer string, stream streamapp.Identity, url 
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = screening.Close() })
 	_, err = screening.Check(s.ctx, "turn-1", "hello")
-	s.Require().NoError(err)
+	return err
+}
+
+func (s *SessionSuite) TestAGuardrailWebhookOnLoopbackIsNeverReached() {
+	// The url is the customer's, and the router's own network is not theirs to ask: the
+	// manager's webhook dials public addresses alone.
+	s.manages()
+	receiver, seen := s.listeningReceiver()
+
+	err := s.screen("acme", streamapp.Identity{
+		CustomerID: "acme", APIKey: "deploy-key", Secret: streamapp.NewSecret("deploy-secret"),
+	}, receiver.URL)
+
+	s.ErrorContains(err, "non-public address")
+	seen.mu.Lock()
+	defer seen.mu.Unlock()
+	s.Nil(seen.body, "the receiver on loopback was reached")
 }
 
 func (s *SessionSuite) TestAGuardrailWebhookIsSignedWithTheAppsSecret() {
