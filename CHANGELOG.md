@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A socket's token stays out of the JS and Dart SDKs' errors, and out of the URL on Node
 
 A JS socket the router refused said so with its whole URL, which carries the token (a server token, with `apiSecret`) in its query, so the token reached the app's logs and error reports. It now names the URL without its query. On Node the token is no longer in the URL at all: `openSocket` sends it as `Authorization: Bearer`, and behind the proxy `api_key` and `stream-auth-type: jwt` go as headers with it, as on a request. A browser, and a `webSocket` passed in, still put it in the query, since a browser WebSocket sets no headers. The Dart SDK's `TransportException` for a socket that did not open no longer repeats the URL's query.
+### A user token works with the key the request was made with
+
+In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
 ### An id reused once its utterance has finished counts against credit
 
 On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
