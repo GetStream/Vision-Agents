@@ -128,11 +128,10 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		{"pprof", &settings.PprofAddr, "/debug/pprof/cmdline"},
 		{"metrics", &settings.MetricsAddr, "/metrics"},
 	}
+	// The process id spreads parallel packages over the range.
+	ports := s.freePorts(20000+(os.Getpid()%2000)*6, len(listeners))
 	for i, listener := range listeners {
-		// 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS
-		// (49152-65535), so a client's own connection does not take the port. The
-		// process id spreads parallel packages over the range.
-		*listener.setting = s.freeAddress(20000 + (os.Getpid()%2000)*6 + i)
+		*listener.setting = fmt.Sprintf("127.0.0.1:%d", ports[i])
 	}
 
 	stopped := make(chan error, 1)
@@ -176,19 +175,57 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 	}
 }
 
-// freeAddress is the first loopback address from port up that nothing listens on.
-func (s *IdleTimeoutSuite) freeAddress(port int) string {
-	for ; port < 32768; port++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		opened, err := net.Listen("tcp", addr)
+// TestFreePortsDiffer holds the first candidate port, which pushes the first listener on to
+// the next port. The ports must still all differ: scanning each from the same start would
+// give every one of them that next port.
+func (s *IdleTimeoutSuite) TestFreePortsDiffer() {
+	start := 20000 + (os.Getpid()%2000)*6
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.freePort(start)))
+	s.Require().NoError(err)
+	defer held.Close() //nolint:errcheck // the test is ending
+
+	ports := s.freePorts(start, 4)
+	s.Len(ports, 4)
+	chosen := map[int]bool{}
+	for _, port := range ports {
+		s.False(chosen[port], "port %d was chosen twice in %v", port, ports)
+		chosen[port] = true
+	}
+}
+
+// TestFreePortWraps: a scan that starts past 32767, as the one after the last port of the
+// range does, wraps to 20000 and stays out of the ephemeral ranges.
+func (s *IdleTimeoutSuite) TestFreePortWraps() {
+	port := s.freePort(32768)
+	s.GreaterOrEqual(port, 20000)
+	s.Less(port, 32768)
+}
+
+// freePorts is n different ports nothing listens on. Each scan starts after the previous port.
+func (s *IdleTimeoutSuite) freePorts(from, n int) []int {
+	ports := make([]int, n)
+	for i := range ports {
+		ports[i] = s.freePort(from)
+		from = ports[i] + 1
+	}
+	return ports
+}
+
+// freePort is the first loopback port from the given one up to 32767, wrapping to 20000, that
+// nothing listens on. 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS
+// (49152-65535), so a client's own connection does not take the port.
+func (s *IdleTimeoutSuite) freePort(from int) int {
+	for i := 0; i < 32768-20000; i++ {
+		port := 20000 + (from-20000+i)%(32768-20000)
+		opened, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			continue
 		}
 		s.Require().NoError(opened.Close())
-		return addr
+		return port
 	}
 	s.FailNow("no free port in 20000-32767")
-	return ""
+	return 0
 }
 
 func (s *IdleTimeoutSuite) dialWhenListening(addr string) net.Conn {
