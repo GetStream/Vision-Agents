@@ -404,6 +404,19 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNo
 	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
 }
 
+// A channel before the call that may land later keeps the occurrence retried, but the
+// channel after the call is not tried even then.
+func (s *ScheduledTasksSuite) TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed() {
+	task := s.silentTask([]string{"whatsapp", "phone", "sms"})
+
+	_, err := s.deliverNow(task, time.Now(), "the-earlier-call")
+
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonUnreachable, failure.Reason)
+	s.False(failure.Final, "WhatsApp may open by the next attempt")
+	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
+}
+
 // A call whose end the run records went unanswered, so the next channel carries the task.
 func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel() {
 	s.retryLate()
