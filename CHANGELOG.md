@@ -176,9 +176,21 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
-### Speech-to-text stops when its money runs out, and reused utterance ids are billed
+### Speech-to-text stops when its money runs out
 
-A transcription re-checks the money it set aside as it streams, as a speech-to-speech conversation does: once a renewal is refused for lack of credit or a spend limit, every frame after is refused and the session closes, and while the money cannot be checked a frame is refused and the session kept. Text sent under the id of an utterance that already finished is reserved before it is sent, and billed if the voice speaks it, rather than sent unreserved.
+A transcription re-checks the money it set aside as it streams, as a speech-to-speech conversation does: once a renewal is refused for lack of credit or a spend limit, every frame after is refused and the session closes, and while the money cannot be checked a frame is refused and the session kept.
+
+### Work a scheduled turn hands over is counted as the turn after a barge-in
+
+On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
+### A user token works with the key the request was made with
+
+In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
+### An id reused once its utterance has finished counts against credit
+
+On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
+
 ### A text or call whose limits cannot be checked is not sent
 
 When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
@@ -212,6 +224,10 @@ A session that closed while code still ran in its sandbox had the sandbox delete
 ### A file `run_code` hands back is read only up to its limit
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
+
+### A refusal by the prompt injection screen reads as a refusal
+
+A response the prompt injection screen refused while the model was still answering settled as `cancelled`, as if its caller had closed it. It now fails as refused: the session socket's and the `/stream` socket's `error` frame carries `code: prompt_injection`, the `/stream` socket's `complete` has status `failed`, and `model_call` reads `error_code: refused`. A refusal does not count against the provider's health, uptime or latency, and what the provider generated is still billed. The refused turn's `responded` has empty text: neither what streamed before the verdict nor what a voice says for the lost reply is recorded as the agent's answer, and nothing the agent was still holding of the reply is spoken or sent after the verdict. A run (`POST /v1/agents/runs`) whose input the screen refused answers a 400 `prompt_injection`, not a 503 `model_failed` a caller would retry. A response its caller closed still reads `cancelled` (AI-2308).
 
 ### A response refused by the prompt injection screen acts on nothing
 
