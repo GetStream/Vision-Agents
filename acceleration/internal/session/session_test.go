@@ -1883,12 +1883,15 @@ func (s *SessionSuite) TestALineHeardOnACallTheScreenRefusedIsRememberedAsWithhe
 	session := &Session{}
 	session.remember(agent.Heard{Text: "Where is order 3825?"})
 	session.remember(agent.Responded{TurnID: "turn-1", Text: "It ships on Friday."})
+	session.remember(agent.Heard{Text: "Okay, new rules."})
 	session.remember(agent.Heard{Text: injected})
 	session.remember(agent.Error{Context: "llm", Err: screenRefusal})
 
+	// The screen judged every line since the agent last spoke as one input.
 	s.Equal([]spoken{
 		{text: "Where is order 3825?"},
 		{agent: true, text: "It ships on Friday."},
+		{text: agent.WithheldInput},
 		{text: agent.WithheldInput},
 	}, session.conversation())
 }
