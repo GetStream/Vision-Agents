@@ -894,11 +894,18 @@ type PluginConnection struct {
 	UserID string `bun:"user_id,notnull"`
 	// InstanceURL is the shop or org hostname for plugins that have no single global URL,
 	// or the URL of an MCP server named by URL, whose login is good only there.
-	InstanceURL  string     `bun:"instance_url,notnull"`
-	AccessToken  string     `bun:"access_token,notnull"`
-	RefreshToken string     `bun:"refresh_token,notnull"`
-	ExpiresAt    *time.Time `bun:"expires_at"`
-	Status       string     `bun:"status,notnull"`
+	InstanceURL string `bun:"instance_url,notnull"`
+	// AccessToken and RefreshToken are the login's tokens in the clear. The store never
+	// writes them: they are stored sealed in AccessTokenSealed and RefreshTokenSealed, under
+	// KEKVersion (session.SealPluginLogin), and a read gives them only for a row written
+	// before tokens were sealed, until it is written again (session.OpenPluginLogin).
+	AccessToken        string     `bun:"access_token,notnull"`
+	RefreshToken       string     `bun:"refresh_token,notnull"`
+	AccessTokenSealed  []byte     `bun:"access_token_sealed"`
+	RefreshTokenSealed []byte     `bun:"refresh_token_sealed"`
+	KEKVersion         int        `bun:"kek_version,notnull"`
+	ExpiresAt          *time.Time `bun:"expires_at"`
+	Status             string     `bun:"status,notnull"`
 	// OAuthState, CodeVerifier, ClientID and TokenEndpoint are what the callback needs
 	// to finish the login. They are cleared once the connection is connected.
 	OAuthState    string     `bun:"oauth_state,notnull"`
@@ -925,6 +932,12 @@ type PluginClient struct {
 	SecretKEKVersion int       `bun:"kek_version,notnull"`
 	CreatedAt        time.Time `bun:"created_at,notnull"`
 	UpdatedAt        time.Time `bun:"updated_at,notnull"`
+}
+
+// HoldsToken reports whether the login has an access token stored, sealed or, for a row
+// written before tokens were sealed, in the clear.
+func (c PluginConnection) HoldsToken() bool {
+	return len(c.AccessTokenSealed) > 0 || c.AccessToken != ""
 }
 
 // MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
@@ -1153,9 +1166,13 @@ type PluginEventSubscription struct {
 	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
 	// in another key order are the same subscription.
 	Key string `bun:"key,notnull"`
-	// Token is the callback's path segment and Secret what deliveries to it are signed with.
-	Token  string `bun:"token,notnull"`
-	Secret string `bun:"secret,notnull"`
+	// Token is the callback's path segment and Secret what deliveries to it are signed with,
+	// in the clear. The store never writes Secret: it is stored sealed in SecretSealed, under
+	// KEKVersion, and a read gives it only for a row written before secrets were sealed.
+	Token        string `bun:"token,notnull"`
+	Secret       string `bun:"secret,notnull"`
+	SecretSealed []byte `bun:"secret_sealed"`
+	KEKVersion   int    `bun:"kek_version,notnull"`
 	// RemoteID is the id the server gave the subscription.
 	RemoteID string `bun:"remote_id,notnull"`
 	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil

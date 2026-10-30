@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -289,7 +290,7 @@ func (s *PluginMigrateSuite) TestAGrantWhoseRotationIsUnknownIsSkippedUnlessAske
 	login := s.loginTo(config, "", unknownPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
 	other := s.config([]store.PluginEntry{{Name: unknownPlugin}}, nil)
 	accessOnly := s.loginTo(other, "", unknownPlugin, s.provider.ClientID, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
-	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_plugin_connections SET refresh_token = '' WHERE id = ?", accessOnly)
+	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE agent_plugin_connections SET refresh_token_sealed = NULL WHERE id = ?", accessOnly)
 	s.Require().NoError(err)
 
 	report := s.run(true)
@@ -544,7 +545,7 @@ func (s *PluginMigrateSuite) TestAMovedGrantIsAuditedAndLoggedByItsTokens() {
 	config := s.config([]store.PluginEntry{{Name: movedPlugin}}, nil)
 	s.pluginClient(config, s.provider.ClientID, s.provider.ClientSecret)
 	login := s.login(config, "", s.provider.ClientID)
-	refresh := s.text("SELECT refresh_token FROM agent_plugin_connections WHERE id = ?", login)
+	refresh := s.refreshTokenOf(login)
 	moved := pluginmigrate.MovedConnectionID(login)
 	var logged strings.Builder
 	options := s.options(false)
@@ -734,6 +735,7 @@ func (s *PluginMigrateSuite) options(includeRotating bool) pluginmigrate.Options
 		Credentials: credentials, Transports: transports,
 		HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic, Clients: s.clients,
 		PluginClients: session.PluginClients(s.store, s.sealer),
+		LoginSecrets:  s.sealer,
 		SealClientSecret: func(customerID, connectorID, secret string) ([]byte, int, error) {
 			return SealConnectorOAuthClientSecret(s.sealer, customerID, connectorID, secret)
 		},
@@ -770,11 +772,22 @@ func (s *PluginMigrateSuite) login(config, user, client string) string {
 	return s.loginTo(config, user, movedPlugin, client, s.provider.URL+fakeprovider.PathToken, store.PluginConnected)
 }
 
+// refreshTokenOf is the refresh token the plugin login id holds, opened as the run opens it.
+func (s *PluginMigrateSuite) refreshTokenOf(id string) string {
+	logins, err := s.store.EveryPluginConnection(context.Background(), s.customerID())
+	s.Require().NoError(err)
+	at := slices.IndexFunc(logins, func(login store.PluginConnection) bool { return login.ID == id })
+	s.Require().GreaterOrEqual(at, 0, id)
+	s.Require().NoError(session.OpenPluginLogin(s.sealer, &logins[at]))
+	return logins[at].RefreshToken
+}
+
 func (s *PluginMigrateSuite) loginTo(config, user, plugin, client, tokenEndpoint, status string) string {
 	expires := time.Now().Add(time.Hour).UTC()
 	login := store.PluginConnection{CustomerID: s.customerID(), ConfigID: config, PluginID: plugin, UserID: user,
 		AccessToken: s.token, RefreshToken: "plugin-refresh-" + s.utils.uuid(), ExpiresAt: &expires, Status: status,
 		ClientID: client, TokenEndpoint: tokenEndpoint}
+	s.Require().NoError(session.SealPluginLogin(s.sealer, &login))
 	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &login))
 	return login.ID
 }

@@ -143,7 +143,7 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "access_token_sealed", "refresh_token_sealed", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {

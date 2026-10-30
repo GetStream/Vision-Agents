@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
 
 // The servers are public IP literals (Google Public DNS 8.8.8.8 and 8.8.4.4, Cloudflare
@@ -166,6 +167,7 @@ func (s *MCPLoginSuite) TestTheAppLogsIntoAServerNamedByURLAsItDoesIntoAPlugin()
 	login, err := s.store.PluginLogins(s.T().Context(), s.customerID(), created.Id, "crm")
 	s.Require().NoError(err)
 	s.Require().Len(login, 1)
+	s.Require().NoError(session.OpenPluginLogin(s.sealer, &login[0]))
 	s.Equal("crm-token", login[0].AccessToken)
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))

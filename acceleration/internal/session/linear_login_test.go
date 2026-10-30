@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -58,7 +59,9 @@ func (s *LinearLoginSuite) SetupSuite() {
 }
 
 func (s *LinearLoginSuite) SetupTest() {
-	s.auth = &plugins.Auth{PublicURL: "https://router.example"}
+	secrets, err := auth.NewSealer("the suite's key encryption key")
+	s.Require().NoError(err)
+	s.auth = &plugins.Auth{PublicURL: "https://router.example", Secrets: secrets}
 	s.runner = &userPluginRunner{
 		customerID: "customer-" + uuid.NewString(),
 		configID:   uuid.NewString(),
@@ -164,10 +167,12 @@ func (s *LinearLoginSuite) TestTheLogoTheCardPointsAtIsOneWeServe() {
 // A token Linear does not know is a login that has to be asked for again, rather than a
 // tool that fails and a conversation that cannot say why.
 func (s *LinearLoginSuite) TestATokenLinearRefusesIsAskedForAgain() {
-	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+	refused := &store.PluginConnection{
 		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: "linear",
 		UserID: "alice", Status: store.PluginConnected, AccessToken: "not-a-linear-token",
-	}))
+	}
+	s.Require().NoError(SealPluginLogin(s.auth.Secrets, refused))
+	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), refused))
 
 	found := s.asked(s.run("linear__list_tools", ""))
 
@@ -176,7 +181,7 @@ func (s *LinearLoginSuite) TestATokenLinearRefusesIsAskedForAgain() {
 		s.runner.customerID, s.runner.configID, "alice", "linear")
 	s.Require().NoError(err)
 	s.Equal(store.PluginPending, conn.Status)
-	s.Empty(conn.AccessToken, "the token Linear refused is not kept")
+	s.False(conn.HoldsToken(), "the token Linear refused is not kept")
 }
 
 // run calls one of the plugin's tools the way the model would.

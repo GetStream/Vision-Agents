@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
@@ -186,6 +187,10 @@ func (s *Service) Reconcile(ctx context.Context, config store.AgentConfig) {
 				if !reaches(config, login) {
 					continue
 				}
+				if err := session.OpenPluginLogin(s.auth.Secrets, &login); err != nil {
+					s.logger.Warn("not subscribing to plugin events with a login that does not open", "config", config.ID, "error", err)
+					continue
+				}
 				want := wanted{event: event, login: login, key: Key(event.Event, event.Arguments)}
 				wants[slot(login.PluginID, login.UserID, want.key)] = want
 			}
@@ -201,9 +206,16 @@ func (s *Service) Reconcile(ctx context.Context, config store.AgentConfig) {
 		named := slot(sub.PluginID, sub.UserID, sub.Key)
 		if want, ok := wants[named]; ok {
 			delete(wants, named)
-			if due(sub) {
-				s.subscribe(ctx, config, want, sub)
+			if !due(sub) {
+				continue
 			}
+			// One stored before secrets were sealed holds its secret in the clear: it is sealed
+			// as the subscription is written again.
+			if err := s.openSecret(&sub); err != nil {
+				s.logger.Warn("not refreshing a plugin event subscription", "config", config.ID, "error", err)
+				continue
+			}
+			s.subscribe(ctx, config, want, sub)
 			continue
 		}
 		s.drop(ctx, config, sub)
@@ -263,6 +275,10 @@ func (s *Service) subscribe(ctx context.Context, config store.AgentConfig, want 
 			Secret:     secret,
 			Status:     store.PluginEventPending,
 		}
+		if err := s.sealSecret(&sub); err != nil {
+			s.logger.Warn("not subscribing to a plugin event", "config", config.ID, "error", err)
+			return
+		}
 		if err := s.store.SavePluginEventSubscription(ctx, &sub); err != nil {
 			s.logger.Warn("not subscribing to a plugin event", "config", config.ID, "error", err)
 			return
@@ -287,9 +303,52 @@ func (s *Service) subscribe(ctx context.Context, config store.AgentConfig, want 
 		sub.Status = store.PluginEventFailed
 		sub.Error = err.Error()
 	}
+	if err := s.sealSecret(&sub); err != nil {
+		s.logger.Warn("could not store a plugin event subscription", "config", config.ID, "error", err)
+		return
+	}
 	if err := s.store.SavePluginEventSubscription(ctx, &sub); err != nil {
 		s.logger.Warn("could not store a plugin event subscription", "config", config.ID, "error", err)
 	}
+}
+
+// sealSecret seals sub's signing secret under the deployment's current key, bound to the
+// subscription, which is the only way the store writes it.
+func (s *Service) sealSecret(sub *store.PluginEventSubscription) error {
+	if s.auth.Secrets == nil {
+		return stack.Wrap(session.ErrNoLoginKey)
+	}
+	sealed, err := s.auth.Secrets.SealWithAAD(sub.Secret, secretAAD(sub.CustomerID, sub.ConfigID, sub.Token))
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	sub.SecretSealed, sub.KEKVersion = sealed, s.auth.Secrets.CurrentVersion()
+	return nil
+}
+
+// openSecret opens sub's sealed signing secret into Secret. A subscription stored before
+// secrets were sealed holds it in the clear, and is left as it was read.
+func (s *Service) openSecret(sub *store.PluginEventSubscription) error {
+	if len(sub.SecretSealed) == 0 {
+		return nil
+	}
+	if s.auth.Secrets == nil {
+		return stack.Wrap(session.ErrNoLoginKey)
+	}
+	secret, err := s.auth.Secrets.OpenWithAADVersion(sub.SecretSealed, secretAAD(sub.CustomerID, sub.ConfigID, sub.Token), sub.KEKVersion)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("pluginevents: the secret of subscription %s does not open: %w", sub.ID, err))
+	}
+	sub.Secret = secret
+	return nil
+}
+
+// secretAAD binds a sealed signing secret to its customer, config and token, so a blob copied
+// onto another subscription's row does not open. Each part is length-prefixed, as
+// mcpevents.secretAAD's are. v1 changes with the layout.
+func secretAAD(customerID, configID, token string) []byte {
+	return fmt.Appendf(nil, "accelerate:plugin-event-subscription-secret:v1:%d:%s:%d:%s:%d:%s",
+		len(customerID), customerID, len(configID), configID, len(token), token)
 }
 
 // drop stops a subscription nobody declares any more. Without the login there is nobody to
@@ -318,7 +377,7 @@ func (s *Service) login(ctx context.Context, sub store.PluginEventSubscription) 
 	}
 	for _, login := range logins {
 		if login.UserID == sub.UserID {
-			return login, nil
+			return login, session.OpenPluginLogin(s.auth.Secrets, &login)
 		}
 	}
 	return store.PluginConnection{}, fmt.Errorf("pluginevents: no %s login", sub.PluginID)
@@ -350,6 +409,9 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	}
 	if err != nil {
 		return Reply{Status: http.StatusInternalServerError, Body: failure(err.Error())}
+	}
+	if err := s.openSecret(&sub); err != nil {
+		return Reply{Status: http.StatusInternalServerError, Body: failure("the subscription's secret could not be read")}
 	}
 	if err := webhook.Verify(sub.Secret, header, body, time.Now()); err != nil {
 		return Reply{Status: http.StatusUnauthorized, Body: failure(err.Error())}

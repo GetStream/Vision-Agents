@@ -19,6 +19,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -90,6 +91,9 @@ type Options struct {
 	Clients        oauth2code.ClientLookup
 	// PluginClients opens a plugin client's secret (session.PluginClients).
 	PluginClients plugins.ClientLookup
+	// LoginSecrets opens a plugin login's sealed tokens (session.OpenPluginLogin). Nil opens
+	// none: such a login is a Skipped row.
+	LoginSecrets *auth.Sealer
 	// Getenv reads the deployment's plugin clients, <PLUGIN_ID>_MCP_CLIENT_ID, as the plugin
 	// system does (os.Getenv). Nil reads none.
 	Getenv func(string) string
@@ -396,6 +400,9 @@ func (m *migration) moveConnection(ctx context.Context, login store.PluginConnec
 	plugin, ok := m.opts.Catalog(login.PluginID)
 	if !ok {
 		return skip("not a catalog plugin: a login to an MCP server named by its URL, or to a plugin since removed")
+	}
+	if err := session.OpenPluginLogin(m.opts.LoginSecrets, &login); err != nil {
+		return skip("its tokens do not open: " + err.Error())
 	}
 	if login.Status != store.PluginConnected || login.AccessToken == "" {
 		return skip("not connected (" + login.Status + ")")

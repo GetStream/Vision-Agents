@@ -1103,6 +1103,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		PublicURL:    settings.PublicURL,
 		DashboardURL: settings.DashboardURL,
 		Clients:      session.PluginClients(pgStore, secrets),
+		Secrets:      secrets,
 	}
 
 	// An LLM-only deployment serves text sessions; voice modes validate their own

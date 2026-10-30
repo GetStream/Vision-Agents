@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/webhook"
 )
@@ -56,6 +57,20 @@ func (s *PluginEventsSuite) TestAnEventTheAgentSubscribedToOpensAConversation() 
 	s.Equal(http.StatusAccepted, s.deliver(sub, "evt-"+s.utils.uuid()))
 
 	s.Eventually(func() bool { return len(s.conversations(config.Name, "")) == 1 }, settleFor, 50*time.Millisecond)
+}
+
+// The secret deliveries are signed with is stored sealed: a reader of the database cannot sign
+// a delivery with it, and the router still checks one against it.
+func (s *PluginEventsSuite) TestASubscriptionsSecretIsNotStoredInTheClear() {
+	config := s.subscribedAgent(nil)
+	sub := s.mcp.subscription(s.T(), config.Name)
+
+	var secrets []string
+	s.Require().NoError(s.store.DB().NewRaw(
+		"SELECT secret FROM agent_plugin_event_subscriptions WHERE config_id = ?", config.Id).Scan(s.T().Context(), &secrets))
+
+	s.Equal([]string{""}, secrets)
+	s.Equal(http.StatusAccepted, s.deliver(sub, "evt-"+s.utils.uuid()))
 }
 
 func (s *PluginEventsSuite) TestTheServerCheckedTheCallbackBeforeSubscribing() {
@@ -168,6 +183,7 @@ func (s *PluginEventsSuite) subscribedAgent(userID *string) AgentConfig {
 		login.UserID = *userID
 	}
 	s.mcp.name(login.AccessToken, config.Name)
+	s.Require().NoError(session.SealPluginLogin(s.sealer, &login))
 	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &login))
 	s.reconcile(config.Id)
 	return config

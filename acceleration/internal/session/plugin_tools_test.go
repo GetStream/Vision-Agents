@@ -38,6 +38,8 @@ type UserPluginsSuite struct {
 	refusing atomic.Bool
 	runner   *userPluginRunner
 	calendar plugins.Plugin
+	// secrets seal the logins the tests store, as the router's key does.
+	secrets *auth.Sealer
 }
 
 func TestUserPluginsSuite(t *testing.T) {
@@ -54,6 +56,8 @@ func (s *UserPluginsSuite) SetupSuite() {
 	s.Require().NoError(db.Migrate(context.Background()))
 	s.store = db
 	s.T().Cleanup(func() { s.Require().NoError(db.Close()) })
+	s.secrets, err = auth.NewSealer("the suite's key encryption key")
+	s.Require().NoError(err)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +94,7 @@ func (s *UserPluginsSuite) SetupTest() {
 		userID:     "alice",
 		named:      map[string]plugins.Plugin{"google_calendar": s.calendar},
 		db:         s.store,
-		auth:       &plugins.Auth{HTTP: s.provider.Client(), PublicURL: "https://router.example"},
+		auth:       &plugins.Auth{HTTP: s.provider.Client(), PublicURL: "https://router.example", Secrets: s.secrets},
 		logger:     slog.New(slog.DiscardHandler),
 		open:       map[string]*plugins.Runtime{},
 	}
@@ -156,7 +160,7 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAPluginEachUserConnectsIsNotHandedT
 		Plugins:    []store.PluginEntry{{Name: "google_calendar", User: true}},
 	}
 
-	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
+	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.DiscardHandler))
 
 	s.Nil(runtime)
 	s.Empty(tools)
@@ -182,7 +186,7 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABinding
 		Plugins:    []store.PluginEntry{{Name: "shopify"}},
 	}
 	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
-		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
+		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client(), Secrets: s.secrets}, slog.New(slog.DiscardHandler))
 		if runtime != nil {
 			s.T().Cleanup(runtime.Close)
 		}
@@ -208,6 +212,36 @@ func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
 
 	s.JSONEq(`{"tools":[{"name":"list_events","description":"Events today","input_schema":{"type":"object"}}]}`, listed)
 	s.Equal("standup at 10", answered)
+}
+
+// A login stored before tokens were sealed holds its token in the clear, and still reaches
+// the account.
+func (s *UserPluginsSuite) TestALoginStoredInTheClearStillReachesTheAccount() {
+	s.connect("")
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE agent_plugin_connections SET access_token = 'good-token' WHERE customer_id = ? AND config_id = ?",
+		s.runner.customerID, s.runner.configID)
+	s.Require().NoError(err)
+
+	answered := s.run("google_calendar__call_tool", `{"tool":"list_events","arguments":{}}`)
+
+	s.Equal("standup at 10", answered)
+}
+
+// A renewed token is stored sealed too: the refresh leaves neither token in the clear.
+func (s *UserPluginsSuite) TestARenewedLoginStoresNoTokenInTheClear() {
+	notes := s.server(store.MCPServer{})
+	s.refreshableLogin(notes, "stale-token")
+
+	runtime, _, _ := s.attach(store.MCPServer{Name: notes.ID, URL: notes.URL, NeedsLogin: &needsLogin})
+	s.Require().NotNil(runtime, "the renewed token opened the server")
+	defer runtime.Close()
+
+	var stored []string
+	s.Require().NoError(s.store.DB().NewRaw(
+		"SELECT access_token || refresh_token FROM agent_plugin_connections WHERE customer_id = ? AND config_id = ?",
+		s.runner.customerID, s.runner.configID).Scan(context.Background(), &stored))
+	s.Equal([]string{""}, stored)
 }
 
 func (s *UserPluginsSuite) TestAToolTheAgentLeftOutIsNeitherListedNorRun() {
@@ -310,6 +344,7 @@ func (s *UserPluginsSuite) TestAnAppLoginTheServerRefusesIsRenewedAndOpened() {
 
 	s.Equal([]string{"notes__list_events"}, toolNames(tools))
 	stored := s.appLogin(notes.ID)
+	s.Require().NoError(OpenPluginLogin(s.secrets, &stored))
 	s.Equal("good-token", stored.AccessToken, "the renewed token is kept for the next session")
 	s.Equal(store.PluginConnected, stored.Status)
 }
@@ -353,7 +388,7 @@ func (s *UserPluginsSuite) TestAServerTheAppHasNotLoggedIntoFailsWithHowToConnec
 	notes := s.server(store.MCPServer{})
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, MCPServers: []store.MCPServer{{Name: notes.ID, URL: notes.URL}}}
 
-	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
+	runtime, tools, unconnected := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.DiscardHandler))
 	_, err := (&pluginRunner{mcp: runtime, unconnected: unconnected}).Run(context.Background(),
 		llm.ToolCall{ID: uuid.NewString(), Name: "notes__list_tools", Arguments: `{}`})
 
@@ -401,7 +436,7 @@ func (s *UserPluginsSuite) TestASessionOnTheAppsPluginLoginWarnsOfTheDeprecation
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, Plugins: []store.PluginEntry{{Name: "shopify"}}}
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client(), Secrets: s.secrets}, slog.New(slog.NewTextHandler(&logged, nil)))
 	s.Require().NotNil(runtime)
 	defer runtime.Close()
 	for range 2 {
@@ -429,7 +464,7 @@ func (s *UserPluginsSuite) TestASessionWhosePluginABindingReplacesWarnsOfNothing
 	spec.Plugins = spec.withoutBoundPlugins(spec.Plugins)
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.NewTextHandler(&logged, nil)))
 
 	s.Nil(runtime)
 	s.Empty(tools)
@@ -441,7 +476,7 @@ func (s *UserPluginsSuite) TestASessionWithoutPluginsWarnsOfNothing() {
 		MCPServers: []store.MCPServer{{Name: "menus", URL: s.provider.URL + "/open"}}}
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.NewTextHandler(&logged, nil)))
 	s.Require().NotNil(runtime)
 	defer runtime.Close()
 
@@ -454,7 +489,7 @@ func (s *UserPluginsSuite) TestASessionOfferingEachUserAPluginWarnsOfTheDeprecat
 		Plugins: []store.PluginEntry{{Name: "google_calendar", User: true}}}
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.NewTextHandler(&logged, nil)))
 
 	s.Nil(runtime)
 	s.Empty(tools)
@@ -473,7 +508,7 @@ func (s *UserPluginsSuite) TestASessionOnServersWithPluginLoginsWarnsOfTheDeprec
 	}}
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.NewTextHandler(&logged, nil)))
 	s.Require().NotNil(runtime)
 	defer runtime.Close()
 
@@ -516,25 +551,31 @@ func (s *UserPluginsSuite) server(server store.MCPServer) plugins.Plugin {
 // attach opens the config's MCP servers as a session starting would.
 func (s *UserPluginsSuite) attach(server store.MCPServer) (*plugins.Runtime, []harness.Tool, []string) {
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, MCPServers: []store.MCPServer{server}}
-	return attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client()}, slog.New(slog.DiscardHandler))
+	return attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: s.provider.Client(), Secrets: s.secrets}, slog.New(slog.DiscardHandler))
 }
 
 // login stores a login to plugin made at endpoint, the app's for an empty user.
 func (s *UserPluginsSuite) login(userID string, plugin plugins.Plugin, endpoint, token string) {
-	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+	s.stored(&store.PluginConnection{
 		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: plugin.ID,
 		UserID: userID, InstanceURL: endpoint, Status: store.PluginConnected, AccessToken: token,
-	}))
+	})
+}
+
+// stored writes conn with its tokens sealed, as the callback does.
+func (s *UserPluginsSuite) stored(conn *store.PluginConnection) {
+	s.Require().NoError(SealPluginLogin(s.secrets, conn))
+	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), conn))
 }
 
 // refreshableLogin stores the app's login to plugin holding token, with a refresh token the
 // provider's token endpoint renews.
 func (s *UserPluginsSuite) refreshableLogin(plugin plugins.Plugin, token string) {
-	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+	s.stored(&store.PluginConnection{
 		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: plugin.ID,
 		InstanceURL: plugin.URL, Status: store.PluginConnected, AccessToken: token,
 		RefreshToken: "refresh-token", ClientID: "registered", TokenEndpoint: s.provider.URL + "/token",
-	}))
+	})
 }
 
 // appLogin is the app's stored login to pluginID.
@@ -568,10 +609,10 @@ func (s *UserPluginsSuite) run(name, arguments string) string {
 
 // connect stores Alice's login as the callback would have.
 func (s *UserPluginsSuite) connect(token string) {
-	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+	s.stored(&store.PluginConnection{
 		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: "google_calendar",
 		UserID: "alice", Status: store.PluginConnected, AccessToken: token,
-	}))
+	})
 }
 
 func (s *UserPluginsSuite) asksToConnect(result string) {
@@ -588,7 +629,7 @@ func (s *UserPluginsSuite) forgotten() {
 		s.runner.customerID, s.runner.configID, "alice", "google_calendar")
 	s.Require().NoError(err)
 	s.Equal(store.PluginPending, conn.Status)
-	s.Empty(conn.AccessToken)
+	s.False(conn.HoldsToken())
 	s.NotEmpty(conn.OAuthState)
 }
 

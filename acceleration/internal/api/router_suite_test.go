@@ -632,7 +632,7 @@ func (s *RouterSuite) SetupSuite() {
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
-	public := &plugins.Auth{HTTP: http.DefaultClient}
+	public := &plugins.Auth{HTTP: http.DefaultClient, Secrets: s.sealer}
 	s.events = s.pluginEvents(sessions, public, logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -52,6 +53,10 @@ type Auth struct {
 	// Clients finds the client an agent set for a plugin, which comes before this
 	// deployment's own. Nil means no agent has one.
 	Clients ClientLookup
+	// Secrets seals the tokens of the logins made through it and the signing secrets of their
+	// event subscriptions (session.SealPluginLogin). Nil, on a deployment with no key
+	// encryption key, stores neither.
+	Secrets *auth.Sealer
 }
 
 // Pending is what authorize has to remember so the callback can finish the login.
