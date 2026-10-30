@@ -118,10 +118,10 @@ func (b *stalled) BeforeRun(ctx context.Context) error {
 
 func (b *stalled) Close(context.Context) error { return nil }
 
-// held is a sandbox on lifecycle with a run inside it until the broker's let is closed. Close
+// busy is a sandbox on lifecycle with a run inside it until the broker's let is closed. Close
 // gives up waiting for that run after half a second, which a create on the test's Daytona takes
 // far less than.
-func (s *LifecycleSuite) held(lifecycle sandbox.Lifecycle) (*Sandbox, *stalled) {
+func (s *LifecycleSuite) busy(lifecycle sandbox.Lifecycle) (*Sandbox, *stalled) {
 	broker := &stalled{entered: make(chan struct{}, 1), let: make(chan struct{})}
 	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(), Lifecycle: lifecycle, Meter: s.meter,
 		Broker: broker, Timeout: 500 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
@@ -281,21 +281,21 @@ func (s *LifecycleSuite) TestASandboxInAFailedStateIsDeletedAndMadeAgain() {
 }
 
 func (s *LifecycleSuite) TestASandboxIsDeletedWhenTheRunItsCloseGaveUpOnEnds() {
-	box, held := s.held(sandbox.Lifecycle{IdleStop: time.Hour})
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: time.Hour})
 
 	s.ErrorIs(box.Close(), context.DeadlineExceeded, "the run still holds the sandbox")
 	s.Empty(s.daytona.Deleted(), "nothing is deleted under a run")
-	held.release()
+	run.release()
 
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "gone")
 	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted as the run ended, long before it idled")
 }
 
 func (s *LifecycleSuite) TestASandboxNotDeletedWhenTheRunItsCloseGaveUpOnEndsIsDeletedOnceIdle() {
-	box, held := s.held(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour})
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour})
 	s.Error(box.Close())
 	s.daytona.RefuseDeletes(true)
-	held.release()
+	run.release()
 
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned")
 	s.Contains(s.logs.String(), `msg="could not close a sandbox once the run its Close gave up on ended"`)
@@ -306,8 +306,8 @@ func (s *LifecycleSuite) TestASandboxNotDeletedWhenTheRunItsCloseGaveUpOnEndsIsD
 }
 
 func (s *LifecycleSuite) TestASandboxIsDeletedWhenItsRunEndsAsCloseGivesUp() {
-	box, held := s.held(sandbox.Lifecycle{IdleStop: time.Hour})
-	ending := time.AfterFunc(box.timeout, held.release)
+	box, run := s.busy(sandbox.Lifecycle{IdleStop: time.Hour})
+	ending := time.AfterFunc(box.timeout, run.release)
 	defer ending.Stop()
 
 	_ = box.Close()
