@@ -147,7 +147,8 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		select {
 		case err := <-stopped:
 			s.NoError(err)
-		case <-time.After(30 * time.Second):
+		// Generous for a starved CI runner: a stalled VM took 30 s to stop it once.
+		case <-time.After(60 * time.Second):
 			s.Fail("the router did not stop on SIGTERM")
 		}
 	})
@@ -166,9 +167,9 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			s.Require().NoError(err)
 			s.Require().NoError(response.Body.Close())
 
-			// 5 s is far past the 300 ms idle timeout and far below the 10 min of a server
-			// that lost it.
-			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+			// 20 s is far below the 10 min idle timeout a broken server would show, and
+			// generous for a starved CI runner (a stalled VM overran 5 s).
+			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(20 * time.Second)))
 			_, err = reader.ReadByte()
 			s.True(errors.Is(err, io.EOF), "the server held an idle connection open: %v", err)
 		})
