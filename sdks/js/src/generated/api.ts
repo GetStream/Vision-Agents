@@ -9149,7 +9149,7 @@ export type components = {
             readonly voice?: string;
         };
         readonly SpeechRequest: {
-            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. */
+            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400. */
             readonly callback?: string;
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
@@ -9844,7 +9844,7 @@ export type components = {
          */
         readonly TranscriptionMode: "verbatim" | "smart";
         readonly TranscriptionRequest: {
-            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. */
+            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400. */
             readonly callback?: string;
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             readonly config_id?: string;
