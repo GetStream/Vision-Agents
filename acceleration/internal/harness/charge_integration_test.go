@@ -4,8 +4,9 @@ package harness
 
 import (
 	"context"
-	"fmt"
+	"crypto/rand"
 	"log/slog"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func (s *HarnessChargeSuite) TearDownSuite() {
 
 func (s *HarnessChargeSuite) SetupTest() {
 	// A fresh user per test, so no test reads another's day.
-	s.user = routing.Caller{UserID: fmt.Sprintf("user-%d", time.Now().UnixNano())}
+	s.user = routing.Caller{UserID: "user-" + rand.Text()}
 	limiter, err := quota.New(s.redis, quota.Limits{MessagesPerDay: messagesPerDay}, nil, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	s.limiter = limiter
@@ -249,7 +250,10 @@ func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAn
 	s.Require().NoError(err)
 	s.limiter = limiter
 	// An address of its own, as the user has: the address bucket outlives the test.
-	address := fmt.Sprintf("2001:db8::%x", time.Now().UnixNano())
+	var raw [16]byte
+	_, err = rand.Read(raw[:])
+	s.Require().NoError(err)
+	address := netip.AddrFrom16(raw).String()
 	sender := routing.Caller{UserID: s.user.UserID, Verified: true, IP: address}
 	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
 
