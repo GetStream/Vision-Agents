@@ -1631,7 +1631,7 @@ func (s *Session) write(event Event) {
 		// An error names which part failed rather than which turn, because a transcriber or
 		// a voice falling over is not a property of one turn. So it fails whatever was in
 		// flight: a turn left open would be read back forever as a question nobody answered.
-		s.failTurns(typed.Context, typed.Err)
+		s.failTurns(typed.Context, typed.Err, typed.TurnID)
 	}
 }
 
@@ -1754,29 +1754,31 @@ func (s *Session) abandonTurns() {
 	}
 }
 
-// failTurns records a failure against every turn still in flight and closes them. A turn
-// the prompt injection screen refused is closed as refused, so what it asked is never
-// replayed to a model.
-func (s *Session) failTurns(where string, cause error) {
+// failTurns records a failure against every turn still in flight and closes them. The turn
+// the prompt injection screen refused, with every reply that continued it, is closed as
+// refused, so what it asked is never replayed to a model; the others failed with it.
+func (s *Session) failTurns(where string, cause error, refusedTurn string) {
 	reason := cause.Error()
 	if where != "" {
 		reason = where + ": " + reason
 	}
-	status := store.ResponseFailed
-	if errors.Is(cause, policy.ErrPromptInjection) {
-		status = store.ResponseRefused
-	}
 
 	s.turnsMu.Lock()
+	refused := s.turns[refusedTurn]
 	failing := make([]string, 0, len(s.turns))
-	for turnID := range s.turns {
+	statuses := make(map[string]string, len(s.turns))
+	for turnID, turn := range s.turns {
 		failing = append(failing, turnID)
+		statuses[turnID] = store.ResponseFailed
+		if turn == refused {
+			statuses[turnID] = store.ResponseRefused
+		}
 	}
 	s.turnsMu.Unlock()
 
 	for _, turnID := range failing {
 		s.item(turnID, store.ItemError, reason, "", nil)
-		s.endTurn(turnID, status, reason)
+		s.endTurn(turnID, statuses[turnID], reason)
 	}
 }
 

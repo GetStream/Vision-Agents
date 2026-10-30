@@ -259,6 +259,9 @@ func (s *AgentSuite) TestAWrittenReplyRefusedMidAnswerIsNotReportedAsTheAnswer()
 	failed, ok := firstOf[Error](s.reported())
 	s.Require().True(ok, "the refusal was never reported")
 	s.ErrorIs(failed, policy.ErrPromptInjection)
+	ended, _ := firstOf[Responded](s.reported())
+	s.NotEmpty(ended.TurnID)
+	s.Equal(ended.TurnID, failed.TurnID, "the refusal names the turn refused, the one row closed as refused")
 	s.Equal([]string{""}, s.answered(), "what streamed before the verdict was reported as the answer")
 }
 

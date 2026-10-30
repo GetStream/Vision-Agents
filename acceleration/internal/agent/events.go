@@ -498,6 +498,8 @@ type Error struct {
 	Err error
 	// Context says which part failed, e.g. "stt", "llm", "tts" or "edge".
 	Context string
+	// TurnID is the turn the prompt injection screen refused, empty for any other failure.
+	TurnID string
 }
 
 func (e Error) Error() string { return e.Err.Error() }
