@@ -28,6 +28,12 @@ func (s *ScheduledTasksSuite) forwardDelivery(other *httptest.Server, credential
 
 // forwardChanged is forwardDelivery with change applied to the payload before it is sent.
 func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential []byte, change func(map[string]any)) (string, *node.ForwardResponse, error) {
+	return s.forwardStored(other, credential, nil, change)
+}
+
+// forwardStored is forwardChanged with edit applied to the task before it is stored; the
+// payload then names the edited task's owner but the session the task was made in.
+func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
 	opened := user.on(other).createSession(CreateSessionRequest{ConfigId: &config})
@@ -36,6 +42,9 @@ func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential 
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
 		Instructions: "Remind them to stretch.",
 		StartLocal:   time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "UTC",
+	}
+	if edit != nil {
+		edit(&task)
 	}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
 
@@ -124,6 +133,31 @@ func (s *ScheduledTasksSuite) TestAPeerNamingAnotherUserThanTheStoredTaskIsRefus
 
 	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
 		payload["user_id"] = s.utils.uuid()
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherSessionThanAServerTasksIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		task.CallerKind = string(auth.KindServer)
+		task.SessionID = s.utils.uuid()
+	}, nil))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAServerTasksOwnSessionDelivers() {
+	other, _ := s.otherRouter(nil)
+
+	s.delivers(s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		task.CallerKind = string(auth.KindServer)
+	}, nil))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingChannelsTheStoredTaskLacksDeliversInTheConversation() {
+	other, _ := s.otherRouter(nil)
+
+	s.delivers(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["channels"] = []string{"sms"}
 	}))
 }
 

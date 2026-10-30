@@ -755,6 +755,9 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		writeError(w, internalError())
 		return
 	}
+	// What the task carries is the row's, whatever the payload says.
+	delivery.ConfigID, delivery.APIKey = task.ConfigID, task.APIKey
+	delivery.UsageCategories, delivery.Channels = task.UsageCategories, task.Channels
 	ctx := routing.WithScheduledTurn(r.Context())
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {
@@ -779,9 +782,10 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// ownsTask reports whether a delivery names the owner its task is stored with.
+// ownsTask reports whether a delivery names the owner and session its task is stored with.
 func ownsTask(delivery scheduledDelivery, task store.ScheduledTask) bool {
-	return task.UserID == delivery.UserID && task.CallerKind == delivery.CallerKind
+	return task.UserID == delivery.UserID && task.CallerKind == delivery.CallerKind &&
+		task.SessionID == delivery.SessionID
 }
 
 // deliverChainReopened walks a delivery's channels in a conversation whose
