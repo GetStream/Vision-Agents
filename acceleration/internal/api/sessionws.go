@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -897,7 +898,7 @@ func frameOf(event session.Event) (frame, bool) {
 		}, true
 
 	case agent.Error:
-		return frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}, true
+		return withRefusal(frame{"type": "error", "context": typed.Context, "error": errorText(typed.Err)}, typed.Err), true
 
 	case agent.Left:
 		return frame{"type": "left", "at": typed.At}, true
@@ -969,6 +970,16 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// withRefusal adds the code naming a refusal to an error frame for one, so a client can tell
+// a turn the prompt injection screen refused from any other failure. Every other error frame
+// is the one it always was.
+func withRefusal(failed frame, err error) frame {
+	if errors.Is(err, policy.ErrPromptInjection) {
+		failed["code"] = "prompt_injection"
+	}
+	return failed
 }
 
 // filesOf is what a settled task handed back, as a frame lists it: always a list, so a
