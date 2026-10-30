@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -62,9 +63,9 @@ func (s *ReplicateIDsSuite) emptyDatabase(name string) string {
 	return own
 }
 
-// replicate copies acme's agent logs with the ids exported, then follows one page of changes
-// inserting those with the ids changed, as `router replicate --once` does.
-func (s *ReplicateIDsSuite) replicate(exported, changed []int64) {
+// replicate copies acme's agent logs with the ids exported, then follows one page of the
+// changes given, as `router replicate --once` does.
+func (s *ReplicateIDsSuite) replicate(exported []int64, changes ...store.DataChange) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/data/export":
@@ -73,12 +74,7 @@ func (s *ReplicateIDsSuite) replicate(exported, changed []int64) {
 			}
 			fmt.Fprintln(w, `{"cursor":1,"customer":"acme"}`)
 		case "/v1/data/changes":
-			page := changePage{Changes: []store.DataChange{}, Cursor: 1, CaughtUp: true}
-			for _, id := range changed {
-				page.Cursor++
-				page.Changes = append(page.Changes, store.DataChange{Seq: page.Cursor, Table: "agent_logs", Op: store.ChangeInsert,
-					Key: json.RawMessage(fmt.Sprintf(`{"id":%d}`, id)), Payload: copiedLog(id), At: time.Now().UTC()})
-			}
+			page := changePage{Changes: changes, Cursor: 1 + int64(len(changes)), CaughtUp: true}
 			s.NoError(json.NewEncoder(w).Encode(page))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -100,6 +96,12 @@ func copiedLog(id int64) json.RawMessage {
 		`"occurred_at":"2026-10-30T00:00:00Z","ingested_at":"2026-10-30T00:00:00Z","details":{}}`, id))
 }
 
+// inserted is the change recording an insert of an agent log of acme's with the id given.
+func inserted(id int64) store.DataChange {
+	return store.DataChange{Table: "agent_logs", Op: store.ChangeInsert, Key: json.RawMessage(fmt.Sprintf(`{"id":%d}`, id)),
+		Payload: copiedLog(id), At: time.Now().UTC()}
+}
+
 // logged writes a log of another app's on the target, the way the router does, and answers it.
 func (s *ReplicateIDsSuite) logged() (*store.AgentLog, error) {
 	entry := &store.AgentLog{CustomerID: "other", Source: "agent", Severity: "info", EventType: "turn", Message: "live"}
@@ -110,7 +112,7 @@ func (s *ReplicateIDsSuite) TestALogWrittenAfterACopyDrawsAnIDAboveTheCopiedOnes
 	_, err := s.logged()
 	s.Require().NoError(err)
 
-	s.replicate([]int64{2, 3}, nil)
+	s.replicate([]int64{2, 3})
 	written, err := s.logged()
 
 	s.Require().NoError(err, "the target's next id is not one a copied row holds")
@@ -121,7 +123,7 @@ func (s *ReplicateIDsSuite) TestALogWrittenAfterAReplayedChangeDrawsAnIDAboveIt(
 	_, err := s.logged()
 	s.Require().NoError(err)
 
-	s.replicate(nil, []int64{2})
+	s.replicate(nil, inserted(2))
 	written, err := s.logged()
 
 	s.Require().NoError(err, "the target's next id is not one a replayed row holds")
@@ -129,7 +131,7 @@ func (s *ReplicateIDsSuite) TestALogWrittenAfterAReplayedChangeDrawsAnIDAboveIt(
 }
 
 func (s *ReplicateIDsSuite) TestACopyIntoATargetThatNeverWroteALogTakesItsFirstIDToo() {
-	s.replicate([]int64{1}, nil)
+	s.replicate([]int64{1})
 	written, err := s.logged()
 
 	s.Require().NoError(err, "a sequence nothing has drawn from yet hands out its first number next")
@@ -141,9 +143,17 @@ func (s *ReplicateIDsSuite) TestATargetSequenceAlreadyPastTheCopiedIDsStaysWhere
 	_, err := s.target.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('agent_logs', 'id'), 5000)")
 	s.Require().NoError(err)
 
-	s.replicate([]int64{2, 3}, []int64{4})
+	s.replicate([]int64{2, 3}, inserted(4))
 	written, err := s.logged()
 
 	s.Require().NoError(err)
 	s.Equal(int64(5001), written.ID, "a copy never moves a sequence back")
+}
+
+func (s *ReplicateIDsSuite) TestAReplayedDeleteCarriesNoRowToReserveAndIsApplied() {
+	s.replicate([]int64{2}, store.DataChange{Table: "agent_logs", Op: store.ChangeDelete,
+		Key: json.RawMessage(`{"id":2}`), At: time.Now().UTC()})
+
+	_, err := s.target.AgentLog(s.ctx, "acme", 2)
+	s.ErrorIs(err, sql.ErrNoRows)
 }
