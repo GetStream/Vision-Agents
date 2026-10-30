@@ -154,8 +154,9 @@ func (s *ProxySuite) TestTheSandboxReachesTheProxyAlone() {
 }
 
 // TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun: the tunnel starts with the
-// setup, after its file is written, and is checked before each run, whose clients it serves;
-// a check that fails runs no code. The sandbox still reaches the proxy's address alone.
+// setup, after its file is written, and is checked before each run but the first after the
+// setup, which has just started it, whose clients it serves; a check that fails runs no code.
+// The sandbox still reaches the proxy's address alone.
 func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRun() {
 	box := s.proxied(sandbox.Config{}, "https://203.0.113.7:8091")
 
@@ -167,8 +168,8 @@ func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRu
 	s.Equal("203.0.113.7/32", s.platform.requests()[0]["networkAllowList"])
 	s.Contains(s.platform.uploads, "/tmp/va-egress-tunnel.py after 0 runs")
 	start := "sh -c " + quoted(box.mount.EachRun[0])
-	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 0 runs",
-		start + " after 1 runs"}, s.platform.commands)
+	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 1 runs"},
+		s.platform.commands)
 	for _, ran := range s.platform.executed() {
 		s.Regexp(`^http://sbx:[A-Z2-7]{26}@127\.0\.0\.1:3128$`, ran["envs"].(map[string]any)["HTTPS_PROXY"])
 	}
@@ -179,6 +180,44 @@ func (s *ProxySuite) TestAnHTTPSProxyIsReachedThroughATunnelCheckedBeforeEveryRu
 	_, err = box.Run(s.ctx, "print(3)", nil)
 	s.ErrorContains(err, "readying the sandbox for a run: exit code 1: the TLS tunnel to the proxy did not start: OSError")
 	s.Len(s.platform.executed(), 2)
+}
+
+// TestTheRunAfterASetupBeforeItSkipsTheCheck: run_code makes the sandbox ready and writes the
+// skills' files before it runs code, so the setup runs there, and the run after it has nothing
+// to check. Only that one run skips it.
+func (s *ProxySuite) TestTheRunAfterASetupBeforeItSkipsTheCheck() {
+	box := s.proxied(sandbox.Config{}, "https://203.0.113.7:8091")
+	_, err := box.Ready(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(box.Write(s.ctx, "f.txt", []byte("x")))
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	_, err = box.Run(s.ctx, "print(2)", nil)
+	s.Require().NoError(err)
+
+	start := "sh -c " + quoted(box.mount.EachRun[0])
+	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 1 runs"},
+		s.platform.commands)
+}
+
+// TestALapsedSandboxChecksTheTunnelOnTheRunAfterItsSetup: a sandbox Daytona may have stopped
+// for idling has lost the forwarder its setup started, so the next run checks it.
+func (s *ProxySuite) TestALapsedSandboxChecksTheTunnelOnTheRunAfterItsSetup() {
+	box := s.proxied(sandbox.Config{}, "https://203.0.113.7:8091")
+	meter := &told{}
+	box.meter, box.lifecycle.IdleStop = meter, 100*time.Millisecond
+	_, err := box.Ready(s.ctx)
+	s.Require().NoError(err)
+	s.Eventually(func() bool { return slices.Contains(meter.all(), "stopped") }, 5*time.Second, 10*time.Millisecond)
+
+	_, err = box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	start := "sh -c " + quoted(box.mount.EachRun[0])
+	s.Equal([]string{"sh -c " + quoted(box.mount.Setup[0]) + " after 0 runs", start + " after 0 runs", start + " after 0 runs"},
+		s.platform.commands)
+	s.Equal([]string{"created sandbox-1 2 vCPU 4 GiB 10 GiB container", "stopped", "started"}, meter.all())
 }
 
 // slowed is a sandbox of config behind an HTTPS proxy, that has run once, after which each

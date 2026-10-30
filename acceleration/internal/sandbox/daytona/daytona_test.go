@@ -87,6 +87,9 @@ type platform struct {
 	// or until the caller gives up; checking, when set, hears of each shell command.
 	slowCommand, slowRun time.Duration
 	checking             chan struct{}
+	// slowUpload is how long each file written into the sandbox takes to answer, or until the
+	// caller gives up.
+	slowUpload time.Duration
 	// asked, when set, hears of each download before it is served, by the files it names.
 	asked func(name string)
 }
@@ -116,6 +119,12 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		if checking != nil {
 			checking <- struct{}{}
 		}
+		answerAfter(r, slow)
+	}
+	if strings.HasSuffix(r.URL.Path, "/files/upload-v2") {
+		p.mu.Lock()
+		slow := p.slowUpload
+		p.mu.Unlock()
 		answerAfter(r, slow)
 	}
 	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
@@ -161,7 +170,12 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		p.created = append(p.created, id)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`))
+		_, _ = w.Write(p.sandbox(id))
+
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sandbox/"):
+		// A sandbox's state, read once it may have stopped for idling: it runs still.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(p.sandbox(strings.TrimPrefix(r.URL.Path, "/api/sandbox/")))
 
 	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
 		file, _, err := r.FormFile("file")
@@ -208,6 +222,11 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(p.runStatus)
 		_, _ = w.Write([]byte(p.runBody))
 	}
+}
+
+// sandbox is the sandbox id as Daytona describes it, running.
+func (p *platform) sandbox(id string) []byte {
+	return []byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`)
 }
 
 // download serves a file of the sandbox's as Daytona's toolbox does: whole from /files/download,
@@ -849,4 +868,59 @@ func (s *DaytonaSuite) TestAFileWhoseDownloadBreaksOffIsMissingRatherThanCutShor
 	s.Require().NoError(err)
 	s.Empty(result.Files)
 	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
+}
+
+// TestAHungUploadIsCutAtTheSandboxsTimeout: a write holds the sandbox, so an upload Daytona
+// never answers is cut at the sandbox's timeout, as every other call to it is, and the next
+// call gets in.
+func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowUpload = 20 * time.Second
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 10*time.Second, "cut long before the upload's end")
+	s.platform.mu.Lock()
+	s.platform.slowUpload = 0
+	s.platform.mu.Unlock()
+	s.NoError(box.Write(s.ctx, "f.txt", []byte("y")), "the next write gets in")
+	s.Equal([]byte("y"), s.platform.files["f.txt"])
+}
+
+// TestAHungMkdirIsCutAtTheSandboxsTimeout: the directory a file sits in is made under the same
+// bound, and a write whose directory was not made uploads nothing.
+func (s *DaytonaSuite) TestAHungMkdirIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowCommand = 20 * time.Second
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "dir/f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 10*time.Second, "cut long before the command's end")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.Empty(s.platform.uploads)
+}
+
+// TestACallerGivingUpDuringAWriteEndsIt is the control: the bound is on the caller's context,
+// so a caller that gives up before the sandbox's timeout is answered then.
+func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
+	s.platform.mu.Lock()
+	s.platform.slowUpload = 30 * time.Second
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	err := s.box.Write(ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 20*time.Second, "answered long before the sandbox's 60 s timeout")
 }
