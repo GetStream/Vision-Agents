@@ -435,6 +435,9 @@ type RouterSuite struct {
 	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
 	// loopback. Nil reaches only public hosts.
 	imageHTTP *http.Client
+	// importLineLimit is the longest line an import reads, for a suite to set before it starts
+	// the harness. Zero is the router's own.
+	importLineLimit int
 	// callbackHTTP is what a finished recording is posted to its callback with, for a suite
 	// whose receiver listens on loopback. Nil reaches only public hosts.
 	callbackHTTP *http.Client
@@ -751,6 +754,7 @@ func (s *RouterSuite) SetupSuite() {
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		RunsPerApp:            s.runsPerApp,
 		ImageHTTP:             s.imageHTTP,
+		ImportLineLimit:       s.importLineLimit,
 		CallbackHTTP:          s.callbackHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,

@@ -25,6 +25,15 @@ func TestDataMoveSuite(t *testing.T) {
 	runSuite(t, new(DataMoveSuite))
 }
 
+// suiteImportLine is the longest line an import reads here, so a test can send a longer one
+// without sending the router's own limit.
+const suiteImportLine = 64 << 10
+
+func (s *DataMoveSuite) SetupSuite() {
+	s.importLineLimit = suiteImportLine
+	s.RouterSuite.SetupSuite()
+}
+
 func (s *DataMoveSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
@@ -122,6 +131,19 @@ func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
 	s.Equal(int64(1), written.Tables["agent_configs"])
 	s.Equal(int64(len(exported)-1), written.Rows, "every line but the cursor was a row")
 	s.Require().NotNil(written.Cursor)
+}
+
+func (s *DataMoveSuite) TestALineLongerThanAnImportReadsIsRefused() {
+	s.data.createAgentConfig()
+	// The export as it was written, with its agent's line padded past the limit by whitespace
+	// JSON allows, so it is a row the import would otherwise take.
+	padded := strings.Replace(ndjson(s.export()), `{"table":"agent_configs"`,
+		"{"+strings.Repeat(" ", suiteImportLine)+`"table":"agent_configs"`, 1)
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import", padded)
+
+	s.Equal(http.StatusRequestEntityTooLarge, status)
+	s.Contains(failure, "a line of an import is at most")
 }
 
 func (s *DataMoveSuite) TestAnImportCannotClaimAnotherAppsNumberInAnotherForm() {

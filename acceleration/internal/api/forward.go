@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httputil"
@@ -17,6 +19,12 @@ import (
 // whatever timeout that call already had; short enough that a node which has stopped
 // answering does not hold a caller indefinitely.
 const forwardTimeout = 30 * time.Second
+
+// maxForwardedBody is the largest body carried to another node. It is read whole, and before
+// the caller is authenticated, which the node answering does, so it is held to what every
+// operation under a session's path reads a body up to: Huma's default MaxBodyBytes
+// (ensureMaxBodyBytes in huma.go, v2.39.1), which none of them raises.
+const maxForwardedBody = 1 << 20
 
 // unreachableNode is what a caller is told when the session exists but the node running
 // it does not answer, which is a different thing from a session that is not there.
@@ -45,7 +53,12 @@ func (s *Server) onOwningNode(next http.Handler) http.Handler {
 
 		ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
 		defer cancel()
+		r.Body = http.MaxBytesReader(w, r.Body, maxForwardedBody)
 		if err := s.forwarder.Forward(ctx, address, w, r); err != nil {
+			if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+				writeError(w, payloadTooLarge(fmt.Sprintf("a request about a session takes a body of at most %d MiB", maxForwardedBody>>20)))
+				return
+			}
 			s.logger.Error("could not reach the node running a session",
 				"node", address, "path", r.URL.Path, "error", err)
 			writeError(w, unavailable(unreachableNode))
