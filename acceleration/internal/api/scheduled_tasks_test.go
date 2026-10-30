@@ -1965,17 +1965,28 @@ func (s *ScheduledTasksSuite) TestTheAgentRewordingATaskKeepsCountingFromItsStor
 // countingTaskWithOnePassed stores a daily COUNT=3 task whose first run has
 // passed, and returns it with its start and the two runs it has left.
 func (s *ScheduledTasksSuite) countingTaskWithOnePassed(user *testClient, config string) (ScheduledTask, string, []time.Time) {
+	return s.countingTaskStartedDaysAgo(user, config, 1, 3)
+}
+
+// countingTaskStartedDaysAgo stores a daily COUNT task whose start is days
+// days before the hour its next run falls on, and returns it with its start
+// and the runs it has left. Two days back, the stored date is never today's,
+// whatever time of day the test runs.
+func (s *ScheduledTasksSuite) countingTaskStartedDaysAgo(user *testClient, config string, days, count int) (ScheduledTask, string, []time.Time) {
 	created := s.createTask(user, taskRequest(config))
-	start, want := yesterdayAtAnHourAhead()
-	stored, err := time.Parse("2006-01-02T15:04", start)
-	s.Require().NoError(err)
-	_, err = s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
-		Set("rrule = ?", "FREQ=DAILY;COUNT=3").Set("timezone = ?", "UTC").
-		Set("start_local = ?", stored).Set("next_run_at = ?", want[0]).
+	hour := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Hour)
+	start := hour.AddDate(0, 0, -days)
+	left := []time.Time{}
+	for run := 0; run < count-days; run++ {
+		left = append(left, hour.AddDate(0, 0, run))
+	}
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("rrule = ?", fmt.Sprintf("FREQ=DAILY;COUNT=%d", count)).Set("timezone = ?", "UTC").
+		Set("start_local = ?", start).Set("next_run_at = ?", hour).
 		Where("customer_id = ?", s.customerID()).Where("id = ?", created.Id).
 		Exec(context.Background())
 	s.Require().NoError(err)
-	return created, start, want[:2]
+	return created, start.Format("2006-01-02T15:04"), left
 }
 
 func (s *ScheduledTasksSuite) TestAnEditThatSendsTheStartBackKeepsCountingFromIt() {
@@ -2022,33 +2033,33 @@ func (s *ScheduledTasksSuite) TestAnEditToAnotherTimeOnTheStoredDateCountsFromNo
 func (s *ScheduledTasksSuite) TestAnEditResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
-	created, start, left := s.countingTaskWithOnePassed(user, config)
+	created, start, left := s.countingTaskStartedDaysAgo(user, config, 2, 4)
 
 	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(start[len("2006-01-02T"):]),
-		Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Until: pointerTo(left[0].AddDate(0, 1, 0).Format("2006-01-02")), Timezone: pointerTo("UTC")})
+		Repeat: pointerTo("FREQ=DAILY;COUNT=4"), Until: pointerTo(left[0].AddDate(0, 1, 0).Format("2006-01-02")), Timezone: pointerTo("UTC")})
 
 	s.Equal(start, reloaded.StartLocal.UTC().Format("2006-01-02T15:04"), "the same time of day is not a new time")
-	s.Equal(left, s.upcomingOf(reloaded), "one of the three has already passed")
+	s.Equal(left, s.upcomingOf(reloaded), "two of the four have already passed")
 }
 
 func (s *ScheduledTasksSuite) TestAnEditToAnotherTimeOfDayCountsFromNow() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
-	created, start, left := s.countingTaskWithOnePassed(user, config)
+	created, start, left := s.countingTaskStartedDaysAgo(user, config, 2, 4)
 	later := left[0].Add(30 * time.Minute)
 
 	reloaded := s.editSchedule(user, created.Id, ScheduledTaskSchedule{At: pointerTo(later.Format("15:04")),
-		Repeat: pointerTo("FREQ=DAILY;COUNT=3"), Timezone: pointerTo("UTC")})
+		Repeat: pointerTo("FREQ=DAILY;COUNT=4"), Timezone: pointerTo("UTC")})
 
 	s.NotEqual(start, reloaded.StartLocal.UTC().Format("2006-01-02T15:04"))
-	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2)}, s.upcomingOf(reloaded),
-		"a different time of day is a new start: three from now")
+	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2), later.AddDate(0, 0, 3)}, s.upcomingOf(reloaded),
+		"a different time of day is a new start: four from now")
 }
 
 func (s *ScheduledTasksSuite) TestTheAgentResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
-	created, start, left := s.countingTaskWithOnePassed(user, config)
+	created, start, left := s.countingTaskStartedDaysAgo(user, config, 2, 4)
 	opened := s.openScheduling(user, config, nil)
 	watching := s.watch(user, opened.Id)
 
@@ -2066,7 +2077,7 @@ func (s *ScheduledTasksSuite) TestTheAgentResendingTheStoredTimeOfDayKeepsCounti
 func (s *ScheduledTasksSuite) TestTheAgentMovingToAnotherTimeOfDayCountsFromNow() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
-	created, _, left := s.countingTaskWithOnePassed(user, config)
+	created, _, left := s.countingTaskStartedDaysAgo(user, config, 2, 4)
 	later := left[0].Add(30 * time.Minute)
 	opened := s.openScheduling(user, config, nil)
 	watching := s.watch(user, opened.Id)
@@ -2077,8 +2088,8 @@ func (s *ScheduledTasksSuite) TestTheAgentMovingToAnotherTimeOfDayCountsFromNow(
 	s.NotContains(s.ranResult(watching), `"error"`)
 
 	stored := s.taskReloaded(store.ScheduledTask{ID: created.Id})
-	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2)}, s.upcomingOf(stored),
-		"a different time of day is a new start: three from now")
+	s.Equal([]time.Time{later, later.AddDate(0, 0, 1), later.AddDate(0, 0, 2), later.AddDate(0, 0, 3)}, s.upcomingOf(stored),
+		"a different time of day is a new start: four from now")
 }
 
 func (s *ScheduledTasksSuite) TestTheAgentSendingTheStoredStartBackKeepsCountingFromIt() {
