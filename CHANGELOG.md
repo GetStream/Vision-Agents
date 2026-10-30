@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Work a user's turn delegates is counted on that user's day
+
+In a session a backend opened, a user types a turn. The reply was counted on that user's daily limit, but the work the turn delegated (a skill, vision, the summary of a long conversation) was counted on the backend, which has no limit. It is now counted on the user as the reply is, so once the user's day is spent the work is refused with the daily-limit error. A turn a scheduled task fired is still the customer's (AI-2000).
 ### A Daytona file write that hangs no longer holds the sandbox
 
 Writing a skill's files into a Daytona sandbox before `run_code` is now bounded as the check before a run is: by the sandbox's timeout, at most 60 seconds. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).

@@ -82,7 +82,8 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 		return false, nil
 	}
 	h.compaction = &compaction{prefix: prefix}
-	// A summary a scheduled turn set off is counted as that turn is (chargedAs).
+	// A summary a turn set off is counted as that turn is: on its sender, and as scheduled
+	// when a scheduled task fired it (chargedAs).
 	charged := h.charged
 	h.mu.Unlock()
 
