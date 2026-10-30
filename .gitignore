@@ -97,10 +97,13 @@ plugins/*/example/uv.lock
 # Compiled Go commands, which land beside the module they were built from
 /acceleration/agent
 /acceleration/chat
+/acceleration/fetchbinary
+/acceleration/gateway
 /acceleration/phone
 /acceleration/router
 /acceleration/say
 /acceleration/transcribe
+/examples/routers/stt_realtime_example/stt_realtime_example
 /examples/voice_agents/swift_demo/backend/backend
 /examples/voice_agents/swift_demo/configure/configure
 
