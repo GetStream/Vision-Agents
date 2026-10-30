@@ -168,6 +168,8 @@ const (
 type shape struct {
 	columns []string
 	keys    []string
+	// sequences are the sequences behind the columns whose default draws from one, by column.
+	sequences map[string]string
 }
 
 // tableShapes caches those, since they only change when a migration does.
@@ -498,11 +500,7 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		return err
 	}
 
-	columns := shape.insertable(spec)
-	if spec.across != "" {
-		// The id is the destination's to draw: the source's may be one of its own rows'.
-		columns = slices.DeleteFunc(columns, func(column string) bool { return spec.isKey(shape, column) })
-	}
+	columns := spec.written(shape)
 	quoted := strings.Join(columns, ", ")
 	selected := quoted
 	if i := slices.Index(columns, "usage_id"); spec.name == "requests" && i >= 0 {
@@ -555,6 +553,45 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: import %s: %w", table, err)
+	}
+	return nil
+}
+
+// ReserveImportedIDs moves this deployment's sequences past the numbers a row is about to be
+// imported with, so no row inserted here afterwards draws one of them.
+//
+// An import keeps the source's ids, and the sequence behind such a column here knows nothing
+// of them: whichever customer's insert draws a number an imported row holds fails on the key.
+// It runs before the row lands, so no live insert can draw the number once the row is here. A
+// sequence already past the number stays where it is, since this deployment draws from it on
+// its own. Reading a sequence and setting it are two steps nothing locks together, so an insert
+// drawing in between can still be handed a number the setval goes back below.
+//
+// Only for a source the operator vouches for: the numbers are the row's word, and a row naming
+// a sequence's largest value would stop every insert into its table, whoever's.
+func (s *Store) ReserveImportedIDs(ctx context.Context, table string, row json.RawMessage) error {
+	spec, found := dataTableByName(table)
+	if !found {
+		return fmt.Errorf("store: %q is not a table an export carries", table)
+	}
+	shape, err := s.shapeOf(ctx, table)
+	if err != nil {
+		return err
+	}
+	for _, column := range spec.written(shape) {
+		sequence, drawn := shape.sequences[column]
+		if !drawn {
+			continue
+		}
+		// The next number a sequence hands out is its last value, or the one after once it has
+		// handed that out.
+		query := fmt.Sprintf(`
+SELECT setval(?::regclass, r.%[1]s)
+FROM jsonb_populate_record(NULL::%[2]s, ?::jsonb) AS r, %[3]s AS s
+WHERE r.%[1]s >= CASE WHEN s.is_called THEN s.last_value + 1 ELSE s.last_value END`, column, spec.name, sequence)
+		if _, err := s.sideOf(spec).ExecContext(ctx, query, sequence, string(row)); err != nil {
+			return fmt.Errorf("store: reserve %s.%s: %w", table, column, err)
+		}
 	}
 	return nil
 }
@@ -938,14 +975,16 @@ func (s *Store) shapeOf(ctx context.Context, table string) (shape, error) {
 		return shape{}, fmt.Errorf("store: %q is not a table an export carries", table)
 	}
 
-	var read shape
+	read := shape{sequences: map[string]string{}}
+	// pg_get_serial_sequence finds the sequence of a serial and of an identity column alike.
 	rows, err := s.db.QueryContext(ctx, `
 SELECT a.attname,
        EXISTS (SELECT 1 FROM pg_index i
-               WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY (i.indkey)) AS is_key
+               WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY (i.indkey)) AS is_key,
+       pg_get_serial_sequence(?, a.attname)
 FROM pg_attribute a
 WHERE a.attrelid = ?::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
-ORDER BY a.attnum`, table)
+ORDER BY a.attnum`, table, table)
 	if err != nil {
 		return shape{}, fmt.Errorf("store: shape of %s: %w", table, err)
 	}
@@ -954,12 +993,16 @@ ORDER BY a.attnum`, table)
 	for rows.Next() {
 		var column string
 		var isKey bool
-		if err := rows.Scan(&column, &isKey); err != nil {
+		var sequence sql.NullString
+		if err := rows.Scan(&column, &isKey, &sequence); err != nil {
 			return shape{}, fmt.Errorf("store: shape of %s: %w", table, err)
 		}
 		read.columns = append(read.columns, column)
 		if isKey {
 			read.keys = append(read.keys, column)
+		}
+		if sequence.Valid {
+			read.sequences[column] = sequence.String
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -986,6 +1029,16 @@ func (s shape) insertable(table dataTable) []string {
 		if !slices.Contains(secretColumns, column) && !slices.Contains(table.vouched, column) {
 			columns = append(columns, column)
 		}
+	}
+	return columns
+}
+
+// written are the columns an import writes of a row of this table.
+func (t dataTable) written(s shape) []string {
+	columns := s.insertable(t)
+	if t.across != "" {
+		// The id is the destination's to draw: the source's may be one of its own rows'.
+		columns = slices.DeleteFunc(columns, func(column string) bool { return t.isKey(s, column) })
 	}
 	return columns
 }

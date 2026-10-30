@@ -156,6 +156,9 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 				// customer_id holds and what --app-id on `keys create` is for.
 				customerID = customerOf(line.Row)
 			}
+			if err := pgStore.ReserveImportedIDs(ctx, line.Table, line.Row); err != nil {
+				return "", 0, err
+			}
 			if err := pgStore.ImportRow(ctx, customerID, line.Table, line.Row); err != nil {
 				return "", 0, err
 			}
@@ -199,6 +202,14 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 		}
 
 		if len(page.Changes) > 0 {
+			for _, change := range page.Changes {
+				if change.Op == store.ChangeDelete {
+					continue
+				}
+				if err := pgStore.ReserveImportedIDs(ctx, change.Table, change.Payload); err != nil {
+					return err
+				}
+			}
 			if err := pgStore.ApplyChanges(ctx, customerID, page.Changes); err != nil {
 				return err
 			}
