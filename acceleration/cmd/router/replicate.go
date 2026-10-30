@@ -27,6 +27,8 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --api-key     a server-side key there, vak_live_...
   --api-secret  its secret, vas_live_...
   --as          the app id the rows land under here. Defaults to the one they had
+  --source-auth jwt for a router behind the Stream gateway (the default), server for one
+                reached directly
   --poll        how often to ask for changes once the copy is done
   --once        stop as soon as there is nothing left to catch up on
 `
@@ -42,18 +44,9 @@ const tokenLifetime = 5 * time.Minute
 // at one moment; the changes carry on from exactly where it stopped; both are applied the
 // same way, by upserting, so anything applied twice lands where applying it once would.
 func runReplicate(args []string, settings config.Config, logger *slog.Logger) error {
-	flags := flag.NewFlagSet("replicate", flag.ContinueOnError)
-	from := flags.String("from", "", "the deployment to copy from")
-	key := flags.String("api-key", "", "a server-side key there")
-	secret := flags.String("api-secret", "", "its secret")
-	as := flags.String("as", "", "the app id the rows land under here")
-	poll := flags.Duration("poll", 2*time.Second, "how often to ask for changes")
-	once := flags.Bool("once", false, "stop once there is nothing left to catch up on")
-	if err := flags.Parse(args); err != nil {
+	options, err := parseReplicate(args)
+	if err != nil {
 		return err
-	}
-	if *from == "" || *key == "" || *secret == "" {
-		return errors.New(replicateUsage)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -82,19 +75,56 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	cancel()
 	pgStore.SetStreamPins(streamPins(streamClients))
 
-	source := &deployment{
-		url:    strings.TrimSuffix(*from, "/"),
-		key:    *key,
-		secret: *secret,
-		client: &http.Client{Timeout: time.Hour},
-	}
-
-	customerID, cursor, err := copyEverything(ctx, source, pgStore, *as, logger)
+	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, options.as, logger)
 	if err != nil {
 		return err
 	}
 
-	return follow(ctx, source, pgStore, customerID, cursor, *poll, *once, logger)
+	return follow(ctx, options.source, pgStore, customerID, cursor, options.poll, options.once, logger)
+}
+
+// replicateOptions is what the command line asked replicate for.
+type replicateOptions struct {
+	source *deployment
+	as     string
+	poll   time.Duration
+	once   bool
+}
+
+// parseReplicate reads replicate's flags into the source it copies from and how.
+func parseReplicate(args []string) (replicateOptions, error) {
+	flags := flag.NewFlagSet("replicate", flag.ContinueOnError)
+	from := flags.String("from", "", "the deployment to copy from")
+	key := flags.String("api-key", "", "a server-side key there")
+	secret := flags.String("api-secret", "", "its secret")
+	// The Stream gateway in front of a hosted router accepts only a jwt Stream-Auth-Type and
+	// takes a token signed with the app secret that names no user for a server-side one.
+	// A router reached directly makes a caller server-side only when it says server.
+	sourceAuth := flags.String("source-auth", auth.AuthTypeJWT, "the Stream-Auth-Type the source accepts: jwt or server")
+	as := flags.String("as", "", "the app id the rows land under here")
+	poll := flags.Duration("poll", 2*time.Second, "how often to ask for changes")
+	once := flags.Bool("once", false, "stop once there is nothing left to catch up on")
+	if err := flags.Parse(args); err != nil {
+		return replicateOptions{}, err
+	}
+	if *from == "" || *key == "" || *secret == "" {
+		return replicateOptions{}, errors.New(replicateUsage)
+	}
+	if *sourceAuth != auth.AuthTypeJWT && *sourceAuth != auth.AuthTypeServer {
+		return replicateOptions{}, fmt.Errorf("--source-auth is jwt or server, not %q", *sourceAuth)
+	}
+	return replicateOptions{
+		source: &deployment{
+			url:      strings.TrimSuffix(*from, "/"),
+			key:      *key,
+			secret:   *secret,
+			authType: *sourceAuth,
+			client:   &http.Client{Timeout: time.Hour},
+		},
+		as:   *as,
+		poll: *poll,
+		once: *once,
+	}, nil
 }
 
 // copyEverything reads the export and writes it here, returning who it turned out to be
@@ -212,7 +242,9 @@ type deployment struct {
 	url    string
 	key    string
 	secret string
-	client *http.Client
+	// authType is the Stream-Auth-Type sent with the server token: AuthTypeJWT or AuthTypeServer.
+	authType string
+	client   *http.Client
 }
 
 // get asks the source for something, as the backend it is.
@@ -236,7 +268,7 @@ func (d *deployment) get(ctx context.Context, path string, query map[string]stri
 	}
 	request.Header.Set(auth.APIKeyHeader, d.key)
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeServer)
+	request.Header.Set(auth.AuthTypeHeader, d.authType)
 
 	response, err := d.client.Do(request)
 	if err != nil {
@@ -245,6 +277,16 @@ func (d *deployment) get(ctx context.Context, path string, query map[string]stri
 	if response.StatusCode == http.StatusGone {
 		response.Body.Close()
 		return nil, errors.New("the source no longer keeps the changes since that cursor: start again with a fresh export")
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+		response.Body.Close()
+		other := auth.AuthTypeServer
+		if d.authType == auth.AuthTypeServer {
+			other = auth.AuthTypeJWT
+		}
+		return nil, fmt.Errorf("%s %s: %s: %s (sent with --source-auth %s; a source that wants the other kind takes --source-auth %s)",
+			request.Method, path, response.Status, strings.TrimSpace(string(message)), d.authType, other)
 	}
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
