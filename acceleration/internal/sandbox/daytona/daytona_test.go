@@ -89,6 +89,8 @@ type platform struct {
 	// or until the caller gives up; checking, when set, hears of each shell command.
 	slowCommand, slowRun time.Duration
 	checking             chan struct{}
+	// asked, when set, hears of each download before it is served, by the files it names.
+	asked func(name string)
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -223,6 +225,12 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		name = strings.Join(body.Paths, ",")
+	}
+	p.mu.Lock()
+	asked := p.asked
+	p.mu.Unlock()
+	if asked != nil {
+		asked(name)
 	}
 	p.mu.Lock()
 	var content io.Reader
@@ -365,6 +373,13 @@ func (p *platform) holdsCut(path string, size int) {
 	defer p.mu.Unlock()
 	p.sized[path] = size
 	p.cut[path] = true
+}
+
+// onDownload has asked hear of each download before it is served.
+func (p *platform) onDownload(asked func(name string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked = asked
 }
 
 // holdsSized puts a file of size bytes of x at path.
@@ -772,6 +787,32 @@ func (s *DaytonaSuite) TestAFileFarTooLargeIsRefusedWithoutBeingReadWhole() {
 	// What passed the limit is only what the connection's buffers took before the router
 	// stopped reading: a few MiB at most, well short of another MaxFileBytes.
 	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestARefusedDownloadHasEndedBeforeTheNextFileIsAskedFor() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+	s.platform.holds("/tmp/small.txt", []byte("small"))
+	endedFirst := make(chan bool, 1)
+	s.platform.onDownload(func(name string) {
+		if name != "/tmp/small.txt" {
+			return
+		}
+		// The refused download ends once the router closes it; give the server a moment to
+		// notice, but never longer than the test may wait.
+		var ended bool
+		for deadline := time.Now().Add(3 * time.Second); !ended && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			_, ended = s.platform.sent("/tmp/dump.bin")
+		}
+		endedFirst <- ended
+	})
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/dump.bin", "/tmp/small.txt"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	s.Equal("small.txt", result.Files[0].Name)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	s.True(<-endedFirst, "the refused download was still open when the next file was asked for")
 }
 
 func (s *DaytonaSuite) TestAHandBackLeavesNoFileOnTheRoutersDisk() {
