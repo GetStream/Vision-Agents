@@ -106,6 +106,31 @@ import (
 // Sentry reads as "no release" rather than as an error.
 var release string
 
+// idleTimeout is how long the API, peer, pprof and metrics servers hold a keep-alive
+// connection that sends no next request. It must outlast the idle timeout of every
+// client that pools connections to them, or that client reuses a connection the router
+// has just closed and a request that cannot be replayed fails. The clients:
+//   - the stream-accelerate gateway sets no ReverseProxy.Transport (GetStream/chat
+//     projects/stream-accelerate/proxy.go), so it pools with http.DefaultTransport's
+//     IdleConnTimeout, 90 s (net/http/transport.go:55). The router's Service is a
+//     ClusterIP (chat infra/charts/accelerate/values.yaml, service.type): no pooling;
+//   - Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
+//     config/http_config.go:55) and scrapes every 15 s (chat values.yaml,
+//     monitoring.serviceMonitor.interval). The Datadog agent's check leaves
+//     persist_connections at its default, false (DataDog/integrations-core
+//     datadog_checks_base/utils/http.py, STANDARD_FIELDS), so it opens a new connection per
+//     scrape and pools none;
+//   - peers talk gRPC over h2c, which this timeout does not reach: x/net v0.58.0
+//     http2/server_wrap.go:109 gives the h2 server the http2.Server's own idle timeout,
+//     zero in node.Serve, not the http.Server's.
+//
+// 10 min is twice the longest, Prometheus'. A response still being written, such as
+// the SSE log stream, is not idle: net/http arms the deadline once a response is
+// finished (net/http/server.go:2163), and a hijacked websocket is out of it.
+//
+// A variable so a test can shorten it; nothing else assigns it.
+var idleTimeout = 10 * time.Minute
+
 const (
 	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
 	// keys are authKEKEnvVar with a _V<n> suffix, and authKEKVersionEnvVar says which one
@@ -117,24 +142,6 @@ const (
 	authKEKWrappedSuffix = "_WRAPPED"
 	shutdownGrace        = 10 * time.Second
 	readHeaderTimeout    = 10 * time.Second
-	// idleTimeout is how long the API, peer, pprof and metrics servers hold a keep-alive
-	// connection that sends no next request. It must outlast the idle timeout of every
-	// client that pools connections to them, or that client reuses a connection the router
-	// has just closed and a request that cannot be replayed fails. The clients:
-	//   - the stream-accelerate gateway sets no ReverseProxy.Transport (GetStream/chat
-	//     projects/stream-accelerate/proxy.go), so it pools with http.DefaultTransport's
-	//     IdleConnTimeout, 90 s (net/http/transport.go:55). The router's Service is a
-	//     ClusterIP (chat infra/charts/accelerate/values.yaml, service.type): no pooling;
-	//   - Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
-	//     config/http_config.go:55) and scrapes every 15 s (chat values.yaml,
-	//     monitoring.serviceMonitor.interval). The Datadog agent's client is unverified;
-	//   - peers talk gRPC over h2c, which this timeout does not reach: x/net v0.58.0
-	//     http2/server_wrap.go:109 gives the h2 server the http2.Server's own idle timeout,
-	//     zero in node.Serve, not the http.Server's.
-	// 10 min is twice the longest, Prometheus'. A response still being written, such as
-	// the SSE log stream, is not idle: net/http arms the deadline once a response is
-	// finished (net/http/server.go:2163), and a hijacked websocket is out of it.
-	idleTimeout = 10 * time.Minute
 	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
 	// to a search because nobody is on the phone waiting for it: a page that has to be
 	// crawled live rather than served from an index takes seconds, and giving up on it
