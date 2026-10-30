@@ -109,7 +109,9 @@ func (s *IdleTimeoutSuite) TestIdleTimeoutOutlastsEveryPoolingClient() {
 // metrics listeners and idleTimeout shortened, and sends one request on a keep-alive
 // connection to each. The server must then close the connection. A server that loses its
 // IdleTimeout, or has it overwritten after its literal, keeps the connection open and the
-// read times out.
+// read times out. Each answer must come from the listener's own server: the API server has an
+// IdleTimeout too, so if it answered on another listener's address the test would prove
+// nothing about that listener.
 func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 	previous := idleTimeout
 	idleTimeout = 300 * time.Millisecond
@@ -122,11 +124,16 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		name    string
 		setting *string
 		path    string
+		// body is text only that listener's server answers with: pprof.Cmdline writes the
+		// process arguments, and the Prometheus handler writes TYPE lines. The API and peer
+		// servers share one handler, so for them the distinct addresses checked below and the
+		// router still running at the end show each listened on its own.
+		body string
 	}{
-		{"api", &settings.Addr, "/health"},
-		{"peer", &settings.Node.Listen, "/health"},
-		{"pprof", &settings.PprofAddr, "/debug/pprof/cmdline"},
-		{"metrics", &settings.MetricsAddr, "/metrics"},
+		{"api", &settings.Addr, "/health", ""},
+		{"peer", &settings.Node.Listen, "/health", ""},
+		{"pprof", &settings.PprofAddr, "/debug/pprof/cmdline", os.Args[0]},
+		{"metrics", &settings.MetricsAddr, "/metrics", "# TYPE "},
 	}
 	// The process id spreads parallel packages over the range.
 	base := 20000 + (os.Getpid()%2000)*6
@@ -136,9 +143,17 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = held.Close() })
 	ports := s.freePorts(base, len(listeners))
+	addresses := map[string]string{}
+	var given []string
 	for i, listener := range listeners {
 		*listener.setting = fmt.Sprintf("127.0.0.1:%d", ports[i])
+		other, taken := addresses[*listener.setting]
+		s.Require().False(taken, "%s and %s were given one address, %s", other, listener.name, *listener.setting)
+		addresses[*listener.setting] = listener.name
+		given = append(given, *listener.setting)
 	}
+	// A table row that points at the wrong setting leaves another one empty or set twice.
+	s.Require().Equal(given, []string{settings.Addr, settings.Node.Listen, settings.PprofAddr, settings.MetricsAddr}, "a row points at the wrong setting")
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- run(settings, slog.New(slog.DiscardHandler)) }()
@@ -164,13 +179,18 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			defer conn.Close() //nolint:errcheck // the test is ending
 			reader := bufio.NewReader(conn)
 
+			// A listener that accepts but is never served would hang the read below; the same 20 s
+			// as the idle read further down.
+			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(20 * time.Second)))
 			_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: x\r\n\r\n", listener.path)
 			s.Require().NoError(err)
 			response, err := http.ReadResponse(reader, nil)
 			s.Require().NoError(err)
-			_, err = io.Copy(io.Discard, response.Body)
+			body, err := io.ReadAll(response.Body)
 			s.Require().NoError(err)
 			s.Require().NoError(response.Body.Close())
+			s.Equal(http.StatusOK, response.StatusCode, "%s answered %s", listener.name, listener.path)
+			s.Contains(string(body), listener.body, "another server answered on the %s address", listener.name)
 
 			// A server without IdleTimeout never closes the connection, so 20 s still fails it, and is
 			// generous for a starved CI runner (a stalled VM overran 5 s).
@@ -178,6 +198,14 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			_, err = reader.ReadByte()
 			s.True(errors.Is(err, io.EOF), "the server held an idle connection open: %v", err)
 		})
+	}
+
+	// A bind failure of the API or peer listener ends run; pprof and metrics retry instead, so their subtests check the body.
+	select {
+	case err := <-stopped:
+		stopped <- err // the cleanup reads it, and must not signal a router that has ended
+		s.Failf("the router stopped while the listeners were checked", "%v", err)
+	default:
 	}
 }
 
