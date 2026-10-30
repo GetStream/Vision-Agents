@@ -1011,9 +1011,11 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 		"UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-active'")
 	s.Require().NoError(err)
 
-	resumed, _ := s.resume("moved")
+	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
+	s.Require().NoError(err)
 	s.Zero(resumed)
+	s.Zero(skipped, "it was not left paused")
 	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
 	s.Equal(ScheduledTaskCompleted, state)
 }
@@ -1032,6 +1034,7 @@ func (s *DataMoveSuite) TestTheCutOverIsOnlyTheCustomersOwn() {
 	s.Equal([]string{acmeCampaign}, campaigns)
 	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-other")
 	s.Equal(ScheduledTaskPaused, state, "another customer's move is cut over on its own")
+	s.True(s.movePausedOn("st-other"), "and keeps its mark for it")
 	_, campaigns = s.resume("other")
 	s.Equal([]string{otherCampaign}, campaigns)
 }
