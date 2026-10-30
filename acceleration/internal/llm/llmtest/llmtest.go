@@ -186,6 +186,13 @@ func (s *Script) Close() error {
 	s.abandoned = true
 	s.mu.Unlock()
 
+	// A response still in flight is reported cancelled, as every provider reports the
+	// cancelled request a close leaves it reading.
+	select {
+	case <-s.ended:
+	default:
+		s.write(func(w *llm.ResponseWriter) { w.Cancelled() })
+	}
 	s.Done()
 	return nil
 }
