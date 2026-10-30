@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -304,6 +305,215 @@ func (s *MessageHooksSuite) TestSomethingThatIsNotAMessageEventIsAccepted() {
 	// outage worth retrying.
 	s.Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
 		`{"type":"reaction.new","cid":"agent:somewhere"}`))
+}
+
+// Only the session of the customer a channel names answers a message there, even with
+// another customer's session on the channel's id newer.
+func (s *MessageHooksSuite) TestAChannelsMessageReachesOnlyTheSessionOfTheCustomerItNames() {
+	owner := s.customerID()
+	ownSession, own := s.dispatching(), s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(s.ownedBy(owner)))
+
+	s.Equal(ownSession, s.handed(own).SessionID)
+	s.nothingReaches(other, "another customer's session answered the channel")
+}
+
+// With the channel's customer running nothing on it, the message goes to that customer's
+// worker as on any channel nothing runs on, and never to the other customer's session.
+func (s *MessageHooksSuite) TestAChannelsMessageReachesNoOtherCustomersSessionWhileItsOwnIsNotRunning() {
+	owner, configID := s.customerID(), s.holds()
+	own := s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{%q: %q, %q: %q}`,
+		conversation.CustomerField, owner, ConfigField, configID)))
+
+	handed := s.handed(own)
+	s.Empty(handed.SessionID, "handed to the owner's worker to start a conversation")
+	s.Equal(configID, handed.ConfigID)
+	s.nothingReaches(other, "another customer's session answered the channel")
+}
+
+// A channel names its customer only as a string the router wrote. Anything else there names
+// nobody's session, the other customer's included.
+func (s *MessageHooksSuite) TestAChannelNamingItsCustomerAsAnythingButTheirIdReachesNoOtherCustomersSession() {
+	owner := s.customerID()
+	s.useApp(s.data.createApp())
+	other := s.workerOf(s.customerID())
+	for _, stamp := range []string{`""`, `"` + owner + `"`, `null`, `0`, `{}`, `[]`, `"` + strings.ToUpper(s.customerID()) + `"`} {
+		s.channelID = "chat-" + s.utils.uuid()
+		s.dispatching()
+
+		s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{%q: %s}`, conversation.CustomerField, stamp)))
+
+		s.nothingReaches(other, "a channel stamped "+stamp+" was answered by another customer's session")
+	}
+}
+
+// A channel that names no customer and holds no call is answered by nobody while two
+// customers' sessions run on it: neither is known to be its customer's. Nor by the config it
+// names, which would start a second conversation beside the session running there.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyThatTwoCustomersSessionsRunOnIsAnsweredByNone() {
+	s.dispatching()
+	own := s.workerOf(s.customerID())
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(""))
+
+	s.nothingReaches(own, "a channel two customers' sessions run on was answered")
+	s.nothingReaches(other, "a channel two customers' sessions run on was answered")
+	s.Contains(s.logged.String(), `msg="not answering a message in a channel more than one customer's sessions run on" channel=`+s.channelID)
+}
+
+// A channel naming nobody whose calls are one customer's is answered only by that customer:
+// with nothing of theirs running, by their worker, never by another customer's session.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyIsAnsweredOnlyByTheCustomerItsCallsAre() {
+	owner, configID := s.customerID(), s.holds()
+	s.ran(configID)
+	own := s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(""))
+
+	handed := s.handed(own)
+	s.Empty(handed.SessionID, "handed to the owner's worker to start a conversation")
+	s.Equal(configID, handed.ConfigID)
+	s.nothingReaches(other, "another customer's session answered a channel naming nobody")
+}
+
+// The customer a channel naming nobody has its last calls of answers it with its session, even
+// with another customer's session newer.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyIsAnsweredByTheSessionOfTheCustomerItsCallsAre() {
+	owner := s.customerID()
+	s.ran(s.holds())
+	ownSession, own := s.dispatching(), s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(""))
+
+	s.Equal(ownSession, s.handed(own).SessionID)
+	s.nothingReaches(other, "another customer's session answered a channel naming nobody")
+}
+
+// A support chat names the config answering in it and holds no call. Its message reaches no
+// other customer's session, but the worker of the customer holding the config.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyButAConfigIsAnsweredOnlyByTheCustomerHoldingItWhileItsOwnIsNotRunning() {
+	owner, configID := s.customerID(), s.holds()
+	own := s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{%q: %q}`, ConfigField, configID)))
+
+	select {
+	case m := <-other:
+		s.Failf("another customer's session answered", "session %s of the other customer was handed the message", m.SessionID)
+		return
+	case <-time.After(3 * time.Second):
+	}
+	handed := s.handed(own)
+	s.Empty(handed.SessionID)
+	s.Equal(configID, handed.ConfigID)
+	s.nothingReaches(other, "another customer's session answered a channel naming the owner's config")
+}
+
+// The session of the customer holding the config answers, with another customer's newer.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyButAConfigIsAnsweredByTheSessionOfTheCustomerHoldingIt() {
+	owner, configID := s.customerID(), s.holds()
+	ownSession, own := s.dispatching(), s.workerOf(owner)
+	s.useApp(s.data.createApp())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(fmt.Sprintf(`{%q: %q}`, ConfigField, configID)))
+
+	select {
+	case m := <-other:
+		s.Failf("another customer's session answered", "session %s of the other customer was handed the message", m.SessionID)
+		return
+	case <-time.After(3 * time.Second):
+	}
+	s.Equal(ownSession, s.handed(own).SessionID)
+}
+
+// A channel naming nobody whose calls are two customers' is answered by none, the session
+// running there included.
+func (s *MessageHooksSuite) TestAChannelNamingNobodyWhoseCallsAreTwoCustomersIsAnsweredByNone() {
+	s.ran(s.holds())
+	own := s.workerOf(s.customerID())
+	s.useApp(s.data.createApp())
+	s.ran(s.holds())
+	s.dispatching()
+	other := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.wrote(""))
+
+	s.nothingReaches(own, "a channel whose calls are two customers' was answered")
+	s.nothingReaches(other, "another customer's session answered a channel naming nobody")
+	s.Contains(s.logged.String(), `msg="not answering a message in a channel more than one customer's sessions run on" channel=`+s.channelID)
+}
+
+// One customer's two sessions on a channel are no ambiguity: the newest answers, which is
+// the one a person writing there is watching, whether or not the channel names its customer.
+func (s *MessageHooksSuite) TestAChannelsMessageReachesTheNewestOfItsCustomersSessions() {
+	worker := s.workerOf(s.customerID())
+	for _, custom := range []string{"", s.ownedBy(s.customerID())} {
+		s.channelID = "chat-" + s.utils.uuid()
+		s.dispatching()
+		newest := s.dispatching()
+
+		s.Require().Equal(http.StatusOK, s.wrote(custom))
+
+		s.Equal(newest, s.handed(worker).SessionID, "channel custom %s", custom)
+	}
+}
+
+// dispatching opens a session for the app's backend on the suite's channel, whose agent
+// leaves what is written to the customer's dispatch worker, and returns its id. It is held
+// off the record, so nothing but the session itself ties it to the channel.
+func (s *MessageHooksSuite) dispatching() string {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "en-low-latency", DispatchText: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	return s.serverClient.createSession(CreateSessionRequest{
+		AgentId: &s.channelID, Agent: &config.Name, Incognito: pointerTo(true),
+	}).Id
+}
+
+// workerOf connects a dispatch worker for a customer and returns what it is handed.
+func (s *MessageHooksSuite) workerOf(customer string) <-chan dispatch.Message {
+	worker, release := s.dispatch.Register(customer, dispatch.Registration{Capacity: 4})
+	s.T().Cleanup(release)
+	return worker.Messages()
+}
+
+// ownedBy is the custom data of a channel the router created for a customer.
+func (s *MessageHooksSuite) ownedBy(customer string) string {
+	return fmt.Sprintf(`{%q: %q}`, conversation.CustomerField, customer)
+}
+
+// handed is the next message a worker was handed.
+func (s *MessageHooksSuite) handed(messages <-chan dispatch.Message) dispatch.Message {
+	select {
+	case message := <-messages:
+		return message
+	case <-time.After(settleFor):
+		s.FailNow("the worker was handed nothing")
+		return dispatch.Message{}
+	}
 }
 
 // holds stores an agent config for the suite's app and returns its id.
