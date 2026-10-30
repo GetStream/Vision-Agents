@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### An app may have at most 1000 sessions open at once
 
 Every agent session counts against its app's cap, however it was opened (`POST /v1/agents/sessions`, a fork or a reopened conversation, the agent socket, a call to one of the app's numbers, a channel or chat message, a run, a scheduled task, a campaign), and so does every model stream of `/v1/{modality}/stream`, counted in Redis across routers. One over it is refused, over HTTP with a 429 `concurrency_limited` and `Retry-After: 5`; an arriving call over it is hung up, as one nobody can answer is. A session holds its place until it ends, and one on a router that died frees it within a minute. `ROUTER_SESSIONS_CONCURRENT_PER_APP` (`sessions.concurrent_per_app`) sets the cap, `1000` by default; `0` turns it off, and so does a router with no Redis.
+### A recording callback is posted only to a public https address
+
+`POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

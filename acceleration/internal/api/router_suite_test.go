@@ -438,6 +438,9 @@ type RouterSuite struct {
 	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
 	// loopback. Nil reaches only public hosts.
 	imageHTTP *http.Client
+	// callbackHTTP is what a finished recording is posted to its callback with, for a suite
+	// whose receiver listens on loopback. Nil reaches only public hosts.
+	callbackHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
 
@@ -752,6 +755,7 @@ func (s *RouterSuite) SetupSuite() {
 		RunsPerApp:            s.runsPerApp,
 		SessionsPerApp:        s.sessionsPerApp,
 		ImageHTTP:             s.imageHTTP,
+		CallbackHTTP:          s.callbackHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
