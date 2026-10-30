@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -304,6 +306,43 @@ func (s *LifecycleSuite) TestASandboxNotDeletedWhenTheRunItsCloseGaveUpOnEndsIsD
 	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted once it idled, by its own timer")
 	// The warning is written before the gate is let go, so by the timer's delete it is there.
 	s.Contains(s.logs.String(), `msg="could not close a sandbox once the run its Close gave up on ended"`)
+}
+
+func (s *LifecycleSuite) TestAnOrphanIsDeletedOnceIdleWhenTheDeleteAfterItsRunOutlastedTheIdleStop() {
+	deletes := &stallingDeletes{}
+	broker := &stalled{entered: make(chan struct{}, 1), let: make(chan struct{})}
+	// The delete after the run stalls for the whole 500 ms Timeout, past the 300 ms IdleStop, so
+	// the timer the run armed fires while that delete holds the sandbox.
+	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(),
+		Lifecycle: sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, Meter: s.meter, Broker: broker,
+		Timeout: 500 * time.Millisecond, HTTPClient: &http.Client{Transport: deletes}, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
+	s.Require().NoError(err)
+	ran := make(chan error, 1)
+	go func() {
+		_, err := box.Run(s.ctx, "print(1)", nil)
+		ran <- err
+	}()
+	<-broker.entered
+
+	s.Error(box.Close())
+	deletes.stall.Store(true)
+	broker.release()
+	s.NoError(<-ran)
+
+	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
+	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted by its timer, armed again after the stalled delete")
+}
+
+// stallingDeletes passes requests to the test's Daytona, but holds the first delete after stall
+// is set until its request gives up.
+type stallingDeletes struct{ stall atomic.Bool }
+
+func (t *stallingDeletes) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodDelete && t.stall.CompareAndSwap(true, false) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 func (s *LifecycleSuite) TestASandboxIsDeletedWhenItsRunEndsAsCloseGivesUp() {

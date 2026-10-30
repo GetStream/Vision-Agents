@@ -827,10 +827,14 @@ func (s *Sandbox) Close() error {
 
 // closeLater waits for the work a Close gave up on to end, then closes as that Close would have:
 // the sandbox goes as soon as it is free rather than once it idles, and one Daytona would not
-// delete is an orphan, for the timer that work armed to delete once it idles.
+// delete is an orphan, for its timer, armed again here as any work that held the gate arms it,
+// to delete once it idles: a timer that fired while this delete held the gate did nothing.
 func (s *Sandbox) closeLater() {
 	s.gate <- struct{}{}
-	defer func() { <-s.gate }()
+	defer func() {
+		s.arm()
+		<-s.gate
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 	if err := s.shut(ctx); err != nil {
