@@ -41,9 +41,16 @@ private val EMPTY_PAGE = pageJson(emptyList())
 class VisionAgentsTest {
     private val router = TestRouter()
     private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val deviceZone = deviceZoneId
+
+    init {
+        // Whatever zone the machine running these is in, a request asserted whole sends none.
+        deviceZoneId = { null }
+    }
 
     @AfterTest
     fun stop() {
+        deviceZoneId = deviceZone
         agents.close()
         router.close()
     }
@@ -191,15 +198,54 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `a session names the user's timezone only when one is given`() = runTest {
+    fun `a session is in the device's zone unless it names its own`() = runTest {
         router.answer = { Reply(201, sessionJson()) }
+        deviceZoneId = { "Asia/Kolkata" }
 
+        agents.sessions.create()
+        agents.agent("docs").sessions.create(SessionOptions(title = "Billing"))
         agents.sessions.create(SessionOptions(timezone = "Europe/Skopje"))
-        agents.sessions.create(SessionOptions())
 
-        val (zoned, plain) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
-        assertEquals(JsonPrimitive("Europe/Skopje"), zoned["timezone"])
-        assertEquals(null, plain["timezone"])
+        val (device, agent, named) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
+        assertEquals("""{"timezone":"Asia/Kolkata"}""", device.toString())
+        assertEquals(JsonPrimitive("Asia/Kolkata"), agent["timezone"])
+        assertEquals(JsonPrimitive("Europe/Skopje"), named["timezone"])
+    }
+
+    @Test
+    fun `a session that asks for no zone sends none, whatever the device is in`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+        deviceZoneId = { "Asia/Kolkata" }
+
+        agents.sessions.create(SessionOptions(timezone = null))
+        agents.sessions.create(SessionOptions(timezone = ""))
+
+        assertEquals(listOf("{}", "{}"), router.requests.map { it.body })
+    }
+
+    @Test
+    fun `a device set to a bare offset sends no zone, but one the app names is sent as it is`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+        deviceZoneId = { "GMT+05:30" }
+
+        agents.sessions.create()
+        // The router is the one that knows which zones it knows, so what the app names is its to refuse.
+        agents.sessions.create(SessionOptions(timezone = "GMT+05:30"))
+
+        val (device, named) = router.requests.map { it.body }
+        assertEquals("{}", device)
+        assertEquals("""{"timezone":"GMT+05:30"}""", named)
+    }
+
+    @Test
+    fun `only a device zone named the IANA way is taken`() {
+        val taken = listOf<String?>("Europe/Skopje", "America/Argentina/Buenos_Aires", "Etc/GMT-5", "UTC", "GMT")
+        val left = listOf<String?>("GMT+05:30", "GMT-08:00", "EST", "Local", "", null)
+
+        for (id in taken + left) {
+            deviceZoneId = { id }
+            assertEquals(id.takeIf { it in taken }, SessionOptions().timezone, "the device in $id")
+        }
     }
 
     @Test

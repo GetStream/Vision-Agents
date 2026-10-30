@@ -142,6 +142,7 @@ export {
   daytona,
   userIdOf,
   type AgentOptions,
+  type CallOptions,
   type ChatOptions,
   type ConnectorDeclaration,
   type Declaration,

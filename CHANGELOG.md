@@ -12,6 +12,17 @@ A message in a `thread-` channel with an image attachment (`type: image`, `image
 
 A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
+### Every SDK tells the agent its callers' timezone
+
+A session can name the zone of the person on it, so the agent tells the date and the hour in that zone and a time the person gives is theirs. One agent serves callers in many zones, so the zone is named per session or call, over an optional agent-wide default:
+
+- **Python:** `Agent(timezone=...)`, and a `timezone` on `join`, `answer`, `outbound_call` and `chat` that wins over it. `SessionOptions.timezone` in `plugins/stream`. A pipeline that runs locally refuses one, since nothing there would tell the model.
+- **Go:** `agents.Options.Timezone`, under `SessionOptions.Timezone`.
+- **JavaScript:** `AgentOptions.timezone`, under a call's `timezone` (`CallOptions`). In a browser, `sessions.create` sends the device's zone when the app names none; `timezone: ""` sends none.
+- **Swift and Kotlin:** `SessionOptions.timezone` is now the device's zone unless the app sets one; `nil` (`null`) sends none.
+
+A device's zone is only sent when it is an IANA name, such as `Europe/Lisbon` or `UTC`: an offset such as `GMT+05:30` is left out rather than have the session refused. A zone the app names is sent as it is. With none, the router falls back on the user's stored zone, then the agent config's `scheduling.default_timezone`. Dart is unchanged: its standard library has no IANA zone name, so the app passes one, for example from `flutter_timezone`.
+
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
@@ -221,7 +232,7 @@ A Dart socket opened with a key now sends its token as `authorization` too, with
 
 ### Every agent knows the date and the hour
 
-Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named, else the agent config's `scheduling.default_timezone`. An agent that knows none of them takes a time of day the user gives in their own local time, and asks for their zone only when they bring up another one or a tool needs it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
 
 ### A Dart question with images is no longer refused in a saved conversation
 

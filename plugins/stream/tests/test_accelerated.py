@@ -217,6 +217,29 @@ class TestAccelerated:
         for field in ("call", "call_id", "call_type", "text"):
             assert field not in router.created
 
+    async def test_the_zone_of_the_person_on_the_call_goes_over_as_the_sessions(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        await llm.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-8",
+                agent_user_id="agent",
+                instructions="",
+                timezone="Asia/Kolkata",
+            )
+        )
+        await llm.leave_remote()
+
+        assert router.created is not None
+        assert router.created["timezone"] == "Asia/Kolkata"
+
+    async def test_a_call_with_no_zone_sends_none(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        assert router.created is not None
+        assert "timezone" not in router.created
+
     async def _created_for(
         self,
         router: Router,
