@@ -2592,3 +2592,18 @@ func (s *ConfigsSuite) TestCallsAreChecked() {
 		})
 	}
 }
+
+func (s *ConfigsSuite) TestCallsWhenIsCountedInCharactersNotBytes() {
+	long := strings.Repeat("щ", 1000)
+	created := s.createConfig(map[string]any{"name": "support", "calls": map[string]any{
+		"end_call": map[string]any{"enabled": true, "when": long},
+		"transfer": map[string]any{"enabled": true, "destinations": []any{
+			map[string]any{"name": "Sales", "number": "+15550001111", "when": long}}},
+	}})
+	calls := s.readCalls(created.Id)
+	s.Equal(long, calls["end_call"].(map[string]any)["when"])
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"calls": map[string]any{"end_call": map[string]any{"when": strings.Repeat("a", 1001)}}})
+	s.Equal(http.StatusBadRequest, status)
+}

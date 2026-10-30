@@ -157,6 +157,8 @@ func (s *SyncSuite) TestASyncLeavingOutMoreThan64ConnectorsIsRefused() {
 
 // The keys a sync and a GET answered on 7f4c3e16, before left-out connectors existed, for a
 // sync that left nothing out (probe in the PR). They answer the same now.
+// calls is the one deliberate addition to the keys a config renders: every config renders
+// its call tools, defaults included.
 func (s *SyncSuite) TestASyncLeavingNothingOutAnswersAsBefore() {
 	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sync",
 		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})

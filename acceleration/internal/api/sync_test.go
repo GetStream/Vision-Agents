@@ -115,8 +115,9 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsCalls() {
 	calls := callsExample()
 	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "calls": calls})
 
+	other := s.sync(map[string]any{"name": "by-put", "hash": "v1"})
 	var put AgentConfig
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+other.Config.Id,
 		map[string]any{"name": "by-put", "calls": calls}, &put))
 	synced, err := json.Marshal(result.Config.Calls)
 	s.Require().NoError(err)

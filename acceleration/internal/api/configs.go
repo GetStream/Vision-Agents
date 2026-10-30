@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"path"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -44,13 +43,6 @@ var errNoConfigs = notConfigured("agent configs are not available: no database c
 
 // mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
 // themselves.
-const (
-	maxTransferDestinations = 20
-	maxCallsWhen            = 1000
-)
-
-var callNumber = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
-
 const mcpBrandingTimeout = 5 * time.Second
 
 // listAgentConfigs returns the calling customer's configs, newest first.
@@ -2579,7 +2571,7 @@ func callsOr(stored store.AgentCalls, calls *AgentCalls) store.AgentCalls {
 		for _, destination := range calls.Transfer.Destinations {
 			transfer.Destinations = append(transfer.Destinations, store.TransferDestination{
 				Name:   strings.TrimSpace(destination.Name),
-				Number: strings.TrimSpace(destination.Number),
+				Number: destination.Number,
 				When:   strings.TrimSpace(destination.When),
 				Warm:   destination.Warm,
 			})
@@ -2609,14 +2601,12 @@ func renderedCalls(stored store.AgentCalls) *AgentCalls {
 	return rendered
 }
 
-// callsComplaint refuses destinations the schema cannot check alone: a name another
-// destination already has, and padding that trims to nothing or to a bad number.
+// callsComplaint refuses what the schema cannot check on its own: a name that is blank
+// once trimmed, and a name another destination already has. The schema counts the raw
+// when, which is never shorter than the trimmed one.
 func callsComplaint(calls store.AgentCalls) (string, bool) {
 	if calls.Transfer == nil {
 		return "", true
-	}
-	if len(calls.Transfer.Destinations) > maxTransferDestinations {
-		return fmt.Sprintf("calls.transfer.destinations: at most %d", maxTransferDestinations), false
 	}
 	seen := map[string]bool{}
 	for i, destination := range calls.Transfer.Destinations {
@@ -2624,20 +2614,11 @@ func callsComplaint(calls store.AgentCalls) (string, bool) {
 		if destination.Name == "" {
 			return at + ".name: must not be empty", false
 		}
-		if !callNumber.MatchString(destination.Number) {
-			return at + ".number: must be an E.164 number, such as +15550001111", false
-		}
-		if len(destination.When) > maxCallsWhen {
-			return at + ".when: at most 1000 characters", false
-		}
 		name := strings.ToLower(destination.Name)
 		if seen[name] {
 			return at + ".name: " + destination.Name + " is named twice", false
 		}
 		seen[name] = true
-	}
-	if calls.EndCall != nil && len(calls.EndCall.When) > maxCallsWhen {
-		return "calls.end_call.when: at most 1000 characters", false
 	}
 	return "", true
 }
