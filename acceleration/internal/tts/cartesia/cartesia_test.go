@@ -400,6 +400,47 @@ func (s *CartesiaSuite) TestAudioAndTheDoneFrameSettleTheSynthesis() {
 	s.False(complete.Interrupted)
 }
 
+// The router counts and holds text for a settled id as a new utterance because Cartesia
+// speaks it as one: a new generation goes upstream and the utterance starts again.
+func (s *CartesiaSuite) TestTextForAnIdWhoseUtteranceSettledIsSpokenAsANewUtterance() {
+	fake := newFakeCartesia()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+	started := func(id string) func(tts.Event) bool {
+		return func(event tts.Event) bool {
+			typed, ok := event.(tts.SynthesisStarted)
+			return ok && typed.SynthesisID == id
+		}
+	}
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+	s.generations(conn, 1)
+	s.Require().NoError(finish(conn, "u1"))
+	s.collect(provider, func(event tts.Event) bool { _, done := event.(tts.SynthesisComplete); return done })
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "again", Final: true}))
+	again := s.generations(conn, 1)[0]
+	s.Equal("u1", again.ContextID)
+	s.Equal("again", again.Transcript, "text after the done frame goes upstream")
+	s.collect(provider, started("u1"))
+
+	// The same after a barge-in settled the utterance.
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u2", Text: "a long answer"}))
+	s.generations(conn, 1)
+	s.collect(provider, started("u2"))
+	s.Require().NoError(provider.Interrupt())
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u2", Text: " and more", Final: true}))
+	late := s.collect(provider, started("u2"))
+	var interrupted bool
+	for _, event := range late {
+		if complete, ok := event.(tts.SynthesisComplete); ok && complete.SynthesisID == "u2" {
+			interrupted = complete.Interrupted
+		}
+	}
+	s.True(interrupted, "the barge-in settled u2 before its id was used again")
+}
+
 func (s *CartesiaSuite) TestInterruptCancelsTheContextAndDropsAudioStillOnTheWire() {
 	fake := newFakeCartesia()
 	defer fake.close()
