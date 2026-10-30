@@ -874,7 +874,107 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithoutTheBlockLeavesTheGrantU
 	s.True(finished)
 	s.NotEqual(tokenOf("primary"), api.value("CRM_TOKEN"))
 	s.Contains(s.logs.String(), "reconnect to use sandbox access")
-	s.Equal(sandbox.Result{}, result, "connected, so not to be connected again, and not bound")
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result, "connected, so not to be connected again, and not bound")
+}
+
+// TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun: under either broker, a login that
+// cannot bind the grant names it on every run after, and never as just connected.
+func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionIsToldToReconnectOnEveryRun() {
+	for _, broker := range []string{daytona.BrokerName, egress.BrokerName} {
+		s.Run(broker, func() {
+			s.SetupTest()
+			s.daytonaAPI()
+			if broker == egress.BrokerName {
+				address := os.Getenv("ROUTER_REDIS_ADDR")
+				if address == "" {
+					s.T().Skip("ROUTER_REDIS_ADDR is not set")
+				}
+				redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+				s.Require().NoError(err)
+				s.T().Cleanup(redis.Close)
+				s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+				s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
+					CACert: []byte(proxyCA)}
+			}
+			mine := s.pending("alice", "primary")
+			s.sandboxRevision()
+			box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+			_, err := s.call(d, "crm__list_tools", `{}`)
+			s.Require().NoError(err)
+
+			s.connect(mine, "primary")
+			_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+			first, err := box.Run(s.ctx, "print(1)", nil)
+			s.Require().NoError(err)
+			second, err := box.Run(s.ctx, "print(1)", nil)
+
+			s.Require().NoError(err)
+			s.True(finished)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, first)
+			s.Equal(first, second, "no run of this session binds it")
+		})
+	}
+}
+
+// TestALoginOnAnOlderRevisionFinishedWhileCodeRunsIsToldToReconnect: the login lands during
+// the code-run request on a connection pinned before the revision that gives the sandbox
+// access. The run it finished during says reconnect, not "was just connected: wait and run
+// the code again", which no run of this session can make true.
+func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionFinishedWhileCodeRunsIsToldToReconnect() {
+	api := s.daytonaAPI()
+	mine := s.pending("alice", "primary")
+	s.sandboxRevision()
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	var once sync.Once
+	api.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/process/code-run") {
+			once.Do(func() {
+				s.connect(mine, "primary")
+				_, _, _ = d.loginFinished(s.ctx, "attempt-alice", mine)
+			})
+		}
+		api.serve(w, r)
+	})
+
+	during, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, during)
+}
+
+// TestAReconnectDuringTheSessionBindsNoRunOfIt: the user reconnects on the latest revision
+// with a new token, as the reconnect line asks. The grant was fixed when the login opened,
+// so no later run of this session binds that token and every run still says reconnect; the
+// next session does.
+func (s *SandboxGrantsSuite) TestAReconnectDuringTheSessionBindsNoRunOfIt() {
+	api := s.daytonaAPI()
+	mine := s.pending("alice", "primary")
+	s.sandboxRevision()
+	box, d := s.chatSandbox(s.config(sandboxed(s.chosen("crm", "whoami"))), consent(mine))
+	_, err := s.call(d, "crm__list_tools", `{}`)
+	s.Require().NoError(err)
+	s.connect(mine, "primary")
+	_, finished, _ := d.loginFinished(s.ctx, "attempt-alice", mine)
+	first, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	stored, _, err := bearer.New().Complete(s.ctx, core.CompleteInput{Supplied: map[string]string{bearer.SuppliedToken: tokenOf("second")}})
+	s.Require().NoError(err)
+	s.setState(mine, func(state *core.CredentialState) {
+		state.DefinitionRevision, state.Credentials, state.Status = s.revision, stored, store.ConnectionConnected
+	})
+	second, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	third, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.True(finished)
+	s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, first)
+	s.Equal(first, second, "no run of this session binds it")
+	s.Equal(first, third, "no run of this session binds it")
+	s.NotEqual(tokenOf("second"), api.value("CRM_TOKEN"))
 }
 
 // TestALoginOnARevisionWithOtherHostsLeavesTheGrantUnbound: revision 3 names other hosts
@@ -904,7 +1004,7 @@ func (s *SandboxGrantsSuite) TestALoginOnARevisionWithOtherHostsLeavesTheGrantUn
 
 			s.Require().NoError(err)
 			s.True(finished)
-			s.Equal(sandbox.Result{}, result)
+			s.Equal(sandbox.Result{Reconnect: box.(sandbox.Granted).Grants()}, result)
 			env := box.(sandbox.Granted).Grants()[0].Env
 			s.NotEqual(tokenOf("primary"), api.value(env))
 			s.Contains(s.logs.String(), "reconnect to use sandbox access")
