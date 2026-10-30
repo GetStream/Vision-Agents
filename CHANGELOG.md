@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### The JS SDK's guest cookie is Secure on an https page
+
+The cookie the JavaScript SDK remembers a page's guest in (`stream-vision-agents-guest`, written by `guestUser` and `browserStore`) is now set `Secure` when the page is served over https, so the guest's token is never sent on a plain-http request to the same host. A page served over http, such as one on localhost, is unchanged. It is still `SameSite=Lax` and `path=/`.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

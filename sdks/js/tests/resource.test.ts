@@ -6,6 +6,7 @@ import {
   ConfigurationError,
   GUEST_STORAGE_KEY,
   RouterError,
+  browserStore,
   Session,
   type CreateSessionOptions,
   type GuestStore,
@@ -857,5 +858,57 @@ describe("guest users", () => {
 
   it("keeps the guest under one key, so two tabs are one visitor", () => {
     assert.equal(GUEST_STORAGE_KEY, "stream-vision-agents-guest");
+  });
+
+  /** Runs `body` on a page served over `protocol`, its document's cookie writes kept. */
+  function onPage(protocol: string, body: (written: string[]) => void): void {
+    const global = globalThis as { document?: unknown };
+    const hadDocument = "document" in global;
+    const previous = global.document;
+    const written: string[] = [];
+    global.document = {
+      location: { protocol },
+      get cookie() {
+        return "";
+      },
+      set cookie(value: string) {
+        written.push(value);
+      },
+    };
+    try {
+      body(written);
+    } finally {
+      if (hadDocument) {
+        global.document = previous;
+      } else {
+        delete global.document;
+      }
+    }
+  }
+
+  it("remembers a guest on an https page in a cookie only https carries", () => {
+    onPage("https:", (written) => {
+      const store = browserStore();
+      assert.ok(store);
+      store.write("guest-token");
+      store.clear();
+
+      assert.equal(written.length, 2);
+      for (const cookie of written) {
+        assert.match(cookie, /; Secure$/, cookie);
+        assert.match(cookie, /; SameSite=Lax/, cookie);
+      }
+    });
+  });
+
+  it("remembers a guest on a plain http page, which cannot set a Secure cookie", () => {
+    onPage("http:", (written) => {
+      browserStore()?.write("guest-token");
+
+      assert.equal(written.length, 1);
+      const [cookie = ""] = written;
+      assert.doesNotMatch(cookie, /Secure/);
+      assert.match(cookie, /^stream-vision-agents-guest=guest-token; /);
+    });
   });
 });

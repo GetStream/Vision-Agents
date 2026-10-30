@@ -147,7 +147,7 @@ function read(store: GuestStore | undefined): Guest | undefined {
  * available on a server, where this is undefined and nothing is remembered.
  */
 export function browserStore(): GuestStore | undefined {
-  const document = (globalThis as { document?: { cookie: string } }).document;
+  const document = (globalThis as { document?: CookieDocument }).document;
   if (document) {
     return cookieStore(document);
   }
@@ -162,7 +162,16 @@ export function browserStore(): GuestStore | undefined {
   return undefined;
 }
 
-function cookieStore(document: { cookie: string }): GuestStore {
+/** What the cookie store reads of a page's document. */
+interface CookieDocument {
+  cookie: string;
+  location?: { protocol: string };
+}
+
+function cookieStore(document: CookieDocument): GuestStore {
+  // Secure on an https page, so the token never rides a plain-http request to the same host.
+  // An http page, such as one on localhost, could not set a Secure cookie at all.
+  const secure = document.location?.protocol === "https:" ? "; Secure" : "";
   return {
     read() {
       for (const pair of document.cookie.split(";")) {
@@ -176,13 +185,14 @@ function cookieStore(document: { cookie: string }): GuestStore {
     write(value) {
       const expires = new Date(Date.now() + COOKIE_DAYS * 86_400_000).toUTCString();
       // SameSite=Lax rather than Strict: the guest has to survive arriving from a link,
-      // which is how most of them arrive. No Secure flag, because this has to work on a
-      // localhost page too, and what the cookie holds is a token scoped to one guest.
+      // which is how most of them arrive. The path is the whole site because the SDK does
+      // not know which of the app's pages talk to an agent, and the guest has to be the same
+      // on each of them.
       document.cookie =
-        `${GUEST_STORAGE_KEY}=${encodeURIComponent(value)}; path=/; expires=${expires}; SameSite=Lax`;
+        `${GUEST_STORAGE_KEY}=${encodeURIComponent(value)}; path=/; expires=${expires}; SameSite=Lax${secure}`;
     },
     clear() {
-      document.cookie = `${GUEST_STORAGE_KEY}=; path=/; max-age=0; SameSite=Lax`;
+      document.cookie = `${GUEST_STORAGE_KEY}=; path=/; max-age=0; SameSite=Lax${secure}`;
     },
   };
 }
