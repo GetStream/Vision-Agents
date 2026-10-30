@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Work a user's turn delegates is counted on that user's day
+
+In a session a backend opened, a user types a turn. The reply was counted on that user's daily limit, but the work the turn delegated (a skill, vision, the summary of a long conversation) was counted on the backend, which has no limit. It is now counted on the user as the reply is, so once the user's day is spent the work is refused with the daily-limit error. A turn a scheduled task fired is still the customer's (AI-2000).
+
 ### Work a scheduled turn hands over is counted as the turn after a barge-in
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).

@@ -232,10 +232,13 @@ func (m *manager) Create(
 	return created.id, nil
 }
 
-// chargedAs returns ctx marked as scheduled when a scheduled task fired the turn asked
-// (llmrouter Session.charged). Nothing else of asked is kept, its cancellation least of
-// all: delegated work outlives the turn that asked for it.
+// chargedAs returns ctx marked with who sent the turn asked, and as scheduled when a
+// scheduled task fired it (llmrouter Session.charged). Nothing else of asked is kept, its
+// cancellation least of all: delegated work outlives the turn that asked for it.
 func chargedAs(ctx, asked context.Context) context.Context {
+	if sender, ok := routing.CallerFrom(asked); ok {
+		ctx = routing.WithCaller(ctx, sender)
+	}
 	if routing.ScheduledTurn(asked) {
 		ctx = routing.WithScheduledTurn(ctx)
 	}

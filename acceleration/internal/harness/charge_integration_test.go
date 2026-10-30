@@ -162,15 +162,66 @@ func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesIsCountedOnTheirDay
 	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
 }
 
-func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedStaysOnTheBackend() {
+func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsCountedOnTheirDay() {
 	// The backend opened both sessions; the user typed the turn. The reply is the user's,
-	// and the work it delegated is counted on whoever opened the subagent, the backend.
+	// and so is the work it delegated, with the user's own token as the session's doc says.
 	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
 
 	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	s.EqualValues(1, s.day(), "only the reply is the user's")
+	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsRefusedOnceTheirDayIsSpent() {
+	limiter, err := quota.New(s.redis, quota.Limits{MessagesPerDay: 1}, nil, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	result := s.settled()
+	s.Equal(Failed, result.State)
+	s.Require().Error(result.Err)
+	s.Contains(result.Err.Error(), "daily limit", "the reply spent the user's one message")
+}
+
+func (s *HarnessChargeSuite) TestWorkAUserHandsOverInASessionABackendOpenedIsCountedOnTheirDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+	turn, cancel := context.WithCancel(routing.WithCaller(s.ctx, s.user))
+
+	_, err := s.harness.Delegate(turn, "think", "15% of 84.20", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.slow.requests()) == 1 },
+		settleFor, time.Millisecond, "the subagent was never asked")
+	cancel()
+
+	s.Equal(Done, s.settled().State, "the work outlives the turn that handed it over")
+	s.EqualValues(1, s.day(), "the work a user's turn handed over is the user's spend")
+}
+
+func (s *HarnessChargeSuite) TestWorkAScheduledTurnDelegatesInASessionABackendOpenedIsNotCountedOnTheUsersDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithScheduledTurn(routing.WithCaller(s.ctx, s.user)), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.Zero(s.day(), "a scheduled turn is the customer's, whoever the turn names")
+}
+
+func (s *HarnessChargeSuite) TestAConversationAUserTurnCompactsInASessionABackendOpenedIsCountedOnTheirDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", "")
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.Require().True(started)
+	close(s.asked)
+
+	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		settleFor, 10*time.Millisecond, "the conversation was never compacted")
+	s.EqualValues(2, s.day(), "the reply and the summary it set off are both the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpenedIsCountedOnTheOwner() {
