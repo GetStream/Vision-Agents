@@ -1148,7 +1148,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
-			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r))
+			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
@@ -1211,12 +1211,13 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 }
 
 // vouchedKey is the app's key the proxy forwarded a server token with, which is the key the
-// caller used. It is believed only where that token is, from a proxy that declares kinds.
-func (s *Server) vouchedKey(r *http.Request) string {
+// caller used. A proxy that could not mint that token names the key it authenticated the
+// caller with instead. It is believed only where that token is, from a proxy that declares kinds.
+func (s *Server) vouchedKey(r *http.Request, principal auth.Principal) string {
 	if s.authMode != auth.Proxy || !s.proxyDeclaresKind {
 		return ""
 	}
-	return strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader))
+	return cmp.Or(strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), principal.APIKey)
 }
 
 // recordUser writes down the end user a request is for, so an app can ask who its users

@@ -28,7 +28,7 @@ func TestRequestKeyMintSuite(t *testing.T) {
 }
 
 func (s *RequestKeyMintSuite) SetupSuite() {
-	s.appMode = true
+	s.appMode, s.proxied = true, true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -45,15 +45,29 @@ func (s *RequestKeyMintSuite) holding(key string) {
 		appToken(jwt.MapClaims{"exp": time.Now().Add(48 * time.Hour).Unix()})))
 }
 
-// calledWith is the suite's backend as the gateway forwards it after checking its key: with
-// the server token the gateway minted for that key.
-func (s *RequestKeyMintSuite) calledWith(key string) *testClient {
+// gatewayCall is a caller of the app as the gateway forwards it once it has checked the
+// key the caller came with: it names the app, the kind of caller and that key, and writes
+// the server token it minted for the key, when it could mint one.
+func (s *RequestKeyMintSuite) gatewayCall(authType, user, key string, withToken bool) *testClient {
 	s.answerAs(key, s.id)
-	client := *s.serverClient
-	client.header = s.serverClient.header.Clone()
-	client.header.Set(auth.ServerTokenKeyHeader, key)
-	client.header.Set(auth.ServerTokenHeader, appToken(jwt.MapClaims{"exp": time.Now().Add(24 * time.Hour).Unix()}))
-	return &client
+	header := http.Header{}
+	header.Set(auth.AppHeader, s.customerID())
+	header.Set(auth.OrganizationHeader, s.app.organization.ID)
+	header.Set(auth.AuthTypeHeader, authType)
+	if user != "" {
+		header.Set(auth.UserHeader, user)
+	}
+	header.Set(auth.APIKeyIDHeader, key)
+	if withToken {
+		header.Set(auth.ServerTokenKeyHeader, key)
+		header.Set(auth.ServerTokenHeader, appToken(jwt.MapClaims{"exp": time.Now().Add(24 * time.Hour).Unix()}))
+	}
+	return &testClient{suite: &s.RouterSuite, header: header, userID: user}
+}
+
+// calledWith is the suite's backend, forwarded with the server token for key.
+func (s *RequestKeyMintSuite) calledWith(key string) *testClient {
+	return s.gatewayCall(auth.AuthTypeServer, "", key, true)
 }
 
 // signedFor is whether a user token verifies with the secret of key.
@@ -94,6 +108,35 @@ func (s *RequestKeyMintSuite) TestAGuestIsMintedForTheKeyTheRequestCameWith() {
 	s.False(signedFor(token, "key-b"))
 }
 
+func (s *RequestKeyMintSuite) TestAGuestIsMintedForTheKeyAPageCameWith() {
+	// A page minting a guest is the main path of that call: an end user, not the backend.
+	s.holding("key-b")
+
+	for _, caller := range []*testClient{
+		s.gatewayCall(auth.AuthTypeAnonymous, s.utils.uuid(), "key-a", true),
+		s.gatewayCall(auth.AuthTypeJWT, s.utils.uuid(), "key-a", true),
+	} {
+		token := s.guestToken(caller)
+
+		s.True(signedFor(token, "key-a"))
+		s.False(signedFor(token, "key-b"))
+	}
+}
+
+func (s *RequestKeyMintSuite) TestARequestWithNoServerTokenIsMintedForTheKeyTheGatewayNamedForTheCaller() {
+	// A gateway that could not mint a server token still names the key it checked.
+	s.holding("key-b")
+
+	backend := s.gatewayCall(auth.AuthTypeServer, "", "key-a", false)
+	page := s.gatewayCall(auth.AuthTypeAnonymous, s.utils.uuid(), "key-a", false)
+
+	s.True(signedFor(s.guestToken(page), "key-a"))
+	s.True(signedFor(s.guestToken(backend), "key-a"))
+	minted := s.callToken(backend)
+	s.Equal("key-a", minted.ApiKey)
+	s.True(signedFor(minted.Token, "key-a"))
+}
+
 func (s *RequestKeyMintSuite) TestACallTokenIsMintedForAndNamesTheKeyTheRequestCameWith() {
 	s.holding("key-b")
 
@@ -123,14 +166,16 @@ func (s *RequestKeyMintSuite) TestAnAppCalledWithOneKeyMintsForIt() {
 }
 
 func (s *RequestKeyMintSuite) TestARequestTheGatewayVouchedNoKeyForMintsForTheKeyHeld() {
-	// A gateway that could not mint a server token forwards the request without one.
+	// A request that names no key at all is minted for the key held.
 	s.holding("key-b")
+	client := s.gatewayCall(auth.AuthTypeServer, "", "key-b", false)
+	client.header.Del(auth.APIKeyIDHeader)
 
-	s.True(signedFor(s.guestToken(s.serverClient), "key-b"))
-	minted := s.callToken(s.serverClient)
+	s.True(signedFor(s.guestToken(client), "key-b"))
+	minted := s.callToken(client)
 	s.Equal("key-b", minted.ApiKey)
 	s.True(signedFor(minted.Token, "key-b"))
-	chat := s.chatToken(s.serverClient)
+	chat := s.chatToken(client)
 	s.Equal("key-b", chat.ApiKey)
 	s.True(signedFor(chat.Token, "key-b"))
 }

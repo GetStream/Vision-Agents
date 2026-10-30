@@ -93,7 +93,12 @@ func (s *ProxyKindSuite) TestOnlyAProxyThatDeclaresKindsNamesTheKeyARequestCameW
 		request := httptest.NewRequest(http.MethodPost, "/v1/agents/guests", nil)
 		request.Header.Set(auth.ServerTokenKeyHeader, " key-a ")
 
-		s.Equal(mode.want, server.vouchedKey(request), mode.name)
+		s.Equal(mode.want, server.vouchedKey(request, auth.Principal{}), mode.name)
+
+		// With no server token key, the key the proxy authenticated the caller with is believed
+		// under the same rule.
+		request.Header.Del(auth.ServerTokenKeyHeader)
+		s.Equal(mode.want, server.vouchedKey(request, auth.Principal{APIKey: "key-a"}), mode.name)
 	}
 }
 
