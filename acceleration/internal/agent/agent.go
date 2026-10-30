@@ -282,6 +282,10 @@ type Agent struct {
 	toolContexts map[string]context.Context
 	// toolTurns is the turn each running call belongs to.
 	toolTurns map[string]string
+	// toolScheduled holds each running call asked for in a turn a scheduled task fired, taken
+	// when the call arrives: the caller can be heard before it runs, and what it hands over is
+	// still that turn's.
+	toolScheduled map[string]bool
 	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
 	toolUpdates map[string]toolUpdate
 	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).
@@ -482,6 +486,9 @@ type Agent struct {
 	// scheduled says that last thing was a turn a scheduled task fired, kept the same way,
 	// so neither it nor the replies that finish it are counted on an end user's day.
 	scheduled bool
+	// scheduledReply is the last native reply begun while scheduled was set, so a tool call
+	// of that reply that arrives after the caller is heard is still the scheduled task's.
+	scheduledReply string
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
@@ -2410,7 +2417,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		return nil
 	}
 	current := a.harness
-	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx))
+	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
@@ -2421,11 +2428,11 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 
 // chargedLocked marks ctx with who the turn being answered is counted on (llmrouter
 // Session.charged): whoever sent it, and whether a scheduled task fired it.
-func (a *Agent) chargedLocked(ctx context.Context) context.Context {
+func (a *Agent) chargedLocked(ctx context.Context, scheduled bool) context.Context {
 	if !a.sender.IsZero() {
 		ctx = routing.WithCaller(ctx, a.sender)
 	}
-	if a.scheduled {
+	if scheduled {
 		ctx = routing.WithScheduledTurn(ctx)
 	}
 	return ctx
