@@ -2782,6 +2782,11 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
+	if refused {
+		// What streamed before the verdict, or the apology spoken for the lost reply, is no
+		// answer the agent gave, so it is not reported as one to be recorded.
+		said = ""
+	}
 	a.resetTurn()
 
 	a.mu.Lock()
