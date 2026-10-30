@@ -2059,3 +2059,31 @@ func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
 	s.eventually(s.left, "the agent stayed on a call it ended")
 	s.Equal(1, s.ender.ends())
 }
+
+func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsTold() {
+	// The model is told plainly that the call is still open, rather than that hanging up
+	// failed, so it answers the caller and can end the call again later.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.replyWentOut()
+
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "oh wait, one more thing")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && m.Content == endCallCancelled
+		})
+	}, "the model was never told the call is still open")
+	s.edge.holdSpeech(false)
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}

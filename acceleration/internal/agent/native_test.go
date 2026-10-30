@@ -819,9 +819,13 @@ func (s *AgentSuite) newLiveRetryFixture(mode liveRetryMode, tools harness.Tools
 		}
 		return session, nil
 	})
+	var ending Ender
+	if s.ender != nil {
+		ending = s.ender
+	}
 	s.joinNative(registry, Options{
 		CustomerID: "acme", STSTarget: "openai/gpt-live-1",
-		Tools: tools, ToolRunner: runner,
+		Tools: tools, ToolRunner: runner, Ender: ending,
 	})
 	return fixture
 }
@@ -1277,9 +1281,70 @@ func (s *AgentSuite) TestANativeGoodbyeTheCallerTalksOverKeepsTheCall() {
 
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
 	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
 	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"cancelled","status_details":{"reason":"turn_detected"}}}`)
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the goodbye was never cut")
 
 	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
 	s.False(s.left(), "the agent left a caller still talking")
+}
+
+func (s *AgentSuite) TestANativeCallerSpeakingOverTheGoodbyesTailKeepsTheCall() {
+	// The model reports a reply done well before its last words are heard. A caller who
+	// cuts in on that tail has something more to say, as one who cut in earlier has.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.edge.holdSpeech(true)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	answer := s.nativeFrame(peer, "conversation.item.create")
+	s.Contains(string(answer["item"]), "call end_call again", "the model is never told the call can stay open")
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.nativeListening
+	}, "the caller was never heard")
+	s.edge.holdSpeech(false)
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}
+
+func (s *AgentSuite) TestANativeGoodbyeLostToASessionSwapStillEndsTheCall() {
+	// A goodbye whose session dropped mid-reply never reports its end. Waiting for it would
+	// hold the call open, and billed, which on an outbound call left in a voicemail box is
+	// until the box hangs up.
+	tools, err := harness.DefaultTools()
+	s.Require().NoError(err)
+	s.ender = &stubEnder{}
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, tools, nil)
+	oldPeer := s.nextNativePeer(fixture.peers)
+	s.nativeSend(oldPeer, `{"type":"response.event","delegation_id":"reply","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"bye-call","name":"end_call","arguments":"{}"}}}`)
+	s.Eventually(func() bool { return countOf[ToolRan](s.events.seen()) == 1 }, settleFor, time.Millisecond)
+	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.Require().Eventually(func() bool { return len(s.edge.heard()) == 1 }, settleFor, time.Millisecond)
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended before the goodbye was heard")
+
+	_ = oldPeer.conn.Close()
+
+	s.Eventually(func() bool { return s.ender.ends() == 1 }, settleFor, time.Millisecond, "the call was held open for a goodbye that was lost")
+	s.Eventually(func() bool { return countOf[Left](s.events.seen()) == 1 }, settleFor, time.Millisecond)
 }

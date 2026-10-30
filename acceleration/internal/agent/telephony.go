@@ -30,24 +30,55 @@ const (
 // defaultEndCallWhen is when the agent is told to hang up if the config does not say.
 const defaultEndCallWhen = "End the call once the conversation is finished and the caller needs nothing else."
 
+// endCallStillOpen is the end of what the model is told when the caller spoke before the
+// call ended: it stays open, and only another end_call ends it.
+const endCallStillOpen = "If the caller speaks before the call has ended, it stays open: " +
+	"answer them, and call end_call again once they are done."
+
+// endCallCancelled is what a cascade model is told when the caller spoke over its goodbye.
+const endCallCancelled = "The caller spoke before the call ended, so it is still open. " +
+	"Call end_call again once they are done."
+
 // endCallNative is what a native model is told end_call did. Its goodbye may not have
-// started yet, and the call ends only once it has been heard.
+// started yet, and the call ends only once it has been heard. A native model is told the
+// rule for a caller who speaks up front: nothing reaches it mid-session without making it
+// reply, and that reply would talk over the caller.
 const endCallNative = "The call ends as soon as you finish speaking. Say a short goodbye now " +
-	"if you have not already; otherwise say nothing more."
+	"if you have not already; otherwise say nothing more. " + endCallStillOpen
 
 // goodbyeWait bounds how long a native model has to start its goodbye after end_call. A
 // model that takes the result and says nothing would otherwise hold the call open, and
 // billing, until the caller hangs up.
 const goodbyeWait = 10 * time.Second
 
+// goodbyeLength bounds how long a native goodbye that has started may take to finish. A
+// reply whose end never arrives, a provider that drops it, would otherwise hold the call
+// open, and billing, as an outbound call left in a voicemail box does.
+const goodbyeLength = time.Minute
+
 // goodbye is the reply a native model gives once told end_call ran.
 type goodbye struct {
+	// cancel keeps the call: the caller spoke before it ended.
+	cancel context.CancelFunc
 	// reply is the goodbye, once it has begun.
 	reply   string
 	started chan struct{}
 	done    chan struct{}
-	// cut is whether the caller talked over the goodbye, which keeps the call open.
-	cut bool
+	// finished is whether done is closed.
+	finished bool
+}
+
+// finishLocked closes the goodbye's wait, as though it had been heard. The caller holds the
+// lock.
+func (bye *goodbye) finishLocked() {
+	if bye.finished {
+		return
+	}
+	bye.finished = true
+	if bye.reply == "" {
+		close(bye.started)
+	}
+	close(bye.done)
 }
 
 // arrivalTimeout bounds how long a warm transfer waits for the human to pick up. Past it
@@ -666,11 +697,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		defer a.noteToolDone(hold)
 		if ctx.Err() == nil {
 			var bye *goodbye
+			var hangUp context.Context
 			a.mu.Lock()
 			a.nativeAwaiting = true
 			// Set before answering, so the reply the answer brings cannot start unseen.
-			if requested.Call.Name == toolEndCall && err == nil {
+			if requested.Call.Name == toolEndCall && ran && err == nil {
 				bye = &goodbye{started: make(chan struct{}), done: make(chan struct{})}
+				hangUp, bye.cancel = context.WithCancel(a.ctx)
 				a.goodbye = bye
 			}
 			a.mu.Unlock()
@@ -678,13 +711,16 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			if err == nil {
 				a.askedApproval(requested.Call.ID)
 				if bye != nil {
-					go a.hangUpAfter(bye)
+					go a.hangUpAfter(hangUp, bye)
 				}
 			} else {
 				a.mu.Lock()
 				a.nativeAwaiting = false
-				if a.goodbye == bye {
-					a.goodbye = nil
+				if bye != nil {
+					bye.cancel()
+					if a.goodbye == bye {
+						a.goodbye = nil
+					}
 				}
 				a.mu.Unlock()
 				capabilities := model.Capabilities()
@@ -790,7 +826,7 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 	}
 
 	if call.Name == toolEndCall {
-		if a.options.Ender == nil {
+		if a.options.Ender == nil || a.options.Text {
 			return nil, false, errors.New("agent: this call cannot be ended")
 		}
 		// A native model says its goodbye after the result, so the call ends after that
@@ -1094,10 +1130,11 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 	return "The caller has been introduced and transferred, and you have left the call.", true, nil
 }
 
-// endCall hangs up once the goodbye the model said with the call has been heard.
+// endCall hangs up once the goodbye the model said with the call has been heard. The
+// caller speaking first cancels ctx, which keeps the call.
 func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
-	if err := a.Finish(ctx); err != nil {
-		return "", false, fmt.Errorf("agent: finish the goodbye: %w", err)
+	if a.Finish(ctx) != nil {
+		return endCallCancelled, false, nil
 	}
 	if err := a.options.Ender.EndCall(ctx); err != nil {
 		return "", false, fmt.Errorf("agent: end the call: %w", err)
@@ -1106,34 +1143,38 @@ func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
 }
 
 // hangUpAfter ends the call once a native model's goodbye has been heard, or once it has
-// gone goodbyeWait without starting one. A goodbye the caller talked over keeps the call.
-func (a *Agent) hangUpAfter(bye *goodbye) {
-	a.mu.Lock()
-	ctx := a.ctx
-	a.mu.Unlock()
-	timer := time.NewTimer(goodbyeWait)
-	defer timer.Stop()
-	select {
-	case <-bye.started:
-		select {
-		case <-bye.done:
-		case <-ctx.Done():
-			return
-		}
-		if bye.cut {
-			return
-		}
-	case <-timer.C:
+// gone goodbyeWait without starting one or goodbyeLength without finishing it. The caller
+// speaking before the call ends cancels ctx, which keeps the call.
+func (a *Agent) hangUpAfter(ctx context.Context, bye *goodbye) {
+	defer func() {
 		a.mu.Lock()
 		if a.goodbye == bye {
 			a.goodbye = nil
 		}
 		a.mu.Unlock()
+		bye.cancel()
+	}()
+	start := time.NewTimer(goodbyeWait)
+	defer start.Stop()
+	select {
+	case <-bye.started:
+		finish := time.NewTimer(goodbyeLength)
+		defer finish.Stop()
+		select {
+		case <-bye.done:
+		case <-finish.C:
+		case <-ctx.Done():
+			return
+		}
+	case <-start.C:
 	case <-ctx.Done():
 		return
 	}
-	if _, _, err := a.endCall(ctx); err != nil {
+	_, left, err := a.endCall(ctx)
+	if err != nil {
 		a.logger.Error("could not end the call", "error", err)
+	}
+	if !left {
 		return
 	}
 	if err := a.Close(); err != nil {

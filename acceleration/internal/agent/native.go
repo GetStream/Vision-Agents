@@ -205,6 +205,9 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.mu.Lock()
 			a.nativeListening = true
 			a.scheduled = false
+			if a.goodbye != nil {
+				a.goodbye.cancel()
+			}
 			a.mu.Unlock()
 		case sts.SpeechStopped:
 			// A stop is answered by the next reply: the one the server opens for it, or,
@@ -397,6 +400,10 @@ func (a *Agent) recoverNative(p *pipeline, retry bool, failure error) {
 	}
 
 	a.mu.Lock()
+	// The goodbye was dropped with the session, so it is as heard as it will ever be.
+	if a.goodbye != nil {
+		a.goodbye.finishLocked()
+	}
 	a.generating = false
 	a.utterances = 0
 	a.speakingTurn = ""
@@ -549,7 +556,7 @@ func (a *Agent) goodbyeBegan(responseID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	bye := a.goodbye
-	if bye == nil || bye.reply != "" {
+	if bye == nil || bye.reply != "" || bye.finished {
 		return
 	}
 	bye.reply = responseID
@@ -645,10 +652,10 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	a.generating = false
 	a.saying = ""
-	if bye := a.goodbye; bye != nil && bye.reply == complete.ResponseID {
-		bye.cut = complete.Interrupted
-		a.goodbye = nil
-		close(bye.done)
+	// A goodbye cut short is either the caller talking, which SpeechStarted cancels, or a
+	// lost session, which recoverNative finishes: providers report both as interrupted.
+	if bye := a.goodbye; bye != nil && bye.reply == complete.ResponseID && !complete.Interrupted {
+		bye.finishLocked()
 	}
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
