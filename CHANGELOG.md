@@ -415,7 +415,7 @@ When the provider lists a granted tool with another schema than the one approved
 
 ### The key encryption key that seals is at least 32 characters
 
-The router refuses to start when the keyring version that seals new rows (`ROUTER_AUTH_KEK`, or the `ROUTER_AUTH_KEK_V<n>` that `ROUTER_AUTH_KEK_VERSION` names, plain or unwrapped from `_WRAPPED`) is shorter than 32 characters, naming the variable but not the key. The key becomes the AES key through one SHA-256, so a short passphrase is as easy to guess as it is short. A deployment with a shorter key sets a random one, such as `openssl rand -base64 32` prints, as the next version, names it in `ROUTER_AUTH_KEK_VERSION` and keeps the old one: an older version may be shorter, so the rows it sealed still open and peers still on it are still let in.
+The router refuses to start when the keyring version that seals new rows (`ROUTER_AUTH_KEK`, or the `ROUTER_AUTH_KEK_V<n>` that `ROUTER_AUTH_KEK_VERSION` names, plain or unwrapped from `_WRAPPED`) is shorter than 32 characters, naming the variable but not the key. The key becomes the AES key through one SHA-256, so a short passphrase is as easy to guess as it is short. A deployment with a shorter key moves in two deploys. First, on the build it runs now, it adds a random key as the next version, such as `ROUTER_AUTH_KEK_V2` set to what `openssl rand -base64 32` prints, and leaves `ROUTER_AUTH_KEK_VERSION` as it is: every node then accepts peers presenting either key. Then it upgrades with `ROUTER_AUTH_KEK_VERSION=2`, keeping the old key. An older version may be shorter, so the rows it sealed still open, and nodes not yet upgraded and nodes already upgraded still accept each other.
 
 ### A Dart tool's `run` returns a `ToolOutput`
 
