@@ -9,7 +9,10 @@ Gmail and Linear, connected in the chat the first time the agent needs them.
 agent.yaml           what runs the agent: models, voice, search, greeting
 instructions.md      what the agent is told
 configure/main.go    the backend half that runs once: syncs this directory to the router
-backend/main.go      the backend half that stays up: Stream tokens, and sending from Gmail
+backend/main.go      the backend half that stays up: Stream tokens, sending from Gmail, and how
+                     the agent answers
+a2ui/                how the agent writes interactive UI in A2UI, generated from the app's components
+openui/              the same in OpenUI
 app/                 the phone half: SwiftUI over VisionAgentsCore and StreamChatAI
 ```
 
@@ -29,11 +32,12 @@ go run ./configure
 
 `configure` syncs the directory with the Go SDK, then patches on `visible_tools` and `skills`,
 which `agent.yaml` has no field for: the first shows a step for the phone's own tools on a reply,
-and the second adds `vision`, which looks through the phone's camera on a call.
+and the second adds `vision`, which looks through the phone's camera on a call. It leaves the
+agent answering in Markdown, until the app's settings choose [interactive UI](#interactive-ui).
 
 Leave the backend running. It signs the Stream token the phone is its user with, as the Swift
-demo's does, and does what only a server may with the person's Gmail connection: send a mail
-through it.
+demo's does, does what only a server may with the person's Gmail connection: send a mail
+through it, and changes what the agent is told when the app's settings choose how it answers.
 
 ```bash
 STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
@@ -47,8 +51,10 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from its `develop` branch, because the AI components it uses
-(`AIConversationView`, `AIToolAuthorizationView`) are not in a released `StreamChatAI` yet.
+takes `stream-chat-swift` from its `add/generative-ui` branch, because the generative UI it shows
+is not in a released `StreamChatAI` yet, and GenUI and OpenUI, which its renderers of A2UI and
+OpenUI draw with, from their `main` branches. The renderers themselves are the app's own, in
+`app/SwiftAssistant/A2UI` and `app/SwiftAssistant/OpenUI`, for now.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
@@ -128,6 +134,48 @@ a change), and `go run ./configure` again, which binds both:
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
   showing who it goes to). Calendar, reminders and location each need the phone's permission
   too.
+
+## Interactive UI
+
+The gear in the conversations list opens the settings, where Replies chooses how the agent
+answers: in Markdown, or with interactive UI in A2UI or OpenUI. The backend keeps the choice as
+what the agent is told (`GET` and `PUT /reply-format`), so the app has nothing to switch: its
+`AIUIHost` has a renderer for each format, and a reply shows whichever UI it carries. A
+conversation keeps the instructions it started with, so the next new one is the first to answer
+the new way, and earlier replies keep theirs.
+
+With A2UI or OpenUI chosen, ask "Plan a weekend in Ohrid" and the reply is UI rather than text: a
+map of the places, the person's own calendar for those days, a tab per day with each place's photo
+and summary, a form to change the pace and the interests, and follow-ups. The model writes it
+after one sentence saying what it shows: as [A2UI](https://github.com/a2ui-project/a2ui) 1.0
+messages in a ```` ```ui:a2ui@1.0 ```` block, or in [OpenUI](https://github.com/thesysdev/openui)
+Lang in an ```` ```openui-lang ```` block. The router keeps that sentence as the message's text,
+which push notifications and the Android app show, and moves the block into the message's
+`custom.ai_ui` with its format, which StreamChatAI's `AIUIHost` shows in place of the text with
+the app's `A2UIRenderer`, on [GenUI](https://github.com/martinmitrevski/GenUI), or its
+`OpenUIRenderer`, on [OpenUI](https://github.com/martinmitrevski/OpenUI).
+
+The map, the place cards and the calendar are the app's own views (`TripComponents.swift`),
+described once in `app/SwiftAssistant/UIComponents.json`, and both formats place them. They
+load what they show on the phone: the photos from Wikipedia and the calendar from EventKit, which
+the agent never sees. The agent learns them with the format, from `a2ui/instructions.md` or
+`openui/instructions.md`, which the backend adds to what it is told, and which are generated
+from the same file by GenUI's `a2ui-prompt` and OpenUI's `openui-prompt`, with both cloned beside
+this repository:
+
+```bash
+swift run --package-path ../../../../GenUI a2ui-prompt a2ui/prompt.json > a2ui/instructions.md
+swift run --package-path ../../../../OpenUI openui-prompt openui/prompt.json > openui/instructions.md
+```
+
+Each `prompt.json` picks the components the agent may use and says when to write UI, and its
+example has to render, or nothing is written. Choose the format again in the settings after
+regenerating.
+
+Tapping a place, a pin, a follow-up or the form's button asks the agent again: the person's
+message says what they did in words, such as "Update the plan", and carries the action, with
+the form's values, as `custom.ai_ui_action` (`session.responses.create(_:uiAction:)`). The
+model is told it after their words.
 
 ## What does not work yet
 

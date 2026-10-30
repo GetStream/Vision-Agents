@@ -242,6 +242,12 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 	for _, display := range metadata.Sources {
 		message.Sources = append(message.Sources, Source(display))
 	}
+	if ui, ok := custom["ai_ui"].(map[string]any); ok {
+		message.UI = ui
+	}
+	if action, ok := custom["ai_ui_action"].(map[string]any); ok && ValidUIAction(action) {
+		message.UIAction = action
+	}
 	return message, nil
 }
 

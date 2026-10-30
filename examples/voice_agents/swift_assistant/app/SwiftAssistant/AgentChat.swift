@@ -41,6 +41,13 @@ final class AgentChat {
     /// router takes no ratings yet.
     private(set) var ratings: [String: AIMessageRating] = [:]
 
+    /// The UI the agent writes for some replies, in A2UI or OpenUI, whichever it was told.
+    typealias UI = AIUIHost<AIUIRendererPair<A2UIRenderer, OpenUIRenderer>>
+
+    /// Shows the UI the agent writes for some replies, such as an interactive trip plan, with the
+    /// phone's own components, and sends what the person does in it back.
+    @ObservationIgnored private(set) var ui: UI?
+
     /// The newest message when something was last asked here, until it fails or is stopped:
     /// what arrives after it is the question and then its reply.
     private var askedAfter: String?
@@ -81,6 +88,12 @@ final class AgentChat {
         session.$approvals
             .sink { [weak self] approvals in MainActor.assumeIsolated { self?.approvals = approvals } }
             .store(in: &following)
+        ui = AIUIHost(components: TripComponents.all) {
+            A2UIRenderer()
+            OpenUIRenderer()
+        } send: { [weak self] action in
+            self?.answer(action)
+        }
     }
 
     /// What the agent is doing while its reply shows nothing yet.
@@ -165,6 +178,22 @@ final class AgentChat {
         }
     }
 
+    /// Tells the agent what the person did in the UI of a reply, such as tapping a place on its
+    /// map: their message says it in words, and carries the action for the agent.
+    func answer(_ action: AIUIAction) {
+        failure = nil
+        askedAfter = messages.last?.id ?? ""
+        Task {
+            do {
+                _ = try await session.responses.create(action.label, uiAction: action.json)
+            } catch is CancellationError {
+            } catch {
+                failure = error.localizedDescription
+                askedAfter = nil
+            }
+        }
+    }
+
     /// Stops the reply in flight. What was written so far is kept.
     func stop() {
         askedAfter = nil
@@ -198,9 +227,9 @@ extension ChatMessage {
         extraData["ai_generated"]?.boolValue == true
     }
 
-    /// Whether it is a reply with nothing to show yet: no text and no steps.
+    /// Whether it is a reply with nothing to show yet: no text, no steps and no UI.
     var isEmptyReply: Bool {
-        isAgentReply && text.isEmpty && parts.isEmpty
+        isAgentReply && text.isEmpty && parts.isEmpty && extraData[AIUIDocument.customDataKey] == nil
     }
 
     /// Whether the agent is still writing it.
@@ -230,6 +259,8 @@ struct AgentMessage: AIMessage {
     var role: AIMessageRole { message.isAgentReply ? .assistant : .user }
     var text: String { message.text }
     var isGenerating: Bool { message.isGenerating }
+    /// The UI the agent wrote for the reply, which shows in place of its text.
+    var uiDocument: AIUIDocument? { AIUIDocument(customData: message.extraData) }
     var attachments: [AIMessageAttachment] {
         message.imageAttachments.map { .image($0.imageURL, name: $0.title) }
             + message.fileAttachments.map {

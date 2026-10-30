@@ -90,6 +90,19 @@ import Testing
         #expect(Set(plain.keys) == ["request_id", "text"])
     }
 
+    @Test func whatThePersonDidInAReplysUIGoesWithTheirWords() throws {
+        let action: [String: RawJSON] = [
+            "message_id": .string("m1"), "format": .string("openui"), "name": .string("ask_about"),
+            "payload": .dictionary(["title": .string("Ohrid")]),
+        ]
+        let body = try JSONDecoder().decode(
+            [String: RawJSON].self,
+            from: JSONEncoder().encode(Responses.body("Tell me more about Ohrid", images: [], uiAction: action)))
+
+        #expect(body["text"] == .string("Tell me more about Ohrid"))
+        #expect(body["ui_action"] == .dictionary(action))
+    }
+
     @Test func aToolCallWhoseArgumentsAreNotAnObjectYieldsNoArguments() throws {
         let event = try JSONDecoder().decode(
             AgentEvent.self,

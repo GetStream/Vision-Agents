@@ -2,6 +2,12 @@
 
 ## Features
 
+### A reply can be UI the agent writes
+
+An agent can answer with UI rather than text, written in a fenced block of its reply whose info string is `ui:<format>` or `ui:<format>@<version>`, or OpenUI's `openui-lang`. The router knows no format: it sends the block to Stream Chat as the message's `custom.ai_ui` when it fits in the message's custom data, and the words around it as the text, which push notifications, external threads and clients that cannot show the UI show instead. A person's message keeps a block they wrote as their words. StreamChatAI's generative UI shows it in place of the text. What the person does in it comes back with their next message as `ui_action` on `POST /v1/agents/sessions/{id}/responses`, which their message carries as `custom.ai_ui_action` and the model is told after their words, with the opening words of the reply it was in. Go has `client.UIAction` and Swift `Responses.create(_:uiAction:)`.
+
+The `swift_assistant` example plans a trip as interactive UI, in A2UI or OpenUI, as its settings choose: a map, the person's own calendar for those days, a tab per day and a form to change the plan, drawn with the app's own components.
+
 ### An iMessage photo reaches the agent
 
 A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).

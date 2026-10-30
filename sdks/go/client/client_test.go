@@ -845,6 +845,27 @@ func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
 	}
 }
 
+func TestWhatThePersonDidInAReplysUIGoesOverWithTheirWords(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Update the plan", UIAction{
+		"message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"pace": "relaxed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	action, _ := json.Marshal(body["ui_action"])
+	if string(action) != `{"format":"a2ui","message_id":"reply-1","name":"update_plan","payload":{"pace":"relaxed"}}` {
+		t.Errorf("the action went over as %s", action)
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("an action goes with the person's words, so the question still has a request id")
+	}
+}
+
 func TestAClipOnDiskIsSentInline(t *testing.T) {
 	for name, kind := range map[string]string{"unboxing.webm": "video/webm", "unboxing": "video/mp4"} {
 		path := filepath.Join(t.TempDir(), name)

@@ -11,15 +11,18 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
     let requestId: String?
     /// What to answer, as though it had been said.
     let text: String
+    /// What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+    let uiAction: [String: RawJSON]?
     /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     let videos: [VideoSource]?
 
-    init(images: [ImageSourcePayload]? = nil, maxOutputTokens: Int? = nil, reasoningEffort: String? = nil, requestId: String? = nil, text: String, videos: [VideoSource]? = nil) {
+    init(images: [ImageSourcePayload]? = nil, maxOutputTokens: Int? = nil, reasoningEffort: String? = nil, requestId: String? = nil, text: String, uiAction: [String: RawJSON]? = nil, videos: [VideoSource]? = nil) {
         self.images = images
         self.maxOutputTokens = maxOutputTokens
         self.reasoningEffort = reasoningEffort
         self.requestId = requestId
         self.text = text
+        self.uiAction = uiAction
         self.videos = videos
     }
 
@@ -30,6 +33,7 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
         self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
         self.requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
         self.text = try container.decode(String.self, forKey: .text)
+        self.uiAction = try container.decodeIfPresent([String: RawJSON].self, forKey: .uiAction)
         self.videos = try container.decodeIfPresent([VideoSource].self, forKey: .videos)
     }
 
@@ -40,6 +44,7 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(requestId, forKey: .requestId)
         try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(uiAction, forKey: .uiAction)
         try container.encodeIfPresent(videos, forKey: .videos)
     }
 
@@ -52,6 +57,7 @@ extension CreateResponseRequest: Hashable {
         lhs.reasoningEffort == rhs.reasoningEffort &&
         lhs.requestId == rhs.requestId &&
         lhs.text == rhs.text &&
+        lhs.uiAction == rhs.uiAction &&
         lhs.videos == rhs.videos
     }
 
@@ -61,6 +67,7 @@ extension CreateResponseRequest: Hashable {
         hasher.combine(reasoningEffort)
         hasher.combine(requestId)
         hasher.combine(text)
+        hasher.combine(uiAction)
         hasher.combine(videos)
     }
 }

@@ -5990,6 +5990,10 @@ export type components = {
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. */
             readonly text: string;
+            /** @description What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text. */
+            readonly ui_action?: {
+                readonly [key: string]: unknown;
+            };
             /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
             readonly videos?: readonly components["schemas"]["VideoSource"][];
         };

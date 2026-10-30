@@ -34,7 +34,7 @@ struct ChatScreen: View {
     private static let starters = [
         "What's on my calendar today?",
         "Remind me to call mum at 6pm",
-        "Plan a weekend in Lisbon",
+        "Plan a weekend in Ohrid",
         "What should I cook tonight?",
     ]
 
@@ -54,6 +54,7 @@ struct ChatScreen: View {
             },
             isThinking: activity == .thinking,
             approver: chat.map { approver(for: $0.session) },
+            ui: chat?.ui,
             loadOlderMessages: chat?.hasOlderMessages == true ? { await chat?.loadOlderMessages() } : nil,
             viewFactory: MessageViews(chat: chat),
             footer: {

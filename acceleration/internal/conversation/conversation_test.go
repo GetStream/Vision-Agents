@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -120,6 +121,11 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		case strings.HasSuffix(r.URL.Path, "/message"):
 			m := body["message"].(map[string]any)
 			id := m["id"].(string)
+			if overCustomLimit(m["custom"]) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"code":4,"message":"custom data is too large"}`))
+				return
+			}
 			if _, exists := db.messages[id]; !exists {
 				db.order = append(db.order, id)
 				m["cid"] = "agent:" + parts[len(parts)-2]
@@ -146,7 +152,23 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				}
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
+				custom := maps.Clone(db.messages[id]["custom"].(map[string]any))
+				for k, v := range body["set"].(map[string]any) {
+					if k != "attachments" && k != "text" {
+						custom[k] = v
+					}
+				}
+				if overCustomLimit(custom) {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"code":4,"message":"custom data is too large"}`))
+					return
+				}
 				db.updates++
+				if unset, ok := body["unset"].([]any); ok {
+					for _, k := range unset {
+						delete(db.messages[id]["custom"].(map[string]any), k.(string))
+					}
+				}
 				for k, v := range body["set"].(map[string]any) {
 					if k == "attachments" {
 						db.messages[id][k] = partiallySetAttachments(v)
@@ -166,6 +188,13 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 	require.NoError(t, err)
 	return db, client
 }
+
+// overCustomLimit is whether Stream would refuse a message's custom data as more than 50 KB.
+func overCustomLimit(custom any) bool {
+	encoded, _ := json.Marshal(custom)
+	return len(encoded) > 50<<10
+}
+
 func current(c *Conversation) Message {
 	c.mu.Lock()
 	defer c.mu.Unlock()

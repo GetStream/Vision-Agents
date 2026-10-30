@@ -1,0 +1,41 @@
+{
+  "components": "../app/SwiftAssistant/UIComponents.json",
+  "catalog_id": "getstream.io:app-catalog",
+  "fence": "ui:a2ui@1.0",
+  "keep": [
+    "Text",
+    "Icon",
+    "Row",
+    "Column",
+    "List",
+    "Card",
+    "Tabs",
+    "Divider",
+    "Button",
+    "TextField",
+    "CheckBox",
+    "ChoicePicker",
+    "Slider",
+    "DateTimeInput",
+    "formatString",
+    "formatDate",
+    "formatNumber",
+    "openUrl",
+    "required"
+  ],
+  "preamble": "Some answers work better as interactive UI than as text: planning a trip, a day out or a weekend away, and choosing where to go, stay or eat. Write those in A2UI, a protocol for UI an agent writes: first one short sentence saying what the UI shows, for anyone who can't see it, then the UI in one ```ui:a2ui@1.0 fenced block. Answer everything else in Markdown as usual, with no A2UI. Out loud, on a call, never write A2UI: say the plan in a few sentences instead.",
+  "notes": [
+    "- PlaceCard, TripMap and CalendarCheck are the phone's own views. They load the place's photo and summary, the map and the person's calendar on the phone, so they need no URLs or data from you. Give their properties as values, not bindings.",
+    "- A PlaceCard's title must be the place's exact English Wikipedia article title, or its photo won't load."
+  ],
+  "rules": [
+    "These rules are for the UI you write in A2UI. Answers in Markdown follow the instructions above.",
+    "A trip plan's UI is a Column holding, in this order: a Text with a ## heading; a Text of one or two sentences; a TripMap with every place of the plan and its real coordinates; a CalendarCheck of the trip's days when it has dates; Tabs with one tab per day, each a Column with a Text of the day's plan and a PlaceCard per place; a Text quote with one practical tip; a Card with ChoicePickers for the pace and the interests, bound to the data model, and a primary Button whose event is update_plan, with both in its context and \"Update the plan\" as its userMessage; and a Column of three borderless Buttons for next steps, whose event is ask, with the question as the userMessage.",
+    "Before a plan with dates, call get_local_context for today's date, and give real dates: \"this weekend\" is the coming Saturday and Sunday.",
+    "When the person changes a plan, or sends update_plan, write the whole UI again on a new surface, never only what changed.",
+    "Never add images or image URLs for places: PlaceCard shows the place's photo."
+  ],
+  "examples": [
+    "Example — a weekend trip, after get_local_context said today is Thursday 2026-11-12:\n\nA weekend in Ohrid by the lake: a map, your calendar and a plan for each day.\n\n```ui:a2ui@1.0\n{\"version\":\"v1.0\",\"createSurface\":{\"surfaceId\":\"ohrid-weekend\",\"catalogId\":\"getstream.io:app-catalog\",\"dataModel\":{\"pace\":[\"relaxed\"],\"interests\":[]}}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"root\",\"component\":\"Column\",\"children\":[\"title\",\"intro\",\"map\",\"calendar\",\"days\",\"tip\",\"refine\",\"next\"]},{\"id\":\"title\",\"component\":\"Text\",\"text\":\"## A weekend in Ohrid\"},{\"id\":\"intro\",\"component\":\"Text\",\"text\":\"Two easy days by the lake: the old town on Saturday, a boat to St. Naum on Sunday.\"}]}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"map\",\"component\":\"TripMap\",\"places\":[{\"name\":\"Church of St. John at Kaneo\",\"latitude\":41.1112,\"longitude\":20.7881},{\"name\":\"Plaošnik\",\"latitude\":41.1131,\"longitude\":20.7903},{\"name\":\"Samuel's Fortress, Ohrid\",\"latitude\":41.1162,\"longitude\":20.7928},{\"name\":\"Monastery of Saint Naum\",\"latitude\":40.9139,\"longitude\":20.7406},{\"name\":\"Bay of Bones\",\"latitude\":41.0118,\"longitude\":20.7988}]},{\"id\":\"calendar\",\"component\":\"CalendarCheck\",\"start\":\"2026-11-14\",\"end\":\"2026-11-15\"}]}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"days\",\"component\":\"Tabs\",\"tabs\":[{\"title\":\"Saturday\",\"child\":\"saturday\"},{\"title\":\"Sunday\",\"child\":\"sunday\"}]},{\"id\":\"saturday\",\"component\":\"Column\",\"children\":[\"saturday-plan\",\"plaosnik\",\"fortress\",\"kaneo\"]},{\"id\":\"saturday-plan\",\"component\":\"Text\",\"text\":\"**Morning:** coffee by the harbour, then up through the old town to Plaošnik.\\n\\n**Afternoon:** Samuel's Fortress for the view over the lake.\\n\\n**Sunset:** St. John at Kaneo, on the cliff above the water.\"},{\"id\":\"plaosnik\",\"component\":\"PlaceCard\",\"title\":\"Plaošnik\",\"note\":\"1 hour\"},{\"id\":\"fortress\",\"component\":\"PlaceCard\",\"title\":\"Samuel's Fortress, Ohrid\",\"note\":\"2 hours\"},{\"id\":\"kaneo\",\"component\":\"PlaceCard\",\"title\":\"Church of St. John at Kaneo\",\"note\":\"Best at sunset\"}]}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"sunday\",\"component\":\"Column\",\"children\":[\"sunday-plan\",\"naum\",\"bones\"]},{\"id\":\"sunday-plan\",\"component\":\"Text\",\"text\":\"**Morning:** the boat from the harbour to St. Naum.\\n\\n**Afternoon:** the Bay of Bones on the way back.\"},{\"id\":\"naum\",\"component\":\"PlaceCard\",\"title\":\"Monastery of Saint Naum\",\"note\":\"Take the 10:00 boat\"},{\"id\":\"bones\",\"component\":\"PlaceCard\",\"title\":\"Bay of Bones\",\"note\":\"1 hour\"}]}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"tip\",\"component\":\"Text\",\"text\":\"> **Good to know:** book the St. Naum boat the day before. It fills up at weekends.\"},{\"id\":\"refine\",\"component\":\"Card\",\"child\":\"refine-form\"},{\"id\":\"refine-form\",\"component\":\"Column\",\"children\":[\"pace\",\"interests\",\"update\"]},{\"id\":\"pace\",\"component\":\"ChoicePicker\",\"label\":\"Pace\",\"variant\":\"mutuallyExclusive\",\"displayStyle\":\"chips\",\"options\":[{\"label\":\"Relaxed\",\"value\":\"relaxed\"},{\"label\":\"Packed\",\"value\":\"packed\"}],\"value\":{\"path\":\"/pace\"}},{\"id\":\"interests\",\"component\":\"ChoicePicker\",\"label\":\"More of\",\"variant\":\"multipleSelection\",\"displayStyle\":\"chips\",\"options\":[{\"label\":\"History\",\"value\":\"history\"},{\"label\":\"Food\",\"value\":\"food\"},{\"label\":\"Nature\",\"value\":\"nature\"},{\"label\":\"Swimming\",\"value\":\"swimming\"}],\"value\":{\"path\":\"/interests\"}},{\"id\":\"update\",\"component\":\"Button\",\"variant\":\"primary\",\"child\":\"update-label\",\"action\":{\"event\":{\"name\":\"update_plan\",\"userMessage\":\"Update the plan\",\"context\":{\"pace\":{\"path\":\"/pace\"},\"interests\":{\"path\":\"/interests\"}}}}},{\"id\":\"update-label\",\"component\":\"Text\",\"text\":\"Update the plan\"}]}}\n{\"version\":\"v1.0\",\"updateComponents\":{\"surfaceId\":\"ohrid-weekend\",\"components\":[{\"id\":\"next\",\"component\":\"Column\",\"children\":[\"hotel\",\"eat\",\"longer\"]},{\"id\":\"hotel\",\"component\":\"Button\",\"variant\":\"borderless\",\"child\":\"hotel-label\",\"action\":{\"event\":{\"name\":\"ask\",\"userMessage\":\"Find a hotel by the lake\"}}},{\"id\":\"hotel-label\",\"component\":\"Text\",\"text\":\"Find a hotel by the lake\"},{\"id\":\"eat\",\"component\":\"Button\",\"variant\":\"borderless\",\"child\":\"eat-label\",\"action\":{\"event\":{\"name\":\"ask\",\"userMessage\":\"Where should we eat?\"}}},{\"id\":\"eat-label\",\"component\":\"Text\",\"text\":\"Where should we eat?\"},{\"id\":\"longer\",\"component\":\"Button\",\"variant\":\"borderless\",\"child\":\"longer-label\",\"action\":{\"event\":{\"name\":\"ask\",\"userMessage\":\"Make it three days\"}}},{\"id\":\"longer-label\",\"component\":\"Text\",\"text\":\"Make it three days\"}]}}\n```"
+  ]
+}

@@ -242,6 +242,18 @@ func (e ReasoningEffort) attachTo(request *acceleration.CreateResponseRequest) {
 	request.ReasoningEffort = pointer(string(e))
 }
 
+// UIAction is what the person did in the UI an earlier reply showed, which the text says in
+// their words: the reply (message_id), the UI's format and the action (name), with what it
+// carries (payload). Their message carries it, and the model is told it after the text.
+type UIAction map[string]any
+
+func (a UIAction) attachTo(request *acceleration.CreateResponseRequest) {
+	if len(a) > 0 {
+		action := map[string]any(a)
+		request.UiAction = &action
+	}
+}
+
 // ClipFile is a video on disk, sent inline so the router needs no way to reach it.
 func ClipFile(path string) (Clip, error) {
 	clip, err := os.ReadFile(path)

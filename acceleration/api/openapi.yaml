@@ -3250,6 +3250,10 @@ components:
         text:
           description: What to answer, as though it had been said.
           type: string
+        ui_action:
+          additionalProperties: {}
+          description: 'What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI''s format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.'
+          type: object
         videos:
           description: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
           items:

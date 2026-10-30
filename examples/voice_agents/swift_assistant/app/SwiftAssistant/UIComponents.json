@@ -1,0 +1,72 @@
+[
+  {
+    "name": "place_card",
+    "description": "One place of a plan, with its photo and a short summary, which the phone loads from Wikipedia, so it needs no image URL. Use one per sight, beach, monastery, village or day trip.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The place's exact English Wikipedia article title, such as \"Church of St. John at Kaneo\""
+        },
+        "note": {
+          "type": "string",
+          "description": "One short line about it for this plan, such as \"Best at sunset\" or \"2 hours\""
+        }
+      },
+      "required": ["title"],
+      "x-order": ["title", "note"]
+    },
+    "events": [
+      {
+        "name": "ask_about",
+        "description": "Tapping the card asks you about the place."
+      }
+    ]
+  },
+  {
+    "name": "trip_map",
+    "description": "A map of a plan with a pin for each place, drawn on the phone. Use one near the top of every trip plan.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "places": {
+          "type": "array",
+          "description": "Every place of the plan, with its coordinates",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "latitude": { "type": "number" },
+              "longitude": { "type": "number" }
+            },
+            "required": ["name", "latitude", "longitude"],
+            "x-order": ["name", "latitude", "longitude"]
+          }
+        }
+      },
+      "required": ["places"],
+      "x-order": ["places"]
+    },
+    "events": [
+      {
+        "name": "select_place",
+        "description": "Tapping a pin asks you about that place."
+      }
+    ]
+  },
+  {
+    "name": "calendar_check",
+    "description": "The person's own calendar for the days of a plan, read on the phone. You never see it: use it whenever a plan has dates, so they can see what the trip would clash with.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "string", "format": "date", "description": "The first day, as YYYY-MM-DD" },
+        "end": { "type": "string", "format": "date", "description": "The last day, as YYYY-MM-DD" }
+      },
+      "required": ["start", "end"],
+      "x-order": ["start", "end"]
+    },
+    "events": []
+  }
+]
