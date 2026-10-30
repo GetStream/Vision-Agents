@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +39,11 @@ type platform struct {
 	// into it, with how many runs came before.
 	files   map[string][]byte
 	uploads []string
+	// sized are files of the sandbox's that hold only their size, as many bytes of x, and
+	// served is how many bytes each download of a file put on the wire, counted once its
+	// answer ended.
+	sized  map[string]int
+	served map[string]int64
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
 	// commands are every shell command run in the sandbox, with how many runs came before,
@@ -88,12 +96,16 @@ type heldSecret struct {
 
 func newPlatform() *platform {
 	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
-		secrets: map[string]*heldSecret{}}
+		sized: map[string]int{}, served: map[string]int64{}, secrets: map[string]*heldSecret{}}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	return stub
 }
 
 func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/files/download") || strings.HasSuffix(r.URL.Path, "/files/bulk-download") {
+		p.download(w, r)
+		return
+	}
 	if strings.HasSuffix(r.URL.Path, "/process/execute") {
 		p.mu.Lock()
 		slow, checking := p.slowCommand, p.checking
@@ -171,17 +183,6 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"result": p.commandOutput, "exitCode": p.commandExit})
 
-	case strings.HasSuffix(r.URL.Path, "/files/download"):
-		data, ok := p.files[r.URL.Query().Get("path")]
-		if !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"no such file"}`))
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(data)
-
 	case r.Method == http.MethodDelete:
 		p.deleted = append(p.deleted, r.URL.Path)
 		if p.deleteStatus != 0 {
@@ -204,6 +205,79 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(p.runStatus)
 		_, _ = w.Write([]byte(p.runBody))
 	}
+}
+
+// download serves a file of the sandbox's as Daytona's toolbox does: whole from /files/download,
+// and as the part named file of a multipart answer from /files/bulk-download, which is how the
+// SDK streams one. A file it does not hold is a 404, or a part named error. It holds no lock while
+// it writes, so a reader that stops early leaves it waiting on nothing.
+func (p *platform) download(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("path")
+	bulk := strings.HasSuffix(r.URL.Path, "/files/bulk-download")
+	if bulk {
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		name = strings.Join(body.Paths, ",")
+	}
+	p.mu.Lock()
+	var content io.Reader
+	if data, ok := p.files[name]; ok {
+		content = bytes.NewReader(data)
+	} else if size, ok := p.sized[name]; ok {
+		content = io.LimitReader(filler{}, int64(size))
+	}
+	p.mu.Unlock()
+	wire := &counted{Writer: w}
+	defer func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.served[name] += wire.n
+	}()
+	switch {
+	case !bulk && content == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no such file"}`))
+	case !bulk:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = io.Copy(wire, content)
+	default:
+		parts := multipart.NewWriter(wire)
+		w.Header().Set("Content-Type", parts.FormDataContentType())
+		disposition := fmt.Sprintf(`form-data; name="file"; filename=%q`, name)
+		if content == nil {
+			disposition = `form-data; name="error"`
+			content = strings.NewReader(`{"message":"no such file","statusCode":404}`)
+		}
+		part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
+		if _, err := io.Copy(part, content); err == nil {
+			_ = parts.Close()
+		}
+	}
+}
+
+// filler reads as an endless run of x.
+type filler struct{}
+
+func (filler) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = 'x'
+	}
+	return len(b), nil
+}
+
+// counted counts the bytes written through it.
+type counted struct {
+	io.Writer
+	n int64
+}
+
+func (c *counted) Write(b []byte) (int, error) {
+	n, err := c.Writer.Write(b)
+	c.n += int64(n)
+	return n, err
 }
 
 // secret serves Daytona's secret API: create, update and delete. The caller holds mu.
@@ -266,6 +340,21 @@ func (p *platform) holds(path string, data []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.files[path] = data
+}
+
+// holdsSized puts a file of size bytes of x at path.
+func (p *platform) holdsSized(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+}
+
+// sent is how many bytes the downloads of path put on the wire, and whether one has ended.
+func (p *platform) sent(path string) (int64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n, ok := p.served[path]
+	return n, ok
 }
 
 // answerAfter waits slow before a request is answered, or until its caller gives up. The
@@ -621,4 +710,72 @@ func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
 	s.Require().NoError(err)
 	s.Len(result.Files, sandbox.MaxFiles)
 	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileComesBackOnlyIfItIsNeitherEmptyNorTooLarge() {
+	sizes := map[string]int{"/tmp/empty.bin": 0, "/tmp/one.bin": 1, "/tmp/limit.bin": sandbox.MaxFileBytes,
+		"/tmp/over.bin": sandbox.MaxFileBytes + 1}
+	for name, size := range sizes {
+		s.platform.holdsSized(name, size)
+	}
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/empty.bin", "/tmp/one.bin", "/tmp/limit.bin", "/tmp/over.bin"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 2)
+	s.Equal("one.bin", result.Files[0].Name)
+	s.Equal([]byte("x"), result.Files[0].Data)
+	s.Equal("limit.bin", result.Files[1].Name)
+	s.True(bytes.Equal(bytes.Repeat([]byte("x"), sandbox.MaxFileBytes), result.Files[1].Data), "the largest file allowed comes back whole")
+	s.Equal([]string{"/tmp/empty.bin", "/tmp/over.bin"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileFarTooLargeIsRefusedWithoutBeingReadWhole() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+
+	result, err := s.box.Run(s.ctx, "dump()", []string{"/tmp/dump.bin"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("/tmp/dump.bin")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// What passed the limit is only what the connection's buffers took before the router
+	// stopped reading: a few MiB at most, well short of another MaxFileBytes.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestAHandBackLeavesNoFileOnTheRoutersDisk() {
+	temp := s.T().TempDir()
+	s.T().Setenv("TMPDIR", temp)
+	s.platform.holds("/tmp/render.png", []byte("\x89PNG\r\n\x1a\nnot really a picture"))
+
+	result, err := s.box.Run(s.ctx, "render()", []string{"/tmp/render.png"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	left, err := os.ReadDir(temp)
+	s.Require().NoError(err)
+	s.Empty(left, "the file was copied to the router's disk and left there")
+}
+
+func (s *DaytonaSuite) TestAFileAskedForTwiceComesBackOnceAndTakesOneSlot() {
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		s.platform.holds("/tmp/"+name+".txt", []byte(name))
+	}
+
+	result, err := s.box.Run(s.ctx, "write()",
+		[]string{"/tmp/a.txt", "/tmp//a.txt", "/tmp/b.txt", "/tmp/./a.txt", "/tmp/c.txt", "/tmp/d.txt", "/tmp/a.txt", "/tmp/e.txt"})
+
+	s.Require().NoError(err)
+	var names []string
+	for _, file := range result.Files {
+		names = append(names, file.Name)
+	}
+	s.Equal([]string{"a.txt", "b.txt", "c.txt", "d.txt"}, names)
+	s.Equal([]string{"/tmp/e.txt"}, result.Missing)
 }
