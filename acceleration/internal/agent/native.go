@@ -185,10 +185,18 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			}
 			a.mu.Unlock()
 			continue
+		case sts.ResponseStarted:
+			// Kept here, in order with the tool calls and the caller's speech, so a call of
+			// this reply that arrives after the caller is heard is still the task's.
+			a.mu.Lock()
+			if a.scheduled {
+				a.scheduledReply = typed.ResponseID
+			}
+			a.mu.Unlock()
 		case sts.SpeechStarted:
 			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
 			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
-			// of the queue.
+			// of the queue. A call already asked keeps the mark it arrived with.
 			a.mu.Lock()
 			a.nativeListening = true
 			a.scheduled = false
@@ -716,7 +724,7 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 			history = append(history, message)
 		}
 	}
-	charged := a.chargedLocked(context.Background())
+	charged := a.chargedLocked(context.Background(), a.toolScheduled[call.ID])
 	a.mu.Unlock()
 	id, err := a.harness.Delegate(charged, arguments.Skill, arguments.Prompt, call.ID, nil, history)
 	if err != nil {
