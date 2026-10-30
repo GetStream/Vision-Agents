@@ -38,7 +38,11 @@ func (s *RecordingsSuite) SetupSuite() {
 	s.called = make(chan receivedCallback, 16)
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		s.called <- receivedCallback{uri: r.URL.RequestURI(), body: body}
+		// A post nobody reads for must not hold the handler, or receiver.Close waits on it.
+		select {
+		case s.called <- receivedCallback{uri: r.URL.RequestURI(), body: body}:
+		default:
+		}
 	}))
 	s.T().Cleanup(receiver.Close)
 	transport := receiver.Client().Transport.(*http.Transport).Clone()

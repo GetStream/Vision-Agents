@@ -101,6 +101,34 @@ func (s *RecordingCallbackSuite) TestACallbackThatRedirectsToAnotherHostIsNotFol
 	s.Equal(int32(1), s.calls.Load(), "only the callback the caller named was posted to")
 }
 
+func (s *RecordingCallbackSuite) TestAStoredPlainHTTPOrUserinfoCallbackIsNeverPosted() {
+	for _, url := range []string{
+		"http://127.0.0.1:" + s.port() + "/done",
+		"https://user:pass@8.8.8.8:1/done",
+	} {
+		s.logged.Reset()
+		s.server.callBack(context.Background(), url, Transcription{Id: "job-1"})
+
+		s.Contains(s.logged.String(), "only HTTPS URLs with a host and without userinfo", url)
+	}
+	s.Zero(s.calls.Load())
+}
+
+func (s *RecordingCallbackSuite) TestACallbackFailureLogsTheHostAndNothingElse() {
+	for _, url := range []string{
+		"https://127.0.0.1:" + s.port() + "/done?token=sekret",
+		"https://user:sekret@8.8.8.8:1/done?token=sekret",
+		"http://127.0.0.1:" + s.port() + "/done?token=sekret",
+	} {
+		s.logged.Reset()
+		s.server.callBack(context.Background(), url, Transcription{Id: "job-1"})
+
+		s.Contains(s.logged.String(), "host=", url)
+		s.NotContains(s.logged.String(), "sekret", url)
+		s.NotContains(s.logged.String(), "token", url)
+	}
+}
+
 // port is the receiver's port.
 func (s *RecordingCallbackSuite) port() string {
 	_, port, err := net.SplitHostPort(s.receiver.Listener.Addr().String())

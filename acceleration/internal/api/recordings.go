@@ -349,32 +349,52 @@ func (s *Server) finished(ctx context.Context, job store.Recording, provider, mo
 // callBack tells a caller their job is done. A callback that cannot be delivered is
 // logged and let go: the result is written down either way, so the caller can still ask
 // for it, and retrying somebody else's endpoint from here would be a queue of its own.
-func (s *Server) callBack(ctx context.Context, url string, body any) {
+func (s *Server) callBack(ctx context.Context, callback string, body any) {
+	host := callbackHost(callback)
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		s.logger.Error("could not encode a recording callback", "url", url, "error", err)
+		s.logger.Error("could not encode a recording callback", "host", host, "error", err)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, callbackTimeout)
 	defer cancel()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, callback, bytes.NewReader(encoded))
 	if err != nil {
-		s.logger.Error("could not build a recording callback", "url", url, "error", err)
+		s.logger.Error("could not build a recording callback", "host", host, "error", withoutURL(err))
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := s.callbackHTTP.Do(request)
 	if err != nil {
-		s.logger.Error("could not deliver a recording callback", "url", url, "error", err)
+		s.logger.Error("could not deliver a recording callback", "host", host, "error", withoutURL(err))
 		return
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= http.StatusBadRequest {
-		s.logger.Error("a recording callback was refused", "url", url, "status", response.Status)
+		s.logger.Error("a recording callback was refused", "host", host, "status", response.Status)
 	}
+}
+
+// withoutURL is err without the URL a failed request names, which carries the query.
+func withoutURL(err error) error {
+	var failed *url.Error
+	if errors.As(err, &failed) {
+		return failed.Err
+	}
+	return err
+}
+
+// callbackHost is the part of a callback that is safe to log: a caller may put a token in its
+// query or userinfo.
+func callbackHost(callback string) string {
+	endpoint, err := url.Parse(callback)
+	if err != nil {
+		return ""
+	}
+	return endpoint.Host
 }
 
 // errPrivateCallback refuses a callback the router would never post to. One answer for every
@@ -676,7 +696,7 @@ func (RecordingStatus) Schema(registry huma.Registry) *huma.Schema {
 
 // SpeechRequest is the SpeechRequest schema.
 type SpeechRequest struct {
-	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll."`
+	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
 	Inline   *bool              `json:"inline,omitempty" doc:"Speak this short text synchronously and return the audio, base64, in the 202 response, storing neither a job nor the audio: the cheap way to check that synthesis works on an app. At most 16000 characters and no callback, else a 400; deadline 90 seconds, and cancelling the request cancels the work. A model that only streams is refused with a 400, as for a stored job. A synthesis that fails still answers 202, with status failed and the reason in error, unless it was refused for money, which is answered 402 or 403 as any request is. Its ID cannot be retrieved later, and no database is required. Default false keeps the stored, asynchronous job." default:"false"`
 	Options  *TtsOptions        `json:"options,omitempty"`
@@ -731,7 +751,7 @@ type Transcription struct {
 
 // TranscriptionRequest is the TranscriptionRequest schema.
 type TranscriptionRequest struct {
-	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns."`
+	Callback *string            `json:"callback,omitempty" doc:"A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400."`
 	ConfigId *string            `json:"config_id,omitempty" doc:"A stored router config to take the options from. Anything named here as well overrides that one field of it."`
 	Inline   *bool              `json:"inline,omitempty" doc:"Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later; a request refused for money is answered 402 or 403 instead, as any request is. No database is required. Cancelling the request cancels the work. The audio goes in source.audio, at most 8 MiB, with no source.url and no callback, else a 400; deadline 90 seconds. Default false retains asynchronous stored jobs." default:"false"`
 	Options  *SttOptions        `json:"options,omitempty"`
