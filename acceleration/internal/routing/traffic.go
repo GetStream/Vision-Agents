@@ -13,6 +13,7 @@ import (
 const (
 	outcomeOK          = "ok"
 	outcomeCancelled   = "cancelled"
+	outcomeRefused     = "refused"
 	outcomeTimeout     = "timeout"
 	outcomeCustomerKey = "customer_key"
 	outcomeError       = "error"
@@ -110,6 +111,8 @@ func outcome(request store.Request, byok bool) string {
 		return outcomeOK
 	case request.ErrorCode == ErrorCancelled:
 		return outcomeCancelled
+	case request.ErrorCode == ErrorRefused:
+		return outcomeRefused
 	case byok:
 		return outcomeCustomerKey
 	case request.ErrorCode == ErrorTimeout:
