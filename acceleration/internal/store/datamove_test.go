@@ -90,7 +90,9 @@ func (s *DataMoveSuite) TearDownSuite() {
 func (s *DataMoveSuite) SetupTest() {
 	tables := strings.Join(append(DataTables(), "data_changes", "data_change_capture"), ", ")
 	for _, store := range []*Store{s.source, s.destination} {
-		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" CASCADE")
+		// Restarting the sequences makes each test's destination one that drew nothing yet, as
+		// a test that copies ids past them expects.
+		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" RESTART IDENTITY CASCADE")
 		s.Require().NoError(err)
 		store.SetStreamPins(StreamPins{})
 	}
