@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -266,7 +267,7 @@ func (s *ReviewSuite) TestAModelThatThinksBeforeItReviewsStillWritesTheWholeRevi
 
 // The most Claude Opus 5.5 was seen thinking on one turn on staging.
 func (s *ReviewSuite) TestAModelThatThinksAtLengthStillWritesTheWholeReview() {
-	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 2734, Answer: reviewAnswer})
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 1300, Answer: reviewAnswer})
 
 	s.Require().NoError(err)
 	s.Contains(verdict.Notes, "Nothing to act on")
@@ -277,8 +278,19 @@ func (s *ReviewSuite) TestAReviewTheCapCutOffSaysSo() {
 	_, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom - len(reviewAnswer) + 20, Answer: reviewAnswer})
 
 	s.Require().Error(err)
-	s.Contains(err.Error(), "stopped early (max_output_tokens)")
 	s.NotContains(err.Error(), "decode review")
+	// 4,500 tokens were written, the last 20 of them short of the answer's end; the rest was thinking.
+	s.Contains(err.Error(), fmt.Sprintf("the review stopped early (max_output_tokens) after 4500 output tokens, %d of them thinking",
+		4500-len(reviewAnswer)+20))
+}
+
+// A review that is whole but is not JSON was not cut off, so the cap is not what to blame.
+func (s *ReviewSuite) TestAnAnswerThatIsNotJSONKeepsItsOwnError() {
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: 100, Answer: "The caller moved a booking."})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "decode review")
+	s.NotContains(err.Error(), "stopped early")
 }
 
 func (s *ReviewSuite) TestAReviewWhoseThinkingTookTheWholeCapSaysSo() {
