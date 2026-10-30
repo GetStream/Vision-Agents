@@ -92,7 +92,10 @@ func DestinationTransfer(destinations []Destination) harness.Tool {
 	warm := false
 	for _, destination := range destinations {
 		names = append(names, destination.Name)
-		fmt.Fprintf(&description, "\n- %s: %s", destination.Name, destination.When)
+		fmt.Fprintf(&description, "\n- %s", destination.Name)
+		if destination.When != "" {
+			fmt.Fprintf(&description, ": %s", destination.When)
+		}
 		warm = warm || destination.Warm
 	}
 	properties := map[string]any{
@@ -564,7 +567,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
-	} else if to, unsourced := unsourcedTransfer(record, requested.Call, told); unsourced {
+	} else if to, unsourced := unsourcedTransfer(record, requested.Call, told); unsourced && len(a.options.Destinations) == 0 {
 		parts = llm.TextParts(unsourcedTransferResult(to))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
@@ -778,6 +781,9 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 func (a *Agent) availableTools() harness.Tools {
 	var available harness.Tools
 	for _, tool := range a.options.Tools.Tools {
+		if tool.Name == toolTransfer && len(a.options.Destinations) > 0 {
+			tool = DestinationTransfer(a.options.Destinations)
+		}
 		runnable := a.options.ToolRunner != nil
 		switch {
 		case tool.Name == toolPress:
@@ -983,6 +989,11 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 
 	known := a.heardSoFar()
 	if err := a.options.Telephony.Transfer(ctx, arguments.To); err != nil {
+		if len(a.options.Destinations) > 0 {
+			// The model is told the failure, and the error may quote the number it must not see.
+			a.logger.Error("transfer failed", "to", arguments.To, "error", err)
+			return "", false, fmt.Errorf("agent: the transfer to %s did not go through", arguments.Destination)
+		}
 		return "", false, fmt.Errorf("agent: transfer to %s: %w", arguments.To, err)
 	}
 	a.emitter.Send(Transferred{

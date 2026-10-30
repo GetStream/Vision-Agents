@@ -469,11 +469,6 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 // offerDestinations replaces the transfer tool with one that names who can be reached.
 func (s *AgentSuite) offerDestinations(destinations ...Destination) {
 	s.destinations = destinations
-	for i, tool := range s.tools.Tools {
-		if tool.Name == toolTransfer {
-			s.tools.Tools[i] = DestinationTransfer(destinations)
-		}
-	}
 }
 
 func (s *AgentSuite) offeredTool(name string) (llm.Tool, bool) {
@@ -516,7 +511,7 @@ func (s *AgentSuite) TestATransferToADestinationDialsItsNumber() {
 	s.Equal("+15550001111", transferredIn(s.reported())[0].To, "the operator's event lost the number")
 }
 
-func (s *AgentSuite) TestADestinationNameIsMatchedLooselyButNotGuessed() {
+func (s *AgentSuite) TestADestinationNameIgnoresCaseAndSpaces() {
 	s.onACall()
 	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
 	s.join(false)
@@ -566,6 +561,22 @@ func (s *AgentSuite) TestWithDestinationsANumberIsNeverDialled() {
 	s.never(s.left, "the agent left a call it never transferred")
 }
 
+func (s *AgentSuite) TestAFailedTransferToADestinationDoesNotTellTheModelTheNumber() {
+	s.onACall()
+	s.line.transferErr = errors.New("+15550001111 refused")
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.NotContains(ran.Result, "555000")
+}
+
 func (s *AgentSuite) TestAColdDestinationDropsTheSummary() {
 	s.onACall()
 	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
@@ -607,6 +618,7 @@ func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
 	s.offerDestinations(
 		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
 		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+		Destination{Name: "Billing", Number: "+15550003333"},
 	)
 	s.join(false)
 
@@ -616,12 +628,14 @@ func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
 	s.NotContains(properties, "to")
 	s.NotContains(properties, "summary", "only cold destinations, so nothing to introduce")
 	destination := properties["destination"].(map[string]any)
-	s.ElementsMatch([]string{"Sales", "Support"}, destination["enum"])
+	s.ElementsMatch([]string{"Sales", "Support", "Billing"}, destination["enum"])
 	encoded, err := json.Marshal(tool)
 	s.Require().NoError(err)
 	s.NotContains(string(encoded), "555000")
 	s.Contains(tool.Description, "- Sales: buying")
 	s.Contains(tool.Description, "- Support: broken")
+	s.Contains(tool.Description, "- Billing")
+	s.NotContains(tool.Description, "Billing:")
 
 	s.Contains(DestinationTransfer([]Destination{{Name: "Sales", Number: "+15550001111", Warm: true}}).
 		Parameters["properties"], "summary")
