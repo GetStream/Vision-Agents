@@ -833,6 +833,8 @@ type AgentSuite struct {
 	// line is what the agent may do to the call, present only when a test gives it
 	// telephony.
 	line *stubTelephony
+	// destinations are who the agent may transfer to, by name, when a test gives it any.
+	destinations []Destination
 	// tools are what the model may run, which mean nothing without something to run them.
 	tools harness.Tools
 	// runner carries out the tools this package does not own, present only when a test
@@ -924,6 +926,7 @@ func (s *AgentSuite) SetupTest() {
 	s.box = nil
 	s.shelf = nil
 	s.line = nil
+	s.destinations = nil
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.toolPolicy = nil
@@ -1162,6 +1165,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,
+		Destinations:       s.destinations,
 		ToolRunner:         running,
 		ToolPolicy:         s.toolPolicy,
 		Tools:              s.tools,

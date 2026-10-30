@@ -147,6 +147,9 @@ type Options struct {
 	// Telephony is what the agent may do to the call itself. Without it the agent can
 	// only talk, which is what a call that is not on a phone network can do.
 	Telephony Telephony
+	// Destinations, when set, are the only places a transfer may go, asked for by name:
+	// a number the model supplies is never dialled.
+	Destinations []Destination
 	// ToolRunner carries out the tools that are not the two acting on the phone call,
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner

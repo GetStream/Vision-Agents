@@ -64,6 +64,61 @@ type Telephony interface {
 	// SendDigits presses digits on the keypad of the call the agent placed, which is how
 	// it gets past a menu.
 	SendDigits(ctx context.Context, digits string) error
+	// Placed reports whether the call was placed from here, which is what gives it a leg
+	// to press digits on.
+	Placed() bool
+}
+
+// Destination is a number the agent may hand the caller to, which the model asks for by
+// Name and never sees the Number of.
+type Destination struct {
+	Name   string
+	Number string
+	// When tells the model what to transfer to this destination for.
+	When string
+	// Warm has the agent introduce the caller to whoever answers. Otherwise it just leaves.
+	Warm bool
+}
+
+// DestinationTransfer is the transfer tool for an agent that may only hand callers to the
+// destinations named. The number is the router's to supply: a model that could write one
+// could be talked into dialling any.
+func DestinationTransfer(destinations []Destination) harness.Tool {
+	names := make([]string, 0, len(destinations))
+	var description strings.Builder
+	description.WriteString("Hand the caller to a human and leave the call. Use it when they ask for a " +
+		"person, or when what they need is beyond you. You stop being on the call once the human " +
+		"answers, so say goodbye in the same reply. Choose who to hand them to:")
+	warm := false
+	for _, destination := range destinations {
+		names = append(names, destination.Name)
+		fmt.Fprintf(&description, "\n- %s: %s", destination.Name, destination.When)
+		warm = warm || destination.Warm
+	}
+	properties := map[string]any{
+		"destination": map[string]any{
+			"type":        "string",
+			"enum":        names,
+			"description": "who to hand the caller to",
+		},
+	}
+	if warm {
+		properties["summary"] = map[string]any{
+			"type": "string",
+			"description": "One or two sentences telling the human who is calling and what they want. " +
+				"It is spoken aloud on the call, and the caller hears it too, so say it as you would " +
+				"with them listening.",
+		}
+	}
+	return harness.Tool{
+		Name:        toolTransfer,
+		Description: description.String(),
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": properties,
+			"required":   []string{"destination"},
+		},
+	}
 }
 
 // ToolRunner carries out the tools this package does not know about, which is every tool
@@ -151,8 +206,9 @@ func telephonyTool(name string) bool {
 // a warm transfer and its absence makes it a cold one, because the difference between the
 // two is only whether the human is told anything before the agent goes.
 type transferArguments struct {
-	To      string `json:"to"`
-	Summary string `json:"summary"`
+	To          string `json:"to"`
+	Destination string `json:"destination"`
+	Summary     string `json:"summary"`
 }
 
 // pressArguments is what the model fills in to press a menu option.
@@ -724,6 +780,8 @@ func (a *Agent) availableTools() harness.Tools {
 	for _, tool := range a.options.Tools.Tools {
 		runnable := a.options.ToolRunner != nil
 		switch {
+		case tool.Name == toolPress:
+			runnable = a.options.Telephony != nil && a.options.Telephony.Placed()
 		case telephonyTool(tool.Name):
 			runnable = a.options.Telephony != nil
 		case tool.Name == toolLookup:
@@ -907,6 +965,18 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "", false, fmt.Errorf("agent: could not read the transfer arguments: %w", err)
 	}
+	if len(a.options.Destinations) > 0 {
+		// Whatever number the model wrote is ignored: with destinations it names one.
+		chosen, found := a.destination(arguments.Destination)
+		if !found {
+			return fmt.Sprintf(didNotWork+"%q is not somewhere you can transfer to. Choose one of: %s.",
+				arguments.Destination, strings.Join(a.destinationNames(), ", ")), false, nil
+		}
+		arguments.To = chosen.Number
+		if !chosen.Warm {
+			arguments.Summary = ""
+		}
+	}
 	if strings.TrimSpace(arguments.To) == "" {
 		return "", false, errors.New("agent: a transfer needs a number to transfer to")
 	}
@@ -950,6 +1020,24 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 		return "", false, fmt.Errorf("agent: finish the handover summary: %w", err)
 	}
 	return "The caller has been introduced and transferred, and you have left the call.", true, nil
+}
+
+func (a *Agent) destination(name string) (Destination, bool) {
+	name = strings.TrimSpace(name)
+	for _, destination := range a.options.Destinations {
+		if strings.EqualFold(destination.Name, name) {
+			return destination, true
+		}
+	}
+	return Destination{}, false
+}
+
+func (a *Agent) destinationNames() []string {
+	names := make([]string, 0, len(a.options.Destinations))
+	for _, destination := range a.options.Destinations {
+		names = append(names, destination.Name)
+	}
+	return names
 }
 
 // press presses digits at a menu.

@@ -27,6 +27,7 @@ type stubTelephony struct {
 	transferred  []string
 	tried        []string
 	pressed      []string
+	placed       bool
 	transferErr  error
 	sendDigitErr error
 }
@@ -52,6 +53,8 @@ func (t *stubTelephony) SendDigits(_ context.Context, digits string) error {
 	return nil
 }
 
+func (t *stubTelephony) Placed() bool { return t.placed }
+
 func (t *stubTelephony) handedOver() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -73,7 +76,7 @@ func (t *stubTelephony) keypad() []string {
 
 // onACall gives the agent a phone line and the tools that act on it.
 func (s *AgentSuite) onACall() {
-	s.line = &stubTelephony{}
+	s.line = &stubTelephony{placed: true}
 	tools, err := harness.DefaultTools()
 	s.Require().NoError(err)
 	s.tools = tools
@@ -461,6 +464,167 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
 		"the human was never introduced to the caller")
 	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+// offerDestinations replaces the transfer tool with one that names who can be reached.
+func (s *AgentSuite) offerDestinations(destinations ...Destination) {
+	s.destinations = destinations
+	for i, tool := range s.tools.Tools {
+		if tool.Name == toolTransfer {
+			s.tools.Tools[i] = DestinationTransfer(destinations)
+		}
+	}
+}
+
+func (s *AgentSuite) offeredTool(name string) (llm.Tool, bool) {
+	for _, tool := range s.agent.ToolDefinitions() {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return llm.Tool{}, false
+}
+
+func (s *AgentSuite) TestAnAgentThatWasCalledIsNotOfferedTheKeypad() {
+	s.onACall()
+	s.line.placed = false
+	s.join(false)
+
+	_, transfers := s.offeredTool("transfer")
+	_, presses := s.offeredTool("press")
+	s.True(transfers)
+	s.False(presses, "a call nobody placed has no leg to press digits on")
+}
+
+func (s *AgentSuite) TestATransferToADestinationDialsItsNumber() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to buy")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.Equal("+15550001111", transferredIn(s.reported())[0].To, "the operator's event lost the number")
+}
+
+func (s *AgentSuite) TestADestinationNameIsMatchedLooselyButNotGuessed() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":" sales "}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "a name differing in case and spaces was refused")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+}
+
+func (s *AgentSuite) TestAnUnknownDestinationDialsNothingAndNamesTheValidOnes() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111"},
+		Destination{Name: "Support", Number: "+15550002222"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Billing"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "billing please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.Contains(ran.Result, "Support")
+	s.NotContains(ran.Result, "+1555")
+	s.Empty(s.line.attempted())
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestWithDestinationsANumberIsNeverDialled() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550009999."
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"to":"+15550009999"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "put me through")
+
+	s.awaitToolRan()
+	s.Empty(s.line.attempted(), "a number the model supplied was dialled though destinations are set")
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestAColdDestinationDropsTheSummary() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.False(s.spokenText("Alice needs a refund"), "a cold destination was told the summary")
+	s.Empty(transferredIn(s.reported())[0].Summary)
+}
+
+func (s *AgentSuite) TestAWarmDestinationIntroducesTheCaller() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111", Warm: true})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.never(func() bool { return s.spokenText("Alice needs a refund") },
+		"the summary was said to an empty seat")
+
+	s.speak(stt.Participant{ID: "human"})
+
+	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+		"the human was never introduced to the caller")
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+	)
+	s.join(false)
+
+	tool, ok := s.offeredTool("transfer")
+	s.Require().True(ok)
+	properties := tool.Parameters["properties"].(map[string]any)
+	s.NotContains(properties, "to")
+	s.NotContains(properties, "summary", "only cold destinations, so nothing to introduce")
+	destination := properties["destination"].(map[string]any)
+	s.ElementsMatch([]string{"Sales", "Support"}, destination["enum"])
+	encoded, err := json.Marshal(tool)
+	s.Require().NoError(err)
+	s.NotContains(string(encoded), "555000")
+	s.Contains(tool.Description, "- Sales: buying")
+	s.Contains(tool.Description, "- Support: broken")
+
+	s.Contains(DestinationTransfer([]Destination{{Name: "Sales", Number: "+15550001111", Warm: true}}).
+		Parameters["properties"], "summary")
 }
 
 func (s *AgentSuite) TestATransferToANumberOnlyTheCallerSaidIsRefused() {
