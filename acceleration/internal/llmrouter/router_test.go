@@ -374,6 +374,20 @@ func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
 	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
 		"a response the caller abandoned is recorded as that, not as a provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"a response the screen refused is no provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true, TimedOut: true}),
+		"the refusal is what ended it, whatever deadline it also ran past")
+}
+
+func (s *LLMRouterSuite) TestARefusalWithoutUsageIsEstimatedWhereAProviderFailureIsNot() {
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"the screen cut it off before the vendor said what it used, as a cancel does")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, OutputText: "Sure"}))
+	s.False(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, UsageReported: true}),
+		"a vendor that said what it used is taken at its word")
+	s.False(unreported(llm.Response{Status: llm.StatusFailed, OutputText: "Sure"}),
+		"a vendor is not taken to bill its own failure")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
