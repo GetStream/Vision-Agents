@@ -11,6 +11,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -134,7 +135,7 @@ func (s *StreamAppsSuite) talkedIn(chat *chattest.Server, user, channel string, 
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
 		ID: s.utils.uuid(), CustomerID: s.customerID(), StreamAppPK: app, UserID: user,
-		AgentID: "agent", ConversationID: chatlog.ChannelType + ":" + channel, State: store.SessionClosed,
+		CallerKind: string(auth.KindGuest), AgentID: "agent", ConversationID: chatlog.ChannelType + ":" + channel, State: store.SessionClosed,
 	}))
 }
 

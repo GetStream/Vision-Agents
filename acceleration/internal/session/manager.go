@@ -1148,6 +1148,17 @@ func (o Owner) Reaches(other Owner) bool {
 		(other.Kind == auth.KindServer && o.Kind.Verified() && o.UserID != "")
 }
 
+// reachedKinds is the kinds of caller whose sessions under this owner's user id the owner
+// Reaches: always its own, and a backend's when the owner is somebody a backend may open a
+// session for. Never empty, so it always narrows.
+func (o Owner) reachedKinds() []string {
+	kinds := []string{string(o.Kind)}
+	if o.Reaches(Owner{CustomerID: o.CustomerID, UserID: o.UserID, Kind: auth.KindServer}) {
+		kinds = append(kinds, string(auth.KindServer))
+	}
+	return kinds
+}
+
 // Get returns a session its owner may have. Two customers cannot see each other's and
 // neither can two people, so an id that exists but belongs to somebody else is reported
 // as not existing at all: a refusal would confirm it was real.
@@ -1306,6 +1317,9 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 			return nil, nil
 		}
 		filter.UserID = owner.UserID
+		// The kind is narrowed too, in the query rather than after it so a page is still
+		// full: a row is listed on exactly the terms its session is reached by id.
+		filter.CallerKinds = owner.reachedKinds()
 	}
 
 	found := make([]Found, 0, filter.Limit)

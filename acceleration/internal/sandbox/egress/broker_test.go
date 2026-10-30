@@ -582,6 +582,28 @@ func (s *BrokerSuite) TestADisconnectedConnectionIsRefusedAtTheProxy() {
 	s.Empty(s.rig.host.authorizations())
 }
 
+// TestAWithdrawnCredentialsPlaceholderGetsTheProxysAnswer: a revoked connection is a 401
+// naming its binding until the next run, and once that run withdraws it the proxy refuses the
+// tunnel to its host, so code never reads a withdrawal as the host failing. The allowed domain
+// keeps the record, and so the proxy, after the withdrawal. Both answers are the ones the proxy
+// gave before AI-1876 changed the daytona broker's withdrawal.
+func (s *BrokerSuite) TestAWithdrawnCredentialsPlaceholderGetsTheProxysAnswer() {
+	broker, mount := s.allowing("session-withdrawn", "pypi.test")
+	s.fail(sandbox.ErrNoCredential)
+
+	status, body := s.send(mount, "api.github.com", mount.Env["GITHUB_TOKEN"])
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, "https://api.github.com/user", nil)
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+mount.Env["GITHUB_TOKEN"])
+	_, err = s.rig.sandboxClient(s.T(), mount).Do(request)
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal("egress: the connection gives no token: github\n", body)
+	s.ErrorContains(err, "Forbidden")
+	s.Empty(s.rig.host.authorizations())
+}
+
 // lateLinear is a grant whose connection the user has not made yet, and linear the one Bind
 // gives it once they have.
 var (

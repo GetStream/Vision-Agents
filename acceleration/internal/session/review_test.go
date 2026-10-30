@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -227,4 +228,83 @@ func (s *ReviewSuite) TestAnAnswerThatIsNotJsonIsRefused() {
 	_, err := parseJudgement("I think the call went quite well.")
 
 	s.Require().Error(err)
+}
+
+// thoughtOver is a call short enough that any answer the reviewer does not write whole is
+// down to its token cap, not to the call.
+var thoughtOver = []spoken{
+	{text: "can I move my booking to Friday?"},
+	{agent: true, text: "Done, it is on Friday at ten."},
+}
+
+// reviewAnswer is a whole review, as long as the guide asks for.
+const reviewAnswer = `{"summary": "The caller wanted to move a booking to Friday. The agent moved it to ten on Friday ` +
+	`and confirmed the new time.", "score": 5, "notes": "Nothing to act on: the agent did what was asked at once."}`
+
+// judgedBy is what a reviewer whose model is thinker made of thoughtOver.
+func (s *ReviewSuite) judgedBy(thinker *llmtest.Thinker) (judgement, error) {
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return thinker, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	reviews := newReviewer(router, nil, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(reviews.Close)
+	return reviews.judge(context.Background(), store.Call{ID: "call-thought-over", CustomerID: "customer-reviewed"},
+		"", "en-low-latency", "", thoughtOver)
+}
+
+// Claude Opus 5.5 thought for up to 456 tokens before writing a review on staging, all of
+// it out of the same cap as the review.
+func (s *ReviewSuite) TestAModelThatThinksBeforeItReviewsStillWritesTheWholeReview() {
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 456, Answer: reviewAnswer})
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
+	s.Contains(verdict.Summary, "move a booking to Friday")
+	s.Contains(verdict.Notes, "Nothing to act on")
+}
+
+// The most Claude Opus 5.5 was seen thinking on one turn on staging.
+func (s *ReviewSuite) TestAModelThatThinksAtLengthStillWritesTheWholeReview() {
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 1300, Answer: reviewAnswer})
+
+	s.Require().NoError(err)
+	s.Contains(verdict.Notes, "Nothing to act on")
+}
+
+func (s *ReviewSuite) TestAReviewTheCapCutOffSaysSo() {
+	// The cap ends the answer 20 tokens short of its closing brace.
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom - len(reviewAnswer) + 20, Answer: reviewAnswer})
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "decode review")
+	// 4,500 tokens were written, the last 20 of them short of the answer's end; the rest was thinking.
+	s.Contains(err.Error(), fmt.Sprintf("the review stopped early (max_output_tokens) after 4500 output tokens, %d of them thinking",
+		4500-len(reviewAnswer)+20))
+}
+
+// A review that is whole but is not JSON was not cut off, so the cap is not what to blame.
+func (s *ReviewSuite) TestAnAnswerThatIsNotJSONKeepsItsOwnError() {
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: 100, Answer: "The caller moved a booking."})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "decode review")
+	s.NotContains(err.Error(), "stopped early")
+}
+
+func (s *ReviewSuite) TestAReviewWhoseThinkingTookTheWholeCapSaysSo() {
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom + 100, Answer: reviewAnswer})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "stopped early (max_output_tokens)")
+}
+
+func (s *ReviewSuite) TestAWholeReviewIsReadEvenWhenTheCapCutWhatFollowedIt() {
+	// The cap ends the answer in the blank lines after the review, so the review is whole.
+	trailed := reviewAnswer + strings.Repeat("\n", 40)
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom - len(reviewAnswer) - 20, Answer: trailed})
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
 }

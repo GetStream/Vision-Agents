@@ -291,7 +291,7 @@ type CreateSessionRequest struct {
 	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
 	Tools                *[]SessionTool     `json:"tools,omitempty"`
 	Tts                  *string            `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	UserId               *string            `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
+	UserId               *string            `json:"user_id,omitempty" doc:"The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id." default:"vision-agent"`
 	UserName             *string            `json:"user_name,omitempty" default:"Vision Agent"`
 	Video                *SessionVideo      `json:"video,omitempty"`
 	Voice                *string            `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
@@ -822,7 +822,7 @@ type Session struct {
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`
-	UserId           string                  `json:"user_id"`
+	UserId           string                  `json:"user_id" doc:"The name the agent joined the call as. It is not the owner of the session."`
 	Usage            *CallUsage              `json:"usage,omitempty" doc:"What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only."`
 	Video            *SessionVideo           `json:"video,omitempty"`
 	Voice            *string                 `json:"voice,omitempty" doc:"The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none."`
