@@ -277,6 +277,13 @@ def call():
     return DummyCall(call_id=str(uuid4()))
 
 
+@pytest.fixture
+def stream_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Stream key and secret for an agent built from a config, which nothing here sends."""
+    monkeypatch.setenv("STREAM_API_KEY", "test-key")
+    monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+
+
 class SomeException(Exception):
     pass
 
@@ -1156,6 +1163,7 @@ class TestAgent:
 
         assert agent.instructions.full_reference == DEFAULT_INSTRUCTIONS
 
+    @pytest.mark.usefixtures("stream_credentials")
     async def test_an_agent_built_from_a_config_is_instructed_by_it(self):
         # The config carries its own instructions, and the backend lets anything the
         # agent says override them, so a default here would replace what it says.
@@ -1169,6 +1177,7 @@ class TestAgent:
 
         assert agent.instructions.full_reference == ""
 
+    @pytest.mark.usefixtures("stream_credentials")
     async def test_instructions_passed_alongside_a_config_still_win(self):
         agent = Agent(
             config="support",
