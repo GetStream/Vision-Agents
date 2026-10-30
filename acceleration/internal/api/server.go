@@ -416,9 +416,9 @@ type Server struct {
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
 
-	// serverSide matches the requests the spec marks server-side only. It holds no
-	// handlers: what is registered on it is the patterns, and matching one is the answer.
-	serverSide *http.ServeMux
+	// serverSide is every operation the spec marks server-side only, as its method and the
+	// route pattern it is served under.
+	serverSide map[string]bool
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
@@ -732,7 +732,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
 	s.newAPI(mux)
-	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
 	//
@@ -749,7 +748,7 @@ func (s *Server) Handler() http.Handler {
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
 	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))))
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(mux)))))))))))
 	if s.directory == nil {
 		return served
 	}
@@ -1026,52 +1025,55 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 	return l.ResponseWriter
 }
 
-// serverSideRoutes builds the matcher for every operation an end user's device may not
-// reach, which is every operation the spec does not mark client-accessible.
+// serverSideRoutes lists every operation an end user's device may not reach, which is
+// every operation the spec does not mark client-accessible, by its method and path
+// template.
 //
-// The spec's own path templates are the patterns, because OpenAPI writes a parameter as
-// {id} and so does ServeMux: a route is registered rather than translated. Matching is
-// then the same routing the generated handlers get, so an operation cannot be reached by
-// a path that spells it differently.
+// The spec's own path templates are the keys, because OpenAPI writes a parameter as {id}
+// and so does chi: a template is the pattern its operation is routed under, so a request is
+// matched to one by the same routing that serves it.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
 // before there is a caller to classify — the health check and the plugin redirect, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
-func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
-	operations := specifiedOperations(document)
-
-	routes := http.NewServeMux()
-	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	for _, operation := range operations {
+func serverSideRoutes(document *huma.OpenAPI) (map[string]bool, error) {
+	routes := map[string]bool{}
+	for _, operation := range specifiedOperations(document) {
 		// The connection proxy refuses a client-side caller itself (proxyConnection), on every
 		// path; with connectors off it is no route, and a 403 here would answer for it.
 		if operation.public || operation.open || strings.HasPrefix(operation.path, connectionProxyPath) {
 			continue
 		}
-		routes.Handle(operation.method+" "+operation.path, nothing)
+		routes[operation.method+" "+operation.path] = true
 	}
 	return routes, nil
 }
 
-// withServerSide refuses the generated operations only a backend may reach.
+// withServerSide refuses the operations only a backend may reach, then serves the request
+// with routes.
 //
 // It sits after withCustomer, because refusing a caller for what it is means having worked
-// out what it is first. The four sockets are left out of the embedded spec by being left
-// out of generation, so socketRoutes puts them back rather than leaving them to be open by
-// omission.
+// out what it is first. Which operation a request is for is asked of routes, the router that
+// serves it, on the path it routes by: a matcher of its own would clean or decode a path
+// differently, and a path that read as no server-side operation there would still reach one
+// here.
 //
 // A caller that authenticated and asked for one of these gets a 403 rather than a 401: it
 // has already proved who it is, so there is nothing to be learned from a specific answer
 // and a caller told "unauthenticated" would go looking for a credential problem it does
 // not have. One that never authenticated is left to the handler's own 401.
-func (s *Server) withServerSide(next http.Handler) http.Handler {
+func (s *Server) withServerSide(routes *chi.Mux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, matched := s.serverSide.Handler(r); matched != "" {
+		path := r.URL.RawPath
+		if path == "" {
+			path = r.URL.Path
+		}
+		if s.serverSide[r.Method+" "+routes.Find(chi.NewRouteContext(), r.Method, path)] {
 			if s.refuseClientSide(w, r) {
 				return
 			}
 		}
-		next.ServeHTTP(w, r)
+		routes.ServeHTTP(w, r)
 	})
 }
 

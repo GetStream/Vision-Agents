@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -56,6 +57,27 @@ func (s *PostureSuite) TestEveryOperationTheSpecDoesNotOpenIsRefusedToAUsersDevi
 		s.Equal(http.StatusForbidden, status, operation.method+" "+operation.path)
 	}
 	s.NotZero(refused, "the spec leaves nothing server-side only")
+}
+
+func (s *PostureSuite) TestAServerSideOperationIsRefusedHoweverItsParametersAreSpelled() {
+	// The router that serves a request is what says which operation it is for. A parameter
+	// written as a dot segment, or left empty between two others, is a path that cleans into
+	// no operation at all and is still routed to the one it spells.
+	refused := 0
+	for _, operation := range s.operations() {
+		if operation.public || operation.open || !pathParameter.MatchString(operation.path) {
+			continue
+		}
+		refused++
+
+		status, _ := s.client.call(operation.method, pathParameter.ReplaceAllString(operation.path, "."), empty)
+		s.Equal(http.StatusForbidden, status, operation.method+" "+operation.path+" with a dot segment")
+		if !strings.HasSuffix(operation.path, "}") {
+			status, _ = s.client.call(operation.method, pathParameter.ReplaceAllString(operation.path, ""), empty)
+			s.Equal(http.StatusForbidden, status, operation.method+" "+operation.path+" left empty")
+		}
+	}
+	s.NotZero(refused, "no server-side operation takes a parameter")
 }
 
 func (s *PostureSuite) TestEveryOperationTheSpecOpensIsReachableByAUsersDevice() {
