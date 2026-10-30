@@ -16,8 +16,9 @@ import (
 type hangUp struct {
 	manager *Manager
 	session *Session
-	// end ends the call at Stream. Nil for a call the caller named, which the agent only
-	// leaves: other people may still be on it.
+	// end ends the call at Stream. Nil when the agent only leaves: for a call the caller
+	// named, where other people may still be on it, and for the session's own call with no
+	// Stream client to end it.
 	end func(ctx context.Context) error
 
 	mu   sync.Mutex
