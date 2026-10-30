@@ -280,7 +280,8 @@ type Spec struct {
 	// dashboard.
 	ReturnURL string
 	// ServerInstructions are what those servers said at initialize about using their
-	// tools, added after Instructions. The session fills it in once they are open.
+	// tools, which the agent reads after Instructions and apart from them
+	// (agent.Options.ServerInstructions). The session fills it in once they are open.
 	ServerInstructions string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
@@ -805,7 +806,8 @@ func (s Spec) LLMOverwrites() options.LLM {
 
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has. The agent adds
-// the clock line to every turn itself.
+// the clock line to every turn itself. What the servers said is not part of it: the agent is
+// handed that apart, as no instruction of the operator's.
 func (s Spec) prompt() string {
 	var parts []string
 	if s.Navigating {
@@ -814,10 +816,19 @@ func (s Spec) prompt() string {
 	if s.Instructions != "" {
 		parts = append(parts, s.Instructions)
 	}
-	if s.ServerInstructions != "" {
-		parts = append(parts, s.ServerInstructions)
-	}
 	return strings.Join(parts, "\n\n")
+}
+
+// recordedPrompt is what a call records the agent was told: the prompt, then what the
+// servers said, in the order the agent reads them.
+func (s Spec) recordedPrompt() string {
+	if s.ServerInstructions == "" {
+		return s.prompt()
+	}
+	if prompt := s.prompt(); prompt != "" {
+		return prompt + "\n\n" + s.ServerInstructions
+	}
+	return s.ServerInstructions
 }
 
 // duplex is how the agent listens and talks at the same time.
