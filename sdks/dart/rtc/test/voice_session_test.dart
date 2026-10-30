@@ -144,6 +144,16 @@ void main() {
       await voice.end();
     });
 
+    test('turning the camera on before joining has no call to look through', () async {
+      final voice = await VoiceSession.attach(agents, 'voice-1');
+
+      await voice.setCameraEnabled(true);
+
+      // ignore: invalid_use_of_internal_member
+      expect(voice.session.camera, isNull);
+      await voice.end();
+    });
+
     test('leaving a session something else started leaves it running', () async {
       final voice = await VoiceSession.attach(agents, 'voice-1');
 
