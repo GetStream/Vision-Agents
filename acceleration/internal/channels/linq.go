@@ -80,7 +80,8 @@ type linqDelivery struct {
 			Name   string `json:"name"`
 		} `json:"sender_handle"`
 		Chat struct {
-			ID          string `json:"id"`
+			ID          string          `json:"id"`
+			IsGroup     json.RawMessage `json:"is_group"`
 			OwnerHandle struct {
 				Handle string `json:"handle"`
 			} `json:"owner_handle"`
@@ -119,6 +120,9 @@ func (p *linqProvider) Parse(body []byte) ([]Message, error) {
 		Thread: data.Chat.ID,
 		Name:   data.SenderHandle.Name,
 		Text:   text,
+		// Linq's events show is_group in their example only, so a chat that does not say
+		// false there is taken as a group's.
+		Group: string(data.Chat.IsGroup) != "false",
 	}}, nil
 }
 

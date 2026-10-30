@@ -182,6 +182,9 @@ When the router cannot read an organization's channel counters or the calls it h
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### A reply in an iMessage group chat draws on nothing of one person's own
+
+On an iMessage line connected with `POST /v1/agents/channels`, a message in a group chat was answered in the sender's own conversation with the agent and with the tools that act for them, and its reply reached everyone in the chat. A message whose chat Linq does not say is 1:1 (`data.chat.is_group` `false`) is now answered in a conversation of its own, as an anonymous caller: no `session` connector connections, no user plugins and no scheduling tools. It does not move where a message for the sender alone is sent, and its conversation is not carried on by the next message. A 1:1 chat is answered as before.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

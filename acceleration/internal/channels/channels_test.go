@@ -465,7 +465,7 @@ func (s *LinqSuite) TestAMessageIsReadWithTheChatToAnswerIn() {
 	messages, err := s.provider.Parse([]byte(`{"event_type":"message.received","data":{
 		"id":"msg_1","direction":"inbound","parts":[{"type":"text","value":"hello"}],
 		"sender_handle":{"handle":"+13479018418","name":"Thierry"},
-		"chat":{"id":"chat_7","owner_handle":{"handle":"+13475550100"}}}}`))
+		"chat":{"id":"chat_7","is_group":false,"owner_handle":{"handle":"+13475550100"}}}}`))
 
 	s.Require().NoError(err)
 	s.Require().Len(messages, 1)
@@ -473,6 +473,20 @@ func (s *LinqSuite) TestAMessageIsReadWithTheChatToAnswerIn() {
 		Kind: IMessage, ID: "msg_1", From: "+13479018418", To: "+13475550100",
 		Thread: "chat_7", Name: "Thierry", Text: "hello",
 	}, messages[0])
+}
+
+// A reply in a group chat reaches everybody in it, and a chat that does not say it is one
+// person's is taken as a group's.
+func (s *LinqSuite) TestAChatThatIsOrMayBeAGroupIsReadAsOne() {
+	for _, chat := range []string{`"is_group":true`, `"is_group":"no"`, `"owner":"nobody"`} {
+		messages, err := s.provider.Parse([]byte(`{"event_type":"message.received","data":{
+			"id":"msg_1","direction":"inbound","parts":[{"type":"text","value":"hello"}],
+			"sender_handle":{"handle":"+13479018418"},"chat":{"id":"chat_7",` + chat + `}}}`))
+
+		s.Require().NoError(err, chat)
+		s.Require().Len(messages, 1, chat)
+		s.True(messages[0].Group, chat)
+	}
 }
 
 func (s *LinqSuite) TestTheRoutersOwnMessageComingBackIsNotAnswered() {

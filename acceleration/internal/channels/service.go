@@ -413,6 +413,13 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	spec.ConversationID = identity.ConversationID
 	spec.Caller = routing.Caller{UserID: identity.UserID, Verified: true}
 	spec.CallerKind = auth.KindAuthenticated
+	if message.Group {
+		// A reply in a group chat reaches everybody in it, so nothing that is the sender's
+		// own goes into one: not the conversation they hold with the agent, nor the tools
+		// that act for a signed-in user, such as their connections and scheduled tasks.
+		spec.ConversationID = ""
+		spec.CallerKind = auth.KindAnonymous
+	}
 	// No key started it: the person texted one of the app's numbers.
 	spec.Attribution = routing.Attribution{APIKey: routing.OriginPhoneInbound,
 		UserID: identity.UserID, CallerKind: routing.CallerUser}
@@ -444,7 +451,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	// The conversation a session opened is the one the next message carries on, so it is
 	// recorded before the turn rather than after: a turn that fails halfway still leaves the
 	// person's history where they can see it.
-	if identity.ConversationID == "" {
+	if identity.ConversationID == "" && !message.Group {
 		identity.ConversationID = created.Spec().ConversationID
 		if err := s.store.SaveChannelIdentity(ctx, &identity); err != nil {
 			s.logger.Error("could not record a channel conversation", "agent", config.Name, "error", err)
@@ -475,8 +482,9 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 	identity, err := s.store.ChannelIdentity(ctx, account.CustomerID, config.ID, account.Kind, message.From)
 	if err == nil {
 		// Where a reply reaches this person moves with the chat they wrote in,
-		// which a proactive message later needs: it is kept as it changes.
-		if message.Thread != "" && identity.Thread != message.Thread {
+		// which a proactive message later needs: it is kept as it changes. A group chat
+		// is not where a message for them alone goes.
+		if message.Thread != "" && identity.Thread != message.Thread && !message.Group {
 			identity.Thread = message.Thread
 			if err := s.store.SaveChannelIdentity(ctx, &identity); err != nil {
 				s.logger.Error("could not record where a channel reply goes", "channel", account.Kind, "error", err)
@@ -496,6 +504,9 @@ func (s *Service) identify(ctx context.Context, config store.AgentConfig, accoun
 		Address:    message.From,
 		Thread:     message.Thread,
 		UserID:     "phone:" + message.From,
+	}
+	if message.Group {
+		identity.Thread = ""
 	}
 	if config.Channels.Identity == store.ChannelIdentityLink {
 		link, err := s.store.ClaimChannelLink(ctx, account.CustomerID, strings.TrimSpace(message.Text))

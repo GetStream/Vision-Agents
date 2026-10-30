@@ -6,11 +6,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +210,53 @@ func (s *RouterOpenedConnectorsSuite) TestAMessageOnALineImpliesNoAppOwnedConnec
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
+// A reply in an iMessage group chat reaches everybody in it, so the sender's connection is
+// not used for it, though it would be in their chat with the agent alone.
+func (s *RouterOpenedConnectorsSuite) TestAGroupChatMessageUsesNoneOfTheSendersConnections() {
+	sender := "+1347" + digits(s.utils.uuid())
+	connector := s.connector()
+	mine := s.userConnection(connector, "phone:"+sender)
+	line, config := s.imessageAgent(connector, s.grant(mine))
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Require().Equal(http.StatusAccepted, s.deliverIMessage(line, sender, "chat-"+s.utils.uuid(), true, "tell Nash"))
+
+	s.settled(config.Name, "phone:"+sender)
+	s.Zero(s.echoed(config.Name, "phone:"+sender))
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "the sender's connection did not reach the provider")
+}
+
+// A group chat message carries on none of the sender's own conversation with the agent, and
+// a message for them alone is still sent to their chat with the agent, not to the group.
+func (s *RouterOpenedConnectorsSuite) TestAGroupChatMessageLeavesTheSendersOwnConversationAndChatAlone() {
+	sender, alone, group := "+1347"+digits(s.utils.uuid()), "chat-"+s.utils.uuid(), "chat-"+s.utils.uuid()
+	connector := s.connector()
+	line, config := s.imessageAgent(connector, s.grant(s.userConnection(connector, "phone:"+sender)))
+	s.Require().Equal(http.StatusAccepted, s.deliverIMessage(line, sender, alone, false, "my address is 1 Main St"))
+	s.settled(config.Name, "phone:"+sender)
+	own, err := s.store.ChannelIdentity(context.Background(), s.customerID(), config.Id, "imessage", sender)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(own.ConversationID)
+
+	s.Require().Equal(http.StatusAccepted, s.deliverIMessage(line, sender, group, true, "where do I live?"))
+
+	s.Require().Eventually(func() bool {
+		found := s.sessionsOf(config.Name, "phone:"+sender)
+		return len(found) == 2 && found[0].ClosedAt != nil && found[1].ClosedAt != nil
+	}, settleFor, 50*time.Millisecond, "the group chat's message was not answered")
+	carriedOn := 0
+	for _, held := range s.sessionsOf(config.Name, "phone:"+sender) {
+		if held.ConversationID == own.ConversationID {
+			carriedOn++
+		}
+	}
+	s.Equal(1, carriedOn, "only the chat alone holds the sender's conversation")
+	after, err := s.store.ChannelIdentity(context.Background(), s.customerID(), config.Id, "imessage", sender)
+	s.Require().NoError(err)
+	s.Equal(own.ConversationID, after.ConversationID)
+	s.Equal(alone, after.Thread, "a message for the sender alone still goes to their own chat")
+}
+
 // connector stores a connector of the app's at the fake that takes a bearer token.
 func (s *RouterOpenedConnectorsSuite) connector() string {
 	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
@@ -370,6 +420,62 @@ func (s *RouterOpenedConnectorsSuite) deliverMessage(line ChannelAccount, from, 
 	request, err := http.NewRequest(http.MethodPost, s.server.URL+line.WebhookUrl, bytes.NewReader(body))
 	s.Require().NoError(err)
 	request.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+// imessageLine is an iMessage line's webhook path and the whsec_ secret Linq signs its
+// deliveries with.
+type imessageLine struct {
+	path   string
+	secret []byte
+}
+
+// imessageAgent is an agent answering on a new iMessage line, with connector bound by grant.
+func (s *RouterOpenedConnectorsSuite) imessageAgent(connector string, grant map[string]any) (imessageLine, AgentConfig) {
+	number := "+1555" + digits(s.utils.uuid())
+	secret := make([]byte, 32)
+	_, err := rand.Read(secret)
+	s.Require().NoError(err)
+	var line ChannelAccount
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/channels",
+		ConnectChannelRequest{
+			Kind:    string(channels.IMessage),
+			Number:  number,
+			Token:   pointerTo("linq-key"),
+			Signing: pointerTo("whsec_" + base64.StdEncoding.EncodeToString(secret)),
+		}, &line))
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "channelled-" + s.utils.uuid(), "mode": "text", "llm": "logging-in/login-model",
+		"channels":   map[string]any{"imessage": map[string]any{"number": number}},
+		"connectors": binding(connector, grant),
+	}, &config))
+	return imessageLine{path: line.WebhookUrl, secret: secret}, config
+}
+
+// deliverIMessage posts one message from a handle in a chat to an iMessage line's webhook,
+// signed as Linq signs it (Standard Webhooks), the chat a group one or the sender's alone.
+func (s *RouterOpenedConnectorsSuite) deliverIMessage(line imessageLine, from, chat string, group bool, text string) int {
+	body, err := json.Marshal(map[string]any{"event_type": "message.received", "data": map[string]any{
+		"id": "msg-" + s.utils.uuid(), "direction": "inbound",
+		"parts":         []any{map[string]any{"type": "text", "value": text}},
+		"sender_handle": map[string]any{"handle": from},
+		"chat":          map[string]any{"id": chat, "is_group": group},
+	}})
+	s.Require().NoError(err)
+	id, stamp := "msg_"+s.utils.uuid(), strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, line.secret)
+	mac.Write([]byte(id + "." + stamp + "."))
+	mac.Write(body)
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+line.path, bytes.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Webhook-Id", id)
+	request.Header.Set("Webhook-Timestamp", stamp)
+	request.Header.Set("Webhook-Signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	s.Require().NoError(err)

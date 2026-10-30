@@ -113,6 +113,8 @@ type Message struct {
 	// Media is how many files came with it, which makes a text an MMS. A message of files
 	// alone is billed and not answered.
 	Media int
+	// Group is a chat several people write in, where a reply reaches every one of them.
+	Group bool
 }
 
 // Reply is what the agent said, as a provider has to send it.
