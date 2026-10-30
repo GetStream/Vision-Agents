@@ -23,6 +23,8 @@ import (
 // 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
 // The error code "seven twenty", said where no case was mentioned, is not a case. An ID
 // written in told, the instructions the operator gave the agent, is the operator's to give.
+// So is one the caller wrote out whole with letters and digits in it ("logging in as
+// USR001"), unless they called it something else ("card KTR583027" is not a booking).
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
 	if json.Unmarshal([]byte(call.Arguments), &arguments) != nil {
@@ -86,7 +88,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
 			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
-		}) || holdsValue(told, wanted) {
+		}) || holdsValue(told, wanted) || wroteID(history, text, entityOf(name)) {
 			continue
 		}
 		returned := false
@@ -106,6 +108,60 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		}
 	}
 	return "", "", nil, false
+}
+
+// idLabels are the words a caller puts between what they name and the ID itself: "booking
+// number BK-41", "card: KTR583027".
+var idLabels = []string{"id", "ids", "number", "no", "#", "code", "is", "was"}
+
+// unlabelled are words before an ID that say nothing about what it is: "logging in as
+// USR001", "my account with id 'U-7'".
+var unlabelled = []string{"as", "with", "in", "for", "to", "my", "the", "a", "an", "of", "under", "using", "use",
+	"and", "it", "it's", "its", "this", "that's", "i'm", "me", "here"}
+
+// wroteID reports whether the caller wrote value out as one word that mixes letters and
+// digits, such as USR001 or KTR583027, and did not call it something other than entity. A
+// value like that is not a number they happened to say, so it needs no "user" or "booking"
+// beside it to be theirs. A bare number still does, and so does one read out by speech,
+// which the transcriber rarely writes as one word.
+func wroteID(history []llm.Message, value, entity string) bool {
+	wanted := alphanumeric(value)
+	if !hasLetterAndDigit(wanted) {
+		return false
+	}
+	named := strings.Fields(entity)
+	for _, message := range history {
+		if message.Role != llm.User {
+			continue
+		}
+		words := strings.Fields(strings.ToLower(message.Content))
+		for i, word := range words {
+			word = strings.Trim(word, "\"'`.,;:!?()[]{}")
+			if alphanumeric(word) != wanted || !hasLetterAndDigit(word) {
+				continue
+			}
+			label := ""
+			for j := i - 1; j >= 0 && j >= i-4; j-- {
+				before := strings.Trim(words[j], "\"'`.,;:!?()[]{}")
+				if before == "" || slices.Contains(idLabels, before) {
+					continue
+				}
+				if !slices.Contains(unlabelled, before) {
+					label = before
+				}
+				break
+			}
+			if label == "" || slices.Contains(named, label) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasLetterAndDigit reports whether text holds at least one letter and one digit.
+func hasLetterAndDigit(text string) bool {
+	return strings.IndexFunc(text, unicode.IsLetter) >= 0 && strings.IndexFunc(text, unicode.IsDigit) >= 0
 }
 
 // placeholderName reports a name argument filled with a stand-in for one the caller never
