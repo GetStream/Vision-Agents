@@ -43,9 +43,10 @@ type Sandbox struct {
 
 // Gate decides whether a text or call may go out. A nil Gate lets everything through.
 //
-// The opt-out check fails closed, because reaching somebody who said stop is the one thing
-// a carrier will not forgive. The daily counters fail open, as quota's do: an unreachable
-// Redis should not stop an app from testing.
+// Every check fails closed: the opt-out, because reaching somebody who said stop is the one
+// thing a carrier will not forgive, and the sandbox and the channel limits, because a text or
+// a minute let through unchecked is reach and money nobody agreed to. A gate with no Redis
+// keeps no daily count, and so holds nobody to one.
 type Gate struct {
 	store   *store.Store
 	redis   rueidis.Client
@@ -180,7 +181,10 @@ func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) er
 	if !slices.Contains(recipients, to) {
 		return stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to))
 	}
-	spent := g.spent(ctx, customerID)
+	spent, err := g.spent(ctx, customerID)
+	if err != nil {
+		return err
+	}
 	if channel == Voice {
 		if limit := g.sandbox.AudioMinutesPerDay; limit > 0 && spent.AudioSeconds >= limit*60 {
 			return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit))
@@ -230,7 +234,10 @@ func (g *Gate) Usage(ctx context.Context, customerID string) (Usage, error) {
 	if err != nil {
 		return Usage{}, err
 	}
-	usage := g.spent(ctx, customerID)
+	usage, err := g.spent(ctx, customerID)
+	if err != nil {
+		return Usage{}, err
+	}
 	usage.Sandboxed, usage.Recipients, usage.Limits = sandboxed, recipients, g.sandbox
 	return usage, nil
 }
@@ -244,7 +251,7 @@ func (g *Gate) SetRecipients(ctx context.Context, customerID string, recipients 
 }
 
 // Sandboxed reports whether the sandbox holds an app now, which is what gives its texts and
-// minutes away. A nil Gate holds nobody.
+// minutes away. A nil Gate holds nobody, and neither does one that could not tell.
 func (g *Gate) Sandboxed(ctx context.Context, customerID string) (bool, error) {
 	if g == nil || g.store == nil {
 		return false, nil
@@ -259,7 +266,10 @@ func (g *Gate) sandboxed(ctx context.Context, customerID string) (bool, error) {
 		return false, nil
 	}
 	approved, err := g.store.HasUseCaseIn(ctx, customerID, Approved)
-	return !approved, err
+	if err != nil {
+		return false, err
+	}
+	return !approved, nil
 }
 
 func (g *Gate) count(ctx context.Context, customerID, field string, by int64) {
@@ -283,17 +293,16 @@ func (g *Gate) count(ctx context.Context, customerID, field string, by int64) {
 	}
 }
 
-// spent reads today's counters. Any trouble reads as nothing spent.
-func (g *Gate) spent(ctx context.Context, customerID string) Usage {
+// spent reads today's counters, none without Redis.
+func (g *Gate) spent(ctx context.Context, customerID string) (Usage, error) {
 	if g.redis == nil {
-		return Usage{}
+		return Usage{}, nil
 	}
 	entries, err := g.redis.Do(ctx, g.redis.B().Hgetall().Key(g.key(customerID)).Build()).AsStrMap()
 	if err != nil {
-		g.logger.Error("could not read the sandbox counters, allowing", "error", err)
-		return Usage{}
+		return Usage{}, stack.Wrap(fmt.Errorf("dlc: read the sandbox counters: %w", err))
 	}
-	return Usage{Messages: parseInt(entries[messagesField]), AudioSeconds: parseInt(entries[secondsField])}
+	return Usage{Messages: parseInt(entries[messagesField]), AudioSeconds: parseInt(entries[secondsField])}, nil
 }
 
 // key is the app's counter for today, a new key each UTC day so nothing is ever reset.
