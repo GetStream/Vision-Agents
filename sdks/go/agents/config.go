@@ -306,12 +306,6 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	}
 }
 
-// connectorBindings are the connectors agent.yaml names, in the shape the sync takes.
-// Nil when the key was left out, so the stored bindings stay; empty when the file
-// lists none, which removes them.
-//
-// An entry whose connection the app does not have is left out and returned, so the rest of
-// the agent still syncs, unless the entry is required: a session needs that one.
 // declareCalls always fills the whole block, so a sync resets what a file leaves out.
 func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 	if calls == nil {
@@ -355,6 +349,12 @@ func enabledOr(enabled *bool, fallback bool) *bool {
 	return enabled
 }
 
+// connectorBindings are the connectors agent.yaml names, in the shape the sync takes.
+// Nil when the key was left out, so the stored bindings stay; empty when the file
+// lists none, which removes them.
+//
+// An entry whose connection the app does not have is left out and returned, so the rest of
+// the agent still syncs, unless the entry is required: a session needs that one.
 func connectorBindings(ctx context.Context, client *acceleration.ClientWithResponses, settings Settings) (*[]acceleration.AgentConnectorBinding, []missingConnection, error) {
 	if settings.Connectors == nil {
 		return nil, nil, nil
