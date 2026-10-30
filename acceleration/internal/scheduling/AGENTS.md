@@ -284,7 +284,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
-  paused task stays; its old runs do not. `TestStoreSuite/TestPrune*` in
+  paused task stays; its old runs do not. Each delete reads its table by an index
+  (`scheduled_task_runs_finished_idx`, `scheduled_tasks_pruned_idx`), and the delete's state test must
+  imply the tasks index's predicate (`TestPruneReadsItsIndexes`). `TestStoreSuite/TestPrune*` in
   `internal/store/scheduled_tasks_prune_test.go`.
 
 ## Run the tests
