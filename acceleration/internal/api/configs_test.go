@@ -443,6 +443,29 @@ func (s *ConfigsSuite) TestAnAllowedDomainWithACommaIsRefused() {
 	s.Contains(failure, "allowed_domains")
 }
 
+// The sandbox's egress proxy refuses every address host, so an address among the allowed
+// domains would never be reached. A name that only starts like an address is a name.
+func (s *ConfigsSuite) TestAnAllowedDomainThatIsAnIPAddressIsRefused() {
+	for _, address := range []string{"203.0.113.7", "203.0.113.7:443", "203.0.113.7.", "2001:db8::7", "[2001:db8::7]",
+		"[2001:db8::7]:443", "[2001:db8::7].", "::ffff:203.0.113.7", "fe80::1%eth0"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+			map[string]any{"name": "researcher", "sandbox": "daytona",
+				"sandbox_options": map[string]any{"allowed_domains": []string{"api.example.com", address}}})
+
+		s.Equal(http.StatusBadRequest, status, address)
+		s.Contains(failure, fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", address), address)
+	}
+
+	created := s.createConfig(map[string]any{"name": "researcher", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"allowed_domains": []string{"203.0.113.7.example.com", "1-2-3-4.example.com", "example.com."}}})
+	s.Equal([]string{"203.0.113.7.example.com", "1-2-3-4.example.com", "example.com."},
+		value(value(created.SandboxOptions).AllowedDomains))
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"allowed_domains": []string{"203.0.113.7"}}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `"203.0.113.7" is not a domain`)
+}
+
 func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
 	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
 		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},
