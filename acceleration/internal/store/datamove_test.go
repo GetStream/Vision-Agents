@@ -90,9 +90,7 @@ func (s *DataMoveSuite) TearDownSuite() {
 func (s *DataMoveSuite) SetupTest() {
 	tables := strings.Join(append(DataTables(), "data_changes", "data_change_capture"), ", ")
 	for _, store := range []*Store{s.source, s.destination} {
-		// Restarting the sequences makes each test's destination one that drew nothing yet, as
-		// a test that copies ids past them expects.
-		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" RESTART IDENTITY CASCADE")
+		_, err := store.DB().ExecContext(s.ctx, "TRUNCATE "+tables+" CASCADE")
 		s.Require().NoError(err)
 		store.SetStreamPins(StreamPins{})
 	}
@@ -1221,7 +1219,15 @@ func (s *DataMoveSuite) TestADeletedRequestFromBeforeUsageIDsIsReplayedToo() {
 	s.Contains(rows, kept.UsageID.String())
 }
 
+// drewNothing restarts the sequence behind a column, so the store has drawn nothing from it yet.
+// A truncate leaves sequences where they were, and the databases outlive a run.
+func (s *DataMoveSuite) drewNothing(store *Store, table, column string) {
+	_, err := store.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence(?, ?), 1, false)", table, column)
+	s.Require().NoError(err)
+}
+
 func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes() {
+	s.drewNothing(s.destination, "campaign_contacts", "seq")
 	campaign := &Campaign{CustomerID: "acme", Name: "renewals"}
 	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
 	// The source has handed out more places than the destination: its contacts' places are
@@ -1241,6 +1247,7 @@ func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes
 }
 
 func (s *DataMoveSuite) TestAMovedRequestLeavesTheSequenceOfItsIDAlone() {
+	s.drewNothing(s.destination, "requests", "id")
 	s.takenRequest(s.source, 1_000_000_000)
 
 	s.move("acme", "acme")
