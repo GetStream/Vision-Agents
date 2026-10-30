@@ -240,6 +240,10 @@ A session that closed while code still ran in its sandbox had the sandbox delete
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
 
+### A refused turn stays withheld in a conversation kept in Chat
+
+A conversation kept in a Stream Chat channel kept what a refused reply had streamed before the verdict, and a resume or a fork that read the channel back handed the model what the refused turn asked, as is. The refused reply is now emptied and marked `refused: true`, and its state stays `failed`. A resume or a fork hands back every turn since the last reply before it as `[withheld: this read as a prompt injection]`, each a turn of its own, as the live agent does. The conversation title and a closed episode's summary read it the same way. The person's own message stays in the channel and in the call transcript as they typed it. A reply that failed for any other reason is read back as before (AI-2304).
+
 ### A refused turn stays withheld after a rewind, a fork, the call review and the title
 
 A turn the prompt injection screen refused is recorded with status `refused` (`GET /v1/agents/sessions/{id}/responses`), not `failed`. A rewind or a fork carries what it asked forward as `[withheld: this read as a prompt injection]`, as the live agent does, with no answer after it. The call review and the conversation title quote it the same way, so the screen no longer refuses them and the review no longer fails with an error. A turn that failed for any other reason is recorded and carried forward as before (AI-2307).
