@@ -282,9 +282,10 @@ func (s *StoreSuite) TestPruneReadsItsIndexes() {
 		name, query string
 		batch       int
 		index, cond string
+		outer       string
 	}{
-		{"runs", pruneScheduledTaskRunsSQL, scheduledTaskRunsPruned, "scheduled_task_runs_finished_idx", "(finished_at <"},
-		{"tasks", pruneScheduledTasksSQL, scheduledTasksPruned, "scheduled_tasks_pruned_idx", "(updated_at <"},
+		{"runs", pruneScheduledTaskRunsSQL, scheduledTaskRunsPruned, "scheduled_task_runs_finished_idx", "(finished_at <", "Index Cond: (id = ANY ("},
+		{"tasks", pruneScheduledTasksSQL, scheduledTasksPruned, "scheduled_tasks_pruned_idx", "(updated_at <", ""},
 	} {
 		var plan []string
 		err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -297,5 +298,8 @@ func (s *StoreSuite) TestPruneReadsItsIndexes() {
 		read := strings.Join(plan, "\n")
 		s.Contains(read, c.index, "%s: %s", c.name, read)
 		s.Contains(read, "Index Cond: "+c.cond, "the index is walked by the cut, not filtered after it: %s: %s", c.name, read)
+		if c.outer != "" {
+			s.Contains(read, c.outer, "the delete reads the batch's rows by key, not by a scan of the table: %s: %s", c.name, read)
+		}
 	}
 }

@@ -1059,14 +1059,15 @@ const (
 )
 
 // The two deletes of PruneScheduledTasks. scheduled_task_runs_finished_idx serves the first
-// and scheduled_tasks_pruned_idx the second, whose state test must stay what that index's
-// predicate says (TestPruneReadsItsIndexes).
+// and scheduled_tasks_pruned_idx the second, whose state test must imply that index's
+// predicate (TestPruneReadsItsIndexes). The runs delete picks its batch with ARRAY and = ANY
+// so the outer delete reads the primary key, not the table, once per full batch.
 const (
 	pruneScheduledTaskRunsSQL = `
-DELETE FROM scheduled_task_runs WHERE id IN (
+DELETE FROM scheduled_task_runs WHERE id = ANY(ARRAY(
     SELECT id FROM scheduled_task_runs
     WHERE finished_at < now() - make_interval(secs => ?)
-    LIMIT ? FOR UPDATE SKIP LOCKED)`
+    LIMIT ? FOR UPDATE SKIP LOCKED))`
 	pruneScheduledTasksSQL = `
 DELETE FROM scheduled_tasks WHERE (customer_id, id) IN (
     SELECT customer_id, id FROM scheduled_tasks
