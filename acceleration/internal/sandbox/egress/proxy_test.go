@@ -1606,7 +1606,7 @@ func (s *ProxySuite) tunnelTo(host string, config *tls.Config) *tls.Conn {
 // holds no tunnel past its timeout.
 func (s *ProxySuite) TestASilentOrIdleTunnelIsClosed() {
 	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
-		options.HandshakeTimeout, options.IdleTimeout = 200*time.Millisecond, 200*time.Millisecond
+		options.HandshakeTimeout, options.KeepAliveTimeout = 200*time.Millisecond, 200*time.Millisecond
 	}))
 	s.T().Cleanup(s.proxy.Close)
 	silent := s.tunnel(&tls.Config{}).NetConn()
@@ -1624,6 +1624,39 @@ func (s *ProxySuite) TestASilentOrIdleTunnelIsClosed() {
 
 	s.ErrorIs(silentEnd, io.EOF)
 	s.ErrorIs(idleEnd, io.EOF)
+}
+
+// TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTimeout: a connection a client keeps
+// for its next request is held for the keep-alive timeout, not the blind tunnels' shorter idle
+// timeout, so a client that reuses it within its own idle limit (Go's 90 s, libcurl's 118 s)
+// is answered rather than finding it closed. The waits are bounded by the 5 s conn deadline.
+func (s *ProxySuite) TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTimeout() {
+	const idle, keepAlive = 200 * time.Millisecond, 1500 * time.Millisecond
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
+		options.IdleTimeout, options.KeepAliveTimeout = idle, keepAlive
+	}))
+	s.T().Cleanup(s.proxy.Close)
+	conn := s.tunnel(&tls.Config{})
+	reader := bufio.NewReader(conn)
+	get := func() {
+		_, err := io.WriteString(conn, "GET /echo HTTP/1.1\r\nHost: api.github.test\r\n\r\n")
+		s.Require().NoError(err)
+		response, err := http.ReadResponse(reader, nil)
+		s.Require().NoError(err, "the kept connection was closed")
+		_, err = io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		s.Require().Equal(http.StatusOK, response.StatusCode)
+	}
+	get()
+	// Idle past the idle timeout, and short of the keep-alive timeout.
+	time.Sleep(3 * idle)
+
+	get()
+	answered := time.Now()
+	_, end := reader.ReadByte()
+
+	s.ErrorIs(end, io.EOF)
+	s.GreaterOrEqual(time.Since(answered), keepAlive)
 }
 
 // TestAnEncodedResponseToATokenIsRefused is A5: a host that encodes its echo in a way the
