@@ -81,3 +81,22 @@ func TestTextTheVoiceRefusedIsNoLongerHeld(t *testing.T) {
 	require.Error(t, session.Synthesize(tts.Request{ID: "u1", Text: "cd"}))
 	require.NoError(t, money.Spend(t, owner))
 }
+
+func TestTextForASettledUtteranceIsReservedBeforeItIsSent(t *testing.T) {
+	money := policytest.Start(t, "ttsrouter_reserve")
+	session, provider, owner := reservingSession(t, money, 1_000_000)
+	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "a", Final: true}))
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 1})
+	for event := range session.Events() {
+		if _, ok := event.(tts.SynthesisComplete); ok {
+			break
+		}
+	}
+	require.ErrorIs(t, money.Spend(t, owner), policy.ErrNoCredits, "its one character used the credit up")
+
+	err := session.Synthesize(tts.Request{ID: "u1", Text: "b", Final: true})
+
+	require.ErrorIs(t, err, policy.ErrNoCredits, "more text under the same id is more to pay for")
+	require.Len(t, provider.said, 1, "and the voice never heard it")
+}

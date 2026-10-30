@@ -38,10 +38,11 @@ type Session struct {
 	// reserved is the usage id each utterance not settled yet holds its characters under,
 	// which its row is recorded under.
 	reserved map[string]uuid.UUID
-	// finished is the most recent utterances settled, oldest first in finishedOrder. More
-	// text for one of them is dropped by the provider (an interrupted utterance takes no
-	// more), so it is not counted. Only the last finishedKept are kept: text that comes that
-	// late, or an id reused after it fell out, is counted as an utterance of its own.
+	// finished is the most recent utterances settled, oldest first in finishedOrder, so a
+	// completion a voice repeats for one of them bills nothing. Text sent for one after it
+	// settled is reserved and counted as an utterance of its own, since a voice that speaks it
+	// bills it; what a voice drops (an interrupted utterance takes no more) stays reserved until
+	// the session closes. Only the last finishedKept are kept.
 	finished      map[string]struct{}
 	finishedOrder []string
 
@@ -111,15 +112,11 @@ func (s *Session) Synthesize(request tts.Request) error {
 	characters := int64(utf8.RuneCountInString(request.Text))
 	s.mu.Lock()
 	reserved, speaking := s.reserved[request.ID]
-	if _, done := s.finished[request.ID]; done {
-		characters = 0
-	} else {
-		// Counted before it is sent, so a completion that comes straight back finds it.
-		s.sent[request.ID] += characters
-		if !speaking {
-			reserved = uuid.Must(uuid.NewV7())
-			s.reserved[request.ID] = reserved
-		}
+	// Counted before it is sent, so a completion that comes straight back finds it.
+	s.sent[request.ID] += characters
+	if !speaking {
+		reserved = uuid.Must(uuid.NewV7())
+		s.reserved[request.ID] = reserved
 	}
 	total := s.sent[request.ID]
 	s.mu.Unlock()
@@ -313,18 +310,18 @@ type settled struct {
 }
 
 // settle takes an utterance out of flight, so a late duplicate completion cannot bill
-// twice: one for an utterance already settled that has not started again is reported
-// repeated, and records nothing. An utterance the session never saw start is stamped with
-// now.
+// twice: one for an utterance already settled that has not started again, and was sent no
+// text since, is reported repeated, and records nothing. An utterance the session never saw
+// start is stamped with now.
 func (s *Session) settle(synthesisID string) (settled, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	current, ok := s.inFlight[synthesisID]
-	if _, known := s.finished[synthesisID]; known && !ok {
+	characters, sent := s.sent[synthesisID]
+	if _, known := s.finished[synthesisID]; known && !ok && characters == 0 {
 		return settled{}, true
 	}
-	characters, sent := s.sent[synthesisID]
 	delete(s.sent, synthesisID)
 	reserved := s.reserved[synthesisID]
 	delete(s.reserved, synthesisID)

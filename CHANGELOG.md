@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Speech-to-text stops when its money runs out, and reused utterance ids are billed
+
+A transcription re-checks the money it set aside as it streams, as a speech-to-speech conversation does: once a renewal is refused for lack of credit or a spend limit, every frame after is refused and the session closes, and while the money cannot be checked a frame is refused and the session kept. Text sent under the id of an utterance that already finished is reserved before it is sent, and billed if the voice speaks it, rather than sent unreserved.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

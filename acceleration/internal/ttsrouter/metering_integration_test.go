@@ -90,7 +90,7 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Zoë.", Final: true}))
 	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 17})
 	s.completed(session)
-	// Text for an utterance already settled, as after a barge-in, which the voice drops.
+	// Text for an utterance already settled, as after a barge-in, which this voice drops.
 	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "and the rest", Final: true}))
 	s.Require().NoError(session.Synthesize(tts.Request{Text: "Bye.", Final: true}))
 	s.Require().Len(provider.said, 4)
@@ -113,7 +113,7 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Contains(logs.String(), "level=WARN msg=\"the voice counted characters other than those it was sent")
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	s.Empty(session.sent, "text for a settled utterance is not counted, so nothing is left waiting for a completion")
+	s.Equal(map[string]int64{"u1": 12}, session.sent, "text for a settled utterance is counted, in case the voice speaks it")
 }
 
 // rows reads back what the session recorded for a customer, once it and its recorder have
@@ -146,6 +146,26 @@ func (s *MeteringSuite) TestAnUtteranceAVoiceReportsFinishedTwiceIsBilledOnce() 
 	s.Equal("u1", rows[0].OperationID)
 }
 
+func (s *MeteringSuite) TestTextAVoiceSpeaksForASettledUtteranceWithoutStartingItAgainIsBilled() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	provider := newStubTTS()
+	session := newSession(provider, s.inworld(), routing.Owner{CustomerID: customer}, recorder, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Hello there.", Final: true}))
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 12})
+	s.completed(session)
+	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "And again.", Final: true}))
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 10})
+	s.completed(session)
+	s.Require().NoError(session.Close())
+	recorder.Close()
+
+	rows := s.rows(customer)
+	s.Require().Len(rows, 2, "the second completion follows text sent since, so it is no repeat")
+	s.EqualValues(10, rows[1].Characters)
+}
+
 func (s *MeteringSuite) TestAnUtteranceAVoiceStartsAgainAfterItSettledIsBilledAgain() {
 	customer := uuid.NewString()
 	recorder := routing.NewRecorder(routing.TTS, s.store, nil, s.prices, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -168,6 +188,6 @@ func (s *MeteringSuite) TestAnUtteranceAVoiceStartsAgainAfterItSettledIsBilledAg
 	rows := s.rows(customer)
 	s.Require().Len(rows, 2)
 	s.EqualValues(12, rows[0].Characters)
-	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed what the voice counted")
+	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed")
 	s.Equal("u1", rows[1].OperationID)
 }
