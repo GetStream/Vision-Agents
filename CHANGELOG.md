@@ -169,6 +169,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 On `/v1/tts/stream`, on a voice that speaks each sentence as its own request (Gemini, Fish, Speechify), a `speak` frame for an id whose utterance has already finished is now held against credit before it is sent, as a new id is, and its row bills the characters sent. It is refused once the account has no credit left, as a new id is. Before, it was spoken with nothing held, so it passed a credit limit, and was billed what the voice counted (AI-2190).
 
+### A file `run_code` hands back is read only up to its limit
+
+The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
+
 ### A response refused by the prompt injection screen acts on nothing
 
 With `prompt_injection` on, a response the screen refuses runs none of the tool calls it asked for, written as calls or as tags, and the input it refused is no longer read by the model: in the agent's history it stands as `[withheld: this read as a prompt injection]`, and no reply is recorded after it. The next turn is screened and answered on its own. A response that fails for any other reason also settles with no tool calls (`tool_calls` empty on the `/stream` socket's `complete` frame); the caller's turn is kept as before (AI-1855, AI-1856).
