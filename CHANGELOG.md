@@ -182,6 +182,9 @@ When the router cannot read an organization's channel counters or the calls it h
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### A plugin's MCP server cannot answer the router without end
+
+An answer from a plugin's MCP server, or from its OAuth server at discovery, registration, the code exchange or a refresh, is read up to 4 MiB once decompressed, the connector client's cap, and one that is longer fails rather than being read whole. Each request to them is also cut after 35 seconds, the connector client's per-request bound, so a tool call that runs longer fails as one that timed out.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

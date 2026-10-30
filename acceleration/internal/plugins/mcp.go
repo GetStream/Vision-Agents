@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -25,8 +26,33 @@ const sessionHeader = "Mcp-Session-Id"
 
 // publicClient is how plugin traffic leaves the router when a caller gives no client. A
 // config names its MCP servers, a login its shop and the servers' metadata their auth
-// servers, so it only reaches public hosts.
-var publicClient = egress.NewClient(0, nil)
+// servers, so it only reaches public hosts, and none of them may hold a request open for
+// longer than requestTimeout.
+var publicClient = egress.NewClient(requestTimeout, nil)
+
+// requestTimeout bounds one request to an MCP server or its auth server, its body included.
+// 35 s is what the connector client allows each request to an MCP server
+// (connectors/sources/mcp defaultCallTimeout). Unverified, not measured.
+const requestTimeout = 35 * time.Second
+
+// maxResponseBytes caps one response body from an MCP server or its auth server, as read
+// after the transport has decompressed it, so a server that answers without end cannot
+// exhaust the router's memory. 4 MiB is the connector client's cap
+// (connectors/sources/mcp maxResponseBytes).
+const maxResponseBytes = 4 << 20
+
+// readBody reads a response body of at most maxResponseBytes. A longer one fails rather than
+// being cut short, since what was cut off would read as something the server did not send.
+func readBody(body io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, maxResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, fmt.Errorf("plugins: a response is longer than %d bytes", maxResponseBytes)
+	}
+	return raw, nil
+}
 
 // ErrUnauthorized is a server refusing the token a connection was opened with: it expired
 // early, was revoked, or the account was disconnected at the provider. The login has to be
@@ -441,7 +467,7 @@ func (c *client) send(ctx context.Context, body []byte) ([]byte, error) {
 	if session := response.Header.Get(sessionHeader); session != "" {
 		c.session = session
 	}
-	raw, err := io.ReadAll(response.Body)
+	raw, err := readBody(response.Body)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("plugins: %s: %w", c.pluginID, err))
 	}
