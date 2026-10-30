@@ -119,7 +119,7 @@ func (s *Stream) Next() bool {
 				<-s.screened
 			}
 			if refused := s.refused.Load(); refused != nil {
-				s.writer.settle(*refused)
+				s.writer.refuse(*refused)
 				continue
 			}
 			// A stream the caller closed was abandoned rather than finished, however the
@@ -320,6 +320,7 @@ type ResponseWriter struct {
 	usage              Usage
 	usageReported      bool
 	timedOut           bool
+	refused            bool
 	serviceTier        string
 	status             ResponseStatus
 	incompleteReason   string
@@ -463,6 +464,15 @@ func (w *ResponseWriter) Fail(err error, context string, fatal bool) {
 // Text is the answer so far, reasoning excluded.
 func (w *ResponseWriter) Text() string { return w.text.String() }
 
+// refuse settles the response as failed with a screen's refusal. The screen closed the
+// upstream to stop it, which a provider reports as a cancel, so the refusal is reported
+// whatever the provider made of it.
+func (w *ResponseWriter) refuse(reason error) {
+	w.refused = true
+	w.Fail(reason, "stream", false)
+	w.settle(nil)
+}
+
 // settle queues the event that ends the stream. A response that produced nothing reports a
 // zero time to first token rather than the whole duration.
 func (w *ResponseWriter) settle(failure error) {
@@ -498,6 +508,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Usage:              w.usage,
 		UsageReported:      w.usageReported,
 		TimedOut:           w.timedOut,
+		Refused:            w.refused,
 		ServiceTier:        w.serviceTier,
 		Status:             w.status,
 		IncompleteReason:   w.incompleteReason,

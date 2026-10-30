@@ -243,6 +243,9 @@ type stubLLM struct {
 	// screen, if set, judges each request's input beside its response, as the router's
 	// prompt injection policy does: an error refuses the response once it has been written.
 	screen func(input []llm.Message) error
+	// verdict, if set, is the screen's verdict on a response left in flight, sent by the
+	// test, so a refusal can arrive once part of the answer has streamed.
+	verdict chan error
 
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned. A second response for
@@ -284,7 +287,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	sender, _ := routing.CallerFrom(ctx)
 	s.senders = append(s.senders, sender)
 	s.scheduled = append(s.scheduled, routing.ScheduledTurn(ctx))
-	hold, completion, refuses, breaks, screen := s.holdCreate, s.holdCompletion, s.refuses, s.breaks, s.screen
+	hold, completion, refuses, breaks, screen, verdict := s.holdCreate, s.holdCompletion, s.refuses, s.breaks, s.screen, s.verdict
 	s.mu.Unlock()
 
 	if refuses != nil {
@@ -334,6 +337,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// A response with nothing queued stays in flight until the test writes it, which is
 	// what lets a reply be caught mid-sentence.
 	if len(reply) == 0 && len(calls) == 0 {
+		if verdict != nil {
+			return script.Stream().Screen(verdict), nil
+		}
 		return screened(script.Stream(), screen, params.Input), nil
 	}
 

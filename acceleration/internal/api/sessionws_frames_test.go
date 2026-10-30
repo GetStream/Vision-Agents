@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -367,4 +370,56 @@ func TestAResumableSocketWhoseSessionEndedIsToldItEnded(t *testing.T) {
 	code, _ := endingOf(resuming{resumable: true}, func() bool { return false })()
 
 	require.Equal(t, websocket.CloseNormalClosure, code)
+}
+
+// injection is the failure a response the prompt injection screen refused settles with.
+var injection = fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)
+
+// marshalled is a frame as the socket sends it.
+func marshalled(t *testing.T, sent frame, ok bool) []byte {
+	t.Helper()
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	return raw
+}
+
+func TestAnErrorFrameForATurnTheScreenRefusedNamesTheRefusal(t *testing.T) {
+	for name, err := range map[string]error{
+		"as the screen gave it": injection,
+		"wrapped on its way":    fmt.Errorf("agent: %w", injection),
+	} {
+		sent, ok := frameOf(agent.Error{Err: err, Context: "llm"})
+		raw := marshalled(t, sent, ok)
+		require.JSONEq(t, `"prompt_injection"`, string(mustField(t, raw, "code")), name)
+		require.JSONEq(t, `"llm"`, string(mustField(t, raw, "context")), name)
+	}
+}
+
+func TestAnErrorFrameForAnyOtherFailureIsTheFrameItAlwaysWas(t *testing.T) {
+	// The bytes base cec7b425a sends for these.
+	for err, want := range map[error]string{
+		errors.New("503 Service Unavailable"):                       `{"context":"llm","error":"503 Service Unavailable","type":"error"}`,
+		errors.New("policy: the input reads as a prompt injection"): `{"context":"llm","error":"policy: the input reads as a prompt injection","type":"error"}`,
+		nil: `{"context":"llm","error":"","type":"error"}`,
+	} {
+		sent, ok := frameOf(agent.Error{Err: err, Context: "llm"})
+		require.Equal(t, want, string(marshalled(t, sent, ok)))
+	}
+}
+
+func TestAnLLMSocketErrorForARefusedResponseNamesTheRefusal(t *testing.T) {
+	sent, ok := llmFrame(llm.ResponseFailed{ResponseID: "r1", Err: injection, Context: "stream"})
+	raw := marshalled(t, sent, ok)
+
+	require.JSONEq(t, `"prompt_injection"`, string(mustField(t, raw, "code")))
+	require.JSONEq(t, `"r1"`, string(mustField(t, raw, "id")))
+}
+
+func TestAnLLMSocketErrorForAProviderFailureIsTheFrameItAlwaysWas(t *testing.T) {
+	// The bytes base cec7b425a sends for it.
+	sent, ok := llmFrame(llm.ResponseFailed{ResponseID: "r1", Err: errors.New("unauthorized"), Context: "stream"})
+
+	require.Equal(t, `{"context":"stream","error":"unauthorized","fatal":false,"id":"r1","type":"error"}`,
+		string(marshalled(t, sent, ok)))
 }
