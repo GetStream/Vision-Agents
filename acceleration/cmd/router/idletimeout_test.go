@@ -167,7 +167,7 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			s.Require().NoError(err)
 			s.Require().NoError(response.Body.Close())
 
-			// 20 s is far below the 10 min idle timeout a broken server would show, and
+			// A server without IdleTimeout never closes the connection, so 20 s still fails it, and is
 			// generous for a starved CI runner (a stalled VM overran 5 s).
 			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(20 * time.Second)))
 			_, err = reader.ReadByte()
