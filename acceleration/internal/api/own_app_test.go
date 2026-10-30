@@ -77,8 +77,12 @@ func appToken(claims jwt.MapClaims) string {
 	return token
 }
 
-// gatewayMint is the gateway's internal mint endpoint, signing every app's tokens with
-// ownAppSecret.
+// keySecret is the secret of one key of an app. Each key has its own, so a user token works
+// only with the key it was signed for.
+func keySecret(apiKey string) string { return ownAppSecret + ":" + apiKey }
+
+// gatewayMint is the gateway's internal mint endpoint, signing every app's server tokens with
+// ownAppSecret and a user token with the secret of the key it is asked for.
 func (s *RouterSuite) gatewayMint() *httptest.Server {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+suiteMintBearer {
@@ -94,13 +98,19 @@ func (s *RouterSuite) gatewayMint() *httptest.Server {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		lasts, claims := 24*time.Hour, jwt.MapClaims{}
+		lasts, claims, secret := 24*time.Hour, jwt.MapClaims{}, ownAppSecret
 		if strings.HasSuffix(r.URL.Path, "/user-token") {
 			lasts, claims["user_id"] = time.Duration(body.TTLSeconds)*time.Second, body.UserID
+			secret = keySecret(body.APIKey)
 		}
 		expires := time.Now().Add(lasts)
 		claims["exp"] = expires.Unix()
-		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": body.APIKey, "token": appToken(claims), "expires_at": expires})
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": body.APIKey, "token": token, "expires_at": expires})
 	}))
 	s.T().Cleanup(server.Close)
 	return server
