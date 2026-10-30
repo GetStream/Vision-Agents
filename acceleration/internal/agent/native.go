@@ -214,6 +214,10 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.nativeListening = false
 			a.nativeAnswerDue = !typed.Answered
 			a.mu.Unlock()
+		case sts.ResponseStarted:
+			a.goodbyeBegan(typed.ResponseID)
+		case sts.AudioChunk:
+			a.goodbyeBegan(typed.ResponseID)
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
 			a.mu.Lock()
@@ -537,6 +541,21 @@ func (a *Agent) saidNative(transcript sts.OutputTranscript) {
 	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
 }
 
+// goodbyeBegan notes the reply a native model gives after end_call ran. It is read in
+// provider order, where everything after the call is the model answering it: a new reply, or
+// more audio from the one that made the call, which is how a model that carries on in the
+// same reply says goodbye.
+func (a *Agent) goodbyeBegan(responseID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bye := a.goodbye
+	if bye == nil || bye.reply != "" {
+		return
+	}
+	bye.reply = responseID
+	close(bye.started)
+}
+
 // replyStarted opens a turn for a reply the model began.
 //
 // The turn is only measured when somebody was waiting for it: a reply to a prompt, a
@@ -626,6 +645,11 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	a.generating = false
 	a.saying = ""
+	if bye := a.goodbye; bye != nil && bye.reply == complete.ResponseID {
+		bye.cut = complete.Interrupted
+		a.goodbye = nil
+		close(bye.done)
+	}
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
 	}

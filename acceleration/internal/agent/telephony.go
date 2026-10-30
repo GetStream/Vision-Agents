@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,31 @@ const (
 	toolPress    = "press"
 	toolLookup   = "lookup"
 	toolSearch   = "search"
+	toolEndCall  = "end_call"
 )
+
+// defaultEndCallWhen is when the agent is told to hang up if the config does not say.
+const defaultEndCallWhen = "End the call once the conversation is finished and the caller needs nothing else."
+
+// endCallNative is what a native model is told end_call did. Its goodbye may not have
+// started yet, and the call ends only once it has been heard.
+const endCallNative = "The call ends as soon as you finish speaking. Say a short goodbye now " +
+	"if you have not already; otherwise say nothing more."
+
+// goodbyeWait bounds how long a native model has to start its goodbye after end_call. A
+// model that takes the result and says nothing would otherwise hold the call open, and
+// billing, until the caller hangs up.
+const goodbyeWait = 10 * time.Second
+
+// goodbye is the reply a native model gives once told end_call ran.
+type goodbye struct {
+	// reply is the goodbye, once it has begun.
+	reply   string
+	started chan struct{}
+	done    chan struct{}
+	// cut is whether the caller talked over the goodbye, which keeps the call open.
+	cut bool
+}
 
 // arrivalTimeout bounds how long a warm transfer waits for the human to pick up. Past it
 // the summary is worth nothing: either nobody answered, or they have been listening to the
@@ -67,6 +92,13 @@ type Telephony interface {
 	// Placed reports whether the call was placed from here, which is what gives it a leg
 	// to press digits on.
 	Placed() bool
+}
+
+// Ender ends the call for everyone on it, which is how the agent hangs up rather than only
+// leaving.
+type Ender interface {
+	// EndCall ends the call the agent is on, once the agent has finished speaking.
+	EndCall(ctx context.Context) error
 }
 
 // Destination is a number the agent may hand the caller to, which the model asks for by
@@ -471,7 +503,7 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
-	cancels := telephonyTool(requested.Call.Name) ||
+	cancels := telephonyTool(requested.Call.Name) || requested.Call.Name == toolEndCall ||
 		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
 	a.mu.Lock()
 	parent := a.ctx
@@ -633,15 +665,27 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if model := a.speech(); model != nil {
 		defer a.noteToolDone(hold)
 		if ctx.Err() == nil {
+			var bye *goodbye
 			a.mu.Lock()
 			a.nativeAwaiting = true
+			// Set before answering, so the reply the answer brings cannot start unseen.
+			if requested.Call.Name == toolEndCall && err == nil {
+				bye = &goodbye{started: make(chan struct{}), done: make(chan struct{})}
+				a.goodbye = bye
+			}
 			a.mu.Unlock()
 			err := model.Answer(requested.Call.ID, result, nil)
 			if err == nil {
 				a.askedApproval(requested.Call.ID)
+				if bye != nil {
+					go a.hangUpAfter(bye)
+				}
 			} else {
 				a.mu.Lock()
 				a.nativeAwaiting = false
+				if a.goodbye == bye {
+					a.goodbye = nil
+				}
 				a.mu.Unlock()
 				capabilities := model.Capabilities()
 				if a.switching.Load() {
@@ -745,6 +789,19 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		return llm.TextParts(result), left, err
 	}
 
+	if call.Name == toolEndCall {
+		if a.options.Ender == nil {
+			return nil, false, errors.New("agent: this call cannot be ended")
+		}
+		// A native model says its goodbye after the result, so the call ends after that
+		// (hangUpAfter) rather than here.
+		if a.native() {
+			return llm.TextParts(endCallNative), false, nil
+		}
+		result, left, err := a.endCall(ctx)
+		return llm.TextParts(result), left, err
+	}
+
 	if call.Name == toolLookup {
 		if a.knowledge == nil {
 			return nil, false, errors.New("agent: this agent has no knowledge base")
@@ -790,6 +847,10 @@ func (a *Agent) availableTools() harness.Tools {
 			runnable = a.options.Telephony != nil && a.options.Telephony.Placed()
 		case telephonyTool(tool.Name):
 			runnable = a.options.Telephony != nil
+		case tool.Name == toolEndCall:
+			runnable = a.options.Ender != nil && !a.options.Text
+			tool.Description = strings.TrimSpace(tool.Description) + " " +
+				cmp.Or(strings.TrimSpace(a.options.EndCallWhen), defaultEndCallWhen)
 		case tool.Name == toolLookup:
 			runnable = a.knowledge != nil
 		case tool.Name == toolSearch:
@@ -1031,6 +1092,53 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 		return "", false, fmt.Errorf("agent: finish the handover summary: %w", err)
 	}
 	return "The caller has been introduced and transferred, and you have left the call.", true, nil
+}
+
+// endCall hangs up once the goodbye the model said with the call has been heard.
+func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
+	if err := a.Finish(ctx); err != nil {
+		return "", false, fmt.Errorf("agent: finish the goodbye: %w", err)
+	}
+	if err := a.options.Ender.EndCall(ctx); err != nil {
+		return "", false, fmt.Errorf("agent: end the call: %w", err)
+	}
+	return "You have ended the call.", true, nil
+}
+
+// hangUpAfter ends the call once a native model's goodbye has been heard, or once it has
+// gone goodbyeWait without starting one. A goodbye the caller talked over keeps the call.
+func (a *Agent) hangUpAfter(bye *goodbye) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	timer := time.NewTimer(goodbyeWait)
+	defer timer.Stop()
+	select {
+	case <-bye.started:
+		select {
+		case <-bye.done:
+		case <-ctx.Done():
+			return
+		}
+		if bye.cut {
+			return
+		}
+	case <-timer.C:
+		a.mu.Lock()
+		if a.goodbye == bye {
+			a.goodbye = nil
+		}
+		a.mu.Unlock()
+	case <-ctx.Done():
+		return
+	}
+	if _, _, err := a.endCall(ctx); err != nil {
+		a.logger.Error("could not end the call", "error", err)
+		return
+	}
+	if err := a.Close(); err != nil {
+		a.logger.Error("could not leave after ending the call", "error", err)
+	}
 }
 
 func (a *Agent) destination(name string) (Destination, bool) {

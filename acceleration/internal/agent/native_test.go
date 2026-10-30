@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1220,4 +1221,65 @@ func (s *AgentSuite) TestAStopHeardDuringANativeReplyIsNotTheNextReplysWait() {
 	)
 	_, measured := turnFor(events, "next")
 	s.False(measured, "nobody was waiting on the next reply")
+}
+
+func (s *AgentSuite) TestANativeAgentHangsUpAfterTheGoodbyeItSpeaksAfterTheTool() {
+	// A speech-to-speech model may call end_call first and only say goodbye once it has the
+	// result: ending the call when the tool runs would leave the caller with silence.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	setup := s.nativeFrame(peer, "session.update")
+	s.Contains(string(setup["session"]), "end_call")
+	s.edge.holdSpeech(true)
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeFrame(peer, "conversation.item.create")
+	s.nativeFrame(peer, "response.create")
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended before the goodbye was said")
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended while the goodbye was going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+}
+
+func (s *AgentSuite) TestANativeGoodbyeTheCallerTalksOverKeepsTheCall() {
+	// A caller who cuts in on the goodbye has something more to say, and hanging up on them
+	// mid-sentence is the agent ignoring them.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeFrame(peer, "response.create")
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"cancelled","status_details":{"reason":"turn_detected"}}}`)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the goodbye was never cut")
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
 }

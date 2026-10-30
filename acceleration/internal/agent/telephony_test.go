@@ -1977,3 +1977,85 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 	model := s.model
 	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
 }
+
+// stubEnder is the call's hang-up with no call behind it: it counts the times it was asked.
+type stubEnder struct {
+	mu    sync.Mutex
+	ended int
+}
+
+func (e *stubEnder) EndCall(context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ended++
+	return nil
+}
+
+func (e *stubEnder) ends() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ended
+}
+
+func (s *AgentSuite) TestEndCallIsNotOfferedWithoutAnEnder() {
+	// A model told it may hang up, on a call nothing can hang up, says goodbye and stays.
+	s.onACall()
+	s.join(false)
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestAWrittenConversationIsNeverOfferedEndCall() {
+	// A chat has no call to end, whatever it was handed.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.joinText()
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestEndCallDescriptionCarriesTheCondition() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.endCallWhen = "The caller said bye."
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, "The caller said bye.")
+	s.NotContains(tool.Description, defaultEndCallWhen, "the config's condition replaces the default")
+}
+
+func (s *AgentSuite) TestEndCallWithoutAConditionIsGivenTheDefault() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, defaultEndCallWhen)
+}
+
+func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
+	// Hanging up the moment the model asks drops the goodbye still on its way out, and the
+	// caller hears the line go dead mid-sentence.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended while the goodbye was going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+	s.Equal(1, s.ender.ends())
+}
