@@ -2644,6 +2644,11 @@ func (a *Agent) handle(event llm.Event) {
 		}
 		if errors.Is(typed.Err, policy.ErrPromptInjection) {
 			a.refusedReply = typed.ResponseID
+			// A refusal is an outcome of the input, one any caller can bring about at will,
+			// not a failure of the agent: it is reported as one, and logged below error.
+			a.logger.Info("a reply was refused as a prompt injection", "turn", typed.ResponseID, "error", typed.Err)
+			a.emitter.Send(Error{Err: typed.Err, Context: "llm"})
+			return
 		}
 		a.fail(typed.Err, "llm")
 
@@ -2718,6 +2723,13 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text {
 		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
+	refused := a.refusedReply == response.ID
+	if refused {
+		// Nothing of a refused reply goes out after the verdict: what the harness, the
+		// stripper and the chunker were still holding of it is dropped with the turn.
+		tail, plain = "", ""
+		a.chunk.Reset()
+	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
 		tail = plain
@@ -2731,7 +2743,6 @@ func (a *Agent) finish(response llm.Response) {
 	if response.Status == llm.StatusFailed {
 		calls = nil
 	}
-	refused := a.refusedReply == response.ID
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -2782,6 +2793,11 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
+	if refused {
+		// What streamed before the verdict, or the apology spoken for the lost reply, is no
+		// answer the agent gave, so it is not reported as one to be recorded.
+		said = ""
+	}
 	a.resetTurn()
 
 	a.mu.Lock()
