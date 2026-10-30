@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### API keys survive a key encryption key rotation, and each secret opens only in its own row
+
+`router keys create` seals a key's secret bound to the key and its app, and records the key version that sealed it, where it used to record version 1 whichever version was current. The router opens a key's secret with the version its row names, so raising `ROUTER_AUTH_KEK_VERSION` while keeping the older `ROUTER_AUTH_KEK_V<n>` no longer turns every existing key away, and a sealed secret copied into another key's row does not open there. A key minted before this release still opens as it did, with whichever key of the keyring sealed it, and stays unbound to its row until it is minted again. A key minted by this release does not open on an earlier one, so mint new keys once every replica runs it.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 

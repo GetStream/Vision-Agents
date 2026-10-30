@@ -2197,11 +2197,11 @@ func (d testData) keyed(organization store.Organization, app store.App) testApp 
 	s.own(app.ID)
 	key, secret, err := auth.NewCredential(auth.Test)
 	s.Require().NoError(err)
-	sealed, err := s.sealer.Seal(secret)
+	sealed, err := s.sealer.SealWithAAD(secret, auth.KeySecretAAD(key, app.ID))
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.CreateAPIKey(ctx, &store.APIKey{
 		ID: key, AppID: app.ID, Name: "router suite", Env: string(auth.Test),
-		Sealed: sealed, KEKVersion: auth.KEKVersion, Last4: auth.Last4(secret), CreatedBy: "router suite",
+		Sealed: sealed, KEKVersion: s.sealer.CurrentVersion(), Last4: auth.Last4(secret), CreatedBy: "router suite",
 	}))
 	return testApp{organization: organization, app: app, key: key, secret: secret}
 }

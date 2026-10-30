@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -92,6 +93,22 @@ func ServerToken(secret string, lifetime time.Duration) (string, error) {
 		return "", fmt.Errorf("auth: sign token: %w", err)
 	}
 	return token, nil
+}
+
+// keySecretPurpose names a sealed API key secret, so it opens as nothing else the keyring
+// seals, and nothing else opens as one.
+const keySecretPurpose = "accelerate:api-key-secret:v1"
+
+// KeySecretAAD is what a key's sealed secret is bound to: the key and the app it belongs
+// to. A sealed secret moved to another key's row does not open there. Each part is prefixed
+// with its length, so no two different rows can run together into the same bytes.
+func KeySecretAAD(key, appID string) []byte {
+	var aad []byte
+	for _, part := range []string{keySecretPurpose, key, appID} {
+		aad = binary.BigEndian.AppendUint32(aad, uint32(len(part)))
+		aad = append(aad, part...)
+	}
+	return aad
 }
 
 // Last4 is all of a secret the dashboard ever shows again.

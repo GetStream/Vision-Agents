@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -83,6 +85,14 @@ func NewSealerWithKeyring(currentVersion int, keys map[int]string) (*Sealer, err
 // CurrentVersion is the key version Seal and SealWithAAD write with.
 func (s *Sealer) CurrentVersion() int {
 	return s.currentVersion
+}
+
+// Versions lists the key versions the keyring holds, newest first.
+func (s *Sealer) Versions() []int {
+	versions := slices.Collect(maps.Keys(s.aeads))
+	slices.Sort(versions)
+	slices.Reverse(versions)
+	return versions
 }
 
 // Derive returns a credential for one purpose, HMAC-SHA256 of the purpose under each key of

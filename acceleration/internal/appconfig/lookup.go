@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // Lookup resolves an API key to the app holding it, which is what the api_key mode of
@@ -24,7 +25,7 @@ func (s *Store) Lookup(sealer *auth.Sealer) auth.Lookup {
 		if err != nil {
 			return auth.App{}, auth.ErrUnauthenticated
 		}
-		secret, err := sealer.Open(owner.Sealed)
+		secret, err := openKeySecret(sealer, key, owner)
 		if err != nil {
 			return auth.App{}, fmt.Errorf("unseal key %s: %w", key, err)
 		}
@@ -46,4 +47,25 @@ func (s *Store) Lookup(sealer *auth.Sealer) auth.Lookup {
 			},
 		}, nil
 	}
+}
+
+// openKeySecret opens a key's sealed secret, bound to its row (auth.KeySecretAAD), with the
+// key version its row names.
+//
+// A key minted before secrets were bound to their row was sealed with nothing beside it,
+// under whichever version was current, while its row named the first. It is opened unbound
+// with whichever key of the keyring sealed it, so raising the version does not lose it. It
+// is not sealed again here: a release before this one opens nothing bound, and a replica
+// still running one would turn the key away.
+func openKeySecret(sealer *auth.Sealer, key string, owner store.APIKeyOwner) (string, error) {
+	secret, err := sealer.OpenWithAADVersion(owner.Sealed, auth.KeySecretAAD(key, owner.AppID), owner.KEKVersion)
+	if err == nil {
+		return secret, nil
+	}
+	for _, version := range sealer.Versions() {
+		if unbound, openErr := sealer.OpenWithAADVersion(owner.Sealed, nil, version); openErr == nil {
+			return unbound, nil
+		}
+	}
+	return "", err
 }

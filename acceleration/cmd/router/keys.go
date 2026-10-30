@@ -68,7 +68,7 @@ func runKeys(args []string, settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	sealed, err := sealer.Seal(secret)
+	sealed, err := sealer.SealWithAAD(secret, auth.KeySecretAAD(key, app.ID))
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func runKeys(args []string, settings config.Config, logger *slog.Logger) error {
 		Name:       *keyName,
 		Env:        *environment,
 		Sealed:     sealed,
-		KEKVersion: auth.KEKVersion,
+		KEKVersion: sealer.CurrentVersion(),
 		Last4:      auth.Last4(secret),
 		CreatedBy:  "router keys create",
 	}); err != nil {
