@@ -136,7 +136,8 @@ and check that the pods start and open an existing connection. To roll back, res
   4. Roll back.
 
   The steps are in GetStream/chat `infra/docs/accelerate_overlap_deploy.md`, paragraph "Revert" under
-  "The sandbox proxy socket". If the only target is older than v0.6.135, or the stuck case in that doc applies, stop and ask.
+  "The sandbox proxy socket". If the only target is older than v0.6.135, stop and ask.
+  A router older than v0.6.191 already stuck behind devrun's socket needs only steps 1 and 2 (same paragraph); the new pods start without it.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -hosted` streams a file through the hosted router and prints which model answered.
