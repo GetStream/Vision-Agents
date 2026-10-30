@@ -7,6 +7,7 @@ package llmtest
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -121,6 +122,13 @@ func (s *Script) OnClose(f func()) {
 	s.mu.Unlock()
 }
 
+// Incomplete settles the response as stopped early for reason, the way a provider ends one
+// the token cap cut off.
+func (s *Script) Incomplete(reason string) {
+	s.write(func(w *llm.ResponseWriter) { w.Incomplete(reason) })
+	s.Done()
+}
+
 // Done settles the response, which is what unblocks whoever is draining it.
 func (s *Script) Done() {
 	s.closeOnce.Do(func() { close(s.ended) })
@@ -203,3 +211,47 @@ func (s *Script) wake() {
 	default:
 	}
 }
+
+// Thinker is a model that thinks before it answers, as Claude does: its thinking and its
+// answer share one cap, the request's MaxOutputTokens, and whatever the thinking leaves of
+// the cap is all of the answer that gets written. A token is one byte here, which is all a
+// test of the cap needs.
+type Thinker struct {
+	// Thinks is how many tokens it thinks for before it answers.
+	Thinks int
+	// Answer is what it writes once it has thought.
+	Answer string
+}
+
+func (t *Thinker) Start(context.Context) error { return nil }
+
+func (t *Thinker) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	thinking, answer := strings.Repeat(".", t.Thinks), t.Answer
+	limit := params.MaxOutputTokens
+	cut := limit > 0 && len(thinking)+len(answer) > limit
+	if cut {
+		thinking = thinking[:min(len(thinking), limit)]
+		answer = answer[:limit-len(thinking)]
+	}
+
+	script := New(llm.StreamOptions{ResponseID: params.ID, Provider: t.Provider(), Model: t.Model()})
+	script.ReasoningText(thinking)
+	if answer != "" {
+		script.OutputText(answer)
+	}
+	script.Usage(llm.Usage{
+		OutputTokens:        int64(len(thinking) + len(answer)),
+		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: int64(len(thinking))},
+	})
+	if cut {
+		script.Incomplete(llm.ReasonMaxOutputTokens)
+	} else {
+		script.Done()
+	}
+	return script.Stream(), nil
+}
+
+func (t *Thinker) Provider() string               { return "stub" }
+func (t *Thinker) Model() string                  { return "stub-thinker" }
+func (t *Thinker) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (t *Thinker) Close() error                   { return nil }

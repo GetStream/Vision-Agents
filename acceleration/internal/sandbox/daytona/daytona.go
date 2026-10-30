@@ -125,12 +125,10 @@ func (unmetered) Gone()            {}
 // A cancellable gate serializes creation, execution and deletion. Identity survives a
 // failed delete so Close can be retried; a closed sandbox can never create another VM.
 type Sandbox struct {
-	client *sdk.Client
-	box    *sdk.Sandbox
-	gate   chan struct{}
-	closed atomic.Bool
-	// abandoned says a Close gave up waiting for the gate, so deleted nothing.
-	abandoned           atomic.Bool
+	client              *sdk.Client
+	box                 *sdk.Sandbox
+	gate                chan struct{}
+	closed              atomic.Bool
 	timeout, runTimeout time.Duration
 	// check bounds the checks before each run: the timeout, but at most defaultTimeout, as a
 	// built sandbox's timeout is buildTimeout and a hung check holds the gate, so every other
@@ -596,14 +594,8 @@ func (s *Sandbox) lost() {
 
 // arm sets the timer for the sandbox's next point in its lifecycle: where Daytona stops it for
 // idling, where its stopped state is read to see that it did, and where Daytona deletes it.
-// A sandbox whose Close gave up waiting for the gate is an orphan from here, as one Close could
-// not delete is: billed on as one, and deleted by this timer once idle. The caller holds the
-// gate.
+// The caller holds the gate.
 func (s *Sandbox) arm() {
-	if s.abandoned.Load() && s.box != nil && !s.gone && !s.orphaned {
-		s.orphaned = true
-		s.meter.Orphaned()
-	}
 	s.epoch++
 	if s.timer != nil {
 		s.timer.Stop()
@@ -808,7 +800,7 @@ func mediaType(name string, data []byte) string {
 // so Close can be tried again, and its meter, since Daytona still bills it. Its timer then
 // tries the delete again once it has idled, and failing that it is billed as stopped until
 // Daytona's own timer deletes it. A Close that gives up waiting for work still in the sandbox
-// leaves an orphan the same way, once the work is done.
+// leaves the rest of the close to be done once the work is done.
 func (s *Sandbox) Close() error {
 	s.closed.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
@@ -819,25 +811,39 @@ func (s *Sandbox) Close() error {
 			s.arm()
 			<-s.gate
 		}()
+		return s.shut(ctx)
 	case <-ctx.Done():
-		s.abandoned.Store(true)
-		// Work that ended as Close gave up has armed the timer already, without the orphan.
-		select {
-		case s.gate <- struct{}{}:
-			s.arm()
-			<-s.gate
-		default:
-		}
-		// A run still holds the sandbox, which stays, but its credential goes now: Daytona's
-		// secret would wait for the sweep, the proxy's record for its expiry.
-		if s.broker == nil {
-			return ctx.Err()
-		}
-		released, end := context.WithTimeout(context.Background(), s.timeout)
-		defer end()
-		return errors.Join(ctx.Err(), s.broker.Close(released))
 	}
+	// A run still holds the sandbox, which stays until the run ends, but its credential goes
+	// now: Daytona's secret would wait for the sweep, the proxy's record for its expiry.
+	go s.closeLater()
+	if s.broker == nil {
+		return ctx.Err()
+	}
+	released, end := context.WithTimeout(context.Background(), s.timeout)
+	defer end()
+	return errors.Join(ctx.Err(), s.broker.Close(released))
+}
 
+// closeLater waits for the work a Close gave up on to end, then closes as that Close would have:
+// the sandbox goes as soon as it is free rather than once it idles, and one Daytona would not
+// delete is an orphan, for its timer, armed again here as any work that held the gate arms it,
+// to delete once it idles: a timer that fired while this delete held the gate did nothing.
+func (s *Sandbox) closeLater() {
+	s.gate <- struct{}{}
+	defer func() {
+		s.arm()
+		<-s.gate
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+	if err := s.shut(ctx); err != nil {
+		s.logger.Warn("could not close a sandbox once the run its Close gave up on ended", "error", err)
+	}
+}
+
+// shut deletes the sandbox and closes the client, or leaves an orphan. The caller holds the gate.
+func (s *Sandbox) shut(ctx context.Context) error {
 	// The secrets go first: a sandbox Daytona would not delete keeps no credential.
 	var released error
 	if s.broker != nil {

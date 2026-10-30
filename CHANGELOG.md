@@ -168,6 +168,12 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### An id reused once its utterance has finished counts against credit
 
 On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or whose final text was already sent (as after a barge-in), is now a new utterance on every voice: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
+### A call is reviewed when the review model thinks first
+
+A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
+### A session's Daytona sandbox goes when the run it was closed during ends
+
+A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
 
 ### A file `run_code` hands back is read only up to its limit
 
