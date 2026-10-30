@@ -179,6 +179,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
+
 ### Work a scheduled turn hands over is counted as the turn after a barge-in
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
