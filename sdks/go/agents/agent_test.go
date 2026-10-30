@@ -850,6 +850,8 @@ func TestAnAgentWhoseFolderNamesPluginsIsNotMade(t *testing.T) {
 
 // emptyPluginsYAML names plugins and plugin_events with nothing in them. Its sync body was
 // probed on 259da758b, while the SDK still read both keys.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const emptyPluginsYAML = "name: concierge\nplugins: []\nplugin_events: []\nconnectors:\n  - linear\n"
 
 func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
@@ -1108,6 +1110,8 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 // controlYAML is an agent.yaml with no connectors key. Its sync body was probed on
 // 80773902 (connectors/tool-patterns), before connectors were read, and again on
 // 259da758b once it named no plugins.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
 
 func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
@@ -1292,6 +1296,8 @@ func TestSyncSendsRequireApprovalOnEachBindingThatSetsIt(t *testing.T) {
 
 // sandboxlessYAML is a connector entry with no sandbox key. Its sync body was probed on
 // e5d6d8057, before agent.yaml read sandbox on a connector.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const sandboxlessYAML = "name: concierge\nconnectors:\n  - name: github\n    required: true\n"
 
 func TestSyncOfAConnectorWithoutSandboxSendsTheBodyItSentBefore(t *testing.T) {
@@ -1418,6 +1424,8 @@ func TestSyncResolvesTheOneConnectionWithThatLabel(t *testing.T) {
 
 // resolvingYAML names a session binding and a connection the app has. Its sync body was
 // probed on a5721c90, before a missing connection was left out.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const resolvingYAML = "name: concierge\nconnectors:\n  - linear\n  - name: code\n    connector: github\n    connection: company\n"
 
 func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
