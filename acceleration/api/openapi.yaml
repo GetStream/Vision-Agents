@@ -8691,7 +8691,7 @@ components:
     SpeechRequest:
       properties:
         callback:
-          description: A URL the finished job is POSTed to, so a caller does not have to poll.
+          description: 'A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.'
           type: string
         config_id:
           description: A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -9824,7 +9824,7 @@ components:
     TranscriptionRequest:
       properties:
         callback:
-          description: A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+          description: 'A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.'
           type: string
         config_id:
           description: A stored router config to take the options from. Anything named here as well overrides that one field of it.
