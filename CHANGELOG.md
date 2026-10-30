@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A text or call whose limits cannot be checked is not sent
+
+When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).
