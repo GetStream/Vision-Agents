@@ -131,12 +131,12 @@ and check that the pods start and open an existing connection. To roll back, res
   (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat #19810, #19840). A router older than v0.6.191 ignores that socket and retries :8091
   forever: the API serves, the sandbox proxy does not. To go below it, in this order:
   1. Set `router.overlapDeploy.holdSandboxProxy: false`.
-  2. Run `rocky accelerate up`.
+  2. Run `rocky accelerate up --region us-east1-acceleration --env staging`.
   3. Wait for the rollout.
   4. Roll back.
 
   The steps are in GetStream/chat `infra/docs/accelerate_overlap_deploy.md`, paragraph "Revert" under
-  "The sandbox proxy socket". If the only target is older than a floor and its steps do not apply, stop and ask.
+  "The sandbox proxy socket". If the only target is older than v0.6.135, or the stuck case in that doc applies, stop and ask.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -hosted` streams a file through the hosted router and prints which model answered.
