@@ -241,22 +241,29 @@ func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpened
 	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the owner's")
 }
 
-func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAsTheyAreKnown() {
-	// The limiter counts a verified user on the customer's bucket and a device caller also
-	// on its address bucket. A sender carried without its Verified mark or address is
-	// counted in other buckets, and the user's day shows less.
+func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAndTheirAddress() {
+	// The limiter counts a verified user on the customer's bucket for the user, and any
+	// caller with an address on the address bucket. A sender carried without its Verified
+	// mark or its address is counted in other buckets, and one of the two shows less.
 	limiter, err := quota.New(s.redis, quota.Limits{}, userSet{}, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	s.limiter = limiter
-	sender := routing.Caller{UserID: s.user.UserID, Verified: true, IP: "203.0.113.7"}
+	// An address of its own, as the user has: the address bucket outlives the test.
+	address := fmt.Sprintf("2001:db8::%x", time.Now().UnixNano())
+	sender := routing.Caller{UserID: s.user.UserID, Verified: true, IP: address}
 	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
 
 	s.reply(routing.WithCaller(s.ctx, sender), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	status, err := s.limiter.Allow(s.ctx, "acme", sender)
-	s.Require().NoError(err)
-	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the sender's")
+	for name, asker := range map[string]routing.Caller{
+		"as the user":    {UserID: s.user.UserID, Verified: true},
+		"at the address": {IP: address},
+	} {
+		status, err := s.limiter.Allow(s.ctx, "acme", asker)
+		s.Require().NoError(err)
+		s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both counted %s", name)
+	}
 }
 
 func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesAfterAScheduledTurnIsCountedOnTheirDay() {
