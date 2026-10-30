@@ -123,6 +123,20 @@ func (s *RoboflowSuite) TestAHostedModelIsSentTheImageTheKeyAndTheConfidenceFloo
 	s.Equal("anBlZw==", string(call.body), "the body is the image, base64")
 }
 
+// A key the query escapes is written escaped in the URL a client's error repeats.
+func (s *RoboflowSuite) TestAHostedModelThatCannotBeReachedDoesNotNameTheKey() {
+	key := "rf/secret+key="
+	provider, err := New(Options{APIKey: key, Model: "coco/3", BaseURL: "http://127.0.0.1:1"})
+	s.Require().NoError(err)
+
+	_, err = provider.Detect(context.Background(), frame())
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "127.0.0.1:1/coco/3", "the error still says what failed")
+	s.NotContains(err.Error(), key)
+	s.NotContains(err.Error(), url.QueryEscape(key))
+}
+
 func (s *RoboflowSuite) TestTheFaceWorkflowGivesEveryFaceItsOwnEmbedding() {
 	s.answering(workflowTwoFaces)
 	request := frame()

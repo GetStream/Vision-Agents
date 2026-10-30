@@ -257,10 +257,8 @@ func boxesOf(answer predictions, embeddings [][]float32, request detection.Reque
 // post sends one call, built by build for a key from the pool and again for the next key
 // on a 429, and decodes the answer into out.
 func (p *Provider) post(ctx context.Context, contentType string, build func(key string) (string, []byte, error), out any) error {
-	var used string
 	var buildErr error
 	response, err := p.keys.Send(ctx, func(key string) (*http.Response, error) {
-		used = key
 		endpoint, body, err := build(key)
 		if err != nil {
 			buildErr = err
@@ -278,8 +276,13 @@ func (p *Provider) post(ctx context.Context, contentType string, build func(key 
 		return detection.Fail(detection.ProviderFailed, buildErr)
 	}
 	if err != nil {
-		// The URL carries the key, and an error from the client repeats the URL.
-		return detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+strings.ReplaceAll(err.Error(), used, "REDACTED")))
+		// A hosted model's URL carries the key in its query, escaped, and an error from the
+		// client repeats the URL.
+		var failed *url.Error
+		if errors.As(err, &failed) {
+			failed.URL, _, _ = strings.Cut(failed.URL, "?")
+		}
+		return detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+err.Error()))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {

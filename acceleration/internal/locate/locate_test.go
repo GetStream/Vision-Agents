@@ -1,6 +1,9 @@
 package locate
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"net/netip"
 	"testing"
 
@@ -36,4 +39,21 @@ func (s *LocateSuite) TestAnAddressOutsideThePublishedRangesFallsBackToItsNetwor
 
 	cloud, _ = cloudOf(ranges, netip.MustParseAddr("168.86.128.1"), "AS20473 Twilio Inc.")
 	s.Empty(cloud)
+}
+
+// refusing fails every request, as a client that cannot reach ipinfo does.
+type refusing struct{}
+
+func (refusing) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
+}
+
+func (s *LocateSuite) TestALookupThatFailsDoesNotNameTheToken() {
+	locator := &Locator{client: &http.Client{Transport: refusing{}}, token: "ipinfo-secret", cache: map[string]Place{}}
+
+	_, err := locator.Locate(context.Background(), netip.MustParseAddr("192.0.2.7"))
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "https://ipinfo.io/192.0.2.7/json", "the error still says what failed")
+	s.NotContains(err.Error(), "ipinfo-secret")
 }

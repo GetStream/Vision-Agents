@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -107,11 +108,11 @@ func (l *Locator) Locate(ctx context.Context, ip netip.Addr) (Place, error) {
 	}
 
 	place := Place{IP: key}
-	url := "https://ipinfo.io/" + key + "/json"
+	address := "https://ipinfo.io/" + key + "/json"
 	if l.token != "" {
-		url += "?token=" + l.token
+		address += "?token=" + l.token
 	}
-	raw, lookupErr := l.get(ctx, url)
+	raw, lookupErr := l.get(ctx, address)
 	if lookupErr == nil {
 		if err := json.Unmarshal(raw, &place); err != nil {
 			lookupErr = fmt.Errorf("ipinfo %s: %w", key, err)
@@ -126,20 +127,32 @@ func (l *Locator) Locate(ctx context.Context, ip netip.Addr) (Place, error) {
 	return place, lookupErr
 }
 
-func (l *Locator) get(ctx context.Context, url string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// get reads address. Its query carries the ipinfo token, so no error names it: neither the
+// ones written here nor the URL an error from the client repeats.
+func (l *Locator) get(ctx context.Context, address string) ([]byte, error) {
+	bare, _, _ := strings.Cut(address, "?")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", url, err)
+		return nil, fmt.Errorf("request %s: %w", bare, withoutQuery(err))
 	}
 	response, err := l.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("get %s: %w", strings.SplitN(url, "?", 2)[0], err)
+		return nil, fmt.Errorf("get %s: %w", bare, withoutQuery(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get %s: %s", strings.SplitN(url, "?", 2)[0], response.Status)
+		return nil, fmt.Errorf("get %s: %s", bare, response.Status)
 	}
 	return io.ReadAll(response.Body)
+}
+
+// withoutQuery cuts the query off the URL a *url.Error names.
+func withoutQuery(err error) error {
+	var failed *url.Error
+	if errors.As(err, &failed) {
+		failed.URL, _, _ = strings.Cut(failed.URL, "?")
+	}
+	return err
 }
 
 // orgClouds name a cloud by the network that announces an address, for the clouds that do
