@@ -4292,7 +4292,7 @@ pub struct CreateSessionRequest {
     ///Omit it and the config decides, or en-low-latency when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
-    ///Who the agent joins the call as.
+    ///The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -9926,6 +9926,7 @@ pub struct Session {
     ///What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub usage: ::std::option::Option<CallUsage>,
+    ///The name the agent joined the call as. It is not the owner of the session.
     pub user_id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
