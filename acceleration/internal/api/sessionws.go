@@ -977,7 +977,7 @@ func errorText(err error) string {
 // is the one it always was.
 func withRefusal(failed frame, err error) frame {
 	if errors.Is(err, policy.ErrPromptInjection) {
-		failed["code"] = "prompt_injection"
+		failed["code"] = codePromptInjection
 	}
 	return failed
 }
