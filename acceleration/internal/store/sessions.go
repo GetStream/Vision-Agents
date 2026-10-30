@@ -472,6 +472,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
+	if len(filter.CallerKinds) > 0 {
+		query = query.Where("caller_kind IN (?)", bun.In(filter.CallerKinds))
+	}
 	if filter.ConfigID != "" {
 		query = query.Where("config_id = ?", filter.ConfigID)
 	}
@@ -1055,21 +1058,29 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 		return 0, stack.Wrap(errors.New("store: a guest cannot be claimed by itself"))
 	}
 
+	// Only rows a verified caller of the guest's id wrote move: an anonymous caller that went
+	// by the same name is somebody else. A guest's row becomes the account's, so the account
+	// reaches it by its own kind; a backend's stays a backend's, which the account reaches too.
+	const claimedKind = "caller_kind = CASE WHEN caller_kind = ? THEN ? ELSE caller_kind END"
 	now := time.Now().UTC()
 	moveSessions := func(ctx context.Context, db bun.IDB) (sql.Result, error) {
 		return db.NewUpdate().Model((*AgentSession)(nil)).
 			Set("user_id = ?", userID).
+			Set(claimedKind, UserKindGuest, UserKindAuthenticated).
 			Set("updated_at = ?", now).
 			Where("customer_id = ?", customerID).
 			Where("user_id = ?", guestID).
+			Where("caller_kind <> 'anonymous'").
 			Exec(ctx)
 	}
 	moveTasks := func(ctx context.Context, db bun.IDB) error {
 		_, err := db.NewUpdate().Model((*ScheduledTask)(nil)).
 			Set("user_id = ?", userID).
+			Set(claimedKind, UserKindGuest, UserKindAuthenticated).
 			Set("updated_at = ?", now).
 			Where("customer_id = ?", customerID).
 			Where("user_id = ?", guestID).
+			Where("caller_kind <> 'anonymous'").
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("claim guest scheduled tasks: %w", err)

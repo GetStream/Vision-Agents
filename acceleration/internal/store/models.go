@@ -1942,6 +1942,10 @@ type SessionFilter struct {
 	AgentID   string
 	Project   string
 	Modality  string
+	// CallerKinds, when set, admits only the sessions opened by one of these kinds of
+	// caller. A user id is only worth what proved it, so an end user is narrowed by both
+	// halves of who they are, the same as a session they reach by id.
+	CallerKinds []string
 	// State is SessionRunning or SessionClosed.
 	State string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
