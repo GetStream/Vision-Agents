@@ -125,7 +125,19 @@ and check that the pods start and open an existing connection. To roll back, res
 - Migrations run on start. Additive is fine; anything else wants a plan first.
 - Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
   router ignores `require_approval` on connector bindings, so their write tools run without
-  the person's approval.
+  the person's approval. This floor holds in every environment.
+- Staging has a second, higher floor: never roll back below `accelerate-v0.6.191` (#1433). Since 2026-10-29
+  staging devrun holds the sandbox proxy port :8091 and passes it to the router as fd 4
+  (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat #19810, #19840). A router older than v0.6.191 ignores that socket and retries :8091
+  until it exits: the API serves, the sandbox proxy does not. To go below it, in this order:
+  1. Set `router.overlapDeploy.holdSandboxProxy: false`.
+  2. Run `rocky accelerate up --region us-east1-acceleration --env staging`.
+  3. Wait for the rollout.
+  4. Roll back.
+
+  The steps are in GetStream/chat `infra/docs/accelerate_overlap_deploy.md`, paragraph "Revert" under
+  "The sandbox proxy socket". If the only target is older than v0.6.135, stop and ask.
+  A router older than v0.6.191 already stuck behind devrun's socket needs only steps 1 to 3 (set false, `rocky accelerate up`, wait); the new pods start without it.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -hosted` streams a file through the hosted router and prints which model answered.
