@@ -4,8 +4,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -16,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -101,55 +108,194 @@ VALUES (?, 'agent_configs', 'insert', '{}', now() - make_interval(secs => ?))`,
 	)
 	s.Require().Equal([]int{1, 1, 1}, []int{left(runs), left(changes), left(unredacted)})
 
-	stopped := make(chan error, 1)
-	go func() { stopped <- run(s.settings, slog.New(slog.DiscardHandler)) }()
-	// A failed wait below ends the test with the router still up; run has a handler for
-	// SIGTERM only while it waits, so stop it here and not by the signal killing the binary.
-	var stopRouter sync.Once
-	s.T().Cleanup(func() {
-		stopRouter.Do(func() {
-			select {
-			case <-stopped:
-			default:
-				s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
-				select {
-				case <-stopped:
-				case <-time.After(30 * time.Second):
-					s.Fail("the router did not stop on SIGTERM")
-				}
-			}
-		})
-	})
+	stop := s.start(s.settings)
 
 	pruned := func() bool {
 		return left(runs) == 0 && left(changes) == 0 && left(unredacted) == 0
 	}
+	// A router that stopped before it was told to fails here, and its error is in stop's.
 	deadline := time.After(30 * time.Second)
 	for !pruned() {
 		select {
-		case err := <-stopped:
-			stopRouter.Do(func() {})
-			s.Require().Failf("the router stopped before it was told to", "error: %v", err)
 		case <-deadline:
 			s.Require().Failf("what is past its retention is still there",
 				"scheduled task runs %d, recorded changes %d, unredacted tool results %d", left(runs), left(changes), left(unredacted))
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+	s.Require().NoError(stop())
+}
 
-	// run is waiting on the signal it asked for, so the signal stops it rather than the test.
-	select {
-	case err := <-stopped:
-		stopRouter.Do(func() {})
-		s.Require().Failf("the router stopped before it was told to", "error: %v", err)
-	default:
+// The router starts the sweep of the Daytona secrets a crashed router left behind, and a sweep
+// still running ends when the router is told to stop.
+func (s *RouterStartSuite) TestAStartingRouterSweepsSecretsUntilItStops() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+	// Its own prefix, so a run beside it on the same Redis has its own sweep lease.
+	prefix := "boot" + strings.ToLower(rand.Text())
+	listing, ended, release := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{})
+	signal := func(c chan struct{}) {
+		select {
+		case c <- struct{}{}:
+		default:
+		}
+	}
+	daytona := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The SDK's client also opens Daytona's event socket, which the sweep never uses.
+		if r.URL.Path != "/api/secret/paginated" || r.URL.Query().Get("name") != "va_"+prefix+"_" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// The list is held, so the sweep is still running when the router is told to stop.
+		signal(listing)
+		select {
+		case <-r.Context().Done():
+			signal(ended)
+		case <-release:
+		}
+	}))
+	s.T().Cleanup(daytona.Close)
+	s.T().Cleanup(func() { close(release) })
+	s.T().Setenv("DAYTONA_API_KEY", "key-1")
+	s.T().Setenv("DAYTONA_API_URL", daytona.URL+"/api")
+	settings := s.settings
+	settings.Redis.Addr = address
+	settings.CodeSandbox.SecretPrefix = prefix
+
+	stop := s.start(settings)
 	select {
-	case err := <-stopped:
-		stopRouter.Do(func() {})
-		s.Require().NoError(err)
+	case <-listing:
 	case <-time.After(30 * time.Second):
-		s.Require().Fail("the router did not stop on SIGTERM")
+		s.Require().Fail("the router did not list the secrets it left behind")
+	}
+	s.Require().NoError(stop())
+
+	// The cancelled request ends at once; ten seconds is slack for a loaded machine.
+	select {
+	case <-ended:
+	case <-time.After(10 * time.Second):
+		s.Fail("the sweep went on after the router stopped")
 	}
 }
+
+// The router starts the sweep that retires the status urls of old placed calls.
+func (s *RouterStartSuite) TestAStartingRouterRetiresTheStatusURLsOfOldCalls() {
+	previous := phoneSweepEvery
+	// Well inside the wait below; the production ten minutes would outlast it.
+	phoneSweepEvery = 50 * time.Millisecond
+	s.T().Cleanup(func() { phoneSweepEvery = previous })
+	call := store.PhoneCall{
+		Token: uuid.NewString(), CustomerID: "customer-" + uuid.NewString(), CallType: "default", CallID: uuid.NewString(),
+		Vendor: "telnyx", LocalNumber: "+15125550100", RemoteNumber: "+15125550199", Reports: true,
+		// Past a status url's lifetime, phone.MaxCallLength and an hour (statusTokenLifetime in
+		// internal/phone/service.go).
+		PlacedAt: time.Now().UTC().Add(-phone.MaxCallLength - 2*time.Hour),
+	}
+	s.Require().NoError(s.db.InsertPhoneCall(s.ctx, &call))
+	s.T().Cleanup(func() {
+		_, err := s.db.DB().ExecContext(context.Background(), "DELETE FROM phone_calls WHERE id = ?", call.ID)
+		s.NoError(err)
+	})
+	retired := func() bool {
+		var gone bool
+		err := s.db.DB().QueryRowContext(s.ctx, "SELECT token IS NULL FROM phone_calls WHERE id = ?", call.ID).Scan(&gone)
+		return err == nil && gone
+	}
+
+	stop := s.start(s.settings)
+
+	s.Eventually(retired, 30*time.Second, 50*time.Millisecond, "the old call's status url is still live")
+	s.Require().NoError(stop())
+}
+
+// The router starts the sweep that closes idle episodes where an agent config has the cards on.
+func (s *RouterStartSuite) TestAStartingRouterClosesAnIdleEpisode() {
+	customer := "customer-" + uuid.NewString()
+	carded := &store.AgentConfig{CustomerID: customer, Name: "carded", EpisodeCards: true}
+	s.Require().NoError(s.db.CreateAgentConfig(s.ctx, carded))
+	s.T().Cleanup(func() { s.NoError(s.db.DeleteAgentConfig(context.Background(), customer, carded.ID)) })
+	contact := store.ContactMapEntry{
+		CustomerID: customer, AgentConfigID: carded.ID, Kind: store.ContactSlack,
+		Address: "T1:U1", ConversationID: "agent:omni-" + uuid.NewString(),
+	}
+	_, err := s.db.MapContact(s.ctx, &contact)
+	s.Require().NoError(err)
+	episode := store.Episode{
+		CustomerID: customer, ContactID: contact.ID, Source: store.EpisodeSlack, ThreadChannel: "agent:thread-" + uuid.NewString(),
+		// Past episodes.idle_after, an hour by default (config.Defaults).
+		StartedAt: time.Now().Add(-2 * time.Hour),
+	}
+	_, err = s.db.OpenEpisode(s.ctx, &episode)
+	s.Require().NoError(err)
+	closed := func() bool {
+		var status string
+		err := s.db.DB().QueryRowContext(s.ctx, "SELECT status FROM episodes WHERE id = ?", episode.ID).Scan(&status)
+		return err == nil && status != "in_progress"
+	}
+
+	stop := s.start(s.settings)
+
+	s.Eventually(closed, 30*time.Second, 50*time.Millisecond, "the idle episode is still open")
+	s.Require().NoError(stop())
+}
+
+// start runs the router as its serve command does, and waits for its public listener: a stop
+// signal before that fails the start with the context's error. stop sends it the signal a
+// deployment sends and gives what run returned. A failed wait ends the test with the router
+// still up; run has a handler for SIGTERM only while it runs, so the cleanup stops it here and
+// not by the signal killing the binary.
+func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
+	stopped := make(chan struct{})
+	logs := &listenLog{listening: make(chan struct{})}
+	var runErr error
+	go func() {
+		runErr = run(settings, slog.New(logs))
+		close(stopped)
+	}()
+	stop = sync.OnceValue(func() error {
+		select {
+		case <-stopped:
+			return fmt.Errorf("the router stopped before it was told to: %v", runErr)
+		default:
+		}
+		if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+			return err
+		}
+		select {
+		case <-stopped:
+			return runErr
+		case <-time.After(30 * time.Second):
+			return errors.New("the router did not stop on SIGTERM")
+		}
+	})
+	s.T().Cleanup(func() { s.NoError(stop()) })
+	select {
+	case <-logs.listening:
+	case <-stopped:
+		s.Require().Failf("the router stopped as it started", "error: %v", runErr)
+	// The 30 s the start test has always waited; a start here takes under a second.
+	case <-time.After(30 * time.Second):
+		s.Require().Fail("the router did not start listening")
+	}
+	return stop
+}
+
+// listenLog drops the router's logs and tells when it logs that it is listening.
+type listenLog struct {
+	listening chan struct{}
+	once      sync.Once
+}
+
+func (l *listenLog) Enabled(context.Context, slog.Level) bool { return true }
+
+func (l *listenLog) Handle(_ context.Context, record slog.Record) error {
+	if record.Message == "listening" {
+		l.once.Do(func() { close(l.listening) })
+	}
+	return nil
+}
+
+func (l *listenLog) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *listenLog) WithGroup(string) slog.Handler      { return l }
