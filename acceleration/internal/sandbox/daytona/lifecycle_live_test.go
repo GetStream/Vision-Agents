@@ -17,12 +17,14 @@ import (
 // LiveLifecycleSuite runs a sandbox through Daytona's own states, against Daytona with
 // DAYTONA_API_KEY: go test -tags daytona_live -run TestLiveLifecycleSuite
 // ./internal/sandbox/daytona. Each sandbox is labelled stream.env=live-test and deleted when
-// the test ends.
+// the test ends, and stream.run with this run, whose sandboxes the suite deletes once it ends.
 type LiveLifecycleSuite struct {
 	suite.Suite
 	ctx    context.Context
 	client *sdk.Client
 	meter  *told
+	// runID labels every sandbox of this run of the suite.
+	runID string
 }
 
 func TestLiveLifecycleSuite(t *testing.T) {
@@ -30,6 +32,14 @@ func TestLiveLifecycleSuite(t *testing.T) {
 		t.Skip("DAYTONA_API_KEY is not set")
 	}
 	suite.Run(t, new(LiveLifecycleSuite))
+}
+
+func (s *LiveLifecycleSuite) SetupSuite() {
+	s.runID = "live-" + random()
+}
+
+func (s *LiveLifecycleSuite) TearDownSuite() {
+	sweepRun(s.T(), s.runID)
 }
 
 func (s *LiveLifecycleSuite) SetupTest() {
@@ -41,7 +51,7 @@ func (s *LiveLifecycleSuite) SetupTest() {
 }
 
 func (s *LiveLifecycleSuite) box() *Sandbox {
-	box, err := New(Options{Labels: map[string]string{"stream.env": "live-test", "stream.session": "live-" + random()},
+	box, err := New(Options{Labels: map[string]string{"stream.env": "live-test", "stream.session": "live-" + random(), runLabel: s.runID},
 		Lifecycle: sandbox.Lifecycle{IdleStop: 15 * time.Minute, StoppedDelete: time.Hour}, Meter: s.meter,
 		Timeout: 2 * time.Minute})
 	s.Require().NoError(err)
