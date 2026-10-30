@@ -104,6 +104,30 @@ func (s *VideoSuite) TestSomethingThatIsNotAVideoIsRefused() {
 	s.ErrorContains(err, "not a video")
 }
 
+func (s *VideoSuite) TestAConcatScriptNamingAnotherFileOnThisMachineIsNotRead() {
+	// The clip is written to the temporary directory, and a concat script reads the files it
+	// names from beside itself.
+	dir := s.T().TempDir()
+	s.T().Setenv("TMPDIR", dir)
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "other.mp4"), s.clip, 0o600))
+	script := "ffconcat version 1.0\nfile other.mp4\nduration 4\n"
+
+	_, _, err := Frames(s.T().Context(), "data:video/mp4;base64,"+base64.StdEncoding.EncodeToString([]byte(script)), 2)
+
+	s.ErrorContains(err, "not a video")
+}
+
+func (s *VideoSuite) TestFFmpegIsHandedNoneOfTheRoutersEnvironment() {
+	// FFREPORT is a variable FFmpeg acts on: it writes a report to the file it names.
+	report := filepath.Join(s.T().TempDir(), "report.log")
+	s.T().Setenv("FFREPORT", "file="+report+":level=32")
+
+	_, _, err := Frames(s.T().Context(), s.dataURI(), 1)
+
+	s.Require().NoError(err)
+	s.NoFileExists(report)
+}
+
 func (s *VideoSuite) TestADataURIThatIsNotAVideoIsRefused() {
 	_, _, err := Frames(s.T().Context(), "data:image/png;base64,iVBORw0KGgo=", 2)
 
