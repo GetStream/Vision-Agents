@@ -11,8 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -152,8 +156,8 @@ func (s *LifecycleSuite) run(box *Sandbox) {
 
 // told waits for the meter to have been told want.
 func (s *LifecycleSuite) told(want ...string) {
-	s.Eventually(func() bool { return slices.Equal(s.meter.all(), want) }, 5*time.Second, 10*time.Millisecond,
-		"the meter was told %v", s.meter.all())
+	s.EventuallyWithT(func(c *assert.CollectT) { assert.Equal(c, want, s.meter.all()) }, 5*time.Second, 10*time.Millisecond,
+		"what the meter was told")
 }
 
 func (s *LifecycleSuite) TestASandboxIsCreatedWithLabelsAndALifecycle() {
@@ -343,6 +347,37 @@ func (t *stallingDeletes) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, r.Context().Err()
 	}
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+func (s *LifecycleSuite) TestATimerDueWhileTheGateIsHeldFiresOnceItIsLetGo() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		meter := &told{}
+		box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(),
+			Lifecycle: sandbox.Lifecycle{IdleStop: time.Minute, StoppedDelete: time.Hour}, Meter: meter})
+		require.NoError(t, err)
+		box.box = &sdk.Sandbox{ID: "sandbox-1"}
+		box.gate <- struct{}{}
+		box.done()
+		// Work takes the gate and holds it past the idle stop, as the delete closeLater makes
+		// after a run can, so the timer the run armed fires and finds the gate held. The work
+		// then arms the timer again, due at once, before it lets the gate go.
+		box.gate <- struct{}{}
+		time.Sleep(2 * time.Minute)
+		box.arm()
+		armed := box.epoch
+		synctest.Wait()
+		<-box.gate
+		synctest.Wait()
+
+		require.Equal(t, []string{"stopped"}, meter.all(), "stopped once, by the timer armed last")
+		box.gate <- struct{}{}
+		// The timer that waited for the gate finds itself replaced and sets no timer: one that
+		// did would replace the next waiting one in turn, a chain of wake-ups that do nothing.
+		// Only the stop arms the next point of the lifecycle.
+		assert.Equal(t, armed+1, box.epoch, "timers armed after the gate was let go")
+		box.timer.Stop()
+		<-box.gate
+	})
 }
 
 func (s *LifecycleSuite) TestASandboxIsDeletedWhenItsRunEndsAsCloseGivesUp() {
