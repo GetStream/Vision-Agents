@@ -334,8 +334,9 @@ func (s *Sandbox) Write(ctx context.Context, name string, data []byte) error {
 		return ctx.Err()
 	}
 	return s.use(ctx, func() error {
-		// A hung upload holds the gate, so it is bounded as every other call to Daytona is.
-		write, end := context.WithTimeout(ctx, s.timeout)
+		// A hung upload holds the gate, so it is bounded as a check is: a built sandbox's timeout
+		// is the 20 minutes a build may take, and a skill's files are written one by one.
+		write, end := context.WithTimeout(ctx, s.check)
 		defer end()
 		if dir := path.Dir(name); dir != "." {
 			made, err := s.box.Process.ExecuteCommand(write, "mkdir -p "+quoted(dir), options.WithCommandEnv(s.mount.RunEnv))

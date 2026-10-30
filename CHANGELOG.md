@@ -178,7 +178,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### A Daytona file write that hangs no longer holds the sandbox
 
-Writing a skill's files into a Daytona sandbox before `run_code` is now bounded by the sandbox's timeout, as every other call to Daytona is. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).
+Writing a skill's files into a Daytona sandbox before `run_code` is now bounded as the check before a run is: by the sandbox's timeout, at most 60 seconds. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).

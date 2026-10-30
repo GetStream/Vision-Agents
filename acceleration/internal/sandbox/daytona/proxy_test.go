@@ -273,6 +273,26 @@ func (s *ProxySuite) TestABuiltSandboxsCheckIsCutAtTheDefaultTimeout() {
 	s.Len(s.platform.executed(), 1, "no code ran after the check was cut")
 }
 
+// TestABuiltSandboxsWriteIsCutAtTheDefaultTimeout: a write holds the gate as a check does, and a
+// built sandbox's timeout is the 20 minutes a build may take, so an upload Daytona never answers
+// is cut at defaultTimeout, not held for 20 minutes per skill file.
+func (s *ProxySuite) TestABuiltSandboxsWriteIsCutAtTheDefaultTimeout() {
+	box := s.slowed(sandbox.Config{TimeoutMs: 10, CPU: 1}, 0, 0)
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	err := box.Write(ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+}
+
 // TestACallerGivingUpDuringTheCheckEndsTheRun: the check runs on the caller's context, so a
 // caller that gives up during a hung check is answered then, not at the check's 60 s bound.
 func (s *ProxySuite) TestACallerGivingUpDuringTheCheckEndsTheRun() {
