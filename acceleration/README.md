@@ -2351,6 +2351,9 @@ go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
 ```
 
+The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
+`--source-auth server` is for a source router reached directly.
+
 A scheduled task active on the source is imported paused, and so is a campaign running there,
 since the source goes on delivering them until the move is cut over. Each is marked as paused by
 the move; a change carried later sets the mark again from the source's state, so one the user
