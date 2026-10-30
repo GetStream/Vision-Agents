@@ -108,6 +108,7 @@ type Config struct {
 	Agent      Agent      `koanf:"agent"`
 	Connectors Connectors `koanf:"connectors"`
 	Runs       Runs       `koanf:"runs"`
+	Sessions   Sessions   `koanf:"sessions"`
 	Episodes   Episodes   `koanf:"episodes"`
 	Sandbox    Sandbox    `koanf:"sandbox"`
 	// CodeSandbox is the sandbox code runs in, not the 10DLC Sandbox above.
@@ -388,6 +389,16 @@ type Runs struct {
 	ConcurrentPerApp int64 `koanf:"concurrent_per_app"`
 }
 
+// Sessions is how many sessions one app may have open at once: agent sessions however they
+// were opened (the API, a call to one of its numbers, a channel message, a run) and the model
+// streams of /v1/{modality}/stream.
+type Sessions struct {
+	// ConcurrentPerApp caps one app's sessions open, counted in Redis across every router, so
+	// one app cannot take every agent and model slot the deployment has. One over it is a 429
+	// with Retry-After. 0 turns it off; so does a deployment with no Redis.
+	ConcurrentPerApp int64 `koanf:"concurrent_per_app"`
+}
+
 // Episodes is how a person's episodes close (T55, AI-884; omnichannel.Closer).
 type Episodes struct {
 	// IdleAfter is how long a text episode goes without a message before it closes and is
@@ -549,6 +560,7 @@ var variables = map[string]string{
 
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
 	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
+	"sessions.concurrent_per_app":       "ROUTER_SESSIONS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -626,6 +638,10 @@ func Defaults() Config {
 		// A choice, not a measurement: room for a moderation worker's batch without letting
 		// one app's backlog take every model slot. # unverified
 		Runs: Runs{ConcurrentPerApp: 20},
+		// A choice, not a measurement: a hundred times the most calls at once any tier allows
+		// (10), as text sessions outlive their last message by DetachedGrace and are many more.
+		// # unverified
+		Sessions: Sessions{ConcurrentPerApp: 1000},
 		// turbopuffer's list prices (turbopuffer.com/pricing, read 2026-10-23): $1 per PB
 		// queried, $0.05 per GB returned, $2 per GB written with every write billed at least
 		// 10 KB, $0.33 per GB-month stored, a month taken as 730 hours. Its batch discount on
@@ -741,6 +757,9 @@ func (c Config) validate() error {
 	}
 	if c.Runs.ConcurrentPerApp < 0 {
 		return fmt.Errorf("config: runs.concurrent_per_app cannot be negative, got %d", c.Runs.ConcurrentPerApp)
+	}
+	if c.Sessions.ConcurrentPerApp < 0 {
+		return fmt.Errorf("config: sessions.concurrent_per_app cannot be negative, got %d", c.Sessions.ConcurrentPerApp)
 	}
 	if c.Knowledge.MinChunk < 0 || c.Knowledge.MaxHeading < 0 {
 		return fmt.Errorf("config: knowledge.min_chunk and knowledge.max_heading cannot be negative, got %d and %d",
@@ -1065,6 +1084,7 @@ func (c Config) export() error {
 
 		"connectors.proxy_calls_per_minute": fmt.Sprint(c.Connectors.ProxyCallsPerMinute),
 		"runs.concurrent_per_app":           fmt.Sprint(c.Runs.ConcurrentPerApp),
+		"sessions.concurrent_per_app":       fmt.Sprint(c.Sessions.ConcurrentPerApp),
 
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,

@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### An app may have at most 1000 sessions open at once
+
+Every agent session counts against its app's cap, however it was opened (`POST /v1/agents/sessions`, a fork or a reopened conversation, the agent socket, a call to one of the app's numbers, a channel or chat message, a run, a scheduled task, a campaign), and so does every model stream of `/v1/{modality}/stream`, counted in Redis across routers. One over it is refused, over HTTP with a 429 `concurrency_limited` and `Retry-After: 5`; an arriving call over it is hung up, as one nobody can answer is. A session holds its place until it ends, and one on a router that died frees it within a minute. `ROUTER_SESSIONS_CONCURRENT_PER_APP` (`sessions.concurrent_per_app`) sets the cap, `1000` by default; `0` turns it off, and so does a router with no Redis.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

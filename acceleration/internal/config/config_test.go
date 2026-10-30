@@ -222,6 +222,23 @@ func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {
 	s.ErrorContains(err, "runs.concurrent_per_app")
 }
 
+// TestSessionsAreCappedAtAThousandPerAppUnlessAskedOtherwise: the default, the variable that
+// changes it, 0 that turns it off, and a negative cap refused.
+func (s *ConfigSuite) TestSessionsAreCappedAtAThousandPerAppUnlessAskedOtherwise() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.EqualValues(1000, config.Sessions.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_SESSIONS_CONCURRENT_PER_APP", "0")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Zero(config.Sessions.ConcurrentPerApp)
+
+	s.T().Setenv("ROUTER_SESSIONS_CONCURRENT_PER_APP", "-1")
+	_, _, err = Load("")
+	s.ErrorContains(err, "sessions.concurrent_per_app")
+}
+
 func (s *ConfigSuite) TestKnowledgeIsCutByTheIngestLimitsUnlessAskedOtherwise() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

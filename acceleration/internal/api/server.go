@@ -284,6 +284,11 @@ type Options struct {
 	// RunsPerApp caps one app's headless runs in flight, counted in Live's Redis across every
 	// router (config runs.concurrent_per_app). 0 caps nothing, and neither does an absent Live.
 	RunsPerApp int64
+	// SessionsPerApp caps one app's sessions open, the model streams of /v1/{modality}/stream
+	// among them, counted in Live's Redis across every router (config
+	// sessions.concurrent_per_app); the manager counts its sessions against the same cap. 0
+	// caps nothing, and neither does an absent Live.
+	SessionsPerApp int64
 	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
 	ImageHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
@@ -408,6 +413,10 @@ type Server struct {
 	// runSlots counts each app's runs in flight against runsPerApp; nil counts none.
 	runSlots   *concurrency.Slots
 	runsPerApp int64
+	// streamSlots counts each app's model streams against sessionsPerApp, with its sessions;
+	// nil counts none.
+	streamSlots    *concurrency.Slots
+	sessionsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
 
@@ -586,6 +595,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+		server.streamSlots, server.sessionsPerApp = concurrency.New(options.Live.Redis(), nil), options.SessionsPerApp
 	}
 	server.imageHTTP = options.ImageHTTP
 	if server.imageHTTP == nil {

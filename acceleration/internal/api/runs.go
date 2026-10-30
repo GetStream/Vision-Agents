@@ -38,6 +38,21 @@ const runLeaseGrace = 30 * time.Second
 // measurement: about as long as a short run takes to free its slot. # unverified
 const runRetryAfter = 5 * time.Second
 
+// sessionRetryAfter is the wait a session or model stream over its app's limit is told to take.
+// A choice, not a measurement, as runRetryAfter is. # unverified
+const sessionRetryAfter = 5 * time.Second
+
+// errTooManySessions is a session or model stream refused because its app has as many open as
+// it may (session.ErrTooManySessions).
+var errTooManySessions = APIError{Type: ErrorTypeRateLimited, Code: codeConcurrencyLimited, Message: fmt.Sprintf(
+	"the app has as many sessions open as it may: retry after %ds", int(sessionRetryAfter.Seconds()))}
+
+// tooManySessions answers an operation with errTooManySessions and its Retry-After.
+func tooManySessions() error {
+	return huma.ErrorWithHeaders(errTooManySessions,
+		http.Header{"Retry-After": {strconv.Itoa(int(sessionRetryAfter.Seconds()))}})
+}
+
 // maxRunImages bounds the images on one run: as many as a question in a chat may carry.
 const maxRunImages = 8
 
@@ -145,6 +160,9 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	defer cancel()
 
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrTooManySessions) {
+		return nil, tooManySessions()
+	}
 	if err != nil {
 		return nil, runFailed(ctx, err, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: err.Error()})
 	}

@@ -106,3 +106,35 @@ func (s *SlotsSuite) TestNoLimitTakesEverySlot() {
 
 	s.True(taken)
 }
+
+func (s *SlotsSuite) TestAHeldSlotOutlivesItsLease() {
+	slots := New(s.redis, nil)
+	held, taken := slots.Hold(s.ctx, s.key, 1, 300*time.Millisecond)
+	s.Require().True(taken)
+	defer held.Release()
+
+	s.Never(func() bool {
+		release, taken := slots.Take(s.ctx, s.key, 1, time.Minute)
+		release()
+		return taken
+	}, time.Second, 50*time.Millisecond, "a slot is held for as long as its work runs, however long its lease")
+}
+
+func (s *SlotsSuite) TestAReleasedHeldSlotIsFreeAgain() {
+	held, _ := s.slots.Hold(s.ctx, s.key, 1, time.Minute)
+	held.Release()
+	held.Release()
+
+	_, taken := s.slots.Take(s.ctx, s.key, 1, time.Minute)
+
+	s.True(taken)
+}
+
+func (s *SlotsSuite) TestAHeldSlotOverTheLimitIsRefused() {
+	s.slots.Take(s.ctx, s.key, 1, time.Minute)
+
+	held, taken := s.slots.Hold(s.ctx, s.key, 1, time.Minute)
+
+	s.False(taken)
+	held.Release()
+}

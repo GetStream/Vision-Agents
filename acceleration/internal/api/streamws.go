@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
@@ -165,6 +167,13 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unknownModality(Modality(modality)))
 		return
 	}
+	slot, err := session.HoldSlot(r.Context(), s.streamSlots, customerID, s.sessionsPerApp)
+	if err != nil {
+		w.Header().Set("Retry-After", strconv.Itoa(int(sessionRetryAfter.Seconds())))
+		writeError(w, errTooManySessions)
+		return
+	}
+	defer slot.Release()
 
 	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {

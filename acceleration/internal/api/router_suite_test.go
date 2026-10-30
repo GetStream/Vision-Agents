@@ -356,6 +356,9 @@ type RouterSuite struct {
 	// runsPerApp caps one app's runs in flight, for a suite about runs to set before it starts
 	// the harness. Zero caps nothing.
 	runsPerApp int64
+	// sessionsPerApp caps one app's sessions and model streams open, for a suite about that cap
+	// to set before it starts the harness. Zero caps nothing.
+	sessionsPerApp int64
 	// knowledgeLimits is how documents are cut, for a suite about knowledge limits to set
 	// before it starts the harness. Zero is ingest.DefaultLimits.
 	knowledgeLimits ingest.Limits
@@ -747,6 +750,7 @@ func (s *RouterSuite) SetupSuite() {
 		ConnectorLimiter:      connectorLimiter,
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		RunsPerApp:            s.runsPerApp,
+		SessionsPerApp:        s.sessionsPerApp,
 		ImageHTTP:             s.imageHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
@@ -1401,6 +1405,7 @@ func (s *RouterSuite) sessionManager(
 		Logger:        logger,
 		// The policies a session's resume_history falls back to, as cmd/router passes them.
 		ResumeHistories: policies,
+		SessionsPerApp:  s.sessionsPerApp,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
