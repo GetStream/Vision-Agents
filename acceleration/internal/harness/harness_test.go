@@ -642,13 +642,15 @@ func (s *HarnessSuite) TestAnInterruptedToolReplyResendsTheToolResult() {
 	s.fast.capabilities.Store = true
 	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
 	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	calls := []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}
 	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup", ToolCalls: calls})
 	history = append(history,
-		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.Assistant, ToolCalls: calls},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
 	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
 	s.Equal("provider-lookup", s.fast.requests()[1].PreviousResponseID)
+	s.Equal(history[2:], s.fast.requests()[1].Input, "the provider kept the call, so only its result is sent")
 	// The agent releases an interrupted reply without remembering its response.
 	s.harness.Release("tool-reply")
 	history = append(history, llm.Message{Role: llm.User, Content: "actually use tomorrow"})
@@ -663,19 +665,93 @@ func (s *HarnessSuite) TestAFinishedToolReplyCanStillBeContinued() {
 	s.fast.capabilities.Store = true
 	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
 	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	calls := []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}
 	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup", ToolCalls: calls})
 	history = append(history,
-		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
+		llm.Message{Role: llm.Assistant, ToolCalls: calls},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
 	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
 	s.harness.Remember(llm.Response{ID: "tool-reply", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer"})
-	added := []llm.Message{{Role: llm.Assistant, Content: "Your booking is tomorrow."}, {Role: llm.User, Content: "thanks"}}
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer", OutputText: "Your booking is tomorrow."})
+	history = append(history, llm.Message{Role: llm.Assistant, Content: "Your booking is tomorrow."})
+	added := []llm.Message{{Role: llm.User, Content: "thanks"}}
 	s.answer(Turn{ID: "thanks", Instructions: "be brief", History: append(history, added...)})
 	sent := s.fast.requests()[2]
 	s.Equal("provider-answer", sent.PreviousResponseID)
-	s.Equal(added, sent.Input)
+	s.Equal(added, sent.Input, "the provider kept the answer, so only what the caller said after it is sent")
+}
+
+func (s *HarnessSuite) TestAContinuedTurnSendsOnlyWhatFollowsTheReply() {
+	// The provider keeps the reply it wrote, its words and every call in it. Sending them
+	// again with the results has the model read its own reply twice.
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "find my booking and my receipt"}}
+	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
+	calls := []llm.ToolCall{
+		{ID: "call-1", Name: "lookup", Arguments: `{"what":"booking"}`},
+		{ID: "call-2", Name: "lookup", Arguments: `{"what":"receipt"}`},
+	}
+	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted, Provider: "stub", Model: "stub-model",
+		ProviderResponseID: "provider-lookup", OutputText: "Let me look.", ToolCalls: calls})
+	results := []llm.Message{
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"},
+		{Role: llm.ToolResult, ToolCallID: "call-2", Content: "receipt found"},
+	}
+	history = append(history, llm.Message{Role: llm.Assistant, Content: "Let me look.", ToolCalls: calls})
+	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: append(history, results...)})
+	sent := s.fast.requests()[1]
+	s.Equal("provider-lookup", sent.PreviousResponseID)
+	s.Equal(results, sent.Input, "neither the words nor the calls the provider kept are sent again")
+}
+
+func (s *HarnessSuite) TestAReplyCutShortInTheConversationIsNotContinued() {
+	s.assertRewrittenReplyIsNotContinued(
+		llm.Message{Role: llm.Assistant, Content: "Your booking is tomorrow at nine. Shall I add a reminder?"},
+		llm.Message{Role: llm.Assistant, Content: "Your booking is tomorrow at nine."})
+}
+
+func (s *HarnessSuite) TestAReplyGivenWordsTheModelNeverWroteIsNotContinued() {
+	calls := []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}
+	s.assertRewrittenReplyIsNotContinued(
+		llm.Message{Role: llm.Assistant, ToolCalls: calls},
+		llm.Message{Role: llm.Assistant, Content: "One moment.", ToolCalls: calls})
+}
+
+func (s *HarnessSuite) TestAReplyGivenACallTheModelNeverMadeIsNotContinued() {
+	s.assertRewrittenReplyIsNotContinued(
+		llm.Message{Role: llm.Assistant, Content: "Let me check."},
+		llm.Message{Role: llm.Assistant, Content: "Let me check.",
+			ToolCalls: []llm.ToolCall{{ID: "ask-1", Name: "lookup", Arguments: "{}"}}})
+}
+
+func (s *HarnessSuite) TestAReplyMissingACallIsNotContinued() {
+	first := llm.ToolCall{ID: "call-1", Name: "lookup", Arguments: "{}"}
+	s.assertRewrittenReplyIsNotContinued(
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{first, {ID: "call-2", Name: "press", Arguments: "{}"}}},
+		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{first}})
+}
+
+// assertRewrittenReplyIsNotContinued has the provider keep the reply as written while the
+// conversation holds it as held. Continuing would have the model read the provider's copy,
+// which is not what the conversation says it said, so the next turn is sent whole.
+func (s *HarnessSuite) assertRewrittenReplyIsNotContinued(written, held llm.Message) {
+	s.build(false)
+	s.fast.capabilities.Store = true
+	history := []llm.Message{{Role: llm.User, Content: "when is my booking"}}
+	s.answer(Turn{ID: "answer", Instructions: "be brief", History: history})
+	s.harness.Remember(llm.Response{ID: "answer", Status: llm.StatusCompleted, Provider: "stub", Model: "stub-model",
+		ProviderResponseID: "provider-answer", OutputText: written.Content, ToolCalls: written.ToolCalls})
+	history = append(history, held)
+	for _, call := range held.ToolCalls {
+		history = append(history, llm.Message{Role: llm.ToolResult, ToolCallID: call.ID, Content: "done"})
+	}
+	history = append(history, llm.Message{Role: llm.User, Content: "sorry, which day?"})
+	s.answer(Turn{ID: "next", Instructions: "be brief", History: history})
+	sent := s.fast.requests()[1]
+	s.Empty(sent.PreviousResponseID, "the provider's copy of the reply is not the conversation's")
+	s.Equal(history, sent.Input)
 }
 
 func (s *HarnessSuite) TestWithoutASubagentNothingIsOffered() {

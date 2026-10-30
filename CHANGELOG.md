@@ -187,6 +187,9 @@ On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the
 ### An IP address in a sandbox's allowed domains is refused
 
 Saving an agent config or syncing an agent folder answers `400` when `sandbox_options.allowed_domains` holds an IP address, such as `203.0.113.7`, `203.0.113.7:443` or `[2001:db8::7]`. Behind the egress proxy a sandbox reaches host names only, so code in the sandbox never reached that address. A name such as `203.0.113.7.example.com` is still taken.
+### A turn continued from a stored OpenAI response no longer repeats the last reply
+
+On a model that keeps its responses (OpenAI's Responses API, continued with `previous_response_id`), each continued turn sent the agent's last reply and its tool calls again, though the stored response already held them. The model read its own reply twice, input tokens grew by twice that reply's output on every continued turn, and the model was far more likely to make the same tool call again. A continued turn now sends only what came after the reply, such as the tool results or the caller's next words. A reply the conversation holds differently from how the model wrote it, for example with a skill tag or stage direction taken out or a filler line said for it, is not continued: the whole conversation is sent instead, as it is after a failover.
 
 ### A user token works with the key the request was made with
 

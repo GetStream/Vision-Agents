@@ -292,9 +292,10 @@ type stored struct {
 	// instructions is what that reply was told. Changed instructions mean the turn is no
 	// longer a continuation of it.
 	instructions string
-	// sent is exactly the input the provider has read, so what to append can be worked
-	// out rather than assumed. Compaction rewrites the conversation from the front, and
-	// what it produces is not a continuation of anything.
+	// sent is exactly what the provider holds of the conversation, the input it read and
+	// then the reply it wrote, so what to append can be worked out rather than assumed.
+	// Compaction rewrites the conversation from the front, and what it produces is not a
+	// continuation of anything.
 	sent []llm.Message
 }
 
@@ -319,6 +320,16 @@ func (h *Harness) Remember(response llm.Response) {
 	}
 	h.stored.responseID = response.ProviderResponseID
 	h.stored.identity = response.Provider + "/" + response.Model
+	// The provider keeps the reply with what it read, so the next turn sends only what came
+	// after it rather than handing the model its own words and calls a second time. That
+	// holds while the conversation has the reply exactly as it was written: one cut short
+	// as the caller talked over it, or given words or calls the model never wrote, no
+	// longer appends to this, and the whole conversation is sent instead. A reply with
+	// neither words nor calls is not in the conversation at all.
+	reply := llm.Message{Role: llm.Assistant, Content: response.OutputText, ToolCalls: slices.Clone(response.ToolCalls)}
+	if reply.Content != "" || len(reply.ToolCalls) > 0 {
+		h.stored.sent = append(slices.Clip(h.stored.sent), reply)
+	}
 }
 
 // Forget drops what a provider that keeps its replies is known to have read, because a
