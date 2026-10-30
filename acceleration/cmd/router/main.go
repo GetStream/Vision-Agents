@@ -1573,7 +1573,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	defer stopSandboxProxy()
 
 	if settings.PprofAddr != "" {
-		go servePprof(settings.PprofAddr, logger)
+		go servePprof(settings.PprofAddr, idleTimeout, logger)
 	}
 	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
 	defer stopMetrics()
@@ -1723,8 +1723,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 }
 
 // servePprof serves the runtime profiles on an address of their own, with lock contention
-// and blocking sampled so the mutex and block profiles have something in them.
-func servePprof(addr string, logger *slog.Logger) {
+// and blocking sampled so the mutex and block profiles have something in them. The idle
+// timeout is read by the caller, as the server is built on a goroutine of its own.
+func servePprof(addr string, idleTimeout time.Duration, logger *slog.Logger) {
 	runtime.SetMutexProfileFraction(100)
 	runtime.SetBlockProfileRate(int(time.Millisecond))
 	mux := http.NewServeMux()
