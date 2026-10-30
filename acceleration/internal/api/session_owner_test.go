@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,6 +144,83 @@ func (s *SessionOwnershipSuite) TestAnAnonymousCallerThatNamesNobodyIsListedNoth
 	s.Empty(nameless.querySessions(SessionQuery{}).Items)
 }
 
+func (s *SessionOwnershipSuite) TestClaimingAUsersNameWithoutATokenListsNoneOfTheirSessions() {
+	// The same rule as reaching one by id, over a listing and a search: ended sessions are
+	// listed from their rows, which is where the name alone once sufficed.
+	alice := s.data.createUser()
+	running := alice.createSession(s.titled("Refund for a duplicate charge"))
+	ended := alice.createSession(s.titled("Refund for a missing parcel"))
+	alice.stopSession(ended.Id)
+	claimant := s.data.claiming(alice.userID)
+
+	s.Empty(claimant.querySessions(SessionQuery{}).Items)
+	s.Empty(claimant.querySessions(s.searchingFor("refund")).Items)
+	s.ElementsMatch([]string{running.Id, ended.Id}, ids(alice.querySessions(SessionQuery{}).Items))
+	s.ElementsMatch([]string{running.Id, ended.Id}, ids(alice.querySessions(s.searchingFor("refund")).Items))
+}
+
+func (s *SessionOwnershipSuite) TestEachKindOfCallerOfOneNameIsListedOnlyItsOwnSessions() {
+	name := s.utils.uuid()
+	callers := map[string]*testClient{
+		"signed in": s.data.signedInAs(name),
+		"guest":     s.guestNamed(name),
+		"anonymous": s.data.claiming(name),
+	}
+	opened := map[string]string{}
+	for kind, caller := range callers {
+		opened[kind] = caller.createSession(s.titled("Refund")).Id
+	}
+
+	for kind, caller := range callers {
+		s.Equal([]string{opened[kind]}, ids(caller.querySessions(SessionQuery{}).Items), "the %s caller's list", kind)
+		s.Equal([]string{opened[kind]}, ids(caller.querySessions(s.searchingFor("refund")).Items), "the %s caller's search", kind)
+	}
+	s.Len(s.serverClient.querySessions(SessionQuery{}).Items, len(callers), "the backend lists every one")
+}
+
+func (s *SessionOwnershipSuite) TestASessionABackendOpenedForAUserIsListedToThemAndNotToANamesakeWithoutAToken() {
+	// A backend opening the conversation and handing it over is the ordinary integration,
+	// so a verified user of that name lists it; an unchecked claim to the name does not.
+	alice := s.data.createUser()
+	handed := s.serverClient.actingFor(alice).createSession(s.titled("Refund"))
+
+	s.Equal([]string{handed.Id}, ids(alice.querySessions(SessionQuery{}).Items))
+	s.Equal([]string{handed.Id}, ids(s.guestNamed(alice.userID).querySessions(SessionQuery{}).Items))
+	s.Empty(s.data.claiming(alice.userID).querySessions(SessionQuery{}).Items)
+	s.Empty(s.data.claiming(alice.userID).querySessions(s.searchingFor("refund")).Items)
+}
+
+func (s *SessionOwnershipSuite) TestAnAnonymousCallersPagesAreFullAmongANamesakesSessions() {
+	// The namesake's sessions sit between the caller's own, so a page cut before the rows
+	// were narrowed by kind would come back short or empty.
+	alice := s.data.createUser()
+	claimant := s.data.claiming(alice.userID)
+	var own []string
+	for range 3 {
+		alice.createSession(textSession(nil))
+		own = append(own, claimant.createSession(textSession(nil)).Id)
+		alice.createSession(textSession(nil))
+	}
+	slices.Reverse(own)
+
+	var listed []string
+	var sizes []int
+	query := SessionQuery{Limit: 2}
+	for {
+		page := claimant.querySessions(query)
+		listed = append(listed, ids(page.Items)...)
+		sizes = append(sizes, len(page.Items))
+		if !page.HasMore {
+			break
+		}
+		s.Require().NotNil(page.NextCursor)
+		query.Cursor = *page.NextCursor
+	}
+
+	s.Equal([]int{2, 1}, sizes)
+	s.Equal(own, listed)
+}
+
 func (s *SessionOwnershipSuite) TestAServerTokenInASocketsQueryStringIsNotABackend() {
 	// A socket's credentials travel in the query string, where a URL is copied into places
 	// a header never goes. If that were enough to be server-side, a leaked server token
@@ -220,4 +298,16 @@ func (s *SessionOwnershipSuite) onACall() CreateSessionRequest {
 // between a guest id and one of the customer's own user ids.
 func (s *SessionOwnershipSuite) guestNamed(name string) *testClient {
 	return s.signedIn(jwt.MapClaims{"user_id": name, "role": "guest"}, auth.AuthTypeJWT, guest, name)
+}
+
+// titled is a written session with a title a search can find it by.
+func (s *SessionOwnershipSuite) titled(title string) CreateSessionRequest {
+	request := textSession(nil)
+	request.Title = &title
+	return request
+}
+
+// searchingFor is a query for the sessions whose title holds the words.
+func (s *SessionOwnershipSuite) searchingFor(words string) SessionQuery {
+	return SessionQuery{Filter: &SessionFilter{Text: &TextMatch{Q: words}}}
 }

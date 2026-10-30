@@ -76,8 +76,6 @@ type platform struct {
 	// whose name holds it; createStatus, when set, answers a sandbox's creation with it.
 	refuse       bool
 	refuseSecret string
-	// refuseDelete answers the deletion of a secret whose name holds it with a 500.
-	refuseDelete string
 	// refuseUpdate answers the update of a secret whose name holds it with a 500.
 	refuseUpdate string
 	createStatus int
@@ -334,9 +332,6 @@ func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPatch:
 		held.Value = *body.Value
-	case r.Method == http.MethodDelete && p.refuseDelete != "" && strings.Contains(held.Name, p.refuseDelete):
-		w.WriteHeader(http.StatusInternalServerError)
-		return
 	case r.Method == http.MethodDelete:
 		delete(p.secrets, id)
 		w.WriteHeader(http.StatusNoContent)

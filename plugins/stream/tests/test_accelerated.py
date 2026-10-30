@@ -162,6 +162,12 @@ class TestAccelerated:
         return pipeline
 
     @pytest.fixture
+    def stream_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A Stream key and secret for the edge's client, which nothing here sends."""
+        monkeypatch.setenv("STREAM_API_KEY", "test-key")
+        monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
+
+    @pytest.fixture
     def call(self) -> RemoteCall:
         return RemoteCall(
             call_type="default",
@@ -216,6 +222,29 @@ class TestAccelerated:
         assert router.created["start_voice"] is True
         for field in ("call", "call_id", "call_type", "text"):
             assert field not in router.created
+
+    async def test_the_zone_of_the_person_on_the_call_goes_over_as_the_sessions(
+        self, router: Router, llm: stream.Accelerated
+    ):
+        await llm.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-8",
+                agent_user_id="agent",
+                instructions="",
+                timezone="Asia/Kolkata",
+            )
+        )
+        await llm.leave_remote()
+
+        assert router.created is not None
+        assert router.created["timezone"] == "Asia/Kolkata"
+
+    async def test_a_call_with_no_zone_sends_none(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        assert router.created is not None
+        assert "timezone" not in router.created
 
     async def _created_for(
         self,
@@ -732,6 +761,7 @@ class TestAccelerated:
         finally:
             await pipeline.leave_remote()
 
+    @pytest.mark.usefixtures("stream_credentials")
     async def test_capture_is_task_scoped_and_keeps_frame_time(
         self, router: Router, joined: stream.Accelerated
     ):

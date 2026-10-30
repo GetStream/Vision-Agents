@@ -81,6 +81,22 @@ func (s *UsersSuite) recorded(customerID, userID string) (string, bool) {
 	return kind, true
 }
 
+// setKind rewrites a user's kind behind the recorders' backs, so that a later Seen
+// changing it again is evidence that it went to Postgres.
+func (s *UsersSuite) setKind(customerID, userID, kind string) {
+	_, err := s.db.DB().ExecContext(s.ctx,
+		"UPDATE users SET kind = ? WHERE customer_id = ? AND id = ?", kind, customerID, userID)
+	s.Require().NoError(err)
+}
+
+// version is the row's xmin, which changes with every write to it.
+func (s *UsersSuite) version(customerID, userID string) string {
+	var xmin string
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT xmin::text FROM users WHERE customer_id = ? AND id = ?", customerID, userID).Scan(&xmin))
+	return xmin
+}
+
 // erase removes a user's row behind the recorders' backs, so that a later Seen writing
 // one again is evidence that it went to Postgres.
 func (s *UsersSuite) erase(customerID, userID string) {
@@ -120,16 +136,148 @@ func (s *UsersSuite) TestAUserOneReplicaWroteCostsTheOtherNoWrite() {
 	s.False(found, "the key the first replica left in redis is what the second reads")
 }
 
-func (s *UsersSuite) TestAGuestWhoSignsUpKeepsTheKindThatMakesThemClaimable() {
+func (s *UsersSuite) TestAGuestWhoCallsWithAFullTokenIsAGuestNoLonger() {
+	// The guest sighting is still held, which is what must not stand in for the write.
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindAuthenticated, kind)
+}
+
+func (s *UsersSuite) TestAGuestIsAGuestNoLongerOnAFullTokenWithNoRedis() {
+	// Only the LRU holds the guest sighting here, with no invalidation to drop it.
+	plain, err := New(Options{Store: s.db, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	defer plain.Close()
+	app := s.app()
+	s.Require().NoError(plain.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+
+	s.Require().NoError(plain.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindAuthenticated, kind)
+}
+
+func (s *UsersSuite) TestAGuestAnotherReplicaWroteIsAGuestNoLongerOnAFullToken() {
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+
+	s.Require().NoError(s.other.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindAuthenticated, kind, "the guest key in redis is no answer to a full token")
+}
+
+func (s *UsersSuite) TestAGuestWhoseKeyAnOlderReplicaWroteIsAGuestNoLongerOnAFullToken() {
+	// A replica from before the key held a kind wrote "1", which is no full-token write.
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+	s.Require().NoError(s.first.redis.Do(s.ctx,
+		s.first.redis.B().Set().Key(key(app, "guest-1")).Value("1").Build()).Error())
+
+	s.Require().NoError(s.other.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindAuthenticated, kind, "an older replica's key is no answer to a full token")
+}
+
+func (s *UsersSuite) TestAGuestWhoCallsAsAGuestAgainStaysAGuest() {
 	app := s.app()
 	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
 	s.first.Forget(s.ctx, app, "guest-1")
 
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindGuest, kind)
+}
+
+func (s *UsersSuite) TestAGuestABackendNamesStaysAGuest() {
+	// A backend may act for a guest of its own, which says nothing about who they are.
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+	s.first.Forget(s.ctx, app, "guest-1")
+
+	s.Require().NoError(s.first.Named(s.ctx, app, "guest-1"))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindGuest, kind)
+}
+
+func (s *UsersSuite) TestAUserABackendNamedFirstIsWrittenAgainOnTheirOwnFullToken() {
+	app := s.app()
+	s.Require().NoError(s.first.Named(s.ctx, app, "jlahey"))
+	kind, _ := s.recorded(app, "jlahey")
+	s.Require().Equal(store.UserKindAuthenticated, kind, "a backend's user with no row is recorded as an account")
+	s.setKind(app, "jlahey", store.UserKindGuest)
+
+	s.Require().NoError(s.first.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+
+	kind, _ = s.recorded(app, "jlahey")
+	s.Equal(store.UserKindAuthenticated, kind, "what a backend's naming left held is no answer to a full token")
+}
+
+func (s *UsersSuite) TestAFullTokenIsWrittenOnceAndThenHeld() {
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+	s.setKind(app, "jlahey", store.UserKindGuest)
+
+	s.Require().NoError(s.first.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+	s.Require().NoError(s.other.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "jlahey")
+	s.Equal(store.UserKindGuest, kind, "a full token already written costs neither replica a write")
+}
+
+func (s *UsersSuite) TestAFullTokenLeavesAnAccountsRowUnwritten() {
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+	before := s.version(app, "jlahey")
+	s.first.Forget(s.ctx, app, "jlahey")
+
+	s.Require().NoError(s.first.Seen(s.ctx, app, "jlahey", store.UserKindAuthenticated))
+
+	s.Equal(before, s.version(app, "jlahey"), "an account's row is already what the token says")
+}
+
+func (s *UsersSuite) TestASightingNamingNoUserIsNotRecorded() {
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "", store.UserKindAuthenticated))
+	s.Require().NoError(s.first.Named(s.ctx, app, ""))
+	s.Require().NoError(s.first.Named(s.ctx, "", "jlahey"))
+
+	_, found := s.recorded(app, "")
+	s.False(found)
+	_, found = s.recorded("", "jlahey")
+	s.False(found)
+}
+
+func (s *UsersSuite) TestAGuestTheRouterMintedStaysAGuestOnTheirOwnToken() {
+	// The token minted for them names no role, so it reads as a full user's.
+	app := s.app()
+	s.Require().NoError(s.db.RecordGuest(s.ctx, &store.User{ID: "guest-1", CustomerID: app}))
+
 	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
 
-	kind, found := s.recorded(app, "guest-1")
-	s.True(found)
-	s.Equal(store.UserKindGuest, kind, "a user is written down once, by whoever saw them first")
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindGuest, kind)
+}
+
+func (s *UsersSuite) TestAClaimedGuestStaysAGuestOnAFullToken() {
+	// The claim stands: a retried claim reads the guest row.
+	app := s.app()
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindGuest))
+	_, err := s.db.ClaimGuest(s.ctx, app, "guest-1", "jlahey")
+	s.Require().NoError(err)
+	s.first.Forget(s.ctx, app, "guest-1")
+
+	s.Require().NoError(s.first.Seen(s.ctx, app, "guest-1", store.UserKindAuthenticated))
+
+	kind, _ := s.recorded(app, "guest-1")
+	s.Equal(store.UserKindGuest, kind)
 }
 
 func (s *UsersSuite) TestForgettingAUserOnOneReplicaForgetsThemOnTheOther() {

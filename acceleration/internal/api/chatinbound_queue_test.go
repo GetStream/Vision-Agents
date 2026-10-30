@@ -250,6 +250,33 @@ func (s *ChatInboundQueueSuite) TestADeliveryOnAChannelTwoCustomersCalledOnIsAns
 	s.True(s.reachesWorker(worker.Messages()))
 }
 
+// Sessions of two customers on a channel that names nobody say nobody's session answers it,
+// as calls of two customers say nobody owns it: settled, and answered by none of them.
+func (s *ChatInboundQueueSuite) TestADeliveryOnAChannelTwoCustomersSessionsRunOnIsSettledUnanswered() {
+	own := s.dispatchingOn()
+	s.useApp(s.data.createApp())
+	other := s.dispatchingOn()
+
+	err := s.router.AnswerChatInbound(context.Background(), store.ChatInbound{StreamApp: suiteStreamApp, Deployment: true,
+		Body: []byte(s.message(suiteStreamApp, "", ""))})
+
+	s.NoError(err)
+	s.False(s.reachesWorker(own), "a channel two customers' sessions run on was answered")
+	s.False(s.reachesWorker(other), "a channel two customers' sessions run on was answered")
+}
+
+// dispatchingOn opens a session for the app's backend on the suite's channel, whose agent
+// leaves text to the customer's dispatch worker, and returns what that worker is handed.
+func (s *ChatInboundQueueSuite) dispatchingOn() <-chan dispatch.Message {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "en-low-latency", DispatchText: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, Agent: &config.Name, Incognito: pointerTo(true)})
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	s.T().Cleanup(release)
+	return worker.Messages()
+}
+
 // In app mode, whether the customer may still write in the deployment's app is not known
 // before the deployment's app is: the delivery waits for it.
 func (s *ChatInboundQueueSuite) TestADeliveryForACustomerWhoseAppIsNotKnownYetIsTriedAgain() {

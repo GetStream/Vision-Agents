@@ -310,6 +310,99 @@ func TestASessionCanChangeWhatTheAgentWasConfiguredWith(t *testing.T) {
 	}
 }
 
+// zoneOf is the timezone the one session opened on router was asked for, or "" when it was
+// asked for none.
+func zoneOf(t *testing.T, router *worked) string {
+	t.Helper()
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.opened) != 1 {
+		t.Fatalf("the router was asked to open %d sessions", len(router.opened))
+	}
+	zone := router.opened[0].Timezone
+	if zone == nil {
+		return ""
+	}
+	if *zone == "" {
+		t.Fatal("the session was sent an empty timezone rather than none")
+	}
+	return *zone
+}
+
+func TestASessionThatNamesNoTimezoneIsInTheAgents(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name:     "jean",
+		Timezone: "Europe/Lisbon",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context(), SessionOptions{Title: "Order 1042"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if zone := zoneOf(t, router); zone != "Europe/Lisbon" {
+		t.Errorf("the session was opened in %q", zone)
+	}
+}
+
+func TestASessionsOwnTimezoneWinsOverTheAgents(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name:     "jean",
+		Timezone: "Europe/Lisbon",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{Timezone: "America/New_York"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if zone := zoneOf(t, router); zone != "America/New_York" {
+		t.Errorf("the session was opened in %q", zone)
+	}
+	if agent.options.Timezone != "Europe/Lisbon" {
+		t.Errorf("the session wrote its zone through to the agent: %q", agent.options.Timezone)
+	}
+}
+
+func TestASessionWithNoTimezoneAnywhereSendsNone(t *testing.T) {
+	router := newWorked(t, nil)
+	agent, err := New(Options{
+		Name: "jean",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: stream.Backend{URL: router.URL, CustomerID: "acme"},
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Join(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if zone := zoneOf(t, router); zone != "" {
+		t.Errorf("a session nobody named a zone for was opened in %q", zone)
+	}
+}
+
 func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Name: "jean", Instructions: "Be brief."})

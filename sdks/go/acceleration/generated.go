@@ -8472,7 +8472,7 @@ type Speech struct {
 
 // SpeechRequest defines model for SpeechRequest.
 type SpeechRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -9222,7 +9222,7 @@ type TranscriptionMode string
 
 // TranscriptionRequest defines model for TranscriptionRequest.
 type TranscriptionRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.

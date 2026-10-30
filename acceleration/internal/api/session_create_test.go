@@ -547,6 +547,26 @@ func (s *SessionCreateSuite) TestALaterSessionOfTheUserIsToldTheDayInTheZoneThey
 	s.Contains(s.answerAs(backend, later.Id, "Hello?"), "for the user (Asia/Tokyo)")
 }
 
+// A config's default zone is the zone of a user who has none of their own, whether or not
+// the agent schedules anything, so a caller's "7:30" is a time in it and not a question.
+func (s *SessionCreateSuite) TestASessionWithNoZoneOfItsOwnIsToldTheDayInItsConfigsZone() {
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name:       "agent-" + s.utils.uuid(),
+		Scheduling: &AgentScheduling{DefaultTimezone: pointerTo("Asia/Tokyo")},
+	}, &config))
+
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("echo/echo-model"), ConfigId: &config.Id})
+	told := s.answerTo(opened.Id, "Can I come in at 7:30 tomorrow?")
+	s.Contains(told, "Today is "+today(s.zone("Asia/Tokyo"))+" for the user (Asia/Tokyo), between ")
+	s.NotContains(told, "timezone is not known")
+
+	own := s.serverClient.createSession(CreateSessionRequest{
+		Llm: pointerTo("echo/echo-model"), ConfigId: &config.Id, Timezone: pointerTo("Europe/Rome"),
+	})
+	s.Contains(s.answerTo(own.Id, "Hello?"), "for the user (Europe/Rome)", "a session's own zone comes first")
+}
+
 // The control: an incognito session speaks for nobody, so it is not told the zone either.
 func (s *SessionCreateSuite) TestAnIncognitoSessionOfTheUserIsNotToldTheirZone() {
 	backend := s.serverClient.actingFor(s.data.createUser())

@@ -10,7 +10,9 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -134,7 +136,7 @@ func (s *StreamAppsSuite) talkedIn(chat *chattest.Server, user, channel string, 
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
 		ID: s.utils.uuid(), CustomerID: s.customerID(), StreamAppPK: app, UserID: user,
-		AgentID: "agent", ConversationID: chatlog.ChannelType + ":" + channel, State: store.SessionClosed,
+		CallerKind: string(auth.KindGuest), AgentID: "agent", ConversationID: chatlog.ChannelType + ":" + channel, State: store.SessionClosed,
 	}))
 }
 
@@ -193,6 +195,66 @@ func (s *StreamAppsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsMintedAgainInItsO
 	s.Equal(seen, guest.Id)
 	_, inOwn := s.own.User(seen)
 	s.True(inOwn)
+}
+
+func (s *StreamAppsSuite) TestAGuestSeenAgainAsAGuestIsStillMintedAgain() {
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
+	seen := s.guestSeenInAToken()
+	s.signedIn(jwt.MapClaims{"user_id": seen, "role": "guest"}, auth.AuthTypeJWT, guest, seen).
+		do(http.MethodGet, "/v1/agents/calls", nil, nil)
+
+	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)})
+
+	s.Equal(http.StatusCreated, status)
+}
+
+func (s *StreamAppsSuite) TestAGuestWhoTurnsOutToBeAFullUserIsNotMintedAgain() {
+	// The app's own guest token wrote the row, and the user's own full token since says they
+	// are not a guest, so the id is an account's.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
+	seen := s.guestSeenInAToken()
+	s.own.PutUser(map[string]any{"id": seen, "name": "Ada Lovelace", "role": "user"})
+	s.data.signedInAs(seen).do(http.MethodGet, "/v1/agents/calls", nil, nil)
+
+	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(seen), Name: pointerTo("Mallory")})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a guest of this app")
+	user, _ := s.own.User(seen)
+	s.Equal("Ada Lovelace", user["name"], "their Stream profile is left alone")
+	s.Equal("user", user["role"])
+}
+
+func (s *StreamAppsSuite) TestAGuestTheBackendActsForIsStillMintedAgain() {
+	// A backend may act for a guest of its own, which says nothing about who they are.
+	id := streamAppID()
+	s.useApp(s.numberedApp(id))
+	s.own = s.giveApp(s.customerID(), id, "own-key")
+	seen := s.guestSeenInAToken()
+	s.serverClient.actingFor(s.data.signedInAs(seen)).do(http.MethodGet, "/v1/agents/calls", nil, nil)
+
+	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)})
+
+	s.Equal(http.StatusCreated, status)
+}
+
+func (s *StreamAppsSuite) TestAMintedGuestCallingWithTheirOwnTokenIsStillMintedAgain() {
+	// The token minted for a guest names no role, so their own calls read as a full user's.
+	var minted GuestUser
+	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, &minted))
+	s.data.signedInAs(minted.Id).do(http.MethodGet, "/v1/agents/calls", nil, nil)
+
+	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(minted.Id)})
+
+	s.Equal(http.StatusCreated, status)
+	held, err := s.store.Guest(context.Background(), s.customerID(), minted.Id)
+	s.Require().NoError(err, "and they stay a guest to claim")
+	s.Empty(held.ClaimedBy)
 }
 
 func (s *StreamAppsSuite) TestASessionRecordsTheAppItWasCreatedIn() {

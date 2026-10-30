@@ -12,6 +12,17 @@ A message in a `thread-` channel with an image attachment (`type: image`, `image
 
 A later turn in the thread knows the photo was sent: the history it reads back says so beside the text, as chat history does (`[sent with a photo, not shown again]`), and keeps a message that was only a photo. The photo is not fetched or handed to the model again; the agent's reply to it says what it showed (AI-2095).
 
+### Every SDK tells the agent its callers' timezone
+
+A session can name the zone of the person on it, so the agent tells the date and the hour in that zone and a time the person gives is theirs. One agent serves callers in many zones, so the zone is named per session or call, over an optional agent-wide default:
+
+- **Python:** `Agent(timezone=...)`, and a `timezone` on `join`, `answer`, `outbound_call` and `chat` that wins over it. `SessionOptions.timezone` in `plugins/stream`. A pipeline that runs locally refuses one, since nothing there would tell the model.
+- **Go:** `agents.Options.Timezone`, under `SessionOptions.Timezone`.
+- **JavaScript:** `AgentOptions.timezone`, under a call's `timezone` (`CallOptions`). In a browser, `sessions.create` sends the device's zone when the app names none; `timezone: ""` sends none.
+- **Swift and Kotlin:** `SessionOptions.timezone` is now the device's zone unless the app sets one; `nil` (`null`) sends none.
+
+A device's zone is only sent when it is an IANA name, such as `Europe/Lisbon` or `UTC`: an offset such as `GMT+05:30` is left out rather than have the session refused. A zone the app names is sent as it is. With none, the router falls back on the user's stored zone, then the agent config's `scheduling.default_timezone`. Dart is unchanged: its standard library has no IANA zone name, so the app passes one, for example from `flutter_timezone`.
+
 ### A Node.js tool's parameters can be a Zod schema
 
 `parameters` in the JS SDK takes a Zod 4 schema, or any schema implementing [Standard JSON Schema](https://standardschema.dev) such as ArkType's or Valibot's, beside a JSON Schema written out. The model is told the JSON Schema it describes, and each call's arguments are parsed by it before `run`, which is handed what it parsed, typed from the schema; arguments it refuses fail the call with each one and why, which the model is told. A schema that describes no object, or a Standard Schema with no JSON Schema, is refused when the tool is registered. The SDK does not depend on Zod.
@@ -169,9 +180,32 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
 
+### A text or call whose limits cannot be checked is not sent
+
+When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
+### A recording callback is posted only to a public https address
+
+`POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+
+### A guest who turns out to be a full user is no longer re-minted as a guest
+
+A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).
+
+### A session list holds only the sessions the caller reaches by id
+
+`POST /v1/agents/sessions/query`, a list or a text search, answers an end user with ended and live sessions on the same terms as `GET /v1/agents/sessions/{id}`: the user id and the kind of caller both match, or a backend opened the session for a signed-in or guest user of that id. An anonymous caller is no longer listed the stored sessions of a verified user, a guest or a backend's session by naming the same user id, and a signed-in user and a guest of one id each list only their own. The rows are narrowed in the query, so a page is still full. A backend's list is unchanged (AI-1863).
+
+### Sandbox code tells a withdrawn credential from a failing host under Daytona
+
+Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
 ### A call is reviewed when the review model thinks first
 
 A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
+
+### A chat message reaches only a running session of its channel's customer
+
+In the deployment's shared Stream app, a message written in an agent channel is answered by a running session only when the session's customer is the one the channel names (`support_customer_id`, which the router writes on each channel it creates); otherwise it goes on as on a channel nothing runs on. On a channel that names no customer, only the customer its last calls are, or else the customer holding the config it names (`agent_config_id`), answers with its session; with calls of more than one customer, or with neither a call nor a config to name its customer and sessions of more than one customer running there, no running session answers. A hook from a customer's own app is unchanged (AI-1857).
+
 ### A session's Daytona sandbox goes when the run it was closed during ends
 
 A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).
@@ -214,7 +248,7 @@ A Dart socket opened with a key now sends its token as `authorization` too, with
 
 ### Every agent knows the date and the hour
 
-Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named; an agent that does not know it says so and asks when a time of day depends on it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
+Every turn's instructions end with the date and the hour in UTC, and in the user's timezone when it is known, so "tomorrow" or "next Wednesday at 8" is a date the agent works out rather than one it asks the user for. Before, only an agent offered the scheduling tools to a user whose timezone was known was told the day, and only the day the session started. The user's timezone is the session's `timezone`, else the one their earlier sessions named, else the agent config's `scheduling.default_timezone`. An agent that knows none of them takes a time of day the user gives in their own local time, and asks for their zone only when they bring up another one or a tool needs it. The line is accurate to the hour, so it resets a long conversation's prompt cache at most once an hour.
 
 ### A Dart question with images is no longer refused in a saved conversation
 

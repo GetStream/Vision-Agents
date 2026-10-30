@@ -286,6 +286,9 @@ type Options struct {
 	RunsPerApp int64
 	// ImageHTTP fetches the images a run is handed by URL. Absent reaches only public hosts.
 	ImageHTTP *http.Client
+	// CallbackHTTP posts a finished recording to its callback. Absent is egress.NewClient,
+	// which reaches only public https addresses; tests pass one that reaches their receiver.
+	CallbackHTTP *http.Client
 	// ConnectorEventSecrets finds the secret a connector's events are verified with
 	// (ConnectorEventSecrets reads the operator's from the environment). Absent, the
 	// endpoint takes no events.
@@ -410,6 +413,8 @@ type Server struct {
 	runsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
+	// callbackHTTP posts a finished recording to its callback.
+	callbackHTTP *http.Client
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -591,6 +596,12 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if server.imageHTTP == nil {
 		// No proxy, which would dial on the client's behalf where the check cannot see.
 		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
+	}
+	server.callbackHTTP = options.CallbackHTTP
+	if server.callbackHTTP == nil {
+		// The URL is the caller's, so the post may reach only a public address, checked at
+		// each dial and redirect.
+		server.callbackHTTP = egress.NewClient(callbackTimeout, nil)
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
@@ -1201,7 +1212,9 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 // Only a verified caller is recorded. An anonymous one goes by a name nobody checked, so
 // a table filled with those names would be a table of what callers asked to be called. A
 // backend naming one of its users is recorded as an authenticated user, because a caller
-// holding the secret could mint that user a token and so has nothing to gain by lying.
+// holding the secret could mint that user a token and so has nothing to gain by lying; but
+// a backend may name a guest of its own, so only the user's own full token turns a guest's
+// row into an account's.
 //
 // A failure is logged rather than returned. Writing down who called is not what the
 // caller asked for, and refusing the request they did ask for because of it would be the
@@ -1210,14 +1223,18 @@ func (s *Server) recordUser(ctx context.Context, principal auth.Principal) {
 	if s.users == nil || principal.UserID == "" {
 		return
 	}
-	kind := store.UserKindAuthenticated
+	var err error
 	switch principal.Kind {
-	case auth.KindGuest:
-		kind = store.UserKindGuest
 	case auth.KindAnonymous:
 		return
+	case auth.KindAuthenticated:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindAuthenticated)
+	case auth.KindGuest:
+		err = s.users.Seen(ctx, principal.AppID, principal.UserID, store.UserKindGuest)
+	default:
+		err = s.users.Named(ctx, principal.AppID, principal.UserID)
 	}
-	if err := s.users.Seen(ctx, principal.AppID, principal.UserID, kind); err != nil {
+	if err != nil {
 		s.logger.Error("could not record an end user",
 			"customer", principal.AppID, "user", principal.UserID, "error", err)
 	}

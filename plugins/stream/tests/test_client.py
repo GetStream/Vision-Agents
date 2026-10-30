@@ -570,6 +570,24 @@ class TestSessions:
         body = router.body("POST", "/v1/agents/sessions")
         assert body["return_url"] == "https://app.example/connectors/done"
 
+    async def test_a_timezone_goes_over_as_the_sessions_timezone(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(timezone="Europe/Amsterdam")
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["timezone"] == "Europe/Amsterdam"
+
+    async def test_no_timezone_sends_none(self, api: stream.Client, router: Router):
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert "timezone" not in body
+
     async def test_no_return_url_sends_none(self, api: stream.Client, router: Router):
         session = await api.agent("docs").sessions.create(stream.SessionOptions())
         await session.close()

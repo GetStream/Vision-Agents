@@ -43,6 +43,13 @@ const (
 	readTimeout = 30 * time.Second
 	// idleTimeout is how long a producer's kept-alive connection may sit unused.
 	idleTimeout = 2 * time.Minute
+	// metricsIdleTimeout is how long the metrics server holds a connection that sends no next
+	// request. Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
+	// config/http_config.go:55) and scrapes every 15 s (chat infra/charts/accelerate
+	// usage-service.yaml, scrape interval), so a timeout below 5 min has the server close a
+	// connection Prometheus is about to reuse. 10 min is twice that, as the router's
+	// idleTimeout (cmd/router/main.go).
+	metricsIdleTimeout = 10 * time.Minute
 	// sentryFlushTimeout bounds delivering buffered events on the way out.
 	sentryFlushTimeout = 2 * time.Second
 	// healthcheckTimeout bounds `usage healthcheck`.
@@ -326,7 +333,7 @@ func serve(ctx context.Context, settings settings, logger *slog.Logger) error {
 	})
 	wg.Go(func() { prune(background, opened, logger) })
 	if settings.MetricsAddr != "" {
-		metrics := &http.Server{Addr: settings.MetricsAddr, Handler: metricsHandler(), ReadHeaderTimeout: readHeaderTimeout}
+		metrics := &http.Server{Addr: settings.MetricsAddr, Handler: metricsHandler(), ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: metricsIdleTimeout}
 		wg.Go(func() { listen(metrics, "metrics", logger) })
 		defer metrics.Close() //nolint:errcheck // the process is ending
 	}

@@ -10,6 +10,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -205,9 +206,10 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 	}
 
 	// The sessions have already been rewritten, so they are found by the account rather than
-	// by the guest. Only the ones that kept a transcript have a channel to join.
+	// by the guest. Only the ones that kept a transcript have a channel to join, and only the
+	// ones the account reaches: an anonymous caller that went by its id is somebody else.
 	moved, err := s.store.QuerySessions(ctx, customerID, store.SessionFilter{
-		UserID: userID, Limit: 200,
+		UserID: userID, CallerKinds: []string{string(auth.KindAuthenticated), string(auth.KindServer)}, Limit: 200,
 	})
 	if err != nil {
 		return err
@@ -226,6 +228,10 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 			continue
 		}
 		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err := refuseChannelOutside(ctx, bound.Client, customerID, channel); err != nil {
 			failures = append(failures, err)
 			continue
 		}
