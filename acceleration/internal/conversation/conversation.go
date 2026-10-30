@@ -1927,9 +1927,6 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		if m.ClientID != "" {
 			custom["client_id"] = m.ClientID
 		}
-		if m.Refused {
-			custom[RefusedField] = true
-		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
 		if m.Role == "assistant" {
