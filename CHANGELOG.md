@@ -160,7 +160,7 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 ### A knowledge base can be deleted
 
-`DELETE /v1/agents/knowledge?namespace=<name>` deletes one of the caller's knowledge bases for good: everything turbopuffer holds of it, the documents it was filled with and the pages it was kept filled from, which are no longer read. A base an agent config reads is refused with a 409 `knowledge_base_in_use` naming those agents, and one the caller has nothing in is a 404 `knowledge_base_not_found`, whatever another app has under that name. The delete is one entry in the audit log. It is server-side only (AI-1996).
+`DELETE /v1/agents/knowledge?namespace=<name>` deletes one of the caller's knowledge bases for good: everything turbopuffer holds of it, the documents it was filled with and the pages it was kept filled from, which are no longer read. A base an agent config reads is refused with a 409 `knowledge_base_in_use` naming those agents, and one the caller has nothing in is a 404 `knowledge_base_not_found`, whatever another app has under that name. The delete is one entry in the audit log. It is server-side only. Its name can then be filled again, in any region and account, as a base never written to (AI-1996).
 
 ### GPT-6.1 Terra is `openai/gpt-6.1-terra`
 

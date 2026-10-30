@@ -296,6 +296,18 @@ func (s *Store) ClaimKnowledgePlace(ctx context.Context, customerID, namespace s
 	return kept.Place(), nil
 }
 
+// ForgetKnowledgePlace forgets where a customer's knowledge base is kept, once it is dropped.
+func (s *Store) ForgetKnowledgePlace(ctx context.Context, customerID, namespace string) error {
+	_, err := s.db.NewDelete().Model((*KnowledgeNamespace)(nil)).
+		Where("customer_id = ?", customerID).
+		Where("namespace = ?", namespace).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: forget knowledge place: %w", err))
+	}
+	return nil
+}
+
 // KnowledgeInCustomerAccounts is every knowledge base kept in a customer's own account, by
 // customer and then namespace: what the hourly storage job reads on each one's key, since the
 // deployment's account does not list them.
