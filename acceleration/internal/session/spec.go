@@ -250,6 +250,8 @@ type Spec struct {
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
+	// Calls is the agent config's choice of which call tools the agent is offered.
+	Calls store.AgentCalls
 	// Timezone is the end user's IANA zone for this session, from the session
 	// request. Empty resolves at tool time (the user's stored zone, then the
 	// config's default). The manager fills it in from the store when it can, so
@@ -396,6 +398,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
+		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,

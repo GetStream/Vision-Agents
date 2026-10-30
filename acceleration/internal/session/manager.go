@@ -644,7 +644,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
-		tools = append(tools, builtin.Tools...)
+		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
 	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
@@ -781,6 +781,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			JudgeTarget:        m.options.FlowJudge,
 			Skills:             skills,
 			Telephony:          line,
+			Destinations:       spec.destinations(),
 			ToolRunner:         runner,
 			Tools:              harness.Tools{Tools: tools},
 			Sandbox:            box,
@@ -2096,4 +2097,38 @@ func publisher(conv *persistent.Conversation) sandbox.Publisher {
 		return nil
 	}
 	return conv.Publish
+}
+
+// callTools is the built-in tools a config's calls settings leave on. A session opened
+// from code, with no config, keeps all of them.
+func (s Spec) callTools(builtin []harness.Tool) []harness.Tool {
+	if s.ConfigID == "" {
+		return builtin
+	}
+	var kept []harness.Tool
+	for _, tool := range builtin {
+		if tool.Name == "transfer" && !s.Calls.TransferOn() || tool.Name == "press" && !s.Calls.PressOn() {
+			continue
+		}
+		kept = append(kept, tool)
+	}
+	return kept
+}
+
+// destinations are the places the config lets the agent transfer to. A session that
+// declares its own transfer keeps it, and the router keeps running it with a number.
+func (s Spec) destinations() []agent.Destination {
+	if s.ConfigID == "" || s.Calls.Transfer == nil || !s.Calls.TransferOn() {
+		return nil
+	}
+	for _, tool := range s.Tools {
+		if tool.Name == "transfer" {
+			return nil
+		}
+	}
+	var destinations []agent.Destination
+	for _, d := range s.Calls.Transfer.Destinations {
+		destinations = append(destinations, agent.Destination{Name: d.Name, Number: d.Number, When: d.When, Warm: d.Warm})
+	}
+	return destinations
 }
