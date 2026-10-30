@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A turn continued from a stored OpenAI response no longer repeats the last reply
+
+On a model that keeps its responses (OpenAI's Responses API, continued with `previous_response_id`), each continued turn sent the agent's last reply and its tool calls again, though the stored response already held them. The model read its own reply twice, input tokens grew by twice that reply's output on every continued turn, and the model was far more likely to make the same tool call again. A continued turn now sends only what came after the reply, such as the tool results or the caller's next words. A reply the conversation holds differently from how the model wrote it, for example with a skill tag or stage direction taken out or a filler line said for it, is not continued: the whole conversation is sent instead, as it is after a failover.
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
