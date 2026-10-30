@@ -30,8 +30,7 @@ const RingWindow = 2 * time.Minute
 // imessage whichever of iMessage, RCS or SMS carries it.
 //
 // The countries are checked first, then today's count, then today's recipients, then for a
-// call the calls up now. The daily counts fail open with Redis, as the sandbox's do; the
-// calls up are read from Postgres and fail open too, logged.
+// call the calls up now. A count that cannot be read refuses, as one past its limit does.
 func (g *Gate) withinTier(ctx context.Context, admission routing.Admission, customerID, channel, to string, into Call) error {
 	if !g.limiting() || admission.Limits == nil || admission.OrganizationID == "" {
 		return nil
@@ -64,7 +63,8 @@ func tierNamed(tier string) string {
 
 // overTier is why the limits refuse a text or call to on channel, with a short reason for the
 // logs, or nil. Neither names the number. into is the call a transfer is into, whose leg up
-// already is not counted against the calls allowed at once.
+// already is not counted against the calls allowed at once. Without Redis the daily counts
+// are not kept, so they are not checked.
 func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to string, into Call, limits usage.ChannelLimits) (error, string) {
 	if len(limits.Countries) > 0 {
 		country := region.Of(to)
@@ -76,9 +76,12 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 			return stack.Wrap(fmt.Errorf("%w: %s tier is not allowed to reach %s by %s", ErrRefused, tier, country, channel)), "country"
 		}
 	}
-	if limits.PerDay != nil || limits.RecipientsPerDay != nil {
-		today, ok := g.today(ctx, organization, channel, to)
-		if ok && limits.PerDay != nil && today.count >= int64(*limits.PerDay) {
+	if g.redis != nil && (limits.PerDay != nil || limits.RecipientsPerDay != nil) {
+		today, err := g.today(ctx, organization, channel, to)
+		if err != nil {
+			return err, "unread"
+		}
+		if limits.PerDay != nil && today.count >= int64(*limits.PerDay) {
 			unit := "messages"
 			if channel == Voice {
 				unit = "minutes"
@@ -86,18 +89,19 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d %s of %s a day, and those of today (UTC) are used up",
 				ErrRefused, tier, *limits.PerDay, unit, channel)), "per_day"
 		}
-		if ok && limits.RecipientsPerDay != nil && !today.reached && today.recipients >= int64(*limits.RecipientsPerDay) {
+		if limits.RecipientsPerDay != nil && !today.reached && today.recipients >= int64(*limits.RecipientsPerDay) {
 			return stack.Wrap(fmt.Errorf("%w: %s tier allows %s to %d recipients a day, and that many were reached today (UTC); "+
 				"the ones already reached can still be", ErrRefused, tier, channel, *limits.RecipientsPerDay)), "recipients_per_day"
 		}
 	}
 	if channel == Voice && limits.Concurrent != nil {
 		up, inCall, err := g.store.OpenCallLegs(ctx, organization, time.Now().Add(-RingWindow), into.Type, into.ID)
+		if err != nil {
+			return err, "unread"
+		}
 		// The leg being transferred is one of the call's.
 		up -= min(inCall, 1)
-		if err != nil {
-			g.logger.Error("could not count the calls an organization has up, allowing", "organization", organization, "error", err)
-		} else if up >= *limits.Concurrent {
+		if up >= *limits.Concurrent {
 			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d calls at once, and that many are up",
 				ErrRefused, tier, *limits.Concurrent)), "concurrent"
 		}
@@ -114,12 +118,8 @@ type channelDay struct {
 	reached    bool
 }
 
-// today reads what the organization sent on channel today; ok is false when Redis could not
-// say, which allows.
-func (g *Gate) today(ctx context.Context, organization, channel, to string) (channelDay, bool) {
-	if g.redis == nil {
-		return channelDay{}, false
-	}
+// today reads what the organization sent on channel today.
+func (g *Gate) today(ctx context.Context, organization, channel, to string) (channelDay, error) {
 	counts, reached := g.channelKeys(organization, channel)
 	answers := g.redis.DoMulti(ctx,
 		g.redis.B().Hget().Key(counts).Field(channel).Build(),
@@ -129,19 +129,16 @@ func (g *Gate) today(ctx context.Context, organization, channel, to string) (cha
 	var day channelDay
 	count, err := answers[0].ToString()
 	if err != nil && !rueidis.IsRedisNil(err) {
-		g.logger.Error("could not read an organization's channel counters, allowing", "error", err)
-		return channelDay{}, false
+		return channelDay{}, stack.Wrap(fmt.Errorf("dlc: read an organization's channel counters: %w", err))
 	}
 	day.count = parseInt(count)
 	if day.reached, err = answers[1].AsBool(); err != nil {
-		g.logger.Error("could not read an organization's channel recipients, allowing", "error", err)
-		return channelDay{}, false
+		return channelDay{}, stack.Wrap(fmt.Errorf("dlc: read an organization's channel recipients: %w", err))
 	}
 	if day.recipients, err = answers[2].AsInt64(); err != nil {
-		g.logger.Error("could not read an organization's channel recipients, allowing", "error", err)
-		return channelDay{}, false
+		return channelDay{}, stack.Wrap(fmt.Errorf("dlc: read an organization's channel recipients: %w", err))
 	}
-	return day, true
+	return day, nil
 }
 
 // countChannel counts by against the organization's channel today, and to as reached on it
