@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### The Roboflow plugin needs `rfdetr` 1.4.3 or newer
+
+`vision-agents-plugins-roboflow` required `rfdetr>=1.3.0`, so pip could pick 1.3.0 to 1.4.2, which lack `rfdetr.assets.model_weights` that the plugin's tests import (AI-1871).
+
 ### A rescheduled task runs its whole COUNT from now
 
 `PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
