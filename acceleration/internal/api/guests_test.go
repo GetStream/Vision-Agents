@@ -4,14 +4,17 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -215,6 +218,65 @@ func (s *GuestsSuite) TestAClaimLeavesWhatAnAnonymousNamesakeSaidWhereItWas() {
 	left, err := s.store.ScheduledTask(context.Background(), s.customerID(), task)
 	s.Require().NoError(err)
 	s.Equal(guestID, left.UserID, "the namesake's task is not moved")
+}
+
+func (s *GuestsSuite) TestAClaimDoesNotLetTheAccountIntoAnotherAppsChannel() {
+	// A session row comes in through the import as the file writes it, so it can name a
+	// channel the router stamped for another app. The claim joins the account to the
+	// channels of the sessions it moved, and that one is not the app's.
+	otherUser := s.data.createUser()
+	foreign := s.transcriptOf(s.talkedAs(otherUser))
+	own := s.talkedAs(s.data.createUser())
+	var raw string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT row_to_json(a)::text FROM agent_sessions AS a WHERE id = ?", own).
+		Scan(context.Background(), &raw))
+	row := map[string]any{}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &row))
+
+	s.useApp(s.data.createApp())
+	guest, account := s.recordGuest(), "acct-"+s.utils.uuid()
+	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", foreign
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
+	honest := s.talked(guest)
+
+	s.claim(guest, account)
+
+	s.NotContains(s.chat.Members(foreign), account, "the other app's channel is not the account's to join")
+	s.Contains(s.chat.Members(s.transcriptOf(honest)), account, "the app's own conversation still is")
+}
+
+func (s *GuestsSuite) TestAClaimStillJoinsAChannelWithNoCustomerStamp() {
+	// A channel created before the router stamped channels names no customer. The transcript
+	// reader takes it as the app's, so a claim must still add the account to it.
+	channel := "agent-" + s.utils.uuid()
+	creator := "vision-agent"
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(context.Background(), chatlog.ChannelType, channel,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
+	s.Require().NoError(err)
+	_, exists := s.chat.Channel(channel)
+	s.Require().True(exists, "the channel exists")
+
+	own := s.talkedAs(s.data.createUser())
+	var raw string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT row_to_json(a)::text FROM agent_sessions AS a WHERE id = ?", own).
+		Scan(context.Background(), &raw))
+	row := map[string]any{}
+	s.Require().NoError(json.Unmarshal([]byte(raw), &row))
+
+	s.useApp(s.data.createApp())
+	guest, account := s.recordGuest(), "acct-"+s.utils.uuid()
+	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", channel
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
+
+	s.claim(guest, account)
+
+	s.Contains(s.chat.Members(channel), account, "a channel with no stamp is the app's to join")
 }
 
 // recordGuest is a guest of the suite's app, written the way minting one writes it. Minting
