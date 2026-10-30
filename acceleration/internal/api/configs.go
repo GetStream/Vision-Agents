@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -1376,7 +1377,7 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 		return "sandbox_options.allowed_domains is at most 64 domains", false
 	}
 	for _, domain := range value(options.AllowedDomains) {
-		if domain == "" || len(domain) > 253 || strings.ContainsAny(domain, ", \t\n/") {
+		if domain == "" || len(domain) > 253 || strings.ContainsAny(domain, ", \t\n/") || isAddress(domain) {
 			return fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", domain), false
 		}
 	}
@@ -1392,6 +1393,19 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 		return "sandbox_options takes allowed_domains or network_allow_list, not both", false
 	}
 	return "", true
+}
+
+// isAddress says whether an allowed domain is an IP address, with or without brackets, a port
+// or a trailing dot. The sandbox's egress proxy refuses every address host (sandbox/egress
+// Proxy.ServeHTTP), since a grant names hosts and an address cannot be told apart from another
+// host's.
+func isAddress(domain string) bool {
+	host := domain
+	if split, _, err := net.SplitHostPort(domain); err == nil {
+		host = split
+	}
+	_, err := netip.ParseAddr(strings.Trim(strings.TrimSuffix(host, "."), "[]"))
+	return err == nil
 }
 
 // sandboxConfigOf reads how a caller asked for the sandbox to be built.
