@@ -591,10 +591,15 @@ func nullIfEmpty(text string) *string {
 // of errors, uptime and latency.
 const ErrorCancelled = "cancelled"
 
-// notCancelled is the SQL condition that a request was not cancelled, on the request row the
-// prefix names.
-func notCancelled(prefix string) string {
-	return prefix + "error_code IS DISTINCT FROM '" + ErrorCancelled + "'"
+// ErrorRefused is the error code of a response the router's prompt injection screen refused.
+// The provider answered as asked, so like a cancelled request it is no failure of the
+// provider's, and the rollups leave it out of errors, uptime and latency.
+const ErrorRefused = "refused"
+
+// measured is the SQL condition that a request says something about its provider, neither
+// cancelled nor refused, on the request row the prefix names.
+func measured(prefix string) string {
+	return "COALESCE(" + prefix + "error_code, '') NOT IN ('" + ErrorCancelled + "', '" + ErrorRefused + "')"
 }
 
 // Rollup aggregates the requests in [from, to) into the rollup tables for the given
@@ -675,7 +680,7 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.table(), granularity.truncateUnit(), notCancelled(""), wholeBuckets(granularity, "started_at"))
+		granularity.table(), granularity.truncateUnit(), measured(""), wholeBuckets(granularity, "started_at"))
 
 	// Each shard rolls up the requests it recorded, into its own rollups.
 	result, err := s.shard.ExecContext(ctx, query, from, to)
@@ -737,7 +742,7 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."), wholeBuckets(granularity, "r.started_at"))
+		granularity.tagTable(), granularity.truncateUnit(), measured("r."), wholeBuckets(granularity, "r.started_at"))
 
 	result, err := s.shard.ExecContext(ctx, query, from, to)
 	if err != nil {
@@ -816,7 +821,7 @@ WHERE modality = ? AND customer_id = ?
   AND started_at >= ? AND started_at < ?
   AND tags @> ?::jsonb
 GROUP BY modality, customer_id, provider, model, bucket
-ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit(), notCancelled(""))
+ORDER BY bucket ASC, provider ASC, model ASC`, granularity.truncateUnit(), measured(""))
 
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]Bucket, error) {
 		var buckets []Bucket
