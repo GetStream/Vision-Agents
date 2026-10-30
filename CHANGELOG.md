@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### Speech-to-text stops when its money runs out, and reused utterance ids are billed
 
 A transcription re-checks the money it set aside as it streams, as a speech-to-speech conversation does: once a renewal is refused for lack of credit or a spend limit, every frame after is refused and the session closes, and while the money cannot be checked a frame is refused and the session kept. Text sent under the id of an utterance that already finished is reserved before it is sent, and billed if the voice speaks it, rather than sent unreserved.
+### A recording callback is posted only to a public https address
+
+`POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
