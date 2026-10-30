@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -12,6 +13,15 @@ import (
 // defaultHostedTimeout is how long a hosted tool is given when its worker did not say, which
 // is what a session gives the tools its caller runs.
 const defaultHostedTimeout = 30 * time.Second
+
+// maxHostedTools is the most tools a worker hosts for one agent: OpenAI's per-request tool
+// limit, which patternToolCap in internal/session holds a connector binding to as well.
+const maxHostedTools = 128
+
+// maxHostedAgents is how many agents one worker hosts tools for. Each is kept in the pool and
+// offered to every node through Redis, so a worker naming a new agent in each offer would grow
+// both without end; a worker process hosts the few agents it runs.
+const maxHostedAgents = 64
 
 // toolQueue is how many hosted calls may wait on one worker's socket. A call is a small
 // frame and the worker runs each on its own, so this only fills when the socket has stopped
@@ -182,6 +192,9 @@ func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.D
 	if len(tools) == 0 {
 		return errors.New("dispatch: hosting no tools is not hosting")
 	}
+	if len(tools) > maxHostedTools {
+		return fmt.Errorf("dispatch: a worker hosts at most %d tools for one agent", maxHostedTools)
+	}
 	if timeout <= 0 {
 		timeout = defaultHostedTimeout
 	}
@@ -200,6 +213,15 @@ func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.D
 	if byAgent == nil {
 		byAgent = map[string][]*hosting{}
 		p.hosted[worker.CustomerID] = byAgent
+	}
+	others := 0
+	for agent, offers := range byAgent {
+		if agent != agentID && slices.ContainsFunc(offers, func(offer *hosting) bool { return offer.worker == worker }) {
+			others++
+		}
+	}
+	if others >= maxHostedAgents {
+		return fmt.Errorf("dispatch: a worker hosts tools for at most %d agents", maxHostedAgents)
 	}
 	offers := byAgent[agentID][:0:0]
 	for _, offer := range byAgent[agentID] {

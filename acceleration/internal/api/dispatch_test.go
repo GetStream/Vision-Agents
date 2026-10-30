@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -280,6 +281,18 @@ func (s *DispatchSuite) TestAFrameThatIsNotJSONEndsTheWorkerWithPolicyViolation(
 	s.Require().Eventually(func() bool {
 		return len(s.dispatch.Workers(s.customerID())) == 0
 	}, settleFor, 10*time.Millisecond, "the worker the socket ended is still in the rotation")
+}
+
+func (s *DispatchSuite) TestAFrameLargerThanTheRouterReadsEndsTheWorker() {
+	worker := s.worker()
+
+	// Valid JSON of a known type, so only its size is wrong with it. The router may hang up
+	// before the whole frame is written.
+	_ = worker.WriteJSON(frame{"type": "load", "active_agents": 1, "padding": strings.Repeat("a", maxSocketMessage)})
+
+	s.Require().Eventually(func() bool {
+		return len(s.dispatch.Workers(s.customerID())) == 0
+	}, settleFor, 10*time.Millisecond, "a frame past the read limit was taken")
 }
 
 func (s *DispatchSuite) TestAWorkerThatDisconnectsLeavesTheRotation() {

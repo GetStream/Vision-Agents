@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,43 @@ func TestAHostedToolIsOfferedOnlyForItsAgentAndCustomer(t *testing.T) {
 	}
 	if tools, _ := pool.HostedTools("globex", "support"); len(tools) != 0 {
 		t.Errorf("another customer is offered %+v", tools)
+	}
+}
+
+func TestAWorkerHostsNoMoreToolsForAnAgentThanASessionOffers(t *testing.T) {
+	pool := NewPool()
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
+	tools := make([]Tool, maxHostedTools+1)
+	for i := range tools {
+		tools[i] = Tool{Name: fmt.Sprintf("tool_%d", i), Description: "Does one thing"}
+	}
+
+	if err := pool.Host(worker, "support", tools, time.Minute); err == nil {
+		t.Fatalf("hosted %d tools for one agent", len(tools))
+	}
+	if err := pool.Host(worker, "support", tools[:maxHostedTools], time.Minute); err != nil {
+		t.Fatalf("refused %d tools: %v", maxHostedTools, err)
+	}
+}
+
+func TestAWorkerHostsToolsForABoundedNumberOfAgents(t *testing.T) {
+	pool := NewPool()
+	worker, _ := pool.Register("acme", Registration{Capacity: 1})
+	for i := range maxHostedAgents {
+		if err := pool.Host(worker, fmt.Sprintf("agent-%d", i), []Tool{investigate}, time.Minute); err != nil {
+			t.Fatalf("agent %d: %v", i, err)
+		}
+	}
+
+	if err := pool.Host(worker, "one-more", []Tool{investigate}, time.Minute); err == nil {
+		t.Fatalf("a worker hosted tools for %d agents", maxHostedAgents+1)
+	}
+	if err := pool.Host(worker, "agent-0", []Tool{investigate}, time.Minute); err != nil {
+		t.Errorf("offering again for an agent it hosts was refused: %v", err)
+	}
+	other, _ := pool.Register("acme", Registration{Capacity: 1})
+	if err := pool.Host(other, "one-more", []Tool{investigate}, time.Minute); err != nil {
+		t.Errorf("another worker was held to the first one's agents: %v", err)
 	}
 }
 
