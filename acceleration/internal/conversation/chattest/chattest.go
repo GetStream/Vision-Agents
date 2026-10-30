@@ -84,6 +84,8 @@ type held struct {
 // Request is one request the server was sent, and the api key it was made with.
 type Request struct {
 	Method, Path, APIKey string
+	// SkipEnrichURL is whether the request told Stream not to fetch the links in its text.
+	SkipEnrichURL bool
 }
 
 // Writes reports whether a request changes anything in Stream, rather than reading it: a
@@ -635,6 +637,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
+	db.asked[len(db.asked)-1].SkipEnrichURL = body["skip_enrich_url"] == true
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {

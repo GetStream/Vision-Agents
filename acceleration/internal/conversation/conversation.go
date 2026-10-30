@@ -1866,6 +1866,12 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			user = c.userAuthor()
 		}
 	}
+	// Stream fetches the links in a message's text to preview them. A link the agent wrote can
+	// carry what it read in its address, which that fetch sends out with nobody clicking it.
+	var skipEnrich *bool
+	if m.Role != "user" {
+		skipEnrich = getstream.PtrTo(true)
+	}
 	m.Saved = !ephemeral
 	m.Error = ""
 	metadata, err := metadataOf(m, visible)
@@ -1897,7 +1903,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
 			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
-		}})
+		}, SkipEnrichUrl: skipEnrich})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
 			if readErr == nil {
@@ -1913,10 +1919,10 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		if op.reasoning != nil {
 			fields["reasoning"] = op.reasoning
 		}
-		_, err := client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
+		_, err := client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields, SkipEnrichUrl: skipEnrich})
 		return err
 	}
-	_, err = client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
+	_, err = client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields, SkipEnrichUrl: skipEnrich})
 	return err
 }
 func sameSnapshot(a, b Message) bool {
