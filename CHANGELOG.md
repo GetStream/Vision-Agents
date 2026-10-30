@@ -179,6 +179,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A written conversation stops chaining tools after 16 rounds
 
 A text session whose model answers each tool result by calling another tool is made to answer, with no tools offered, at the 16th reply to a tool result since the user last wrote, as a voice call is at the 8th. It used to go on calling tools until a spend limit stopped it.
+### A user token works with the key the request was made with
+
+In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
 ### An id reused once its utterance has finished counts against credit
 
 On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
