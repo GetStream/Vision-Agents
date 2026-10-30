@@ -27,6 +27,12 @@ const defaultCapacity = 4
 // one worker process twice that, where the SDKs ask for 4.
 const maxCapacity = 1024
 
+// maxHolds is how many tool_hold answers one socket has in flight. Each is a round trip to the
+// conversation, which may be on another node, so it runs beside the reader; past this many the
+// reader waits for one to finish rather than start another. It is as many hosted calls as may
+// wait on one worker (toolQueue in internal/dispatch).
+const maxHolds = 64
+
 // dispatchCalls hands arriving calls to a worker waiting for one.
 //
 // The direction is the point: the worker connects here and waits, because the agent runs in
@@ -66,6 +72,7 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer connection.Close()
+	connection.SetReadLimit(maxSocketMessage)
 
 	worker, release := s.dispatch.Register(customerID, registration)
 	defer func() {
@@ -241,6 +248,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
 	})
+	holds := make(chan struct{}, maxHolds)
 
 	for {
 		var report struct {
@@ -335,8 +343,14 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 
 		case "tool_hold":
 			// The conversation may be on another node, so the answer is a round trip that
-			// the worker's other frames are not held up behind.
+			// the worker's other frames are not held up behind, up to maxHolds of them.
+			select {
+			case holds <- struct{}{}:
+			case <-writerDone:
+				return nil
+			}
 			go func(id string) {
+				defer func() { <-holds }()
 				reply := frame{"type": "tool_held", "id": id}
 				if sessionID, held := worker.Hold(id); !held {
 					reply = frame{"type": "tool_cancel", "id": id, "session_id": sessionID}
