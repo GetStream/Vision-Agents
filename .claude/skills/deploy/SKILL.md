@@ -86,6 +86,21 @@ builds this checkout and swaps it in, in 11-20 s warm.
   every call held, nothing answered 5xx, and devrun logged `pid N (sha) drained in ...,
   exit 0` for each old router once its last call ended.
 
+## Staging sandbox proxy
+
+Staging runs the router with `broker: proxy`: code in a sandbox reaches a connector's API through
+the router's egress proxy (`acceleration/internal/sandbox/egress/AGENTS.md`), not through Daytona
+Secrets. The proxy has been live since AI-2035.
+
+- The proxy port, its LoadBalancer with a reserved address, the public URL and `broker: proxy` are
+  `router.sandboxProxy` in GetStream/chat `infra/shards/us-east1-acceleration/accelerate-staging.yaml`.
+  The accelerate chart (`infra/charts/accelerate`) renders the Service from them.
+- The CA certificate and key are two secrets, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT` and
+  `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`. They reach the pods through `accelerate-secrets`. The values
+  file names the CA's expiry.
+- The CA must be rotated before it expires. The steps are in Linear AI-2069.
+- This repo is public. Read addresses and secret paths in the values file, and do not copy them here.
+
 ## Production
 
 Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own
