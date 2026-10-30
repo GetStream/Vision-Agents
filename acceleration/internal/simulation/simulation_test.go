@@ -385,3 +385,48 @@ func scriptedConfig() routing.ModalityConfig {
 		},
 	}
 }
+
+// ruling is a whole ruling, as long as the judge is asked for.
+const ruling = `{"passed": true, "reason": "The agent confirmed the order: \"Your pizza is on its way for 8pm.\"", "score": 5}`
+
+// ruledBy is what a judge whose model is thinker ruled on a short conversation.
+func (s *SimulationSuite) ruledBy(thinker *llmtest.Thinker) (verdict, error) {
+	registry := llmrouter.NewRegistry()
+	registry.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) { return thinker, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: scriptedConfig(), Registry: registry, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return rule(s.ctx, router, llmrouter.Request{CustomerID: "customer-1"}, "judge-thought-over",
+		"was an order placed for 8pm?", nil, said{
+			{Caller: true, Text: "One pizza for 8pm please."},
+			{Text: "Your pizza is on its way for 8pm."},
+		})
+}
+
+// The most Claude Opus 5.5 was seen thinking on one turn on staging, all of it out of the
+// same cap as the ruling.
+func (s *SimulationSuite) TestAJudgeThatThinksBeforeItRulesStillWritesTheWholeRuling() {
+	ruled, err := s.ruledBy(&llmtest.Thinker{Thinks: 2734, Answer: ruling})
+
+	s.Require().NoError(err)
+	s.True(ruled.Passed)
+	s.Contains(ruled.Reason, "on its way for 8pm")
+}
+
+func (s *SimulationSuite) TestARulingTheCapCutOffSaysSo() {
+	// The cap ends the ruling 20 tokens short of its closing brace.
+	_, err := s.ruledBy(&llmtest.Thinker{Thinks: judgeTokens + llm.ThinkingRoom - len(ruling) + 20, Answer: ruling})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "stopped early (max_output_tokens)")
+	s.NotContains(err.Error(), "decode the ruling")
+}
+
+func (s *SimulationSuite) TestAWholeRulingIsReadEvenWhenTheCapCutWhatFollowedIt() {
+	// The cap ends the answer in the blank lines after the ruling, so the ruling is whole.
+	trailed := ruling + strings.Repeat("\n", 40)
+	ruled, err := s.ruledBy(&llmtest.Thinker{Thinks: judgeTokens + llm.ThinkingRoom - len(ruling) - 20, Answer: trailed})
+
+	s.Require().NoError(err)
+	s.True(ruled.Passed)
+}
