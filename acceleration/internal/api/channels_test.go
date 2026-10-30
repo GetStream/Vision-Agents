@@ -219,6 +219,22 @@ func (s *ChannelsSuite) TestAWebhookCheckWithTheWrongTokenIsRefused() {
 	s.Equal(http.StatusForbidden, status)
 }
 
+// A line other than WhatsApp's has no verify token, so an empty one asked for is no match.
+func (s *ChannelsSuite) TestAWebhookCheckOnALineWithNoVerifyTokenIsRefused() {
+	token := "line-" + s.utils.uuid()
+	sealed, err := s.router.sealChannelSecrets(s.customerID(), channels.Secrets{Token: "linq-key", Signing: "linq-secret"})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SaveChannelAccount(context.Background(), &store.ChannelAccount{
+		CustomerID: s.customerID(), Kind: string(channels.IMessage), E164: s.number(), Token: token,
+		SecretsSealed: sealed, SecretsKEKVersion: s.sealer.CurrentVersion(),
+	}))
+
+	status, body := s.get(channels.HookPath + token + "?hub.mode=subscribe&hub.verify_token=&hub.challenge=nonce-42")
+
+	s.Equal(http.StatusForbidden, status)
+	s.NotContains(string(body), "nonce-42")
+}
+
 func (s *ChannelsSuite) TestAMessageIsAnsweredBackOnWhatsApp() {
 	number := s.number()
 	line := s.connect(number)

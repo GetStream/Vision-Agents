@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -120,13 +121,17 @@ func (s *Service) Close() {
 
 // Challenge answers the GET a provider checks a webhook with before it delivers to it.
 // WhatsApp is the one that does this: it asks for the verify token back along with a
-// challenge to echo, so an URL cannot be pointed at somebody else's router.
+// challenge to echo, so an URL cannot be pointed at somebody else's router. A line with no
+// verify token, which every line but WhatsApp's is, answers no check. The token is compared
+// in constant time, since whoever knows the URL may ask as often as they like.
 func (s *Service) Challenge(ctx context.Context, token string, query url.Values) Answer {
 	line, _, err := s.line(ctx, token)
 	if err != nil {
 		return Answer{Status: http.StatusGone, Body: failure(err.Error())}
 	}
-	if query.Get("hub.mode") != "subscribe" || query.Get("hub.verify_token") != line.Challenge {
+	verify := query.Get("hub.verify_token")
+	if line.Challenge == "" || query.Get("hub.mode") != "subscribe" ||
+		subtle.ConstantTimeCompare([]byte(verify), []byte(line.Challenge)) != 1 {
 		return Answer{Status: http.StatusForbidden, Body: failure("that is not this line's verify token")}
 	}
 	return Answer{Status: http.StatusOK, Text: query.Get("hub.challenge")}
