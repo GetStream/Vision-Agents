@@ -90,11 +90,9 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "Zoë.", Final: true}))
 	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 17})
 	s.completed(session)
-	// Text for an utterance already settled, as after a barge-in, which the voice drops.
-	s.Require().NoError(session.Synthesize(tts.Request{ID: "u1", Text: "and the rest", Final: true}))
 	s.Require().NoError(session.Synthesize(tts.Request{Text: "Bye.", Final: true}))
-	s.Require().Len(provider.said, 4)
-	named := provider.said[3].ID
+	s.Require().Len(provider.said, 3)
+	named := provider.said[2].ID
 	s.NotEmpty(named, "the session names a request that came without an id, not the vendor")
 	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: named})
 	s.completed(session)
@@ -113,7 +111,7 @@ func (s *MeteringSuite) TestCharactersAreWhatWasSent() {
 	s.Contains(logs.String(), "level=WARN msg=\"the voice counted characters other than those it was sent")
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	s.Empty(session.sent, "text for a settled utterance is not counted, so nothing is left waiting for a completion")
+	s.Empty(session.sentences, "nothing is left waiting for a completion")
 }
 
 // rows reads back what the session recorded for a customer, once it and its recorder have
@@ -168,6 +166,6 @@ func (s *MeteringSuite) TestAnUtteranceAVoiceStartsAgainAfterItSettledIsBilledAg
 	rows := s.rows(customer)
 	s.Require().Len(rows, 2)
 	s.EqualValues(12, rows[0].Characters)
-	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed what the voice counted")
+	s.EqualValues(6, rows[1].Characters, "text sent after the utterance settled is billed what was sent")
 	s.Equal("u1", rows[1].OperationID)
 }

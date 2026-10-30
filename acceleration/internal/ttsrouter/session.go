@@ -2,6 +2,7 @@ package ttsrouter
 
 import (
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -32,16 +33,13 @@ type Session struct {
 	mu sync.Mutex
 	// inFlight tracks utterances that have not been settled into a stat row yet.
 	inFlight map[string]*utterance
-	// sent is the characters handed to the provider for each utterance not settled yet,
-	// which is what it is billed for, whatever the adapter counted.
-	sent map[string]int64
-	// reserved is the usage id each utterance not settled yet holds its characters under,
-	// which its row is recorded under.
-	reserved map[string]uuid.UUID
-	// finished is the most recent utterances settled, oldest first in finishedOrder. More
-	// text for one of them is dropped by a streaming provider (an interrupted utterance takes
-	// no more), so it is not counted. Only the last finishedKept are kept: text that comes that
-	// late, or an id reused after it fell out, is counted as an utterance of its own.
+	// sentences is what was sent under each id and not settled yet, oldest first. Text for an
+	// id whose last sentence's final text was already sent, or that settled, is a sentence of
+	// its own, and each completion for the id settles the oldest.
+	sentences map[string][]*pending
+	// finished is the most recent utterances settled, oldest first in finishedOrder. A
+	// completion for one with nothing sent under it since, that has not started again, is a
+	// repeat and records nothing. Only the last finishedKept are kept.
 	finished      map[string]struct{}
 	finishedOrder []string
 
@@ -55,6 +53,17 @@ const finishedKept = 256
 // miscounted is the provider and model names whose adapter was seen counting characters other
 // than those sent, each logged once a process.
 var miscounted sync.Map
+
+// pending is the text sent under an id for one synthesis of it, until that settles.
+type pending struct {
+	// characters is what was handed to the provider, which is what it is billed for, whatever
+	// the adapter counted.
+	characters int64
+	// reserved is the usage id its characters are held under, which its row is recorded under.
+	reserved uuid.UUID
+	// ended is set once its final text was sent.
+	ended bool
+}
 
 // utterance is what the session remembers about one synthesis until it completes.
 type utterance struct {
@@ -88,8 +97,7 @@ func newSession(
 		forwarded: make(chan struct{}),
 		stopped:   make(chan struct{}),
 		inFlight:  map[string]*utterance{},
-		sent:      map[string]int64{},
-		reserved:  map[string]uuid.UUID{},
+		sentences: map[string][]*pending{},
 		finished:  map[string]struct{}{},
 	}
 	go session.forward()
@@ -103,27 +111,28 @@ func newSession(
 // What an utterance's text costs is reserved before it is sent, under the id its row is
 // recorded under, and raised as more of its text follows. A refusal of its first text is
 // answered and nothing is sent; a refusal of more text for an utterance already speaking
-// keeps what it reserved and lets it finish.
+// keeps what it reserved and lets it finish. Text for an id whose final text was already
+// sent, or whose utterance settled, is a new sentence on every voice, as the voice speaks it:
+// it is reserved on its own and refused as a first text is.
 func (s *Session) Synthesize(request tts.Request) error {
 	if request.ID == "" {
 		request.ID = tts.NewSynthesisID()
 	}
 	characters := int64(utf8.RuneCountInString(request.Text))
 	s.mu.Lock()
-	reserved, speaking := s.reserved[request.ID]
-	// A voice that takes each sentence as its own request speaks text for a settled id as a
-	// new sentence, so it is counted and reserved as one; only a streaming voice drops it.
-	if _, done := s.finished[request.ID]; done && s.provider.Streaming() {
-		characters = 0
+	queue := s.sentences[request.ID]
+	speaking := len(queue) > 0 && !queue[len(queue)-1].ended
+	var current *pending
+	if speaking {
+		current = queue[len(queue)-1]
 	} else {
-		// Counted before it is sent, so a completion that comes straight back finds it.
-		s.sent[request.ID] += characters
-		if !speaking {
-			reserved = uuid.Must(uuid.NewV7())
-			s.reserved[request.ID] = reserved
-		}
+		current = &pending{reserved: uuid.Must(uuid.NewV7())}
+		s.sentences[request.ID] = append(queue, current)
 	}
-	total := s.sent[request.ID]
+	// Counted before it is sent, so a completion that comes straight back finds it.
+	current.characters += characters
+	current.ended = request.Final
+	total, reserved := current.characters, current.reserved
 	s.mu.Unlock()
 
 	var err error
@@ -136,24 +145,35 @@ func (s *Session) Synthesize(request tts.Request) error {
 	if err == nil {
 		err = s.provider.Synthesize(request)
 	}
-	if err != nil && characters > 0 {
+	if err != nil {
 		// Refused, it was never sent: what is held goes back to what was.
 		s.mu.Lock()
-		if s.sent[request.ID] -= characters; s.sent[request.ID] <= 0 {
-			delete(s.sent, request.ID)
-		}
-		left := s.sent[request.ID]
+		current.characters -= characters
+		current.ended = false
+		left := current.characters
 		if !speaking || left <= 0 {
-			delete(s.reserved, request.ID)
+			s.forget(request.ID, current)
 		}
 		s.mu.Unlock()
-		if !speaking || left <= 0 {
+		switch {
+		case characters <= 0:
+		case !speaking || left <= 0:
 			s.recorder.Release(reserved)
-		} else {
+		default:
 			_ = s.recorder.Reserve(s.config, s.owner, reserved, pricing.Quantities{pricing.Characters: left}, routing.ReserveTTL)
 		}
 	}
 	return err
+}
+
+// forget takes a sentence that was never sent out of its id's. The caller holds mu.
+func (s *Session) forget(id string, refused *pending) {
+	queue := slices.DeleteFunc(s.sentences[id], func(queued *pending) bool { return queued == refused })
+	if len(queue) == 0 {
+		delete(s.sentences, id)
+		return
+	}
+	s.sentences[id] = queue
 }
 
 // Interrupt drops audio in flight so the agent can stop mid-sentence.
@@ -200,11 +220,13 @@ func (s *Session) Close() error {
 		go func() {
 			<-s.forwarded
 			s.mu.Lock()
-			reserved := s.reserved
-			s.reserved = map[string]uuid.UUID{}
+			sentences := s.sentences
+			s.sentences = map[string][]*pending{}
 			s.mu.Unlock()
-			for _, id := range reserved {
-				s.recorder.Release(id)
+			for _, queue := range sentences {
+				for _, unsettled := range queue {
+					s.recorder.Release(unsettled.reserved)
+				}
 			}
 		}()
 	})
@@ -314,22 +336,30 @@ type settled struct {
 	reserved uuid.UUID
 }
 
-// settle takes an utterance out of flight, so a late duplicate completion cannot bill
-// twice: one for an utterance already settled that has not started again is reported
-// repeated, and records nothing. An utterance the session never saw start is stamped with
-// now.
+// settle takes an utterance out of flight with its oldest sentence, so a late duplicate
+// completion cannot bill twice: one for an utterance already settled that has not started
+// again and has nothing sent under it since is reported repeated, and records nothing. An
+// utterance the session never saw start is stamped with now.
 func (s *Session) settle(synthesisID string) (settled, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	current, ok := s.inFlight[synthesisID]
-	if _, known := s.finished[synthesisID]; known && !ok {
+	queue := s.sentences[synthesisID]
+	if _, known := s.finished[synthesisID]; known && !ok && len(queue) == 0 {
 		return settled{}, true
 	}
-	characters, sent := s.sent[synthesisID]
-	delete(s.sent, synthesisID)
-	reserved := s.reserved[synthesisID]
-	delete(s.reserved, synthesisID)
+	var characters int64
+	var reserved uuid.UUID
+	sent := len(queue) > 0
+	if sent {
+		characters, reserved = queue[0].characters, queue[0].reserved
+		if len(queue) == 1 {
+			delete(s.sentences, synthesisID)
+		} else {
+			s.sentences[synthesisID] = queue[1:]
+		}
+	}
 	if _, known := s.finished[synthesisID]; !known {
 		s.finished[synthesisID] = struct{}{}
 		s.finishedOrder = append(s.finishedOrder, synthesisID)
