@@ -282,14 +282,22 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 	for _, source := range sources {
 		for _, run := range writtenNumber.FindAllString(source, -1) {
 			groups := digitGroups(run)
-			// A US number written without its country code is the same line.
-			if all := strings.Join(groups, ""); len(all) == 10 && "1"+all == wanted {
-				return "", false
-			}
+			spans := numberGroup.FindAllStringIndex(run, -1)
+			// apart reports whether a bracket or a full stop sets group i off from the one
+			// before, as in "1111 (9am" or "1111. 24/7", rather than a space that may join
+			// one number's digits.
+			apart := func(i int) bool { return strings.ContainsAny(run[spans[i-1][1]:spans[i][0]], "().") }
 			// Digits beside the number, "(9am-5pm)" or "24/7", are not part of it.
 			for start := range groups {
 				for end := start + 1; end <= len(groups); end++ {
-					if strings.Join(groups[start:end], "") == wanted {
+					digits := strings.Join(groups[start:end], "")
+					if digits == wanted {
+						return "", false
+					}
+					// A US number written without its country code is the same line, unless
+					// digits run on from it unmarked, as a country code or a second number do.
+					if len(digits) == 10 && "1"+digits == wanted &&
+						(start == 0 || apart(start)) && (end == len(groups) || apart(end)) {
 						return "", false
 					}
 				}

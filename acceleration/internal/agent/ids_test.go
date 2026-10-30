@@ -392,6 +392,8 @@ func TestUnsourcedTransfer(t *testing.T) {
 		"1. Sales: +15550001111\n2. Billing: +15550002222": true,
 		"Transfer to +1 555 000 1111 (9am-5pm)":            true,
 		"Sales is +15550001111. 24/7 support":              true,
+		"Billing: (555) 000-1111 (9am-5pm)":                true,
+		"Billing: (555) 000-1111. 24/7":                    true,
 		"Hand off to +15550001112":                         false,
 		"Hand off to +1 555 000 1112":                      false,
 		"Hand off to +155500011112":                        false,
