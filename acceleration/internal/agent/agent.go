@@ -2718,6 +2718,13 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text {
 		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
+	refused := a.refusedReply == response.ID
+	if refused {
+		// Nothing of a refused reply goes out after the verdict: what the harness, the
+		// stripper and the chunker were still holding of it is dropped with the turn.
+		tail, plain = "", ""
+		a.chunk.Reset()
+	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
 		tail = plain
@@ -2731,7 +2738,6 @@ func (a *Agent) finish(response llm.Response) {
 	if response.Status == llm.StatusFailed {
 		calls = nil
 	}
-	refused := a.refusedReply == response.ID
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
