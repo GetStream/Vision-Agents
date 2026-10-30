@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy/policytest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
@@ -354,6 +355,94 @@ func (s *GateSuite) TestCountersCountAnAppWithAnApprovedUseCase() {
 	held, err := gate.Usage(s.ctx, s.app())
 	s.Require().NoError(err)
 	s.Zero(held.Messages, "the sandbox's counter counts only a sandboxed app")
+}
+
+func (s *GateSuite) TestAnAppWhoseUseCasesCannotBeReadIsNotHeldToTheSandbox() {
+	// Being held is what gives an app's texts and minutes away, so not knowing bills them.
+	closed, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "dlc_gate"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	gate := dlc.NewGate(closed, s.redis, dlc.Sandbox{Enabled: true}, nil)
+
+	held, err := gate.Sandboxed(s.ctx, s.app())
+
+	s.Error(err)
+	s.False(held, "an app the gate could not read is not given its work")
+}
+
+// unreachable is a gate over the suite's money and a Redis the test can take away, holding apps
+// to sandbox and keeping channel limits in mode.
+func (s *GateSuite) unreachable(sandbox dlc.Sandbox, mode config.LimitsMode) (*dlc.Gate, *policytest.Redis) {
+	redis, _ := policytest.SharedHolds(s.T())
+	logger := slog.New(slog.NewTextHandler(s.logs, nil))
+	return dlc.NewGate(s.money.Store, redis.Client, sandbox, logger).Charging(s.money.Enforcer).Limiting(mode), redis
+}
+
+// shortly is a context that gives up on a Redis that is gone, which a client retries a read
+// on for as long as it may.
+func (s *GateSuite) shortly() context.Context {
+	ctx, cancel := context.WithTimeout(s.ctx, time.Second)
+	s.T().Cleanup(cancel)
+	return ctx
+}
+
+func (s *GateSuite) TestADailyLimitWhoseCountCannotBeReadRefuses() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {PerDay: new(100)}})
+	gate, redis := s.unreachable(dlc.Sandbox{}, config.LimitsEnforce)
+	s.Require().NoError(gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550123"))
+
+	redis.Stop()
+
+	s.Error(gate.Allow(s.shortly(), s.app(), dlc.SMS, "+15125550123"), "a text nobody counted could be the one past the limit")
+}
+
+func (s *GateSuite) TestARecipientLimitWhoseCountCannotBeReadRefuses() {
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {RecipientsPerDay: new(100)}})
+	gate, redis := s.unreachable(dlc.Sandbox{}, config.LimitsEnforce)
+	s.Require().NoError(gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123"))
+
+	redis.Stop()
+
+	s.Error(gate.Allow(s.shortly(), s.app(), dlc.Voice, "+15125550123"))
+}
+
+func (s *GateSuite) TestShadowStillAllowsWhatItCouldNotCount() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {PerDay: new(100)}})
+	gate, redis := s.unreachable(dlc.Sandbox{}, config.LimitsShadow)
+
+	redis.Stop()
+
+	s.NoError(gate.Allow(s.shortly(), s.app(), dlc.SMS, "+15125550123"), "shadow refuses nothing")
+	s.Contains(s.logs.String(), "reason=unread")
+}
+
+func (s *GateSuite) TestASandboxWhoseCountersCannotBeReadRefuses() {
+	s.Require().NoError(s.money.Store.SetSandboxRecipients(s.ctx, s.app(), []string{"+15125550123"}))
+	gate, redis := s.unreachable(dlc.Sandbox{Enabled: true, Recipients: 1, MessagesPerDay: 30, AudioMinutesPerDay: 10}, config.LimitsOff)
+	s.Require().NoError(gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550123"))
+
+	redis.Stop()
+
+	s.Error(gate.Allow(s.shortly(), s.app(), dlc.SMS, "+15125550123"), "the sandbox gives its texts away, so an uncounted one is free")
+	s.Error(gate.Allow(s.shortly(), s.app(), dlc.Voice, "+15125550123"))
+}
+
+func (s *GateSuite) TestACallLimitWhoseCallsUpCannotBeCountedRefuses() {
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {Concurrent: new(100)}})
+	// Every shard holds calls, and one that does not answer leaves the calls up uncounted.
+	split, err := store.OpenShards(store.Options{
+		DSN:    testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "dlc_gate"),
+		Shards: map[string]string{"gone": "postgres://postgres:postgres@127.0.0.1:1/gone?sslmode=disable"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = split.Close() })
+	gate := dlc.NewGate(split, s.redis, dlc.Sandbox{}, nil).Charging(s.money.Enforcer).Limiting(config.LimitsEnforce)
+
+	err = gate.Allow(s.shortly(), s.app(), dlc.Voice, "+15125550123")
+
+	s.Error(err)
+	s.NotErrorIs(err, dlc.ErrRefused, "the limit was not reached, it could not be read")
+	s.NoError(gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550123"), "a text counts no calls")
 }
 
 // lockedBuffer is a log the gate writes while a test reads it.
