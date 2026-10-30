@@ -1296,7 +1296,8 @@ func TestARefusedReplyIsEmptiedAndItsQuestionWithheldOnResume(t *testing.T) {
 	stored := db.messages[refused.ID]
 	db.mu.Unlock()
 	require.Empty(t, stored["text"])
-	require.Equal(t, true, stored["custom"].(map[string]any)[RefusedField])
+	// "refused" is the field clients and stored messages read: its name is not ours to change.
+	require.Equal(t, true, stored["custom"].(map[string]any)["refused"])
 	_, history, _, err := s.Open(context.Background(), "customer", "support-agent", c.CID())
 	require.NoError(t, err)
 	require.Equal(t, []llm.Message{
