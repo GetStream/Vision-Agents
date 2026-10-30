@@ -2,6 +2,10 @@
 
 ## Features
 
+### `router replicate --resume` cuts a move over
+
+`router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. Once the source stops delivering, `router replicate --resume --as <app id>` resumes exactly the marked tasks, each from the next run the source had not delivered, and leaves the ones the user paused alone. It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
+
 ### An iMessage photo reaches the agent
 
 A photo sent over Linq, with or without a caption, reaches the agent: the bridge writes it as an image attachment on the person's message in the thread channel, and the agent sees it. A video, an audio file or a document is not passed on; its caption is answered. A connection takes `linq` revision 3 when its API key is saved again (`PUT /v1/agents/connections/{id}/credentials`). A channel manifest reads a message's files with `messages.media` (`url` and `mime_type`) (AI-2094).

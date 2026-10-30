@@ -2351,6 +2351,20 @@ go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
 ```
 
+A scheduled task active on the source is imported paused, and so is a campaign running there,
+since the source goes on delivering them until the move is cut over. Each is marked as paused by
+the move; a change carried later sets the mark again from the source's state, so one the user
+paused there is not marked. Cut over once SDKs point here, the last writes are picked up and the
+source no longer delivers:
+
+```bash
+go run ./cmd/router replicate --resume --as <app id>
+```
+
+It resumes the marked tasks, each at the next run the source had not delivered, and lists the
+marked campaigns. A campaign rings only from the router that started it, so start each one here
+with `POST /v1/agents/campaigns/{id}/start`.
+
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
 however the file was edited on the way. An import upserts and refuses a row whose primary

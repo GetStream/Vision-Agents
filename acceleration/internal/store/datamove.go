@@ -600,18 +600,16 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 //
 // It returns how many tasks it resumed and the campaigns that were running there. Those it
 // leaves paused and marked: a campaign rings only from the router that starts it, so each is
-// started here (POST /v1/agents/campaigns/{id}/start), which clears the mark. Running it again
-// resumes nothing twice.
+// started here (POST /v1/agents/campaigns/{id}/start), and any change of its state here clears
+// the mark (setCampaignState). Running it again resumes nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (int64, []string, error) {
-	if customerID == "" {
-		return 0, nil, stack.Wrap(errors.New("store: a customer id is required"))
-	}
 	result, err := s.db.NewUpdate().Model((*ScheduledTask)(nil)).
 		Set("state = ?", ScheduledTaskActive).
 		Set("move_paused = false").
 		Set("updated_at = now()").
 		Where("customer_id = ?", customerID).
 		Where("move_paused").
+		// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
 		Where("state = ?", ScheduledTaskPaused).
 		Exec(ctx)
 	if err != nil {
@@ -626,7 +624,6 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (int64, 
 		Column("id").
 		Where("customer_id = ?", customerID).
 		Where("move_paused").
-		Where("state = ?", Paused).
 		Order("id").
 		Scan(ctx, &campaigns); err != nil {
 		return 0, nil, stack.Wrap(fmt.Errorf("store: moved campaigns: %w", err))
