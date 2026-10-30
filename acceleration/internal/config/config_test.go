@@ -433,7 +433,7 @@ func (s *ConfigSuite) TestReservedRangesCoverWhatEgressRefuses() {
 			continue
 		}
 		if _, ok := ProxyURL("http://" + address.String() + ":8091"); ok {
-			s.Failf("egress refuses it, ProxyURL takes it", "%s", address)
+			s.Require().Failf("egress refuses it, ProxyURL takes it", "%s", address)
 		}
 	}
 }

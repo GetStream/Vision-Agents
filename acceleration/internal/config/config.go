@@ -923,7 +923,7 @@ func ProxyURL(raw string) (*url.URL, bool) {
 // Special-Purpose Address Registry (RFC 6890,
 // https://www.iana.org/assignments/iana-ipv4-special-registry) marks not globally reachable or
 // deprecated: no host a proxy runs on has an address in them. egress.IsPublic refuses them too,
-// and also the documentation ranges (RFC 5737), which are left in here so a test can stand in a
+// and also the documentation ranges (RFC 5737), which are left out so a test can stand in a
 // public address with one.
 var reservedRanges = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),     // "This network", RFC 791 section 3.2: a source, never a destination
