@@ -181,6 +181,12 @@ func Tool(box Sandbox) llm.Tool {
 			} else {
 				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
 			}
+			// A withdrawn grant stays withdrawn until the session ends, so no retry is offered. The
+			// proxy broker refuses its CONNECT with 403 Forbidden, Daytona's secret holds a value the
+			// host rejects with 401.
+			description += fmt.Sprintf(" A 401 from %s (or a 403 Forbidden on the proxy's CONNECT) means the %s connection was "+
+				"revoked or removed: tell the user to connect %s again; running the code again in this session will not help.",
+				hosts, grant.Binding, grant.Binding)
 			if grant.Late {
 				// Its token reaches code from the next run after the user connects, at once
 				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret

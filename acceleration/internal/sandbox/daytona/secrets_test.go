@@ -550,6 +550,20 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 	s.NotContains(description, "x-access-token")
 }
 
+// TestRunCodeTellsTheModelWhatARevokedGrantLooksLike: every grant, late or not, gets the line for
+// a connection revoked or removed, and it promises no retry in this session.
+func (s *SecretsSuite) TestRunCodeTellsTheModelWhatARevokedGrantLooksLike() {
+	late := sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}, Late: true}
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit, late)).Description
+
+	s.Contains(description, " A 401 from api.github.com, github.com (or a 403 Forbidden on the proxy's CONNECT) means the "+
+		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
+	s.Contains(description, " A 401 from api.linear.app (or a 403 Forbidden on the proxy's CONNECT) means the "+
+		"linear connection was revoked or removed: tell the user to connect linear again; running the code again in this session will not help.")
+	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{})).Description, "revoked", "no grant, no line")
+}
+
 // githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
 var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
 	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
