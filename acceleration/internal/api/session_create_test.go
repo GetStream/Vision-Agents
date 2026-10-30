@@ -684,9 +684,9 @@ func (s *SessionCreateSuite) TestAnAnonymousCallerMayNotOpenMemoriesEvenUnderIts
 	s.Equal(errAnonymousMemory.Message, failure)
 }
 
-// historySession is a conversation in writing on the model that recites what it was handed.
-// A fork past a turn the prompt injection screen refused carries it as withheld, the way the
-// parent's own agent did, and never hands the fork's model what it asked.
+// TestAForkPastARefusedTurnCarriesItWithheld: a fork past a turn the prompt injection screen
+// refused carries it as withheld, the way the parent's own agent did, and never hands the
+// fork's model what it asked.
 func (s *SessionCreateSuite) TestAForkPastARefusedTurnCarriesItWithheld() {
 	ctx := context.Background()
 	opened := s.serverClient.createSession(historySession(false))
@@ -710,6 +710,7 @@ func (s *SessionCreateSuite) TestAForkPastARefusedTurnCarriesItWithheld() {
 		s.answerTo(forked.Id, "And order 4472?"))
 }
 
+// historySession is a conversation in writing on the model that recites what it was handed.
 func historySession(incognito bool) CreateSessionRequest {
 	request := textSession(nil)
 	request.Llm, request.Incognito = pointerTo("recites/recites-model"), &incognito

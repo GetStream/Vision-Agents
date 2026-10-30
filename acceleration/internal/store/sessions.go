@@ -801,10 +801,10 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 
 // ReplyItems are what the replies a conversation's transcript wrote under these turn ids
 // did, by turn id: the answer and tool_result items of the response each one finished, in
-// the order they happened, and whether the response was refused. Only the customer's own sessions on that conversation are read,
-// so a turn id copied into another transcript finds nothing, and a rewound response is
-// left out. A turn whose answer item names no turn id, as one recorded before they did,
-// finds nothing either.
+// the order they happened, and whether the response was refused. Only the customer's own
+// sessions on that conversation are read, so a turn id copied into another transcript finds
+// nothing, and a rewound response is left out. A turn whose answer item names no turn id,
+// as one recorded before they did, finds nothing either.
 func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string]Reply, error) {
 	if customerID == "" || conversationID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
