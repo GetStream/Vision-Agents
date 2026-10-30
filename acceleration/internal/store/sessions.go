@@ -472,6 +472,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
+	if len(filter.CallerKinds) > 0 {
+		query = query.Where("caller_kind IN (?)", bun.In(filter.CallerKinds))
+	}
 	if filter.ConfigID != "" {
 		query = query.Where("config_id = ?", filter.ConfigID)
 	}

@@ -3,6 +3,7 @@
 package store
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -103,6 +104,57 @@ func (s *StoreSuite) TestQueryNarrowsToOnePerson() {
 	s.Require().NoError(err)
 	s.Require().Len(found, 1)
 	s.Equal("mine", found[0].ID)
+}
+
+func (s *StoreSuite) TestQueryAndSearchNarrowToTheKindsOfCallerAsked() {
+	// The same user id under three kinds of caller: a name is only somebody's once the
+	// kind that proved it matches as well.
+	for i, kind := range []string{"authenticated", "anonymous", "server"} {
+		s.opened(kind, "app", s.base.Add(time.Duration(i)*time.Minute), func(session *AgentSession) {
+			session.CallerKind = kind
+			session.Title = "Refund"
+		})
+	}
+
+	verified := SessionFilter{UserID: "jlahey", CallerKinds: []string{"authenticated", "server"}}
+	found, err := s.store.QuerySessions(s.ctx, "app", verified)
+	s.Require().NoError(err)
+	s.Equal([]string{"server", "authenticated"}, sessionIDs(found))
+	found, err = s.store.SearchSessions(s.ctx, "app", "refund", verified)
+	s.Require().NoError(err)
+	s.ElementsMatch([]string{"server", "authenticated"}, sessionIDs(found))
+
+	anonymous := SessionFilter{UserID: "jlahey", CallerKinds: []string{"anonymous"}}
+	found, err = s.store.QuerySessions(s.ctx, "app", anonymous)
+	s.Require().NoError(err)
+	s.Equal([]string{"anonymous"}, sessionIDs(found))
+	found, err = s.store.SearchSessions(s.ctx, "app", "refund", anonymous)
+	s.Require().NoError(err)
+	s.Equal([]string{"anonymous"}, sessionIDs(found))
+
+	// No kinds is no narrowing, which is what a backend asks with.
+	found, err = s.store.QuerySessions(s.ctx, "app", SessionFilter{UserID: "jlahey"})
+	s.Require().NoError(err)
+	s.Len(found, 3)
+}
+
+func (s *StoreSuite) TestPagesNarrowedByKindAreFull() {
+	// Another kind's rows sit between the ones asked for, so a page cut before the kind is
+	// applied would come back short.
+	for i := range 6 {
+		kind := "anonymous"
+		if i%2 == 0 {
+			kind = "authenticated"
+		}
+		s.opened(fmt.Sprintf("%s-%d", kind, i), "app", s.base.Add(time.Duration(i)*time.Minute),
+			func(session *AgentSession) { session.CallerKind = kind })
+	}
+
+	filter := SessionFilter{UserID: "jlahey", CallerKinds: []string{"authenticated"}, Limit: 2}
+	first, err := s.store.QuerySessions(s.ctx, "app", filter)
+	s.Require().NoError(err)
+	s.Equal([]string{"authenticated-4", "authenticated-2", "authenticated-0"}, sessionIDs(first),
+		"a full page and the one row past it that says there is more")
 }
 
 func (s *StoreSuite) TestQueryOrdersMostRecentlyUpdatedFirst() {
@@ -804,4 +856,13 @@ func (s *StoreSuite) TestClaimingAGuestMovesTheirScheduledTasks() {
 		s.Require().NoError(err)
 		s.Equal(want.user, task.UserID, "%s/%s", want.customer, want.task)
 	}
+}
+
+// sessionIDs is the ids of the sessions, in the order they were found.
+func sessionIDs(sessions []AgentSession) []string {
+	found := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		found = append(found, session.ID)
+	}
+	return found
 }
