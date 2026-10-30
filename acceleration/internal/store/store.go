@@ -599,9 +599,11 @@ func notCancelled(prefix string) string {
 
 // Rollup aggregates the requests in [from, to) into the rollup tables for the given
 // granularity, both the provider breakdown and the cost-tag breakdown, and returns how
-// many buckets were written across the two. It is idempotent: re-running it recomputes
-// the buckets it touches, so a missed run is fixed by running it again over the same
-// window.
+// many buckets were written across the two. The window is widened to whole buckets, from
+// the start of the one holding from to the end of the one holding the last instant before
+// to, because a bucket is written whole: summed over part of it, it would replace the
+// totals of the rest. It is idempotent: re-running it recomputes the buckets it touches,
+// so a missed run is fixed by running it again over the same window.
 func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
 	if !granularity.Valid() {
 		return 0, stack.Wrap(fmt.Errorf("store: unknown granularity %q", granularity))
@@ -619,6 +621,15 @@ func (s *Store) Rollup(ctx context.Context, granularity Granularity, from, to ti
 		return 0, err
 	}
 	return providers + tags, nil
+}
+
+// wholeBuckets is a rollup's WHERE on column: the whole buckets [from, to) touches, taking
+// from and to as its two parameters. Postgres keeps timestamps to the microsecond, so to
+// less one is the window's last instant.
+func wholeBuckets(granularity Granularity, column string) string {
+	return fmt.Sprintf("%[1]s >= date_trunc('%[2]s', ?::timestamptz) AND %[1]s < "+
+		"date_trunc('%[2]s', ?::timestamptz - interval '1 microsecond') + interval '1 %[2]s'",
+		column, granularity.truncateUnit())
 }
 
 func (s *Store) rollupProviders(ctx context.Context, granularity Granularity, from, to time.Time) (int64, error) {
@@ -650,7 +661,7 @@ SELECT
     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s),
     PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE %[3]s)
 FROM requests
-WHERE started_at >= ? AND started_at < ?
+WHERE %[4]s
 GROUP BY modality, customer_id, provider, model, bucket
 ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     audio_ms_total = EXCLUDED.audio_ms_total,
@@ -664,7 +675,7 @@ ON CONFLICT (modality, customer_id, provider, model, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.table(), granularity.truncateUnit(), notCancelled(""))
+		granularity.table(), granularity.truncateUnit(), notCancelled(""), wholeBuckets(granularity, "started_at"))
 
 	// Each shard rolls up the requests it recorded, into its own rollups.
 	result, err := s.shard.ExecContext(ctx, query, from, to)
@@ -712,7 +723,7 @@ SELECT
     PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FILTER (WHERE %[3]s)
 FROM requests AS r
 CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
-WHERE r.started_at >= ? AND r.started_at < ?
+WHERE %[4]s
 GROUP BY r.modality, r.customer_id, tag.key, tag.value, bucket
 ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     audio_ms_total = EXCLUDED.audio_ms_total,
@@ -726,7 +737,7 @@ ON CONFLICT (modality, customer_id, tag_key, tag_value, bucket) DO UPDATE SET
     error_count = EXCLUDED.error_count,
     latency_p50_ms = EXCLUDED.latency_p50_ms,
     latency_p95_ms = EXCLUDED.latency_p95_ms`,
-		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."))
+		granularity.tagTable(), granularity.truncateUnit(), notCancelled("r."), wholeBuckets(granularity, "r.started_at"))
 
 	result, err := s.shard.ExecContext(ctx, query, from, to)
 	if err != nil {
