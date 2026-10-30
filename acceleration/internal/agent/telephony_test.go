@@ -1979,12 +1979,21 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 }
 
 // stubEnder is the call's hang-up with no call behind it: it counts the times it was asked.
+// during runs while the request is in flight; a request whose context is cancelled by then
+// fails, as an aborted HTTP request does.
 type stubEnder struct {
-	mu    sync.Mutex
-	ended int
+	mu     sync.Mutex
+	ended  int
+	during func()
 }
 
-func (e *stubEnder) EndCall(context.Context) error {
+func (e *stubEnder) EndCall(ctx context.Context) error {
+	if e.during != nil {
+		e.during()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ended++
@@ -2058,6 +2067,23 @@ func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
 	s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
 	s.eventually(s.left, "the agent stayed on a call it ended")
 	s.Equal(1, s.ender.ends())
+}
+
+func (s *AgentSuite) TestACallerSpeakingOnceTheGoodbyeWasHeardStillEndsTheCall() {
+	// A "bye" landing while the hang-up request is in flight would abort it: the call either
+	// stays up, or ends at Stream while the session never learns the agent hung up.
+	s.onACall()
+	s.ender = &stubEnder{during: func() { s.agent.stopTools() }}
+	s.join(false)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the hang-up was aborted by the caller's bye")
+	s.eventually(s.left, "the agent stayed on a call it ended")
 }
 
 func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsTold() {

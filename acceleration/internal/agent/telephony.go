@@ -60,6 +60,10 @@ const goodbyeLength = time.Minute
 // call is already ending, so only one hang-up waits on the goodbye.
 const endCallPending = "The call is already ending: it ends as soon as you finish speaking. " + endCallStillOpen
 
+// endCallTimeout bounds the hang-up request once the goodbye has been heard. It no longer
+// follows the tool's context, which a caller's "bye" landing just then would cancel mid-request.
+const endCallTimeout = 5 * time.Second
+
 // goodbye is the reply a native model gives once told end_call ran.
 type goodbye struct {
 	// call is the end_call that asked for it.
@@ -739,7 +743,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		return
 	}
 	a.noteToolDone(hold)
-	if ctx.Err() != nil {
+	// A tool that left the call did so before the caller's speech cancelled ctx, so the
+	// agent still goes.
+	if ctx.Err() != nil && !left {
 		return
 	}
 	if !left {
@@ -1136,11 +1142,13 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 }
 
 // endCall hangs up once the goodbye the model said with the call has been heard. The
-// caller speaking first cancels ctx, which keeps the call.
+// caller speaking before then cancels ctx, which keeps the call; after, the call ends.
 func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
 	if a.Finish(ctx) != nil {
 		return endCallCancelled, false, nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endCallTimeout)
+	defer cancel()
 	if err := a.options.Ender.EndCall(ctx); err != nil {
 		return "", false, fmt.Errorf("agent: end the call: %w", err)
 	}
