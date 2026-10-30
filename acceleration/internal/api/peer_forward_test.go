@@ -16,25 +16,45 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// forwardDelivery hands a scheduled delivery for a session on other to it the way a peer
-// does, presenting credential, and returns the text it carried and what other answered.
+// forwardDelivery hands a scheduled delivery for a stored task's session on other to it the
+// way a peer does, presenting credential, and returns the text it carried and what other
+// answered.
 func (s *ScheduledTasksSuite) forwardDelivery(other *httptest.Server, credential []byte) (string, *node.ForwardResponse, error) {
+	return s.forwardChanged(other, credential, nil)
+}
+
+// forwardChanged is forwardDelivery with change applied to the payload before it is sent.
+func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential []byte, change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	config := s.agentWithScheduling(nil)
-	opened := s.data.createUser().on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	user := s.data.createUser()
+	opened := user.on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
+		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
+		Instructions: "Remind them to stretch.",
+		StartLocal:   time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "UTC",
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
 
 	text := "peer-delivery-" + s.utils.uuid()
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"customer_id": s.customerID(),
 		"session_id":  opened.Id,
-		"caller_kind": "server",
-		"task_id":     "peer-task",
+		"user_id":     task.UserID,
+		"caller_kind": task.CallerKind,
+		"task_id":     task.ID,
 		"run_id":      "peer-run",
 		"command_id":  "st_peer",
 		"text":        text,
 		"due":         time.Now(),
-	})
+	}
+	if change != nil {
+		change(payload)
+	}
+	body, err := json.Marshal(payload)
 	s.Require().NoError(err)
 	request, err := http.NewRequest(http.MethodPost, scheduledPeerPath, bytes.NewReader(body))
 	s.Require().NoError(err)
@@ -54,6 +74,16 @@ func (s *ScheduledTasksSuite) suiteCredential() []byte {
 // refused checks that a forwarded delivery was turned away and never reached the session.
 func (s *ScheduledTasksSuite) refused(text string, err error) {
 	s.Equal(codes.Unauthenticated, status.Code(err), "error: %v", err)
+	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
+		"the refused delivery reached the session")
+}
+
+// refusedAsNoTask checks that an authenticated peer's delivery was answered as no such
+// task and never reached the session.
+func (s *ScheduledTasksSuite) refusedAsNoTask(text string, answer *node.ForwardResponse, err error) {
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeScheduledTaskNotFound+`"`)
 	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
 		"the refused delivery reached the session")
 }
@@ -87,6 +117,62 @@ func (s *ScheduledTasksSuite) TestAPeerHoldingTheKeyringDelivers() {
 	other, _ := s.otherRouter(nil)
 
 	s.delivers(s.forwardDelivery(other, s.suiteCredential()))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherUserThanTheStoredTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["user_id"] = s.utils.uuid()
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "user_id")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingTheServerForAUsersTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["caller_kind"] = string(auth.KindServer)
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoCallerKindIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "caller_kind")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingATaskThatIsNotStoredIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["task_id"] = s.utils.uuid()
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "task_id")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoCustomerIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "customer_id")
+	}))
 }
 
 func (s *ScheduledTasksSuite) TestAPeerStillOnTheOlderKeyDeliversToARotatedNode() {

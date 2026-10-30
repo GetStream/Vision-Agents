@@ -93,7 +93,8 @@ var errScheduledNotHere = errors.New("the session is not running on this node")
 
 // scheduledDelivery is one occurrence's follow-up as the node holding the
 // conversation needs it, which is also what a peer is handed: everything is
-// in it, because the peer is not asked to trust its own copy of the task.
+// in it, because the peer is not asked to trust its own copy of the task,
+// which it reads only to check whose the task is.
 type scheduledDelivery struct {
 	CustomerID     string   `json:"customer_id"`
 	TaskID         string   `json:"task_id"`
@@ -718,7 +719,10 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 // was handed an occurrence walks the task's channels in the session it
 // holds and answers where the follow-up landed. Anything not handed over
 // by a peer is answered as no such route, because the payload names its
-// customer and user outright, which is only a peer's to say.
+// customer and user outright, which is only a peer's to say. Even a peer's
+// word on the owner is checked against the task as stored: a task that is
+// gone, or that another user owns, is answered as no such task and nothing
+// is delivered.
 func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
@@ -731,6 +735,24 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 	}
 	if s.sessions == nil || delivery.SessionID == "" {
 		writeError(w, notFound("no such session"))
+		return
+	}
+	if s.store == nil || delivery.CustomerID == "" || delivery.TaskID == "" {
+		writeError(w, errUnknownScheduledTask)
+		return
+	}
+	// The asker builds the delivery from the task's row, so a valid hand-off names its
+	// owner. A task deleted since is refused too; the asker's scheduler tries again later.
+	task, err := s.store.ScheduledTask(r.Context(), delivery.CustomerID, delivery.TaskID)
+	switch {
+	case errors.Is(err, store.ErrNoScheduledTask), err == nil && !ownsTask(delivery, task):
+		s.logger.Warn("refused a peer's scheduled task that its stored task does not match",
+			"task", delivery.TaskID, "session", delivery.SessionID)
+		writeError(w, errUnknownScheduledTask)
+		return
+	case err != nil:
+		s.logger.Error("could not read a peer's scheduled task", "task", delivery.TaskID, "error", err)
+		writeError(w, internalError())
 		return
 	}
 	ctx := routing.WithScheduledTurn(r.Context())
@@ -755,6 +777,11 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(scheduledPeerAnswer{DeliveredTo: deliveredTo, SessionID: sessionID})
 	}
+}
+
+// ownsTask reports whether a delivery names the owner its task is stored with.
+func ownsTask(delivery scheduledDelivery, task store.ScheduledTask) bool {
+	return task.UserID == delivery.UserID && task.CallerKind == delivery.CallerKind
 }
 
 // deliverChainReopened walks a delivery's channels in a conversation whose
