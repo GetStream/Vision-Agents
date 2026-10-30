@@ -12851,7 +12851,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A URL the finished job is POSTed to, so a caller does not have to poll.
+        /// A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("callback")]
         public string? Callback { get; set; } = default!;
@@ -14498,7 +14498,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+        /// A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("callback")]
         public string? Callback { get; set; } = default!;
