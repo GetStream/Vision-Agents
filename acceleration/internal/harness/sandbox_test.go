@@ -396,7 +396,7 @@ func (s *HarnessSuite) TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemRec
 	s.awaitSettled(1)
 	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
 	s.Equal("status: 401\n\nIf this code got 401 from api.github.com, uploads.github.com, the user's github connection is on an "+
-		"older version of its connector: ask the user to reconnect github. The reconnect takes effect only from their next session, "+
+		"older version of its connector, which gives code no access: ask the user to reconnect github. The reconnect takes effect only from their next session, "+
 		"so running the code again in this session will not help, even after they reconnect.", told)
 }
 

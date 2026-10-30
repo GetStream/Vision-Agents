@@ -177,7 +177,7 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 
 // loggedIn is whether the login has opened the binding. A connection whose revision gives the
 // sandbox nothing, or another env var or hosts, is logged in and still unbound (boundLate): a
-// login cannot bind it, a reconnect on the latest revision can.
+// login cannot bind it, a reconnect on the latest revision can, from the next session.
 func (l *login) loggedIn() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
