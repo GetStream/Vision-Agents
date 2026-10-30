@@ -31,7 +31,9 @@ import (
 const tokenValidity = time.Hour
 
 func main() {
-	addr := flag.String("addr", ":8099", "where to listen")
+	// This machine only by default: it signs a token for any user it is asked for. A phone
+	// on the network needs -addr :8099.
+	addr := flag.String("addr", "127.0.0.1:8099", "where to listen")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

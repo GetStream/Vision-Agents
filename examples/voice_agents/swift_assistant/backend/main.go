@@ -48,7 +48,9 @@ const tokenValidity = time.Hour
 const gmail = "gmail"
 
 func main() {
-	addr := flag.String("addr", ":8098", "where to listen")
+	// This machine only by default: it signs a token for any user it is asked for. A phone
+	// on the network needs -addr :8098.
+	addr := flag.String("addr", "127.0.0.1:8098", "where to listen")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -42,7 +42,9 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples \
 go run ./backend
 ```
 
-It listens on `:8098`, beside the Swift demo's on `:8099`.
+It listens on `127.0.0.1:8098`, beside the Swift demo's on `127.0.0.1:8099`, since it signs a
+token and sends mail for any user it is asked for. For a phone on the network, pass
+`-addr :8098` and put your Mac's address in `Assistant.backendURL`.
 
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and

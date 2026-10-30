@@ -1,8 +1,8 @@
 """
 Sales Assistant — real-time meeting coach powered by Vision Agents.
 
-Run as an HTTP server:
-    uv run main.py serve --host 0.0.0.0 --port 8000
+Run as an HTTP server, on this machine only:
+    uv run main.py serve --port 8000
 
 The Flutter overlay app calls POST /sessions to start a coaching session.
 """
@@ -11,10 +11,11 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import Query
+from fastapi import Depends, Query
 from fastapi.responses import JSONResponse
 from getstream import Stream
 from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.runner import allow_local
 from vision_agents.plugins import assemblyai, gemini
 from vision_agents.plugins import getstream as getstream_edge
 
@@ -23,6 +24,9 @@ load_dotenv()
 
 # Meeting context set by the Flutter app before starting a session.
 _meeting_context: str = ""
+
+# How long a token handed to the Flutter app lasts, in seconds.
+TOKEN_VALIDITY = 3600
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -89,7 +93,10 @@ if __name__ == "__main__":
     _stream_client = Stream()
     _api_key = os.environ["STREAM_API_KEY"]
 
-    @runner.fast_api.put("/context")
+    # Both routes answer only the app on this machine. /auth/token signs for whoever it is
+    # asked for, because a demo has nobody signed in; a real application signs for the user
+    # its own sign-in says the caller is.
+    @runner.fast_api.put("/context", dependencies=[Depends(allow_local)])
     async def set_context(request: dict) -> JSONResponse:
         """Set meeting context for the next coaching session."""
         global _meeting_context
@@ -100,10 +107,10 @@ if __name__ == "__main__":
         )
         return JSONResponse({"ok": True})
 
-    @runner.fast_api.get("/auth/token")
+    @runner.fast_api.get("/auth/token", dependencies=[Depends(allow_local)])
     async def create_token(user_id: str = Query(...)) -> JSONResponse:
-        """Generate a Stream user token for the Flutter client."""
-        token = _stream_client.create_token(user_id)
+        """Generate a Stream user token for the Flutter client, valid for an hour."""
+        token = _stream_client.create_token(user_id, expiration=TOKEN_VALIDITY)
         return JSONResponse({"token": token, "apiKey": _api_key})
 
     runner.cli()

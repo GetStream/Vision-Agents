@@ -138,14 +138,19 @@ runner = Runner(
 | Option                   | Default   | Description                                                               |
 |--------------------------|-----------|---------------------------------------------------------------------------|
 | `fast_api`               | none      | Custom FastAPI instance (skips all configuration)                         |
-| `cors_allow_origins`     | `("*",)`  | Allowed CORS origins                                                      |
+| `cors_allow_origins`     | `()`      | Allowed CORS origins; `["*"]` allows every origin                         |
+| `cors_allow_origin_regex`| pages on this machine | Allowed CORS origins by regex: `localhost`, `127.0.0.1` and `[::1]` on any port. `None` for none |
 | `cors_allow_methods`     | `("*",)`  | Allowed CORS methods                                                      |
 | `cors_allow_headers`     | `("*",)`  | Allowed CORS headers                                                      |
-| `cors_allow_credentials` | `True`    | Allow CORS credentials                                                    |
-| `can_start_session`      | allow all | Permission check for starting sessions. Receives `call_id` from URL path. |
-| `can_close_session`      | allow all | Permission check for closing sessions. Receives `call_id` from URL path.  |
-| `can_view_session`       | allow all | Permission check for viewing sessions. Receives `call_id` from URL path.  |
-| `can_view_metrics`       | allow all | Permission check for viewing metrics. Receives `call_id` from URL path.   |
+| `cors_allow_credentials` | `False`   | Allow CORS credentials                                                    |
+| `can_start_session`      | `allow_local` | Permission check for starting sessions. Receives `call_id` from URL path. |
+| `can_close_session`      | `allow_local` | Permission check for closing sessions. Receives `call_id` from URL path.  |
+| `can_view_session`       | `allow_local` | Permission check for viewing sessions. Receives `call_id` from URL path.  |
+| `can_view_metrics`       | `allow_local` | Permission check for viewing metrics. Receives `call_id` from URL path.   |
+
+`allow_local` lets in a caller on this machine and refuses any other with a `403`, so a server
+started with `--host 0.0.0.0` answers nobody else until it is given checks of its own.
+`allow_all`, from `vision_agents.core.runner`, lets everyone in.
 
 ### Permission Callbacks & Authentication
 

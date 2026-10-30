@@ -11,6 +11,7 @@ from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.runner import allow_all
 from vision_agents.core.tts import TTS
 from vision_agents.core.warmup import Warmable
 
@@ -76,10 +77,10 @@ async def runner(agent_launcher) -> Runner:
 @pytest.fixture()
 async def test_client_factory():
     @asynccontextmanager
-    async def factory(runner: Runner):
+    async def factory(runner: Runner, peer: tuple[str, int] = ("127.0.0.1", 123)):
         async with LifespanManager(runner.fast_api):
             async with AsyncClient(
-                transport=ASGITransport(app=runner.fast_api),
+                transport=ASGITransport(app=runner.fast_api, client=peer),
                 base_url="http://test",
             ) as client:
                 yield client
@@ -116,6 +117,66 @@ class TestRunnerServe:
             assert session_id
             assert resp_json["session_started_at"]
             assert agent_launcher.get_session(session_id)
+
+    @pytest.mark.parametrize("address", ["203.0.113.7", "10.0.0.5", "2001:db8::1"])
+    async def test_start_session_from_another_machine_is_refused_by_default(
+        self, agent_launcher, test_client_factory, address
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner, peer=(address, 5000)) as client:
+            resp = await client.post(
+                "/calls/test/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 403
+
+    async def test_start_session_from_another_machine_with_allow_all(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(can_start_session=allow_all),
+        )
+
+        async with test_client_factory(runner, peer=("203.0.113.7", 5000)) as client:
+            resp = await client.post(
+                "/calls/test/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 201
+
+    @pytest.mark.parametrize(
+        "origin", ["https://example.com", "http://localhost.example.com"]
+    )
+    async def test_cors_refuses_a_page_on_another_site_by_default(
+        self, agent_launcher, test_client_factory, origin
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            preflight = await client.options(
+                "/calls/test/sessions",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+            simple = await client.get("/health", headers={"Origin": origin})
+            assert "access-control-allow-origin" not in preflight.headers
+            assert "access-control-allow-origin" not in simple.headers
+
+    @pytest.mark.parametrize(
+        "origin",
+        ["http://localhost:3000", "http://127.0.0.1:5173", "http://[::1]:8080"],
+    )
+    async def test_cors_allows_a_page_on_this_machine_without_credentials(
+        self, agent_launcher, test_client_factory, origin
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            preflight = await client.options(
+                "/calls/test/sessions",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
+            assert preflight.headers["access-control-allow-origin"] == origin
+            assert "access-control-allow-credentials" not in preflight.headers
 
     async def test_start_session_no_permissions_fail(
         self, agent_launcher, test_client_factory
