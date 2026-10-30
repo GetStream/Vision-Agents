@@ -177,6 +177,10 @@ With `prompt_injection` on, a response the screen refuses runs none of the tool 
 
 A `type: webhook` guardrail's `url` must be `https`, and its host must resolve only to public addresses. Creating, replacing, patching or syncing an agent config refuses any other url with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A session posts the check through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public url are kept as written. A config saved earlier is not rewritten: one with a plain `http` webhook url now refuses every session, and one with a private `https` url still starts, but every check of its webhook fails and the turn is answered as on any other webhook failure (AI-1859).
 
+### The stats rollup takes the ops key and writes whole buckets
+
+`runRollup` recomputes every app's rollups, so it is Stream's maintenance job and not an app's: it moves from `POST /v1/stats/rollup` to `POST /v1/ops/stats/rollup`, reached with the ops key (`X-Ops-Key`) and no app (AI-1735). The Go, JavaScript and Python clients drop it; Ruby's and Rust's call the new path. Its window is widened to whole buckets (the start of the hour or day holding `from` to the end of the one holding `to`), so a window that starts or ends inside a bucket recomputes all of it rather than replacing its totals with part of them.
+
 ### A dispatch worker's capacity is at most 1024
 
 `GET /v1/dispatch` refuses a `capacity` above 1024 with a 400 that names the limit, and the spec declares it as `maximum`. Before, any positive number was taken, and the router reserved room for that many calls when the worker connected. A worker asking for 1024 or less is unchanged; the SDKs ask for 4 (AI-1850).
