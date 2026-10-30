@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"testing"
 	"time"
@@ -233,6 +234,28 @@ func (s *SessionOwnershipSuite) TestAServerTokenInASocketsQueryStringIsNotABacke
 	_, status := quiet.watch("/v1/agents/sessions/" + opened.Id + "/events")
 
 	s.Equal(http.StatusNotFound, status)
+}
+
+func (s *SessionOwnershipSuite) TestABackendOpensASessionForAUserWithTheQueryAndNotTheBody() {
+	// The body's user_id is the name the agent joins the call as. The owner comes from the
+	// caller's auth, and a backend names the user it acts for in the query, so the user's own
+	// device reaches the session and a body-only user_id leaves it with nobody's device.
+	named := s.data.createUser()
+	bodyOnly := s.data.createUser()
+	request := textSession(nil)
+
+	var forQuery, forBody Session
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions?"+url.Values{auth.UserParam: {named.userID}}.Encode(), request, &forQuery))
+	request.UserId = &bodyOnly.userID
+	s.Require().Equal(http.StatusCreated,
+		s.serverClient.do(http.MethodPost, "/v1/agents/sessions", request, &forBody))
+
+	_, status := named.watch("/v1/agents/sessions/" + forQuery.Id + "/events")
+	s.Equal(http.StatusSwitchingProtocols, status, "the user the query named reaches its socket")
+	_, status = bodyOnly.watch("/v1/agents/sessions/" + forBody.Id + "/events")
+	s.Equal(http.StatusNotFound, status, "a user only the body named is a stranger to it")
+	s.Equal(bodyOnly.userID, forBody.UserId, "the body's user_id is echoed as the agent's name")
 }
 
 func (s *SessionOwnershipSuite) TestTheAppsBackendEndsAUsersCallWithoutReadingIt() {

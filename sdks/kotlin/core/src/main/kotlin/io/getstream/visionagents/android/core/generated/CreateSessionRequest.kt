@@ -82,7 +82,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param toolTimeoutMs How long the model waits for a tool result. Zero is the default.
  * @param tools 
  * @param tts Omit it and the config decides, or en-low-latency when there is no config.
- * @param userId Who the agent joins the call as.
+ * @param userId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
  * @param userName 
  * @param video 
  * @param voice The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
@@ -227,7 +227,7 @@ internal data class CreateSessionRequest (
     @SerialName(value = "tts")
     val tts: kotlin.String? = null,
 
-    /* Who the agent joins the call as. */
+    /* The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id. */
     @SerialName(value = "user_id")
     val userId: kotlin.String? = null,
 

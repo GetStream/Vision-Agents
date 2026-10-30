@@ -5125,7 +5125,7 @@ namespace GetStream.VisionAgents.Models
         public string? Tts { get; set; } = default!;
 
         /// <summary>
-        /// Who the agent joins the call as.
+        /// The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string? UserId { get; set; } = default!;
@@ -11523,6 +11523,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("usage")]
         public CallUsage? Usage { get; set; } = default!;
 
+        /// <summary>
+        /// The name the agent joined the call as. It is not the owner of the session.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string UserId { get; set; } = default!;
 
