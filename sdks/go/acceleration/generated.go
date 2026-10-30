@@ -5106,7 +5106,7 @@ type CreateSessionRequest struct {
 	// Tts Omit it and the config decides, or en-low-latency when there is no config.
 	Tts *string `json:"tts,omitempty"`
 
-	// UserId Who the agent joins the call as.
+	// UserId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
 	UserId   *string       `json:"user_id,omitempty"`
 	UserName *string       `json:"user_name,omitempty"`
 	Video    *SessionVideo `json:"video,omitempty"`
@@ -7921,7 +7921,9 @@ type Session struct {
 	Tts *string `json:"tts,omitempty"`
 
 	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
-	Usage  *CallUsage    `json:"usage,omitempty"`
+	Usage *CallUsage `json:"usage,omitempty"`
+
+	// UserId The name the agent joined the call as. It is not the owner of the session.
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
 

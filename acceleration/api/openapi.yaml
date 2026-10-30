@@ -3464,7 +3464,7 @@ components:
           type: string
         user_id:
           default: vision-agent
-          description: Who the agent joins the call as.
+          description: The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
           type: string
         user_name:
           default: Vision Agent
@@ -7838,6 +7838,7 @@ components:
           $ref: '#/components/schemas/CallUsage'
           description: What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only.
         user_id:
+          description: The name the agent joined the call as. It is not the owner of the session.
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
