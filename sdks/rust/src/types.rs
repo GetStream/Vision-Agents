@@ -4125,6 +4125,9 @@ pub struct CreateResponseRequest {
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said.
     pub text: ::std::string::String,
+    ///What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub ui_action: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,

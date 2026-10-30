@@ -68,15 +68,23 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
+	action := value(request.Body.UiAction)
+	if !conversation.ValidUIAction(action) {
+		return nil, invalidRequest(fmt.Sprintf("a ui_action names message_id, format and name, in at most %d bytes", conversation.MaxUIAction))
+	}
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	var responseID string
 	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "", parts, asked)
+		_, responseID, err = found.RespondCommandWithAction(ctx, id, request.Body.Text, "", parts, asked, action)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
 	} else {
-		responseID, err = found.Respond(ctx, request.Body.Text, parts, asked)
+		told := request.Body.Text
+		if note := conversation.DescribeUIAction(action); note != "" {
+			told += "\n\n" + note
+		}
+		responseID, err = found.Respond(ctx, told, parts, asked)
 	}
 	if errors.Is(err, agent.ErrCannotSeeImages) {
 		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
@@ -403,12 +411,13 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Images          *[]ImageSource `json:"images,omitempty"`
-	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
-	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
-	Text            string         `json:"text" doc:"What to answer, as though it had been said."`
-	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
+	RequestId       *string         `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Images          *[]ImageSource  `json:"images,omitempty"`
+	MaxOutputTokens *int            `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
+	Text            string          `json:"text" doc:"What to answer, as though it had been said."`
+	UiAction        *map[string]any `json:"ui_action,omitempty" doc:"What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text."`
+	Videos          *[]VideoSource  `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
 }
 
 func (*CreateResponseRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

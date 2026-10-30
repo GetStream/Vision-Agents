@@ -21,6 +21,9 @@ final readonly class CreateResponseRequest
         public ?string $reasoningEffort = null,
         // Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Require...
         public ?string $requestId = null,
+        // What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form,...
+        /** @var array<string, mixed>|null */
+        public ?array $uiAction = null,
         // Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the v...
         /** @var list<VideoSource>|null */
         public ?array $videos = null,
@@ -38,6 +41,7 @@ final readonly class CreateResponseRequest
             maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
             reasoningEffort: array_key_exists('reasoning_effort', $data) && $data['reasoning_effort'] !== null ? Json::string($data, 'reasoning_effort') : null,
             requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
+            uiAction: array_key_exists('ui_action', $data) && $data['ui_action'] !== null ? Json::object($data, 'ui_action') : null,
             videos: array_key_exists('videos', $data) && $data['videos'] !== null ? array_map(VideoSource::fromArray(...), Json::objects($data, 'videos')) : null,
         );
     }
@@ -62,6 +66,9 @@ final readonly class CreateResponseRequest
         }
         if ($this->requestId !== null) {
             $out['request_id'] = $this->requestId;
+        }
+        if ($this->uiAction !== null) {
+            $out['ui_action'] = Json::objectValue($this->uiAction);
         }
         if ($this->videos !== null) {
             $out['videos'] = array_map(static fn (VideoSource $each): array => $each->toArray(), $this->videos);

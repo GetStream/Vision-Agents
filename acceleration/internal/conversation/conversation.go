@@ -75,6 +75,11 @@ type Message struct {
 	// Files are what the agent's own code made for this reply, such as a rendered image, or
 	// on a person's message the photos they sent with it.
 	Files []sandbox.Attachment `json:"files,omitempty"`
+	// UI is a reply's generated UI as Stream stores it (custom.ai_ui), when the reply was read
+	// back rather than written here, where it is still part of Text (ui.go).
+	UI map[string]any `json:"ui,omitempty"`
+	// UIAction is what a person did in a reply's UI, on their message (custom.ai_ui_action).
+	UIAction map[string]any `json:"ui_action,omitempty"`
 	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
 	// They are written among the attachments, by MarshalJSON.
 	Authorizations []plugins.Authorization `json:"-"`
@@ -1105,6 +1110,13 @@ func entries(p Page) []entry {
 
 func entryOf(p Page, m Message) entry {
 	said := m.Text
+	if block := uiBlock(m.UI); block != "" && m.Role == "assistant" {
+		// The model reads back the UI it wrote, which Stream keeps beside the reply's words.
+		said = strings.TrimSpace(said + "\n\n" + block)
+	}
+	if note := DescribeUIAction(m.UIAction); note != "" && m.Role == "user" {
+		said += "\n\n" + note
+	}
 	if m.Role == "user" && len(m.Files) > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
@@ -1295,6 +1307,12 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 // clientID names the install the command came from; an invalid one is ignored. photos are
 // what the person sent with it (PublishPhotos), which their message shows.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
+	return c.BeginCommandWithAction(id, text, clientID, nil, photos...)
+}
+
+// BeginCommandWithAction is BeginCommand for a person's message that says what they did in a
+// reply's UI (ui.go), which their message carries beside their words.
+func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action map[string]any, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -1302,6 +1320,9 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	}
 	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
 		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
+	}
+	if !ValidUIAction(action) {
+		return CommandReceipt{}, stack.Wrap(errors.New("invalid UI action"))
 	}
 	digest := commandDigest(text, photos)
 	if previous, ok := c.data.Commands[id]; ok {
@@ -1325,7 +1346,7 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	// The user's message is stored under the command ID, so a client that shows the
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
-	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID}
+	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID, UIAction: action}
 	for _, photo := range photos {
 		u.Files = append(u.Files, photo.Uploaded)
 	}
@@ -1868,12 +1889,22 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	m.Saved = !ephemeral
 	m.Error = ""
-	metadata, err := metadataOf(m, visible)
+	text, ui := splitUI(m.Text, m.FinishedAt != nil)
+	if ui == nil {
+		ui = m.UI
+	}
+	wire := m
+	wire.Text = text
+	wire.AnswerStart = min(wire.AnswerStart, utf8.RuneCountInString(text))
+	metadata, err := metadataOf(wire, visible)
 	if err != nil {
 		return err
 	}
-	runtime := runtimeOf(m)
-	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	runtime := runtimeOf(wire)
+	fields := map[string]any{"text": text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	if ui != nil {
+		fields["ai_ui"] = ui
+	}
 	parts := m.Parts
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
@@ -1890,13 +1921,19 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		if m.ClientID != "" {
 			custom["client_id"] = m.ClientID
 		}
+		if ui != nil {
+			custom["ai_ui"] = ui
+		}
+		if m.UIAction != nil {
+			custom["ai_ui_action"] = m.UIAction
+		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
 		if m.Role == "assistant" {
 			custom["ai_generated"] = true
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
+			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})

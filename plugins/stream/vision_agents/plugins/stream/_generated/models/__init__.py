@@ -172,6 +172,7 @@ from .cost_source import CostSource
 from .create_opt_out_request import CreateOptOutRequest
 from .create_opt_out_request_source import CreateOptOutRequestSource
 from .create_response_request import CreateResponseRequest
+from .create_response_request_ui_action import CreateResponseRequestUiAction
 from .create_run_request import CreateRunRequest
 from .create_run_request_tags import CreateRunRequestTags
 from .create_scheduled_task_request import CreateScheduledTaskRequest
@@ -742,6 +743,7 @@ __all__ = (
     "CreateOptOutRequest",
     "CreateOptOutRequestSource",
     "CreateResponseRequest",
+    "CreateResponseRequestUiAction",
     "CreateRunRequest",
     "CreateRunRequestTags",
     "CreateScheduledTaskRequest",

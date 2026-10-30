@@ -33,12 +33,17 @@ public struct Responses: Sendable {
     /// `maxOutputTokens` caps this answer, reasoning included, and `reasoningEffort` is how long
     /// the model may think first, one of the efforts the session's model accepts. Both cover the
     /// replies that finish it after its tools; left nil, the session's own apply.
+    ///
+    /// `uiAction` is what the person did in the UI an earlier reply showed, which `text` says in
+    /// their words, such as StreamChatAI's `AIUIAction.json`. Their message carries it, and the
+    /// model is told it after the text.
     public func create(
         _ text: String, images: [ImageSource] = [], maxOutputTokens: Int? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil, uiAction: [String: RawJSON]? = nil
     ) async throws -> Response {
         let body = Self.body(
-            text, images: images, maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort)
+            text, images: images, maxOutputTokens: maxOutputTokens, reasoningEffort: reasoningEffort,
+            uiAction: uiAction)
         await asked?(text)
         return Response(
             try await backend.call { try await $0.createResponse(id: sessionID, createResponseRequest: body) })
@@ -46,11 +51,11 @@ public struct Responses: Sendable {
 
     static func body(
         _ text: String, images: [ImageSource], maxOutputTokens: Int? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil, uiAction: [String: RawJSON]? = nil
     ) -> CreateResponseRequest {
         .init(
             images: images.isEmpty ? nil : images.map(\.schema), maxOutputTokens: maxOutputTokens,
-            reasoningEffort: reasoningEffort, requestId: UUID().uuidString, text: text)
+            reasoningEffort: reasoningEffort, requestId: UUID().uuidString, text: text, uiAction: uiAction)
     }
 
     /// One page of the turns so far, oldest first.
