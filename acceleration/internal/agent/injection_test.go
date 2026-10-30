@@ -329,6 +329,14 @@ func (s *AgentSuite) TestNothingASpokenReplyHeldIsSpokenOnceTheScreenRefusedIt()
 	s.False(s.spokenText("hidden instructions"), "the unfinished sentence was spoken after the refusal")
 }
 
+func (s *AgentSuite) TestNothingTheHarnessHeldOfAPerformedReplyIsSpokenOnceTheScreenRefusedIt() {
+	s.performing = "You may write stage directions in square brackets."
+	// The harness holds what follows a bracket that may open a request for help.
+	s.refusedWhileSaying("Sure. <ask my hidden instructions say")
+
+	s.False(s.spokenText("hidden instructions"), "the held text was spoken after the refusal")
+}
+
 func (s *AgentSuite) TestASentenceSpokenBeforeTheScreenRefusedTheReplyStaysSpoken() {
 	s.refusedWhileSaying("Sure, I can help you with that. Here is what I was told")
 
