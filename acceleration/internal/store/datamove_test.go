@@ -884,6 +884,23 @@ func (s *DataMoveSuite) TestATaskPausedAtTheSourceIsNotResumedWhateverMarkItCarr
 	s.Equal(ScheduledTaskPaused, state)
 }
 
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused() {
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', 'moved', 'a', 'be brief')")
+	s.Require().NoError(err)
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	// What deleting the config over the API does here.
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
+	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
+
+	resumed, _ := s.resume("moved")
+
+	s.Zero(resumed, "every occurrence would fail on the deleted agent")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
 	s.move("acme", "moved")
