@@ -194,6 +194,29 @@ func (s *GuestsSuite) TestAClaimedGuestsScheduledTaskIsListedToTheAccount() {
 	s.Equal(task, page.Items[0].Id)
 }
 
+func (s *GuestsSuite) TestAClaimLeavesWhatAnAnonymousNamesakeSaidWhereItWas() {
+	// A caller with no token picks its own name, so going by the guest's id or the account's
+	// makes it neither: its conversations are not moved, and the account is not let into them.
+	guestID, account := s.recordGuest(), s.data.createUser()
+	genuine := s.talkedAs(s.asGuest(guestID))
+	underTheGuestsName := s.talkedAs(s.data.claiming(guestID))
+	underTheAccountsName := s.underTheName(account.userID)
+	task := s.scheduledFor(guestID, auth.KindAnonymous)
+
+	claimed := s.claim(guestID, account.userID)
+
+	s.Equal(1, claimed.SessionsMoved, "only the guest's own conversation moved")
+	s.Equal([]string{genuine}, ids(account.querySessions(SessionQuery{}).Items))
+	s.Equal([]string{underTheGuestsName}, ids(s.data.claiming(guestID).querySessions(SessionQuery{}).Items),
+		"the namesake keeps its conversation")
+	s.Contains(s.chat.Members(s.transcriptOf(genuine)), account.userID, "the account reads what the guest said")
+	s.NotContains(s.chat.Members(s.transcriptOf(underTheGuestsName)), account.userID)
+	s.NotContains(s.chat.Members(s.transcriptOf(underTheAccountsName)), account.userID)
+	left, err := s.store.ScheduledTask(context.Background(), s.customerID(), task)
+	s.Require().NoError(err)
+	s.Equal(guestID, left.UserID, "the namesake's task is not moved")
+}
+
 // recordGuest is a guest of the suite's app, written the way minting one writes it. Minting
 // over HTTP would reach Stream for the token.
 func (s *GuestsSuite) recordGuest() string {
@@ -256,4 +279,26 @@ func (s *GuestsSuite) scheduledFor(userID string, kind auth.Kind) string {
 	s.Require().NoError(s.store.CreateScheduledTask(ctx, &task, 0))
 	s.T().Cleanup(func() { _ = s.store.DeleteScheduledTask(ctx, task.CustomerID, task.ID) })
 	return task.ID
+}
+
+// transcriptOf is the Stream Chat channel the session's words were written to.
+func (s *GuestsSuite) transcriptOf(sessionID string) string {
+	var row store.AgentSession
+	s.Require().NoError(s.store.DB().NewSelect().Model(&row).Where("id = ?", sessionID).Scan(context.Background()))
+	channel := transcriptChannel(row)
+	_, kept := s.chat.Channel(channel)
+	s.Require().True(kept, "the session wrote a transcript")
+	return channel
+}
+
+// underTheName is an ended conversation an anonymous caller had that the row files under the
+// name, in a channel the name's owner was never put in. An anonymous caller opening one under
+// a name would put the name in its channel, so the row is moved under it afterwards.
+func (s *GuestsSuite) underTheName(name string) string {
+	talked := s.talkedAs(s.data.createAnonymous())
+	_, err := s.store.DB().NewUpdate().Model((*store.AgentSession)(nil)).
+		Set("user_id = ?", name).Where("id = ?", talked).Exec(context.Background())
+	s.Require().NoError(err)
+	s.Require().NotContains(s.chat.Members(s.transcriptOf(talked)), name)
+	return talked
 }
