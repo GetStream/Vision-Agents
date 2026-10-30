@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A guest who turns out to be a full user is no longer re-minted as a guest
+
+A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).
+
 ### A session list holds only the sessions the caller reaches by id
 
 `POST /v1/agents/sessions/query`, a list or a text search, answers an end user with ended and live sessions on the same terms as `GET /v1/agents/sessions/{id}`: the user id and the kind of caller both match, or a backend opened the session for a signed-in or guest user of that id. An anonymous caller is no longer listed the stored sessions of a verified user, a guest or a backend's session by naming the same user id, and a signed-in user and a guest of one id each list only their own. The rows are narrowed in the query, so a page is still full. A backend's list is unchanged (AI-1863).
