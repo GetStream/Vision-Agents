@@ -41,6 +41,11 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	// readTimeout bounds a client sending a whole request, a 2 MiB batch included.
 	readTimeout = 30 * time.Second
+)
+
+// The servers' idle timeouts are variables so a test can shorten them; nothing else assigns
+// them.
+var (
 	// idleTimeout is how long a producer's kept-alive connection may sit unused.
 	idleTimeout = 2 * time.Minute
 	// metricsIdleTimeout is how long the metrics server holds a connection that sends no next
@@ -50,6 +55,9 @@ const (
 	// connection Prometheus is about to reuse. 10 min is twice that, as the router's
 	// idleTimeout (cmd/router/main.go).
 	metricsIdleTimeout = 10 * time.Minute
+)
+
+const (
 	// sentryFlushTimeout bounds delivering buffered events on the way out.
 	sentryFlushTimeout = 2 * time.Second
 	// healthcheckTimeout bounds `usage healthcheck`.
