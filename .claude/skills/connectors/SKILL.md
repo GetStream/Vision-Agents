@@ -236,7 +236,9 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
   binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that
   binds it says to wait 20 s on a 401 (`Result.Connected`; a run the login finished during says it
-  too). A required binding still refuses the session, and a voice
+  too). A login on a connection whose revision has no `sandbox` block, or another env var or
+  hosts, binds nothing: every run after it says to ask the user to reconnect (`Result.Reconnect`).
+  A required binding still refuses the session, and a voice
   session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
