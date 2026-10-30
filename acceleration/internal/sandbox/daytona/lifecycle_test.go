@@ -364,12 +364,17 @@ func (s *LifecycleSuite) TestATimerDueWhileTheGateIsHeldFiresOnceItIsLetGo() {
 		box.gate <- struct{}{}
 		time.Sleep(2 * time.Minute)
 		box.arm()
+		armed := box.epoch
 		synctest.Wait()
 		<-box.gate
 		synctest.Wait()
 
 		require.Equal(t, []string{"stopped"}, meter.all(), "stopped once, by the timer armed last")
 		box.gate <- struct{}{}
+		// The timer that waited for the gate finds itself replaced and sets no timer: one that
+		// did would replace the next waiting one in turn, a chain of wake-ups that do nothing.
+		// Only the stop arms the next point of the lifecycle.
+		assert.Equal(t, armed+1, box.epoch, "timers armed after the gate was let go")
 		box.timer.Stop()
 		<-box.gate
 	})

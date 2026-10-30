@@ -625,13 +625,18 @@ func (s *Sandbox) arm() {
 // lapse moves the sandbox along its lifecycle when its timer fires. A timer that finds the gate
 // held waits for it: the work holding it arms the timer before it lets the gate go, so a timer
 // due by then fires while the gate is still held, and one that gave up would never fire again.
+// A timer that was replaced while it waited arms nothing: whoever replaced it armed the current one.
 func (s *Sandbox) lapse(epoch int) {
 	s.gate <- struct{}{}
+	if epoch != s.epoch {
+		<-s.gate
+		return
+	}
 	defer func() {
 		s.arm()
 		<-s.gate
 	}()
-	if epoch != s.epoch || s.box == nil || s.gone {
+	if s.box == nil || s.gone {
 		return
 	}
 	now := time.Now()
