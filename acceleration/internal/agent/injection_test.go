@@ -349,3 +349,30 @@ func (s *AgentSuite) TestNothingAWrittenReplyHeldIsSentOnceTheScreenRefusedIt() 
 	s.Contains(s.written(), "Sure.", "what streamed before the verdict is sent as it streamed")
 	s.NotContains(s.written(), "hidden instructions", "the held text was sent after the refusal")
 }
+
+func (s *AgentSuite) TestARefusedReplyIsLoggedBelowAnAgentFailure() {
+	s.logs = &logLines{}
+	s.refusedWhileSaying("I")
+
+	s.Empty(s.logs.records("agent failure"))
+	refused := s.logs.records("a reply was refused as a prompt injection")
+	s.Require().Len(refused, 1)
+	s.Equal("INFO", refused[0]["level"])
+	s.Equal(1, countOf[Error](s.reported()), "the refusal is still reported")
+}
+
+// The control: a reply the model failed is still an agent failure in the log.
+func (s *AgentSuite) TestAFailedReplyIsLoggedAsAnAgentFailure() {
+	s.logs = &logLines{}
+	s.join(false)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "What are your opening hours?")
+	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the model was never asked")
+	s.model.opened(s.model.turns()[0].ID).Fail(errors.New("stream reset"), "stream")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the failed turn never ended")
+
+	s.Len(s.logs.records("agent failure"), 1)
+}
