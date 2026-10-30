@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -332,4 +333,23 @@ func (s *AppConfigSuite) TestWithoutRedis() {
 		_, err = plain.APIKey(s.ctx, keyID)
 		s.ErrorIs(err, store.ErrNoAPIKey)
 	})
+}
+
+func (s *AppConfigSuite) TestAKeySealedBeforeSecretsWereBoundStillOpensOnceTheVersionIsRaised() {
+	// Such a row says version 1 whichever version sealed it, and its secret is bound to
+	// nothing. This one was sealed while version 2 was current.
+	sealedUnder, err := auth.NewSealerWithKeyring(2, map[int]string{1: "first-key", 2: "second-key"})
+	s.Require().NoError(err)
+	key, secret, err := auth.NewCredential(auth.Test)
+	s.Require().NoError(err)
+	unbound, err := sealedUnder.Seal(secret)
+	s.Require().NoError(err)
+	s.app(func(credential *store.APIKey) { credential.ID, credential.Sealed = key, unbound })
+	raised, err := auth.NewSealerWithKeyring(3, map[int]string{1: "first-key", 2: "second-key", 3: "third-key"})
+	s.Require().NoError(err)
+
+	app, err := s.first.Lookup(raised)(s.ctx, key)
+
+	s.Require().NoError(err)
+	s.Equal(secret, app.Secret)
 }
