@@ -89,6 +89,14 @@ async def llm():
 
 
 class TestClaudeLLM:
+    @pytest.fixture
+    async def llm(self):
+        """A key of its own: these tests build messages and send none."""
+        llm = ClaudeLLM(model="claude-sonnet-4-6", api_key="test-key")
+        llm.set_conversation(InMemoryConversation("be friendly", []))
+        yield llm
+        await llm.close()
+
     async def test_message(self, llm: ClaudeLLM):
         messages = ClaudeLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
