@@ -38,7 +38,7 @@ func (m *Manager) ender(created *Session, spec Spec, stream streamapp.Bound) age
 		hang.end = func(ctx context.Context) error {
 			return m.options.Phone.EndCall(ctx, spec.CustomerID, spec.StreamApp, spec.CallType, spec.CallID)
 		}
-	case spec.CallType == defaultCallType && spec.CallID == spec.ID && stream.Client != nil:
+	case spec.ownCall && stream.Client != nil:
 		hang.end = func(ctx context.Context) error {
 			_, err := stream.Client.Video().EndCall(ctx, spec.CallType, spec.CallID, &getstream.EndCallRequest{})
 			return stack.Wrap(err)

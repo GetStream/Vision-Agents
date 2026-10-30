@@ -379,6 +379,18 @@ func (s *StoreSuite) TestClosingASessionKeepsTheFirstReason() {
 	s.Equal("transferred", found.EndReason)
 }
 
+func (s *StoreSuite) TestAReopenedSessionHasNotEnded() {
+	s.opened("one", "app", s.base, nil)
+	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(time.Hour), "agent_hangup"))
+
+	s.opened("one", "app", s.base.Add(2*time.Hour), nil)
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Nil(found.ClosedAt)
+	s.Empty(found.EndReason, "a reopened session shows why its last run ended")
+}
+
 func (s *StoreSuite) TestDescribingASessionLongAfterItEnded() {
 	s.opened("one", "app", s.base, nil)
 	s.Require().NoError(s.store.CloseSession(s.ctx, "one", s.base.Add(time.Hour), ""))

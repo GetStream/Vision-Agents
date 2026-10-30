@@ -2281,7 +2281,7 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Apps:      phoneApps{clients: stream},
+		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,
 		Gate:      gate,
 		PublicURL: settings.PublicURL,

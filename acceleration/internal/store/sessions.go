@@ -93,6 +93,7 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
 		Set("closed_at = NULL").
+		Set("end_reason = ''").
 		Set("updated_at = EXCLUDED.updated_at").
 		// A session reopened from its row is opened without the memory it had, and what it
 		// remembered before is still in the store, so once true it stays true. Not known

@@ -1448,7 +1448,7 @@ func (s *RouterSuite) sessionManager(
 		s.Require().NoError(err)
 		// In the suite's Stream apps, as cmd/router's is, so what a session does to its call
 		// reaches the suite's Stream.
-		telephony = s.telephonySealedBy(sealer, suitePhoneApps{s.stream}, logger)
+		telephony = s.telephonySealedBy(sealer, phone.AppsOf(s.stream), logger)
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Phone:         telephony,
@@ -1598,34 +1598,6 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, lo
 	})
 	s.Require().NoError(err)
 	return service
-}
-
-// suitePhoneApps makes a customer's phone lines in the Stream app it acts in, as cmd/router's
-// phoneApps does.
-type suitePhoneApps struct{ clients *streamapp.Clients }
-
-func (a suitePhoneApps) For(ctx context.Context, customer string) (*phone.Stream, int64, error) {
-	bound, err := a.clients.For(ctx, customer)
-	if err != nil {
-		return nil, 0, err
-	}
-	return phone.NewStreamFromClient(bound.Client), bound.Identity.StreamApp, nil
-}
-
-func (a suitePhoneApps) ForApp(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
-	bound, err := a.clients.ForApp(ctx, customer, app)
-	if err != nil {
-		return nil, err
-	}
-	return phone.NewStreamFromClient(bound.Client), nil
-}
-
-func (a suitePhoneApps) ForAppRemoving(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
-	bound, err := a.clients.ForAppReading(ctx, customer, app)
-	if err != nil {
-		return nil, err
-	}
-	return phone.NewStreamFromClient(bound.Client), nil
 }
 
 func (s *RouterSuite) campaigns(sessions *session.Manager, logger *slog.Logger) *campaign.Runner {

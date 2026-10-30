@@ -162,9 +162,18 @@ func offered(created *Session) []string {
 	return names
 }
 
+// joinsOwnCall creates a voice session that names no call, so joining creates agent:<ID>.
+func (s *SessionSuite) joinsOwnCall(spec Spec) *Session {
+	spec.CustomerID = "acme"
+	spec.LLMTarget, spec.STTTarget, spec.TTSTarget = "en-low-latency", "en-low-latency", "en-low-latency"
+	created, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	return created
+}
+
 func (s *SessionSuite) TestAnAgentThatHangsUpEndsTheWebCallItCreated() {
 	server := s.hangingUp()
-	created := s.joins(Spec{ID: "session-1", CallID: "session-1", ConfigID: "cfg-1", Calls: endsCalls()})
+	created := s.joinsOwnCall(Spec{ID: "session-1", ConfigID: "cfg-1", Calls: endsCalls()})
 
 	s.hangsUp(created)
 
@@ -179,6 +188,39 @@ func (s *SessionSuite) TestAnAgentThatHangsUpOnANamedCallOnlyLeaves() {
 
 	s.Empty(endedCalls(server), "a call the caller named was ended for everybody on it")
 	s.True(s.edges[0].gone(), "the agent is still in the call")
+}
+
+func (s *SessionSuite) TestACallerWhoNamesTheSessionsOwnCallKeepsItRunning() {
+	// The caller chose the call, so others they invited may be on it.
+	server := s.hangingUp()
+	created := s.joins(Spec{ID: "session-1", CallID: "session-1", CallType: "agent", ConfigID: "cfg-1", Calls: endsCalls()})
+
+	s.hangsUp(created)
+
+	s.Empty(endedCalls(server), "a call the caller named was ended for everybody on it")
+}
+
+func (s *SessionSuite) TestHangingUpLetsTheGoodbyeFinish() {
+	s.hangingUp()
+	created := s.joinsOwnCall(Spec{ConfigID: "cfg-1", Calls: endsCalls()})
+	events, detach := created.Watch()
+	defer detach()
+
+	s.hangsUp(created)
+
+	var turns []agent.Turn
+	for event := range events {
+		switch event := event.(type) {
+		case agent.Interrupted:
+			s.Fail("the goodbye was interrupted", "%+v", event)
+		case agent.Turn:
+			turns = append(turns, event)
+		}
+	}
+	s.Require().NotEmpty(turns, "the goodbye turn never ended")
+	for _, turn := range turns {
+		s.False(turn.Interrupted, "the goodbye turn was cut short")
+	}
 }
 
 func (s *SessionSuite) TestEndCallIsNotOfferedInWriting() {
