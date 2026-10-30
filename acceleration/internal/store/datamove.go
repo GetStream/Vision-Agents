@@ -564,8 +564,9 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 // of them: whichever customer's insert draws a number an imported row holds fails on the key.
 // It runs before the row lands, so no live insert can draw the number once the row is here. A
 // sequence already past the number stays where it is, since this deployment draws from it on
-// its own. Reading a sequence and setting it are two steps nothing locks together, so an insert
-// drawing in between can still be handed a number the setval goes back below.
+// its own. Reading a sequence and setting it are two steps nothing locks together: should
+// inserts here draw past the row's number in between, the setval puts the sequence back below
+// what they drew.
 //
 // Only for a source the operator vouches for: the numbers are the row's word, and a row naming
 // a sequence's largest value would stop every insert into its table, whoever's.
