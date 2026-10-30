@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Sandbox code says to reconnect a connection on an older connector revision
+
+A user who logs in during a chat with a connection saved on a connector revision that gives the sandbox no access, or other hosts, now gets a `run_code` result that tells the model to ask them to reconnect it, where the result said nothing before (AI-1980).
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
