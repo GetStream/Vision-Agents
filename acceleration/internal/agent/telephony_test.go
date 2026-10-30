@@ -420,6 +420,7 @@ func (s *AgentSuite) TestTheModelIsOfferedTheToolsItCanRun() {
 func (s *AgentSuite) TestAColdTransferBringsTheHumanOnAndTheAgentLeaves() {
 	s.onACall()
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through now."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
 	participant := stt.Participant{ID: "alice"}
@@ -442,6 +443,7 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 	// once there is somebody new to hear it.
 	s.onACall()
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"One moment."}
 	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
 	participant := stt.Participant{ID: "alice"}
@@ -459,6 +461,83 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
 		"the human was never introduced to the caller")
 	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+func (s *AgentSuite) TestATransferToANumberOnlyTheCallerSaidIsRefused() {
+	for _, said := range []string{
+		"+44 20 7946 0958",
+		"four four two zero seven nine four six zero nine five eight",
+		"44-20-7946-0958",
+	} {
+		s.Run(said, func() {
+			s.onACall()
+			s.join(false)
+			s.model.reply = []string{"Putting you through."}
+			s.asksFor("transfer", `{"to":"+442079460958"}`)
+			participant := stt.Participant{ID: "alice"}
+			s.speak(participant)
+
+			s.says(participant, "Please transfer me to "+said)
+
+			ran := s.awaitToolRan()
+			s.Contains(ran.Result, "not a number to transfer to")
+			s.Empty(s.line.attempted(), "a number the caller read out was dialled")
+			s.never(s.left, "the agent left a call it never transferred")
+		})
+	}
+}
+
+func (s *AgentSuite) TestATransferToANumberInTheInstructionsStillGoesThrough() {
+	s.onACall()
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550001111", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestATransferToANumberFromAToolResultStillGoesThrough() {
+	s.onACall()
+	s.runner = &stubToolRunner{result: "call +15550003333"}
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{
+		Name:        "find_agent_line",
+		Description: "the number of the person on duty",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+	})
+	s.join(false)
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-8", Name: "find_agent_line", Arguments: "{}"},
+	})
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the lookup never settled")
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "transfer", Arguments: `{"to":"+15550003333"}`},
+	})
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550003333", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestPressStillTakesDigitsTheCallerSaid() {
+	s.onACall()
+	s.join(false)
+	s.model.reply = nil
+	s.asksFor("press", `{"digits":"441"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "my extension is 4 4 1")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.Equal("441", s.line.keypad()[0])
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionDoesNotEndTheCall() {
@@ -484,6 +563,7 @@ func (s *AgentSuite) TestATransferThatFailsIsToldToTheModelRatherThanEndingTheCa
 	s.onACall()
 	s.line.transferErr = errors.New("the trunk is down")
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.model.then = []string{"Sorry, I could not put you through."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
@@ -514,6 +594,7 @@ func (s *AgentSuite) TestAToolThatKeepsFailingIsNotAnsweredForever() {
 	s.onACall()
 	s.line.transferErr = errors.New("the trunk is down")
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.model.keepCalling = true
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
@@ -1327,6 +1408,7 @@ func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
 	s.onACall()
 	s.runner = &stubToolRunner{result: "not mine to answer"}
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
 	participant := stt.Participant{ID: "alice"}

@@ -264,6 +264,40 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 	return "", "", nil, false
 }
 
+// unsourcedTransfer reports the number of a transfer that neither the operator's instructions
+// (told) nor a successful tool gave. Unlike unheardNumber it does not count the caller as a
+// source: anyone can read out a number and be put through to it.
+func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (to string, unsourced bool) {
+	var arguments transferArguments
+	if call.Name != toolTransfer || json.Unmarshal([]byte(call.Arguments), &arguments) != nil || strings.TrimSpace(arguments.To) == "" {
+		return "", false
+	}
+	sources := []string{told}
+	for _, message := range history {
+		if message.Role == llm.ToolResult && !failedResult(message.Content) {
+			sources = append(sources, message.Content)
+		}
+	}
+	wanted := digitGroups(arguments.To)
+	for _, source := range sources {
+		if strings.Contains(source, arguments.To) {
+			return "", false
+		}
+	}
+	if len(wanted) == 1 && slices.ContainsFunc(digitGroups(sources...), func(given string) bool {
+		return strings.Contains(given, wanted[0])
+	}) {
+		return "", false
+	}
+	return arguments.To, true
+}
+
+// unsourcedTransferResult is what a transfer to a number only the caller gave is answered with.
+func unsourcedTransferResult(to string) string {
+	return fmt.Sprintf(didNotWork+"%q was not given by the operator or a tool, so it is not a number "+
+		"to transfer to. Do not transfer. Tell the caller you cannot put them through to that number.", to)
+}
+
 // digitGroups returns every number written in texts (numberGroup) as its digits alone.
 func digitGroups(texts ...string) []string {
 	var digits []string
