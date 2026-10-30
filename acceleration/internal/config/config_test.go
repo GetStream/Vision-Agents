@@ -1,14 +1,17 @@
 package config
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
@@ -335,7 +338,7 @@ func (s *ConfigSuite) TestTheProxyBrokerNeedsTheProxysURLAndCA() {
 		"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091", "http://192.168.1.1:8091",
 		"http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7", "http://203.0.113.7:0",
 		"http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path", "http://203.0.113.7:8091?a=b",
-		"http://203.0.113.7:8091#frag"} {
+		"http://203.0.113.7:8091?", "http://203.0.113.7:8091#frag", "http://100.64.0.1:8091", "http://240.0.0.1:8091"} {
 		s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", address)
 		_, _, err := Load("")
 		s.ErrorContains(err, "code_sandbox.proxy_public_url", address)
@@ -384,7 +387,7 @@ func (s *ConfigSuite) TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne() {
 	for _, address := range []string{"https://proxy.stg.example:8091", "https://sbx:secret@203.0.113.7:8091",
 		"https://10.1.2.3:8091", "https://127.0.0.1:8091", "https://169.254.169.254:8091", "https://[2001:db8::7]:8091",
 		"https://203.0.113.7", "https://203.0.113.7:0", "https://203.0.113.7:8091/", "https://203.0.113.7:8091?a=b",
-		"https://203.0.113.7:8091#frag", "ftp://203.0.113.7:8091", "httpx://203.0.113.7:8091"} {
+		"https://203.0.113.7:8091?", "https://203.0.113.7:8091#frag", "ftp://203.0.113.7:8091", "httpx://203.0.113.7:8091"} {
 		_, ok := ProxyURL(address)
 		s.False(ok, address)
 	}
@@ -393,6 +396,60 @@ func (s *ConfigSuite) TestAnHTTPSProxyURLHasTheRulesOfAnHTTPOne() {
 	s.Require().True(ok)
 	s.Equal("https", public.Scheme)
 	s.Equal("203.0.113.7", public.Hostname())
+}
+
+// TestAProxyURLInAReservedRangeIsRefused: no proxy's host has an address in IANA's ranges that
+// are not globally reachable or deprecated, and the address just outside each is still taken.
+// 11.22.33.44 stands in for a proxy at a public address; it is a made-up value in a public range,
+// not an address of ours.
+func (s *ConfigSuite) TestAProxyURLInAReservedRangeIsRefused() {
+	for host, usable := range map[string]bool{
+		"0.0.0.1": false, "0.255.255.255": false, "1.0.0.0": true,
+		"100.63.255.255": true, "100.64.0.0": false, "100.127.255.255": false, "100.128.0.0": true,
+		"191.255.255.255": true, "192.0.0.0": false, "192.0.0.8": false, "192.0.0.255": false, "192.0.1.0": true,
+		"192.88.98.255": true, "192.88.99.0": false, "192.88.99.255": false, "192.88.100.0": true,
+		"198.17.255.255": true, "198.18.0.0": false, "198.19.255.255": false, "198.20.0.0": true,
+		"240.0.0.0": false, "255.255.255.254": false,
+		"11.22.33.44": true,
+	} {
+		for _, scheme := range []string{"http", "https"} {
+			_, ok := ProxyURL(scheme + "://" + host + ":8091")
+			s.Equal(usable, ok, scheme+"://"+host)
+		}
+	}
+}
+
+// TestReservedRangesCoverWhatEgressRefuses: ProxyURL's list is its own short copy of the ranges
+// egress.IsPublic refuses, so a range added there and not here would let a proxy URL start that
+// no sandbox reaches. Every /24 egress.IsPublic refuses, but the RFC 5737 documentation ranges
+// (tests stand in a public address with them), is refused by ProxyURL; no refused range is
+// narrower than a /24.
+func (s *ConfigSuite) TestReservedRangesCoverWhatEgressRefuses() {
+	documentation := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24")}
+	for block := uint32(0); block < 1<<24; block++ {
+		address := netip.AddrFrom4([4]byte{byte(block >> 16), byte(block >> 8), byte(block), 1})
+		if egress.IsPublic(address) || slices.ContainsFunc(documentation, func(p netip.Prefix) bool { return p.Contains(address) }) {
+			continue
+		}
+		if _, ok := ProxyURL("http://" + address.String() + ":8091"); ok {
+			s.Require().Failf("egress refuses it, ProxyURL takes it", "%s", address)
+		}
+	}
+}
+
+// TestAProxyURLAtAPublicAddressLoads: the proxy broker takes it at start.
+func (s *ConfigSuite) TestAProxyURLAtAPublicAddressLoads() {
+	s.T().Setenv("ROUTER_CODE_SANDBOX_BROKER", "proxy")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_ADDR", ":8091")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_KEY", "key")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_CA_CERT", "cert")
+	s.T().Setenv("ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL", "https://11.22.33.44:8091")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Equal("https://11.22.33.44:8091", config.CodeSandbox.ProxyPublicURL)
 }
 
 // TestTheProxyBrokerTakesAnHTTPSProxyURL: its sandboxes reach the proxy through their TLS
