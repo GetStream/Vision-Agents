@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### An app may have at most 1000 sessions open at once
+
+Every agent session counts against its app's cap, however it was opened (`POST /v1/agents/sessions`, a fork or a reopened conversation, the agent socket, a call to one of the app's numbers, a channel or chat message, a run, a scheduled task, a campaign), and so does every model stream of `/v1/{modality}/stream`, counted in Redis across routers. One over it is refused, over HTTP with a 429 `concurrency_limited` and `Retry-After: 5`; an arriving call over it is hung up, as one nobody can answer is. A session holds its place until it ends, and one on a router that died frees it within a minute. `ROUTER_SESSIONS_CONCURRENT_PER_APP` (`sessions.concurrent_per_app`) sets the cap, `1000` by default; `0` turns it off, and so does a router with no Redis.
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).

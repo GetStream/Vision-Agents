@@ -1340,6 +1340,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Dispatch:              workers,
 		Quota:                 limiter,
 		RunsPerApp:            settings.Runs.ConcurrentPerApp,
+		SessionsPerApp:        settings.Sessions.ConcurrentPerApp,
 		Policies:              policies,
 		Connectors:            connectors,
 		ConnectorSecrets:      connectorSecrets,
@@ -1985,6 +1986,7 @@ func buildSessions(
 		Edge:               edgeFor(stream),
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
+		SessionsPerApp:     settings.Sessions.ConcurrentPerApp,
 		Directory:          directory,
 		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each

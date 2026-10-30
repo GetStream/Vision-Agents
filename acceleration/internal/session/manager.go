@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
@@ -126,6 +128,10 @@ type ManagerOptions struct {
 	// which case every read is a query, which is what a deployment without Redis does.
 	Configs *appconfig.Store
 	Live    *live.Client
+	// SessionsPerApp caps how many sessions one app may have open at once, counted in Live's
+	// Redis across every router (config sessions.concurrent_per_app). 0 caps nothing, and
+	// neither does an absent Live.
+	SessionsPerApp int64
 	// Pricer and Writer are the process's price list and usage writer, for what a session
 	// records of its own rather than through a router or internal/metered, such as the time
 	// it runs; memory and knowledge record through the recorders they are built with. Nothing
@@ -211,6 +217,8 @@ type Manager struct {
 	hosts ToolHosts
 	// slots caps each connection's connector calls in flight, across every session here.
 	slots callSlots
+	// sessionSlots counts each app's sessions open against SessionsPerApp; nil counts none.
+	sessionSlots *concurrency.Slots
 	// runtime records how long each session is open. Nil without a store or a writer, where
 	// nothing is recorded, though every session is still timed.
 	runtime *routing.Recorder
@@ -263,6 +271,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		logger:        options.Logger,
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
+	}
+	if options.Live != nil {
+		manager.sessionSlots = concurrency.New(options.Live.Redis(), nil)
 	}
 	// written is the recorder behind records, which titles are written through too.
 	var written *sessionRecorder
@@ -465,6 +476,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	opened := false
+	// Before anything is opened or paid for, and held until the session closes.
+	slot, err := HoldSlot(ctx, m.sessionSlots, spec.CustomerID, m.options.SessionsPerApp)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !opened {
+			slot.Release()
+		}
+	}()
 	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
 	// credentials still holds it: what was said is worth keeping, not worth refusing the
 	// conversation for. Resuming or forking one needs the channel, so those still fail.
@@ -622,6 +643,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	created.closers = append(created.closers, slot.Release)
 	fail := func() {
 		runtime.Cancel()
 		created.Close()
@@ -2006,6 +2028,26 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrTooManySessions refuses a session, or a model stream, of an app that has as many open as
+// it may (HoldSlot).
+var ErrTooManySessions = errors.New("session: the app has as many sessions open as it may")
+
+// slotLease is how long a session's slot lasts unrenewed: a router that dies frees its
+// sessions' slots that much later.
+const slotLease = time.Minute
+
+// HoldSlot takes one of the limit slots of the customer's sessions open at once, counted in
+// slots across every router, and keeps it until it is released; a session holds one from the
+// start of Create until it closes, and so does a model stream the API serves. Past the limit
+// it refuses with ErrTooManySessions. A nil slots or a limit of 0 counts nothing.
+func HoldSlot(ctx context.Context, slots *concurrency.Slots, customerID string, limit int64) (*concurrency.Held, error) {
+	held, taken := slots.Hold(ctx, "sessions:"+url.QueryEscape(customerID), limit, slotLease)
+	if !taken {
+		return nil, stack.Wrap(fmt.Errorf("%w: %d", ErrTooManySessions, limit))
+	}
+	return held, nil
+}
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
