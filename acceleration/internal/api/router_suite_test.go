@@ -1199,6 +1199,11 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
+	// A model whose every request fails with the prompt injection screen's refusal, for a
+	// run whose input the screen refused: the suite routes no screen of its own.
+	reasoning.Register("screened", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)}, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.

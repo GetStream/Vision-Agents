@@ -1161,6 +1161,49 @@ func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() 
 		bucket.LatencyP50Ms, bucket.Uptime)
 }
 
+func (s *StoreSuite) TestARefusedRequestIsSpendButNeitherAnErrorNorALatency() {
+	served, refused := 100.0, 900.0
+	for index, request := range []Request{
+		{LatencyMs: &served, Success: true},
+		{LatencyMs: &refused, Success: false, ErrorCode: ErrorRefused},
+	} {
+		request.Modality, request.CustomerID, request.Provider, request.Model = "llm", "acme", "openai", "gpt"
+		request.Tags = map[string]string{"project": "support"}
+		request.StartedAt = s.base.Add(time.Duration(index+1) * time.Minute)
+		request.OutputTokens, request.CostMicros = 10, 25
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &request))
+	}
+	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+
+	check := func(name string, requests, errors, cost int64, p50 *float64) {
+		s.EqualValues(2, requests, name+": a refused request is still a request")
+		s.EqualValues(0, errors, name+": and is no error of the provider's")
+		s.EqualValues(50, cost, name+": and still billed")
+		s.Require().NotNil(p50, name)
+		s.InDelta(100.0, *p50, 0.001, name+": its latency is not one the provider had")
+	}
+	byProvider, err := s.store.CustomerStats(s.ctx, "llm", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(byProvider, 1)
+	check("rollup", byProvider[0].RequestCount, byProvider[0].ErrorCount, byProvider[0].CostMicrosTotal, byProvider[0].LatencyP50Ms)
+	s.Require().NotNil(byProvider[0].Uptime)
+	s.InDelta(1.0, *byProvider[0].Uptime, 0.001, "nor is it downtime")
+
+	byTag, err := s.store.CustomerTagStats(s.ctx, "llm", "acme", "project", Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(byTag, 1)
+	check("tag rollup", byTag[0].RequestCount, byTag[0].ErrorCount, byTag[0].CostMicrosTotal, byTag[0].LatencyP50Ms)
+
+	filtered, err := s.store.CustomerStats(s.ctx, "llm", "acme", Hourly, s.base, s.base.Add(time.Hour),
+		map[string]string{"project": "support"})
+	s.Require().NoError(err)
+	s.Require().Len(filtered, 1)
+	check("raw rows", filtered[0].RequestCount, filtered[0].ErrorCount, filtered[0].CostMicrosTotal, filtered[0].LatencyP50Ms)
+	s.Require().NotNil(filtered[0].Uptime)
+	s.InDelta(1.0, *filtered[0].Uptime, 0.001, "raw rows: nor is it downtime")
+}
+
 // usageRow is a request with a usage id of its own, defaulting what a test does not care about.
 func (s *StoreSuite) usageRow(customerID string, change func(*Request)) Request {
 	request := Request{
