@@ -125,6 +125,8 @@ def sync_detailed(
     heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
     milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
     it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
+    and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -334,6 +336,8 @@ def sync(
     heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
     milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
     it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
+    and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -538,6 +542,8 @@ async def asyncio_detailed(
     heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
     milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
     it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
+    and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.
@@ -745,6 +751,8 @@ async def asyncio(
     heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
     milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
     it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
+    and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
     the reply is written into, the one whose turn_id names the turn, from message_start up to
     message_end. They are left out where the router does not know them.

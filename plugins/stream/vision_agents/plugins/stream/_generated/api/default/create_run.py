@@ -122,10 +122,11 @@ def sync_detailed(
     200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
     naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
-    which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
-    app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
-    concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a
-    run that outlasts its timeout a 504.
+    which retrying does not fix, an input or tool result the prompt injection screen refused a 400
+    prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403
+    budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have
+    (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model
+    that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 
     Args:
         body (CreateRunRequest):
@@ -171,10 +172,11 @@ def sync(
     200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
     naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
-    which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
-    app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
-    concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a
-    run that outlasts its timeout a 504.
+    which retrying does not fix, an input or tool result the prompt injection screen refused a 400
+    prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403
+    budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have
+    (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model
+    that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 
     Args:
         body (CreateRunRequest):
@@ -215,10 +217,11 @@ async def asyncio_detailed(
     200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
     naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
-    which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
-    app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
-    concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a
-    run that outlasts its timeout a 504.
+    which retrying does not fix, an input or tool result the prompt injection screen refused a 400
+    prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403
+    budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have
+    (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model
+    that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 
     Args:
         body (CreateRunRequest):
@@ -262,10 +265,11 @@ async def asyncio(
     200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable
     naming the image, which retrying the same image does not fix.
     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config,
-    which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an
-    app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429
-    concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a
-    run that outlasts its timeout a 504.
+    which retrying does not fix, an input or tool result the prompt injection screen refused a 400
+    prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403
+    budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have
+    (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model
+    that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 
     Args:
         body (CreateRunRequest):
