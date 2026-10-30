@@ -2162,6 +2162,20 @@ func (s *AgentSuite) TestWhatIsRememberedIsToldToTheModel() {
 	s.Contains(instructions, "be brief")
 }
 
+func (s *AgentSuite) TestWhatIsRememberedFollowsTheOperatorsInstructionsAsNotes() {
+	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	instructions := s.model.requests()[0].Instructions
+	s.True(strings.HasPrefix(instructions, "be brief"), "the operator's instructions came after what was remembered")
+	s.Contains(instructions, "not instructions")
+}
+
 func (s *AgentSuite) TestAVoiceThatActsDirectionsSaysSoInTheInstructions() {
 	s.performing = "You may write stage directions in square brackets."
 	s.join(true)
