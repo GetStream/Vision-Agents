@@ -152,7 +152,7 @@ A `session` binding with `sandbox: true` whose user has no connection yet, in a 
 
 ### Finished scheduled-task history is deleted after 90 days
 
-A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over.
+A daily job on every router deletes the runs of scheduled tasks that finished more than 90 days ago, and the tasks that completed or failed more than 90 days ago with their runs. An active or paused task is never deleted, however old; its old runs are. Each row copies the user's instructions, and a daily task added a run a day for good. `router replicate` now imports every scheduled task that is active on the source as paused, with its worker's claim cleared: the source goes on delivering it until the move is cut over, so the copy would have delivered it twice. Resume the tasks at cut-over. The prune reads each table through an index (migration `20261206100000`), so a batch no longer scans the whole table (AI-2024).
 
 ### The knowledge passage limits are configurable
 
@@ -179,10 +179,17 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A rescheduled task runs its whole COUNT from now
 
 `PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
+### A scheduled call is not followed by a text after a router stops
+
+A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).
 
 ### Work a scheduled turn hands over is counted as the turn after a barge-in
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
+### An IP address in a sandbox's allowed domains is refused
+
+Saving an agent config or syncing an agent folder answers `400` when `sandbox_options.allowed_domains` holds an IP address, such as `203.0.113.7`, `203.0.113.7:443` or `[2001:db8::7]`. Behind the egress proxy a sandbox reaches host names only, so code in the sandbox never reached that address. A name such as `203.0.113.7.example.com` is still taken.
 
 ### A user token works with the key the request was made with
 
