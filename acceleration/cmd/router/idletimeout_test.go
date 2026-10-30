@@ -129,7 +129,13 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		{"metrics", &settings.MetricsAddr, "/metrics"},
 	}
 	// The process id spreads parallel packages over the range.
-	ports := s.freePorts(20000+(os.Getpid()%2000)*6, len(listeners))
+	base := 20000 + (os.Getpid()%2000)*6
+	// Holding the first free port makes a call site that scans each listener from its own base
+	// pick the held port's neighbour twice, and fail.
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.freePort(base)))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = held.Close() })
+	ports := s.freePorts(base, len(listeners))
 	for i, listener := range listeners {
 		*listener.setting = fmt.Sprintf("127.0.0.1:%d", ports[i])
 	}
