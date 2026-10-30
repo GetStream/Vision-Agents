@@ -88,12 +88,13 @@ func rule(
 	if err != nil {
 		return verdict{}, err
 	}
-	// A ruling the cap cut off is part of one, which reads as broken JSON: say what cut it.
-	if response.Status == llm.StatusIncomplete {
+	read, err := parseVerdict(response.OutputText)
+	// An answer the cap cut off reads as broken JSON, which hides what broke it.
+	if err != nil && response.Status == llm.StatusIncomplete {
 		return verdict{}, fmt.Errorf("simulation: the ruling stopped early (%s) after %d output tokens, %d of them thinking",
 			response.IncompleteReason, response.Usage.OutputTokens, response.Usage.OutputTokensDetails.ReasoningTokens)
 	}
-	return parseVerdict(response.OutputText)
+	return read, err
 }
 
 // heard is the conversation as the judge reads it, which names the two sides rather than

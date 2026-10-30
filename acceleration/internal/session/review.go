@@ -193,12 +193,13 @@ func (r *reviewer) judge(ctx context.Context, call store.Call, region, target, g
 	if err != nil {
 		return judgement{}, err
 	}
-	// An answer the cap cut off is part of one, which reads as broken JSON: say what cut it.
-	if response.Status == llm.StatusIncomplete {
+	read, err := parseJudgement(response.OutputText)
+	// An answer the cap cut off reads as broken JSON, which hides what broke it.
+	if err != nil && response.Status == llm.StatusIncomplete {
 		return judgement{}, fmt.Errorf("session: the review stopped early (%s) after %d output tokens, %d of them thinking",
 			response.IncompleteReason, response.Usage.OutputTokens, response.Usage.OutputTokensDetails.ReasoningTokens)
 	}
-	return parseJudgement(response.OutputText)
+	return read, err
 }
 
 // conversation is the call as the reviewer reads it. It is quoted rather than replayed as
