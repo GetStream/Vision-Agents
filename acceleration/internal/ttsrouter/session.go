@@ -34,8 +34,8 @@ type Session struct {
 	// inFlight tracks utterances that have not been settled into a stat row yet.
 	inFlight map[string]*utterance
 	// sentences is what was sent under each id and not settled yet, oldest first. Text for an
-	// id whose last sentence's final text was already sent, or that settled, is a sentence of
-	// its own, and each completion for the id settles the oldest.
+	// id joins its last sentence until that has ended; after, or once it settled, it is a
+	// sentence of its own. Each completion for the id settles the oldest.
 	sentences map[string][]*pending
 	// finished is the most recent utterances settled, oldest first in finishedOrder. A
 	// completion for one with nothing sent under it since, that has not started again, is a
@@ -61,7 +61,10 @@ type pending struct {
 	characters int64
 	// reserved is the usage id its characters are held under, which its row is recorded under.
 	reserved uuid.UUID
-	// ended is set once its final text was sent.
+	// ended is set once no more text joins it, which is what the voice does with that text.
+	// A voice that takes each sentence as its own request completes once for each final text,
+	// so its final text ends it. A streaming voice completes once for the utterance and speaks
+	// text sent after the final text in it, so only a barge-in ends it before it settles.
 	ended bool
 }
 
@@ -111,9 +114,9 @@ func newSession(
 // What an utterance's text costs is reserved before it is sent, under the id its row is
 // recorded under, and raised as more of its text follows. A refusal of its first text is
 // answered and nothing is sent; a refusal of more text for an utterance already speaking
-// keeps what it reserved and lets it finish. Text for an id whose final text was already
-// sent, or whose utterance settled, is a new sentence on every voice, as the voice speaks it:
-// it is reserved on its own and refused as a first text is.
+// keeps what it reserved and lets it finish. Text for an id whose sentence ended or settled
+// is a new sentence, as the voice speaks it: it is reserved on its own and refused as a first
+// text is.
 func (s *Session) Synthesize(request tts.Request) error {
 	if request.ID == "" {
 		request.ID = tts.NewSynthesisID()
@@ -131,7 +134,7 @@ func (s *Session) Synthesize(request tts.Request) error {
 	}
 	// Counted before it is sent, so a completion that comes straight back finds it.
 	current.characters += characters
-	current.ended = request.Final
+	current.ended = request.Final && !s.provider.Streaming()
 	total, reserved := current.characters, current.reserved
 	s.mu.Unlock()
 
@@ -176,8 +179,36 @@ func (s *Session) forget(id string, refused *pending) {
 	s.sentences[id] = queue
 }
 
-// Interrupt drops audio in flight so the agent can stop mid-sentence.
-func (s *Session) Interrupt() error { return s.provider.Interrupt() }
+// Interrupt drops audio in flight so the agent can stop mid-sentence. Every sentence sent
+// so far ends, so text for its id after this is a sentence of its own. The voice completes
+// each of them, but one that takes each sentence as its own request throws away a sentence
+// whose final text was not sent and never completes it, so what that held is let go now.
+func (s *Session) Interrupt() error {
+	streaming := s.provider.Streaming()
+	var dropped []uuid.UUID
+	s.mu.Lock()
+	for id, queue := range s.sentences {
+		var kept []*pending
+		for _, sentence := range queue {
+			if !streaming && !sentence.ended {
+				dropped = append(dropped, sentence.reserved)
+				continue
+			}
+			sentence.ended = true
+			kept = append(kept, sentence)
+		}
+		if len(kept) == 0 {
+			delete(s.sentences, id)
+		} else {
+			s.sentences[id] = kept
+		}
+	}
+	s.mu.Unlock()
+	for _, reserved := range dropped {
+		s.recorder.Release(reserved)
+	}
+	return s.provider.Interrupt()
+}
 
 // Events returns the provider's events. The channel closes when the session closes.
 func (s *Session) Events() <-chan tts.Event { return s.events }
