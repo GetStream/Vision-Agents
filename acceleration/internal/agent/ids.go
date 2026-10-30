@@ -280,14 +280,19 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 	}
 	wanted := strings.Join(digitGroups(arguments.To), "")
 	for _, source := range sources {
-		if wanted == "" && strings.Contains(source, arguments.To) {
-			return "", false
-		}
 		for _, run := range writtenNumber.FindAllString(source, -1) {
-			given := strings.Join(digitGroups(run), "")
+			groups := digitGroups(run)
 			// A US number written without its country code is the same line.
-			if given == wanted || (len(given) == 10 && "1"+given == wanted) {
+			if all := strings.Join(groups, ""); len(all) == 10 && "1"+all == wanted {
 				return "", false
+			}
+			// Digits beside the number, "(9am-5pm)" or "24/7", are not part of it.
+			for start := range groups {
+				for end := start + 1; end <= len(groups); end++ {
+					if strings.Join(groups[start:end], "") == wanted {
+						return "", false
+					}
+				}
 			}
 		}
 	}
@@ -359,8 +364,8 @@ var digitRun = regexp.MustCompile(`\d+`)
 var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
 
 // writtenNumber is a number as people write it, its spaces, dots, dashes and brackets
-// included: "+1 (555) 000-1111". Digits split by more than a separator or two are not one number.
-var writtenNumber = regexp.MustCompile(`\d(?:[\s().-]{0,2}\d)*`)
+// included: "+1 (555) 000-1111". A line break ends it, and so do more than two separators in a row.
+var writtenNumber = regexp.MustCompile(`\d(?:[ ().-]{0,2}\d)*`)
 
 func allDigits(text string) bool {
 	return strings.IndexFunc(text, func(r rune) bool { return !unicode.IsDigit(r) }) < 0
