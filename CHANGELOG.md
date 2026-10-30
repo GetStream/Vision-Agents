@@ -190,6 +190,11 @@ Under the Daytona broker, a sandbox credential withdrawn mid-session (its connec
 ### A call is reviewed when the review model thinks first
 
 A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
+
+### A chat message reaches only a running session of its channel's customer
+
+In the deployment's shared Stream app, a message written in an agent channel is answered by a running session only when the session's customer is the one the channel names (`support_customer_id`, which the router writes on each channel it creates); otherwise it goes on as on a channel nothing runs on. On a channel that names no customer, only the customer its last calls are, or else the customer holding the config it names (`agent_config_id`), answers with its session; with calls of more than one customer, or with neither a call nor a config to name its customer and sessions of more than one customer running there, no running session answers. A hook from a customer's own app is unchanged (AI-1857).
+
 ### A session's Daytona sandbox goes when the run it was closed during ends
 
 A session that closed while code still ran in its sandbox had the sandbox deleted only once it had idled, 15 minutes by default, and billed until then. It is now deleted as soon as that run ends; one Daytona will not delete then is still tried again once it idles (AI-1875).

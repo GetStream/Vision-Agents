@@ -225,9 +225,16 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 	if s.sessions != nil {
-		// A session running on a channel of the same name in another app is somebody
-		// else's conversation.
-		if found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns); running {
+		found, running, err := s.liveSessionOn(ctx, origin, event)
+		if errors.Is(err, store.ErrAmbiguousHook) {
+			s.logger.Warn("not answering a message in a channel more than one customer's sessions run on",
+				"channel", event.ChannelID, "stream_app", origin.app, "error", err)
+			return true
+		}
+		if err != nil {
+			return false
+		}
+		if running {
 			if found.Spec().PersistConversation {
 				return true
 			}
@@ -330,6 +337,62 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 	return true
 }
 
+// liveSessionOn is the session running on a message's channel that answers it. err is
+// store.ErrAmbiguousHook for a channel that is more than one customer's, which is answered by
+// none of them, or a read that failed, which a later try may get through.
+//
+// A session running on a channel of the same name in another app is somebody else's
+// conversation. In the deployment's app only the session of the channel's own customer answers
+// a message there: the customer a channel the router created names (conversation.CustomerField),
+// or for a channel naming nobody the customer ownerOf reads from the store: its last calls,
+// else the customer holding the config it names. Unlike the customer ownerOf works out, this
+// one only ever narrows: it admits only sessions the hook already admits. A channel the store
+// names no customer for is answered by a session only while the sessions on it are one
+// customer's, as a hook matching rows of more than one customer is acted on for nobody.
+func (s *Server) liveSessionOn(ctx context.Context, origin hookOrigin, event messageEvent) (*session.Session, bool, error) {
+	if !origin.deployment {
+		found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns)
+		return found, running, nil
+	}
+	owner, stamped := event.ChannelCustom[conversation.CustomerField]
+	if !stamped {
+		// The store is read only when something runs on the channel, so a message nothing
+		// runs for costs no read here.
+		found, running := s.sessions.ByAgentWhere(event.ChannelID, origin.owns)
+		if !running {
+			return nil, false, nil
+		}
+		known := false
+		if s.store != nil {
+			previous, held, err := s.lastCallOn(ctx, origin, event.ChannelID)
+			if err != nil {
+				return nil, false, err
+			}
+			owner, known = previous.CustomerID, held
+			if !held {
+				config, named, err := s.declaredConfigOf(ctx, origin, event)
+				if err != nil {
+					return nil, false, err
+				}
+				owner, known = config.CustomerID, named
+			}
+		}
+		if !known {
+			theirs := found.Spec().CustomerID
+			if _, another := s.sessions.ByAgentWhere(event.ChannelID, func(customer string, app int64) bool {
+				return customer != theirs && origin.owns(customer, app)
+			}); another {
+				return nil, false, store.ErrAmbiguousHook
+			}
+			return found, true, nil
+		}
+	}
+	found, running := s.sessions.ByAgentWhere(event.ChannelID, func(customer string, app int64) bool {
+		return customer == owner && origin.owns(customer, app)
+	})
+	return found, running, nil
+}
+
 // ConfigField is the custom field on an agent channel naming the agent config that answers
 // in it.
 //
@@ -357,26 +420,31 @@ const ConfigField = "agent_config_id"
 //
 // err is a read that failed, which a later try may get through: the queue's worker tries again.
 func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool, err error) {
-	previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), event.ChannelID)
-	if err == nil && (origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, true, nil
-	}
-	// A hook answers from what the channel declares when its last call could not be read, as it
-	// always has. A queued delivery is tried again instead, so it is answered by the agent that
-	// actually ran there.
-	if origin.queued && err != nil && !errors.Is(err, store.ErrNoCall) && !errors.Is(err, store.ErrAmbiguousHook) {
-		s.logger.Error("could not read the last call on a queued message's channel", "channel", event.ChannelID, "error", err)
+	previous, held, err := s.lastCallOn(ctx, origin, event.ChannelID)
+	if err != nil && !errors.Is(err, store.ErrAmbiguousHook) {
 		return "", "", false, err
 	}
-
-	declared, _ := event.ChannelCustom[ConfigField].(string)
-	if declared == "" {
-		s.logger.Debug("no agent has ever run on an arriving message's channel, and it names no config",
-			"channel", event.ChannelID, "field", ConfigField)
-		return "", "", false, nil
+	if held && (origin.deployment || previous.CustomerID == origin.customer) {
+		return previous.CustomerID, previous.ConfigID, true, nil
 	}
 
-	var config store.AgentConfig
+	config, named, err := s.declaredConfigOf(ctx, origin, event)
+	if err != nil || !named {
+		return "", "", false, err
+	}
+	return config.CustomerID, config.ID, true, nil
+}
+
+// declaredConfigOf is the config a channel names, when the store says a customer of the hook's
+// app holds it.
+func (s *Server) declaredConfigOf(ctx context.Context, origin hookOrigin, event messageEvent) (config store.AgentConfig, found bool, err error) {
+	declared, _ := event.ChannelCustom[ConfigField].(string)
+	if declared == "" {
+		s.logger.Debug("an arriving message's channel has held no call, and it names no config",
+			"channel", event.ChannelID, "field", ConfigField)
+		return store.AgentConfig{}, false, nil
+	}
+
 	if owner, scoped := s.configOwnerOf(origin); scoped {
 		config, err = s.store.AgentConfig(ctx, owner, declared)
 	} else {
@@ -387,14 +455,35 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 	if errors.Is(err, store.ErrNoAgentConfig) {
 		s.logger.Info("an arriving message's channel names a config nobody in its app holds",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "customer", origin.customer)
-		return "", "", false, nil
+		return store.AgentConfig{}, false, nil
 	}
 	if err != nil {
 		s.logger.Error("could not read the config an arriving message's channel names",
 			"channel", event.ChannelID, "config", declared, "stream_app", origin.app, "error", err)
-		return "", "", false, err
+		return store.AgentConfig{}, false, err
 	}
-	return config.CustomerID, config.ID, true, nil
+	return config, true, nil
+}
+
+// lastCallOn is the last call a channel held in the hook's app, when it held one. err is
+// store.ErrAmbiguousHook for calls of more than one customer, or a read of a queued delivery
+// that failed. A hook goes on as for a channel that held none when the read fails, as it always
+// has; a queued delivery is tried again instead, so it is answered by the agent that actually
+// ran there.
+func (s *Server) lastCallOn(ctx context.Context, origin hookOrigin, channelID string) (store.Call, bool, error) {
+	previous, err := s.store.CallByAgentInApp(ctx, origin.scope(), channelID)
+	switch {
+	case err == nil:
+		return previous, true, nil
+	case errors.Is(err, store.ErrNoCall):
+		return previous, false, nil
+	case errors.Is(err, store.ErrAmbiguousHook):
+		return previous, false, err
+	case origin.queued:
+		s.logger.Error("could not read the last call on a queued message's channel", "channel", channelID, "error", err)
+		return previous, false, err
+	}
+	return previous, false, nil
 }
 
 // configOwnerOf is the only customer whose configs a channel in the hook's app may name: the
