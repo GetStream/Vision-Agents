@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -1715,4 +1716,40 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 	s.Equal("What time tomorrow?", input[len(input)-1].Content)
 	model := s.model
 	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+}
+
+func (s *AgentSuite) TestACallInATurnAScheduledTaskFiredSaysSo() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	var made atomic.Value
+	s.runner.run = func(ctx context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
+		made.Store(ProvenanceOf(ctx))
+		return llm.TextParts("order 12 ships tomorrow"), nil
+	}
+	s.model.reply = []string{"Checking."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "<scheduled_task>check order 12</scheduled_task>", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return made.Load() != nil }, "the call never ran")
+	s.True(made.Load().(Provenance).Scheduled)
+}
+
+func (s *AgentSuite) TestTheToolsReadAreThoseWhoseResultsCameBackSinceThePersonLastSpoke() {
+	history := []llm.Message{
+		{Role: llm.User, Content: "what is on the news?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "web_search"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: "headlines"},
+		{Role: llm.Assistant, Content: "Here they are."},
+		{Role: llm.User, Content: "and my orders?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "lookup_order"}, {ID: "c3", Name: "web_search"}}},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: "order 12"},
+		{Role: llm.ToolResult, ToolCallID: "c3", Content: "a page"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c4", Name: "lookup_order"}}},
+		{Role: llm.ToolResult, ToolCallID: "c4", Content: "order 13"},
+	}
+
+	s.Equal([]string{"lookup_order", "web_search"}, toolsReadSince(history))
+	s.Empty(toolsReadSince(history[:5]), "nothing came back since the person's last turn")
 }

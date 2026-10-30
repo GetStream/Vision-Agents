@@ -969,6 +969,30 @@ func (s *ScheduledTasksSuite) TestADueTaskFollowsUpInTheConversationItWasSchedul
 	s.True(model.heard("not a message from the user"), "the model was not told what the follow-up is")
 }
 
+func (s *ScheduledTasksSuite) TestATaskThatComesDueCannotScheduleAnother() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+	opened := s.openScheduling(user, config, nil)
+	watching := s.watch(user, opened.Id)
+	s.say(user, opened.Id, "remind me to stretch in two hours")
+	s.ranResult(watching)
+	tasks := s.tasksOf(user)
+	s.Require().Len(tasks, 1)
+	// The turn the task fires asks for another task, as text it carried could tell it to.
+	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
+		Arguments: `{"title":"Again","instructions":"Do it again.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
+
+	s.makeDue(tasks[0])
+	s.runWorker()
+
+	s.delivered(tasks[0])
+	s.Require().Eventually(func() bool { return s.model().heard(`"error":"unattended"`) }, 10*time.Second, 50*time.Millisecond,
+		"the model was never told an unattended run makes no task")
+	s.Len(s.tasksOf(user), 1, "the run that came due scheduled another")
+}
+
 // The worker sleeps up to a lease (a minute) when nothing is due sooner; a
 // task the agent makes or changes wakes it, so one due in seconds is
 // delivered in seconds, well inside that minute.

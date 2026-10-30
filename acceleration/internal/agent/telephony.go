@@ -412,6 +412,7 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	cancels := telephonyTool(requested.Call.Name) ||
 		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
+	delegated := a.turns.originOf(requested.TurnID).kind == kindFollowUp
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
@@ -420,6 +421,7 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 	if requester := a.requesterLocked(); requester != (Requester{}) {
 		parent = WithRequester(parent, requester)
 	}
+	parent = WithProvenance(parent, Provenance{Scheduled: a.scheduled, ToolsRead: toolsReadSince(a.history), Delegated: delegated})
 	ctx, cancel := context.WithCancel(parent)
 	if a.toolCancels == nil {
 		a.toolCancels = map[string]context.CancelFunc{}

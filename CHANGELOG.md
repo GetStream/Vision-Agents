@@ -201,6 +201,9 @@ When the router cannot read an organization's channel counters or the calls it h
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
+### The agent schedules a task only for what the user asked for themselves
+
+`schedule_task` and `update_scheduled_task` refuse, with `unattended`, in a turn a scheduled task fired and in a session a plugin's or a connector's event opened, so a run nobody attends cannot set up more of them. In any other session they refuse, with `not_asked_by_user`, once the model has read what another tool or delegated work returned since the user last spoke or wrote; the model asks the user, and their next turn can schedule it. Reading the user's own tasks with `list_scheduled_tasks` first still lets one be changed.
 
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
