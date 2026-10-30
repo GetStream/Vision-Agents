@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A Daytona file write that hangs no longer holds the sandbox
+
+Writing a skill's files into a Daytona sandbox before `run_code` is now bounded by the sandbox's timeout, as every other call to Daytona is. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).
+
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
