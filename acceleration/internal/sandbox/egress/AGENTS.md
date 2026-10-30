@@ -10,7 +10,7 @@ Most of a sandbox's clients cannot use a TLS proxy URL (curl, urllib, wget, node
 
 - It listens on `127.0.0.1:3128` and takes the clients' plain-HTTP proxy traffic. Each connection gets its own TLS connection to the proxy's address, verified with the router CA alone (`/tmp/va-egress-ca.pem`). It reads none of the bytes.
 - `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy` and `http_proxy` are `http://sbx:<credential>@127.0.0.1:3128`, and `NODE_USE_ENV_PROXY=1`: node ignores the proxy env vars without it. `NO_PROXY` and the CA env vars are as with `http`.
-- `Mount.Setup` writes the bundle, then starts the forwarder with `setsid nohup` and waits until it accepts. `Mount.EachRun` runs the same command before each run: a forwarder whose pid is alive and whose port accepts is left alone, since a restart cuts every download in flight. A dead one is started again.
+- `Mount.Setup` writes the bundle, then starts the forwarder with `setsid nohup` and waits until it accepts. `Mount.EachRun` runs the same command before each run but the first after the setup: a forwarder whose pid is alive and whose port accepts is left alone, since a restart cuts every download in flight. A dead one is started again.
 - An image without `python3`, or another process on port 3128, fails the setup or the run, and no code runs.
 - A connection that sends nothing, such as the check, opens no connection to the proxy.
 
