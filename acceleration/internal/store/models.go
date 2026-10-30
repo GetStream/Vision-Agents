@@ -586,6 +586,9 @@ type AgentConfig struct {
 	// Scheduling is whether the agent may schedule tasks for its users, and the
 	// defaults those tasks take. The zero value is off.
 	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
+	// Calls are the call tools the agent's phone sessions are offered: end the call, press
+	// a key, transfer. A tool never set takes its default.
+	Calls AgentCalls `bun:"calls,type:jsonb,notnull"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -1039,6 +1042,51 @@ func (a AgentScheduling) MaxActive() int {
 	}
 	return DefaultMaxActiveTasks
 }
+
+// AgentCalls is an agent config's call tools, stored in agent_configs.calls. A nil tool
+// was never set, which is its default.
+type AgentCalls struct {
+	EndCall  *EndCallSettings  `json:"end_call,omitempty"`
+	Press    *PressSettings    `json:"press,omitempty"`
+	Transfer *TransferSettings `json:"transfer,omitempty"`
+}
+
+// EndCallSettings is the end_call tool: off unless a config turns it on.
+type EndCallSettings struct {
+	Enabled bool `json:"enabled"`
+	// When tells the agent when to end the call.
+	When string `json:"when,omitempty"`
+}
+
+// PressSettings is the tool that presses keys on the call: on unless a config turns it off.
+type PressSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
+// TransferSettings is the transfer tool: on unless a config turns it off.
+type TransferSettings struct {
+	Enabled      bool                  `json:"enabled"`
+	Destinations []TransferDestination `json:"destinations,omitempty"`
+}
+
+// TransferDestination is a number the agent may transfer a call to.
+type TransferDestination struct {
+	Name   string `json:"name"`
+	Number string `json:"number"`
+	// When tells the agent when to transfer here.
+	When string `json:"when,omitempty"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `json:"warm,omitempty"`
+}
+
+// EndCallOn is whether end_call is offered: off when never set.
+func (c AgentCalls) EndCallOn() bool { return c.EndCall != nil && c.EndCall.Enabled }
+
+// PressOn is whether press is offered: on when never set.
+func (c AgentCalls) PressOn() bool { return c.Press == nil || c.Press.Enabled }
+
+// TransferOn is whether transfer is offered: on when never set.
+func (c AgentCalls) TransferOn() bool { return c.Transfer == nil || c.Transfer.Enabled }
 
 // Lines are the channels named, by kind.
 func (c AgentChannels) Lines() map[string]string {

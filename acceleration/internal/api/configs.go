@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -43,6 +44,13 @@ var errNoConfigs = notConfigured("agent configs are not available: no database c
 
 // mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
 // themselves.
+const (
+	maxTransferDestinations = 20
+	maxCallsWhen            = 1000
+)
+
+var callNumber = regexp.MustCompile(`^\+[1-9][0-9]{6,14}$`)
+
 const mcpBrandingTimeout = 5 * time.Second
 
 // listAgentConfigs returns the calling customer's configs, newest first.
@@ -133,6 +141,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	}
 	config.MCPServers = servers
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -270,8 +281,12 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
+	config.Calls = callsOr(existing.Calls, request.Body.Calls)
 	config.ResumeHistory = resumeHistoryOr(existing.ResumeHistory, request.Body.ResumeHistory)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -1930,6 +1945,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
 	}
 	config.Scheduling = schedulingOf(request.Scheduling)
+	config.Calls = callsOf(request.Calls)
 	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
 	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
@@ -2019,6 +2035,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
+	rendered.Calls = renderedCalls(config.Calls)
 	rendered.ResumeHistory = renderedResumeHistory(config.ResumeHistory)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
@@ -2289,6 +2306,7 @@ type AgentConfigRequest struct {
 	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
 	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
+	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
@@ -2329,6 +2347,7 @@ type AgentConfig struct {
 	Review             *AgentReview             `json:"review,omitempty" doc:"Absent when calls are reviewed by Stream's default guide."`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
+	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
 	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
 	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
@@ -2494,6 +2513,131 @@ func schedulingComplaint(config store.AgentConfig) (string, bool) {
 	}
 	if _, err := scheduling.LoadZone(zone); err != nil {
 		return "scheduling.default_timezone: " + err.Error(), false
+	}
+	return "", true
+}
+
+// AgentCalls is an agent's call tools.
+type AgentCalls struct {
+	EndCall  *EndCallSettings  `json:"end_call,omitempty" doc:"Lets the agent hang up. Off by default."`
+	Press    *PressSettings    `json:"press,omitempty" doc:"Lets the agent press keys on the call, such as to get through a menu. On by default."`
+	Transfer *TransferSettings `json:"transfer,omitempty" doc:"Lets the agent transfer the call to a person. On by default."`
+}
+
+func (*AgentCalls) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The tools an agent on a phone call is offered: end the call, press keys, transfer."
+	return schema
+}
+
+// EndCallSettings is the end_call tool.
+type EndCallSettings struct {
+	Enabled *bool  `json:"enabled,omitempty" doc:"Offer the tool. Omitted is off."`
+	When    string `json:"when,omitempty" maxLength:"1000" doc:"When the agent should end the call, in the caller's terms."`
+}
+
+// PressSettings is the press tool.
+type PressSettings struct {
+	Enabled *bool `json:"enabled,omitempty" doc:"Offer the tool. Omitted is on."`
+}
+
+// TransferSettings is the transfer tool.
+type TransferSettings struct {
+	Enabled      *bool                 `json:"enabled,omitempty" doc:"Offer the tool. Omitted is on."`
+	Destinations []TransferDestination `json:"destinations,omitempty" maxItems:"20" doc:"The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces."`
+}
+
+// TransferDestination is a number the agent may transfer a call to.
+type TransferDestination struct {
+	Name   string `json:"name" minLength:"1" doc:"What the agent calls this destination, such as Sales."`
+	Number string `json:"number" pattern:"^\\+[1-9][0-9]{6,14}$" patternDescription:"an E.164 number, such as +15550001111" doc:"The number to transfer to, in E.164 form."`
+	When   string `json:"when,omitempty" maxLength:"1000" doc:"When the agent should transfer here, in the caller's terms."`
+	Warm   bool   `json:"warm,omitempty" doc:"Announce the caller to the person answering before connecting them."`
+}
+
+// callsOf turns wire call tools into the stored ones.
+func callsOf(calls *AgentCalls) store.AgentCalls {
+	return callsOr(store.AgentCalls{}, calls)
+}
+
+// callsOr writes the tools a caller sent over the stored ones, for an update or a sync: a
+// tool left out keeps what is stored, a tool sent replaces its settings whole.
+func callsOr(stored store.AgentCalls, calls *AgentCalls) store.AgentCalls {
+	if calls == nil {
+		return stored
+	}
+	if calls.EndCall != nil {
+		stored.EndCall = &store.EndCallSettings{
+			Enabled: calls.EndCall.Enabled != nil && *calls.EndCall.Enabled,
+			When:    strings.TrimSpace(calls.EndCall.When),
+		}
+	}
+	if calls.Press != nil {
+		stored.Press = &store.PressSettings{Enabled: calls.Press.Enabled == nil || *calls.Press.Enabled}
+	}
+	if calls.Transfer != nil {
+		transfer := &store.TransferSettings{Enabled: calls.Transfer.Enabled == nil || *calls.Transfer.Enabled}
+		for _, destination := range calls.Transfer.Destinations {
+			transfer.Destinations = append(transfer.Destinations, store.TransferDestination{
+				Name:   strings.TrimSpace(destination.Name),
+				Number: strings.TrimSpace(destination.Number),
+				When:   strings.TrimSpace(destination.When),
+				Warm:   destination.Warm,
+			})
+		}
+		stored.Transfer = transfer
+	}
+	return stored
+}
+
+// renderedCalls renders all three tools with enabled filled in, defaults included, so a
+// client saving back what it read changes nothing.
+func renderedCalls(stored store.AgentCalls) *AgentCalls {
+	endCallOn, pressOn, transferOn := stored.EndCallOn(), stored.PressOn(), stored.TransferOn()
+	rendered := &AgentCalls{
+		EndCall:  &EndCallSettings{Enabled: &endCallOn},
+		Press:    &PressSettings{Enabled: &pressOn},
+		Transfer: &TransferSettings{Enabled: &transferOn},
+	}
+	if stored.EndCall != nil {
+		rendered.EndCall.When = stored.EndCall.When
+	}
+	if stored.Transfer != nil {
+		for _, destination := range stored.Transfer.Destinations {
+			rendered.Transfer.Destinations = append(rendered.Transfer.Destinations, TransferDestination(destination))
+		}
+	}
+	return rendered
+}
+
+// callsComplaint refuses destinations the schema cannot check alone: a name another
+// destination already has, and padding that trims to nothing or to a bad number.
+func callsComplaint(calls store.AgentCalls) (string, bool) {
+	if calls.Transfer == nil {
+		return "", true
+	}
+	if len(calls.Transfer.Destinations) > maxTransferDestinations {
+		return fmt.Sprintf("calls.transfer.destinations: at most %d", maxTransferDestinations), false
+	}
+	seen := map[string]bool{}
+	for i, destination := range calls.Transfer.Destinations {
+		at := fmt.Sprintf("calls.transfer.destinations[%d]", i)
+		if destination.Name == "" {
+			return at + ".name: must not be empty", false
+		}
+		if !callNumber.MatchString(destination.Number) {
+			return at + ".number: must be an E.164 number, such as +15550001111", false
+		}
+		if len(destination.When) > maxCallsWhen {
+			return at + ".when: at most 1000 characters", false
+		}
+		name := strings.ToLower(destination.Name)
+		if seen[name] {
+			return at + ".name: " + destination.Name + " is named twice", false
+		}
+		seen[name] = true
+	}
+	if calls.EndCall != nil && len(calls.EndCall.When) > maxCallsWhen {
+		return "calls.end_call.when: at most 1000 characters", false
 	}
 	return "", true
 }
