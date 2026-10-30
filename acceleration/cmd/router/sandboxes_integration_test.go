@@ -365,7 +365,7 @@ func (s *UsageCommandsSuite) TestTheSandboxJobLooksAfterEachCustomersOrganizatio
 	s.T().Setenv("DAYTONA_API_KEY", "key-1")
 	s.T().Setenv("DAYTONA_API_URL", server.APIURL())
 	s.settings.CodeSandbox.Deployment = ourDeployment
-	s.settings.Auth.KEK = "usage commands suite"
+	s.settings.Auth.KEK = "usage commands suite, long enough to seal with"
 	secrets, err := newSecretSealer(s.ctx, s.settings)
 	s.Require().NoError(err)
 	sealed, err := providerkeys.Seal(secrets, "app-1", providerkeys.Daytona, pricing.RegionUS, customerDaytonaKey)

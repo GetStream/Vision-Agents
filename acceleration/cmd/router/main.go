@@ -359,6 +359,11 @@ func loadKeyring(ctx context.Context, settings config.Config, needs string) (*au
 	return readKeyring(ctx, settings, unwrapper, needs)
 }
 
+// minKEKLength is the shortest key that may seal new rows. The key becomes the AES key
+// through one SHA-256 and no salt, so it is only as hard to guess as it is random: 32
+// characters is 128 bits of hex, and `openssl rand -base64 32` prints 44.
+const minKEKLength = 32
+
 // readKeyring is loadKeyring with the unwrapper given, nil when auth.kms_key is unset.
 func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwrapper, needs string) (*auth.Sealer, error) {
 	current := auth.KEKVersion
@@ -372,8 +377,11 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 		current = version
 	}
 	keys := make(map[int]string)
+	// names is the variable each version was read from, for a refusal to name.
+	names := make(map[int]string)
 	if settings.Auth.KEK != "" {
 		keys[1] = settings.Auth.KEK
+		names[1] = authKEKEnvVar
 	}
 	wrapped := make(map[int]string)
 	for _, variable := range os.Environ() {
@@ -395,6 +403,7 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 				authKEKEnvVar, authKEKEnvVar))
 		}
 		keys[version] = key
+		names[version] = name
 	}
 	for _, version := range slices.Sorted(maps.Keys(wrapped)) {
 		name := fmt.Sprintf("%s_V%d%s", authKEKEnvVar, version, authKEKWrappedSuffix)
@@ -410,6 +419,7 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		keys[version] = key
+		names[version] = name
 	}
 	if keys[current] == "" {
 		if os.Getenv(authKEKVersionEnvVar) == "" {
@@ -422,6 +432,13 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 		return nil, fmt.Errorf("%s a key for the version %s names: "+
 			"set the matching %s_V<n> (versions set: %v)",
 			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+	}
+	// Only the key that seals is held to the minimum: an older one stays loaded, short or
+	// not, so the rows it sealed still open while a longer one takes over.
+	if len(keys[current]) < minKEKLength {
+		return nil, fmt.Errorf("%s a key of at least %d characters to seal with, and %s is shorter: "+
+			"set a random one, such as `openssl rand -base64 32` prints, as another version and name it in %s, "+
+			"keeping this one so the rows it sealed still open", needs, minKEKLength, names[current], authKEKVersionEnvVar)
 	}
 	return auth.NewSealerWithKeyring(current, keys)
 }

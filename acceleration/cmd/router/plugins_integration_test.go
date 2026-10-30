@@ -53,7 +53,7 @@ func (s *PluginsMigrateSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.settings = config.Defaults()
 	s.settings.Postgres.DSN = testenv.Database(dsn, "pluginsmigrate")
-	s.settings.Auth.KEK = "first-key"
+	s.settings.Auth.KEK = firstKey
 	s.settings.Connectors.Enabled = true
 
 	db, err := store.Open(s.settings.Postgres.DSN)
@@ -183,7 +183,7 @@ func (s *PluginsMigrateSuite) TestADryRunLeavesAClientSecretUnderAnOlderKeyAsItI
 	customer := "app-" + store.NewID()
 	older, err := loadKeyring(s.T().Context(), s.settings, "the test needs")
 	s.Require().NoError(err)
-	s.T().Setenv(authKEKEnvVar+"_V2", "second-key")
+	s.T().Setenv(authKEKEnvVar+"_V2", secondKey)
 	s.T().Setenv(authKEKVersionEnvVar, "2")
 	sealed, version, err := api.SealConnectorOAuthClientSecret(older, customer, "github", "app-secret")
 	s.Require().NoError(err)

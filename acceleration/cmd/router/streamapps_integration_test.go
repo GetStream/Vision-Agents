@@ -51,7 +51,7 @@ func (s *StreamAppsCLISuite) SetupSuite() {
 }
 
 func (s *StreamAppsCLISuite) SetupTest() {
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", firstKey)
 	s.stream = chattest.NewServer(s.T())
 	s.stream.SetAppFor("deploy-key", chattest.App{ID: 1})
 	s.customer = strconv.FormatInt(1_000_000_000+rand.Int64N(8_000_000_000), 10)

@@ -413,6 +413,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The key encryption key that seals is at least 32 characters
+
+The router refuses to start when the keyring version that seals new rows (`ROUTER_AUTH_KEK`, or the `ROUTER_AUTH_KEK_V<n>` that `ROUTER_AUTH_KEK_VERSION` names, plain or unwrapped from `_WRAPPED`) is shorter than 32 characters, naming the variable but not the key. The key becomes the AES key through one SHA-256, so a short passphrase is as easy to guess as it is short. A deployment with a shorter key sets a random one, such as `openssl rand -base64 32` prints, as the next version, names it in `ROUTER_AUTH_KEK_VERSION` and keeps the old one: an older version may be shorter, so the rows it sealed still open and peers still on it are still let in.
+
 ### A Dart tool's `run` returns a `ToolOutput`
 
 `AgentTool.run` in the Dart SDK returns a `ToolOutput` rather than a `String`, as Swift's and Kotlin's `run` do, so a tool that shows pictures is the same type as one that answers in words. The `AgentTool(...)` constructor still takes a handler returning a `String` and wraps it, but is no longer `const`; `AgentTool.withPictures` is. Code that called `tool.run(arguments)` itself reads `.text` from what it returns (FLU-1126).

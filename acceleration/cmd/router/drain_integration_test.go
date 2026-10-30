@@ -126,7 +126,7 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	settings.Addr = "127.0.0.1:0"
 	settings.Auth.Mode = string(auth.NoAuth)
 	// Connectors, for the channel bridge, seal under a keyring.
-	settings.Auth.KEK = "drain-key"
+	settings.Auth.KEK = "drain-key-long-enough-to-seal-with"
 	settings.Connectors.Enabled = true
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Chat.InboundKeys = []string{base64.StdEncoding.EncodeToString(public)}
