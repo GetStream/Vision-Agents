@@ -33,6 +33,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -538,6 +539,9 @@ type Agent struct {
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
 	replying string
+	// refusedReply is the last reply the prompt injection screen refused, which finish
+	// takes the refused input out of the history for.
+	refusedReply string
 	// sentences counts the sentences sent in the current turn, for the synthesis id.
 	sentences int
 	// openTurn is the turn a streaming voice has an utterance open for, so a turn's
@@ -2636,6 +2640,9 @@ func (a *Agent) handle(event llm.Event) {
 			a.logger.Debug("a reply failed after it was abandoned", "turn", typed.ResponseID, "error", typed.Err)
 			return
 		}
+		if errors.Is(typed.Err, policy.ErrPromptInjection) {
+			a.refusedReply = typed.ResponseID
+		}
 		a.fail(typed.Err, "llm")
 
 	case llm.ResponseCompleted:
@@ -2717,6 +2724,12 @@ func (a *Agent) finish(response llm.Response) {
 	// turn made, and has to be on the history the result answers.
 	asked := a.harness.TakeAsked()
 	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	// A reply that failed is not one to act on: the calls it wrote as tags are dropped as
+	// the ones it asked for are when it settles.
+	if response.Status == llm.StatusFailed {
+		calls = nil
+	}
+	refused := a.refusedReply == response.ID
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -2771,10 +2784,16 @@ func (a *Agent) finish(response llm.Response) {
 
 	a.mu.Lock()
 	a.generating = false
-	// A reply that only called a tool is still a turn the model took, and it has to be
-	// recorded with the calls on it: the result sent back answers one of them, and a
-	// provider refuses a conversation where it answers nothing.
-	if said != "" || len(calls) > 0 {
+	switch {
+	case refused:
+		// The screen judges only what came after the model last spoke, so a reply recorded
+		// here would leave the refused input behind it, read by every later request and
+		// judged by none.
+		a.history = withheld(a.history)
+	case said != "" || len(calls) > 0:
+		// A reply that only called a tool is still a turn the model took, and it has to be
+		// recorded with the calls on it: the result sent back answers one of them, and a
+		// provider refuses a conversation where it answers nothing.
 		a.history = append(a.history, llm.Message{
 			Role:      llm.Assistant,
 			Content:   said,
@@ -2839,6 +2858,22 @@ func (a *Agent) finish(response llm.Response) {
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
 	a.followUp()
+}
+
+// withheldInput stands in the history for input the prompt injection screen refused.
+const withheldInput = "[withheld: this read as a prompt injection]"
+
+// withheld is history with what the prompt injection screen judged, the turns and tool
+// results since the model last spoke, replaced by withheldInput. A tool result keeps its
+// place, because the call on the history before it still needs an answer.
+func withheld(history []llm.Message) []llm.Message {
+	out := slices.Clone(history)
+	for i := len(out) - 1; i >= 0 && out[i].Role != llm.Assistant; i-- {
+		if out[i].Role == llm.User || out[i].Role == llm.ToolResult {
+			out[i].Content, out[i].Parts = withheldInput, nil
+		}
+	}
+	return out
 }
 
 // readVerbs open the names of tools that only read.

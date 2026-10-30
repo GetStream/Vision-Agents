@@ -165,6 +165,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A response refused by the prompt injection screen acts on nothing
+
+With `prompt_injection` on, a response the screen refuses runs none of the tool calls it asked for, written as calls or as tags, and the input it refused is no longer read by the model: in the agent's history it stands as `[withheld: this read as a prompt injection]`, and no reply is recorded after it. The next turn is screened and answered on its own. A response that fails for any other reason also settles with no tool calls (`tool_calls` empty on the `/stream` socket's `complete` frame); the caller's turn is kept as before (AI-1855, AI-1856).
+
 ### A guardrail webhook is posted only to a public https address
 
 A `type: webhook` guardrail's `url` must be `https`, and its host must resolve only to public addresses. Creating, replacing, patching or syncing an agent config refuses any other url with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A session posts the check through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public url are kept as written. A config saved earlier is not rewritten: one with a plain `http` webhook url now refuses every session, and one with a private `https` url still starts, but every check of its webhook fails and the turn is answered as on any other webhook failure (AI-1859).
