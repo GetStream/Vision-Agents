@@ -38,6 +38,9 @@ func (s *RecordingCallbackSuite) SetupTest() {
 	s.calls.Store(0)
 	s.receiver = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.calls.Add(1)
+		if r.URL.Path == "/refuse" {
+			http.Error(w, "no", http.StatusBadRequest)
+		}
 		if r.URL.Path == "/redirect" {
 			// Another spelling of the receiver's own address: a client that followed it
 			// would be back here, at /elsewhere.
@@ -127,6 +130,30 @@ func (s *RecordingCallbackSuite) TestACallbackFailureLogsTheHostAndNothingElse()
 		s.NotContains(s.logged.String(), "sekret", url)
 		s.NotContains(s.logged.String(), "token", url)
 	}
+}
+
+func (s *RecordingCallbackSuite) TestARefusedCallbackLogsTheHostAndNothingElse() {
+	// A client that can dial the receiver, as in the redirect test, for an answer to log.
+	client := s.receiver.Client()
+	client.Transport.(*http.Transport).TLSClientConfig.ServerName = "example.com"
+	s.server.callbackHTTP = client
+
+	s.server.callBack(context.Background(), s.receiver.URL+"/refuse?token=sekret", Transcription{Id: "job-1"})
+
+	s.Contains(s.logged.String(), "was refused")
+	s.Contains(s.logged.String(), "status=\"400 Bad Request\"")
+	s.Contains(s.logged.String(), "host=127.0.0.1:"+s.port())
+	s.NotContains(s.logged.String(), "sekret")
+	s.NotContains(s.logged.String(), "token")
+}
+
+func (s *RecordingCallbackSuite) TestACallbackThatCannotBeBuiltLogsNothingOfItsURL() {
+	s.server.callBack(context.Background(), "https://exa mple.com/done?token=sekret", Transcription{Id: "job-1"})
+
+	s.Contains(s.logged.String(), "could not build a recording callback")
+	s.NotContains(s.logged.String(), "sekret")
+	s.NotContains(s.logged.String(), "token")
+	s.Zero(s.calls.Load())
 }
 
 // port is the receiver's port.
