@@ -1971,6 +1971,9 @@ const (
 	// ResponseCancelled is one interrupted partway, which is a different thing from
 	// failing: the caller stopped it, and what it had already said still counts.
 	ResponseCancelled = "cancelled"
+	// ResponseRefused is one the prompt injection screen refused. What it was asked is kept
+	// on the row, but never handed to a model again.
+	ResponseRefused = "refused"
 )
 
 // AgentResponse is one turn the agent took in a session.
@@ -1997,6 +2000,8 @@ type Exchange struct {
 	ResponseID string
 	Said       string
 	Answer     string
+	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
+	Refused bool
 }
 
 // The kinds of item a response is made of.

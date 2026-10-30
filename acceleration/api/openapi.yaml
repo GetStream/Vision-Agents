@@ -772,12 +772,13 @@ components:
         session_id:
           type: string
         status:
-          description: 'cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.'
+          description: 'cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.'
           enum:
             - running
             - completed
             - failed
             - cancelled
+            - refused
           type: string
       required:
         - created_at

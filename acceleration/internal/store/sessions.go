@@ -792,7 +792,8 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 	for _, response := range responses {
 		exchanges = append(exchanges, Exchange{
 			ResponseID: response.ID, Said: response.Said,
-			Answer: strings.Join(answered[response.ID], "\n\n"),
+			Answer:  strings.Join(answered[response.ID], "\n\n"),
+			Refused: response.Status == ResponseRefused,
 		})
 	}
 	return exchanges, nil
