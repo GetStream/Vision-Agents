@@ -698,3 +698,5 @@ Every SDK names the session's `timezone` (no spec change). Go: `agents.Options.T
 `runRollup` is Stream staff's now (AI-1735): `POST /v1/ops/stats/rollup` with the ops key. Every client is regenerated: Go, JavaScript and Python drop it, Ruby and Rust keep it at the new path. No SDK wrapped it, so nothing else needs to change.
 
 The recording `callback` doc says it must be a public https URL (AI-2298): Go (`stream/router.go`) is updated. .NET (`Router.cs`) and Python (`plugins/stream` `router.py`) need the same doc line.
+
+An agent folder error names its line (AI-2009, no spec change): Go (`sdks/go/agents/folder.go`) prefixes `line N:` on a connector entry's `a connector needs a name`, `tools: []` and empty `connection` errors, on `connectors must be a list`, and on a `knowledge/urls.yaml` page's unknown key, `refresh_hours` below 1 and non-url/mapping entry. Python, JavaScript, .NET, Ruby, Rust and PHP: any SDK that reads an agent folder by hand should name the line of the entry in agent.yaml or urls.yaml the same way.

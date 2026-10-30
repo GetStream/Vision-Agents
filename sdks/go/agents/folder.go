@@ -93,7 +93,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 		return node.Decode(&k.URL)
 	}
 	if node.Kind != yaml.MappingNode {
-		return errors.New("a page is a url, or a mapping naming one")
+		return fmt.Errorf("line %d: a page is a url, or a mapping naming one", node.Line)
 	}
 
 	for index := 0; index+1 < len(node.Content); index += 2 {
@@ -103,7 +103,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 				return err
 			}
 			if k.RefreshHours < 1 {
-				return errors.New("refresh_hours is how many hours between reads, so it is at least 1; leave it out for never")
+				return fmt.Errorf("line %d: refresh_hours is how many hours between reads, so it is at least 1; leave it out for never", value.Line)
 			}
 			continue
 		}
@@ -111,7 +111,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 			"url": &k.URL, "title": &k.Title, "description": &k.Description,
 		}[key.Value]
 		if field == nil {
-			return fmt.Errorf("%q is not something a page says; url, title, description and refresh_hours are", key.Value)
+			return fmt.Errorf("line %d: %q is not something a page says; url, title, description and refresh_hours are", key.Line, key.Value)
 		}
 		if err := value.Decode(field); err != nil {
 			return err
@@ -272,13 +272,13 @@ func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 	if c.Name == "" {
-		return errors.New("a connector needs a name")
+		return fmt.Errorf("line %d: a connector needs a name", node.Line)
 	}
 	if c.Tools != nil && len(*c.Tools) == 0 {
-		return fmt.Errorf("connector %q: tools: [] grants nothing; leave tools out for every tool", c.Name)
+		return fmt.Errorf("line %d: connector %q: tools: [] grants nothing; leave tools out for every tool", node.Line, c.Name)
 	}
 	if c.Connection != nil && *c.Connection == "" {
-		return fmt.Errorf("connector %q: connection must be a connection id or label", c.Name)
+		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", node.Line, c.Name)
 	}
 	return nil
 }
@@ -289,12 +289,12 @@ type connectorList []ConnectorSettings
 
 func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.SequenceNode {
-		return errors.New("connectors must be a list")
+		return fmt.Errorf("line %d: connectors must be a list", node.Line)
 	}
 	items := make(connectorList, 0, len(node.Content))
 	for _, item := range node.Content {
 		if item.ShortTag() == "!!null" {
-			return errors.New("a connector needs a name")
+			return fmt.Errorf("line %d: a connector needs a name", item.Line)
 		}
 		var entry ConnectorSettings
 		if err := item.Decode(&entry); err != nil {
