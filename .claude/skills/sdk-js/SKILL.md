@@ -121,7 +121,9 @@ dispatch, and the four modality streams.
   everything said after it.
 - `close()` is idempotent. `finish()` removes the listeners and resolves every waiting reader
   as done, so a `for await` ends rather than hanging.
-- Credentials go in the query string, because a browser WebSocket carries no headers.
+- Credentials go in the query string, because a browser WebSocket carries no headers. On
+  Node, `openSocket` moves the token to `Authorization` (behind the proxy, `api_key` and
+  `stream-auth-type: jwt` with it), and no error repeats a socket URL's query.
   **A socket never says it is a backend.** The router reads a `stream-auth-type` query
   parameter only as `jwt` or `anonymous`, only in `proxy` mode without declared kinds, and
   never over the header; the hosted proxy reads it only as `jwt`. That is what stops a

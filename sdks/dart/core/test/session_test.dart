@@ -632,6 +632,25 @@ void main() {
       },
     );
 
+    test('a socket that cannot open says so without the token its URL carries', () async {
+      final keyed = VisionAgents(url: router.url, apiKey: 'key', token: () async => 'secret');
+      router
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSockets = true;
+
+      await expectLater(
+        keyed.chat(),
+        throwsA(
+          isA<TransportException>().having(
+            (e) => e.toString(),
+            'toString',
+            isNot(contains('secret')),
+          ),
+        ),
+      );
+      keyed.close();
+    });
+
     test('deleting takes the conversation away and ends it here', () async {
       router.answer('DELETE /v1/agents/sessions/s1', const Answer(204));
       final chat = await agents.chat();

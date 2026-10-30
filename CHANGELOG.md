@@ -176,6 +176,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A socket's token stays out of the JS and Dart SDKs' errors, and out of the URL on Node
+
+A JS socket the router refused said so with its whole URL, which carries the token (a server token, with `apiSecret`) in its query, so the token reached the app's logs and error reports. It now names the URL without its query. On Node the token is no longer in the URL at all: `openSocket` sends it as `Authorization: Bearer`, and behind the proxy `api_key` and `stream-auth-type: jwt` go as headers with it, as on a request. A browser, and a `webSocket` passed in, still put it in the query, since a browser WebSocket sets no headers. The Dart SDK's `TransportException` for a socket that did not open no longer repeats the URL's query.
 ### A scheduled call is not followed by a text after a router stops
 
 A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms"]`) is not texted when the call was placed and the router that placed it stopped before it recorded the outcome. The router that takes the occurrence over records `already_called` and tries no later channel. A call that nobody answered still falls back to the next channel. Before, the user who was rung was also texted the task (AI-2021).

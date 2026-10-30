@@ -34,6 +34,8 @@ export interface Connection {
   socket: WebSocket;
   path: string;
   query: URLSearchParams;
+  /** The upgrade request's headers, lowercased. */
+  headers: Record<string, string>;
   /** Sends one JSON frame down to the SDK. */
   send: (frame: Record<string, unknown>) => void;
   /** Resolves with the next frame the SDK sends up. */
@@ -114,7 +116,7 @@ export class TestRouter {
     this.server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://router");
       this.sockets.handleUpgrade(request, socket, head, (raw) => {
-        const connection = connectionOf(raw, url);
+        const connection = connectionOf(raw, url, headersOf(request));
         const waiting = this.waiting.shift();
         if (waiting) {
           this.handed.push(connection);
@@ -187,7 +189,7 @@ export class TestRouter {
   }
 }
 
-function connectionOf(socket: WebSocket, url: URL): Connection {
+function connectionOf(socket: WebSocket, url: URL, headers: Record<string, string>): Connection {
   const arrived: Record<string, unknown>[] = [];
   const waiting: ((frame: Record<string, unknown>) => void)[] = [];
 
@@ -205,6 +207,7 @@ function connectionOf(socket: WebSocket, url: URL): Connection {
     socket,
     path: url.pathname,
     query: url.searchParams,
+    headers,
     send: (frame) => socket.send(JSON.stringify(frame)),
     next: () => {
       const frame = arrived.shift();
