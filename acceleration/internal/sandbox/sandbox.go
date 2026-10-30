@@ -47,8 +47,8 @@ type Result struct {
 	Unconnected []Grant
 	Connected   []string
 	// Reconnect are the late grants whose user connected a connection saved on a connector
-	// revision that gives the sandbox no access, or another env var or hosts, so no run gets
-	// their token until the user reconnects it on the latest revision.
+	// revision that gives the sandbox no access, or another env var or hosts. No run of this
+	// session gets their token, even after the user reconnects it; the next session does.
 	Reconnect []Grant
 }
 
