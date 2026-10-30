@@ -320,8 +320,6 @@ func TestAnIdReusedAfterABargeInCutItsUnfinishedSentenceIsRefusedOnceNoCreditIsL
 	}
 }
 
-// A streaming voice speaks text sent after an utterance's final text in that utterance, and
-// completes it once.
 // On a voice of our own deployment, text for an id cut by a barge-in before its final text is
 // dropped there and billed as sent, and the id's text after it is spoken and billed on its own.
 func TestAnUtteranceCutBeforeItsFinalTextIsBilledApartFromTheTextAfterIt(t *testing.T) {
@@ -377,6 +375,8 @@ func TestAnIdReusedAfterABargeInOnOurOwnDeploymentIsRefusedOnceNoCreditIsLeft(t 
 	}
 }
 
+// A streaming voice speaks text sent after an utterance's final text in that utterance, and
+// completes it once.
 func TestTextAfterAStreamingUtterancesFinalTextIsBilledInItsOneCompletion(t *testing.T) {
 	money := policytest.Start(t, "ttsrouter_reserve")
 	session, provider, owner := reservingSession(t, money, 10_000_000, false)
