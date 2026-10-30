@@ -70,6 +70,48 @@ func (s *ScheduleResumeSuite) TestAOneShotResumedInsideTheFallBackHourKeepsTheSe
 	s.Empty(runs, "nothing was slept through")
 }
 
+// movePaused marks a paused task as a data move imports one that was active where it came
+// from, for the cut-over to resume (store.ResumeMovedRows).
+func (s *ScheduleResumeSuite) movePaused(task store.ScheduledTask) {
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("move_paused = true").
+		Where("customer_id = ?", task.CustomerID).Where("id = ?", task.ID).
+		Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentPausesIsLeftPausedByTheCutOver() {
+	runner, task := s.pausedInTheSecondPass()
+	s.movePaused(task)
+
+	_, err := runner.Run(s.ctx, llm.ToolCall{ID: uuid.NewString(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + task.ID + `","action":"pause"}`})
+	s.Require().NoError(err)
+
+	resumed, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
+	s.Require().NoError(err)
+	s.Zero(resumed, "the user asked the agent to pause it")
+	stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
+	s.Require().NoError(err)
+	s.Equal(store.ScheduledTaskPaused, stored.State)
+}
+
+func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentResumesLosesTheMovesMark() {
+	runner, task := s.pausedInTheSecondPass()
+	s.movePaused(task)
+	before := time.Date(2026, 10, 25, 0, 50, 0, 0, time.UTC)
+	runner.now = func() time.Time { return before }
+
+	_, err := runner.Run(s.ctx, llm.ToolCall{ID: uuid.NewString(), Name: "update_scheduled_task",
+		Arguments: `{"id":"` + task.ID + `","action":"resume"}`})
+	s.Require().NoError(err)
+
+	stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(store.ScheduledTaskActive, stored.State)
+	s.False(stored.MovePaused, "the user decided what it does here")
+}
+
 // pausedInTheSecondPass is a runner for a user of a new agent config, and a
 // paused task of theirs stored as one made at 01:50 CEST on 2026-10-25 to run
 // an hour and a half later is: at 02:20 Berlin, the second pass of the hour
