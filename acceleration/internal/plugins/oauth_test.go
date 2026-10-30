@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -216,6 +217,49 @@ func (s *OAuthSuite) TestATokenWithNoExpiresInExpiresByTheCatalogsAccessTTL() {
 	s.Require().NotNil(refreshed.ExpiresAt)
 	s.WithinDuration(due, *refreshed.ExpiresAt, time.Minute)
 	s.Nil(unlisted.ExpiresAt, "a plugin with no access_ttl has no known expiry")
+}
+
+// The cap holds for what the transport decompressed, so an answer that is small on the wire
+// and large once inflated is refused too.
+func (s *OAuthSuite) TestATokenAnswerLongerThanTheCapOnceDecompressedIsRefused() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		zipped := gzip.NewWriter(w)
+		_, _ = zipped.Write(padded(tokenResponse{AccessToken: "tok", RefreshToken: "ref"}))
+		_ = zipped.Close()
+	}))
+	defer server.Close()
+	auth := &Auth{HTTP: server.Client()}
+
+	_, exchanged := auth.Exchange(context.Background(), Owner{}, Pending{ClientID: "dyn-1", TokenEndpoint: server.URL}, "code")
+	_, refreshed := auth.Refresh(context.Background(), Owner{}, "notes", server.URL, "dyn-1", "ref")
+
+	s.ErrorContains(exchanged, "longer than")
+	s.ErrorContains(refreshed, "longer than")
+}
+
+func (s *OAuthSuite) TestMetadataLongerThanTheCapIsRefused() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(padded(authServer{
+			AuthorizationEndpoint: "https://notes.example/authorize",
+			TokenEndpoint:         "https://notes.example/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		}))
+	})
+	mux.HandleFunc("/.well-known/openid-configuration", http.NotFound)
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "dyn-1"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+
+	_, err := auth.StartAuthorize(context.Background(), Owner{},
+		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", ByURL: true}, "")
+
+	s.ErrorContains(err, "oauth discovery")
 }
 
 func (s *OAuthSuite) TestARefreshTheProviderRefusesIsToldApart() {

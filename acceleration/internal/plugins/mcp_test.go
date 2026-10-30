@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -318,6 +319,46 @@ func (s *MCPSuite) TestARenewalThatFailsLeavesTheRefusal() {
 	s.Require().Len(failures, 1)
 	s.ErrorIs(failures[0], ErrUnauthorized)
 	s.ErrorContains(failures[0], "invalid_grant")
+}
+
+// A server chooses how much it answers, so an answer past the cap is refused rather than read
+// whole into the router's memory, however small the part that means anything.
+func (s *MCPSuite) TestAnAnswerLongerThanTheCapIsRefused() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body rpcRequest
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
+		switch body.Method {
+		case "initialize":
+			writeRPC(w, body.ID, map[string]any{"protocolVersion": "2025-03-26"})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			writeRPC(w, body.ID, toolsListResult{Tools: []mcpTool{{Name: "search", InputSchema: map[string]any{"type": "object"}}}})
+		case "tools/call":
+			raw, _ := json.Marshal(toolsCallResult{Content: []mcpContent{{Type: "text", Text: "found it"}}})
+			_, _ = w.Write(padded(rpcResponse{JSONRPC: "2.0", ID: body.ID, Result: raw}))
+		}
+	}))
+	defer server.Close()
+	runtime, _, failures := Open(context.Background(), []Connection{{PluginID: "notes", Endpoint: server.URL}}, server.Client())
+	s.Require().Empty(failures)
+	defer runtime.Close()
+
+	_, err := runtime.Call(context.Background(), llm.ToolCall{Name: "notes__search", Arguments: `{}`})
+
+	s.ErrorContains(err, "longer than")
+}
+
+// A server that never finishes an answer cannot hold the router's request open for good.
+func (s *MCPSuite) TestPluginTrafficHasADeadline() {
+	s.NotZero(publicClient.Timeout)
+}
+
+// padded is v as JSON followed by more whitespace than maxResponseBytes, which is still valid
+// JSON for v.
+func padded(v any) []byte {
+	raw, _ := json.Marshal(v)
+	return append(raw, bytes.Repeat([]byte(" "), maxResponseBytes)...)
 }
 
 func writeRPC(w http.ResponseWriter, id int, result any) {

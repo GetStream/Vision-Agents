@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -199,7 +199,7 @@ func (a *Auth) Exchange(ctx context.Context, owner Owner, pending Pending, code 
 		return Token{}, fmt.Errorf("plugins: token: %w", err)
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(response.Body)
+	raw, err := readBody(response.Body)
 	if err != nil {
 		return Token{}, err
 	}
@@ -242,7 +242,7 @@ func (a *Auth) Refresh(ctx context.Context, owner Owner, pluginID, tokenEndpoint
 		return Token{}, stack.Wrap(err)
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(response.Body)
+	raw, err := readBody(response.Body)
 	if err != nil {
 		return Token{}, stack.Wrap(err)
 	}
@@ -437,7 +437,7 @@ func (a *Auth) register(ctx context.Context, transport *http.Client, endpoint st
 		return registration{}, stack.Wrap(fmt.Errorf("plugins: register: %w", err))
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(response.Body)
+	raw, err := readBody(response.Body)
 	if err != nil {
 		return registration{}, stack.Wrap(err)
 	}
@@ -510,7 +510,11 @@ func getJSON(ctx context.Context, transport *http.Client, url string, target any
 	if response.StatusCode >= 300 {
 		return stack.Wrap(fmt.Errorf("%s: %s", url, response.Status))
 	}
-	return stack.Wrap(json.NewDecoder(response.Body).Decode(target))
+	raw, err := readBody(response.Body)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	return stack.Wrap(json.NewDecoder(bytes.NewReader(raw)).Decode(target))
 }
 
 // resourceMetadataLink is the resource_metadata the server's WWW-Authenticate names when it
