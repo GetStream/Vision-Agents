@@ -20,11 +20,22 @@
 		B200010C /* Conversations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000C /* Conversations.swift */; };
 		B200010D /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000D /* Photos.swift */; };
 		B200010F /* Gmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000F /* Gmail.swift */; };
+		B2000111 /* TripComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* TripComponents.swift */; };
+		B2000113 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000013 /* Settings.swift */; };
+		B2000114 /* A2UIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000014 /* A2UIRenderer.swift */; };
+		B2000115 /* A2UIEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000015 /* A2UIEngine.swift */; };
+		B2000119 /* RawJSON+A2UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000019 /* RawJSON+A2UI.swift */; };
+		B200011A /* OpenUIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200001A /* OpenUIRenderer.swift */; };
+		B200011B /* OpenUIEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200001B /* OpenUIEngine.swift */; };
+		B200011C /* OpenUIValue+RawJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200001C /* OpenUIValue+RawJSON.swift */; };
+		B2000112 /* UIComponents.json in Resources */ = {isa = PBXBuildFile; fileRef = B2000012 /* UIComponents.json */; };
 		B2000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* VisionAgentsCore */; };
 		B2000202 /* StreamChat in Frameworks */ = {isa = PBXBuildFile; productRef = B2000302 /* StreamChat */; };
 		B2000203 /* StreamChatAI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000303 /* StreamChatAI */; };
 		B2000204 /* StreamVideo in Frameworks */ = {isa = PBXBuildFile; productRef = B2000304 /* StreamVideo */; };
 		B2000205 /* StreamVideoSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000305 /* StreamVideoSwiftUI */; };
+		B2000206 /* OpenUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000306 /* OpenUI */; };
+		B2000207 /* GenUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000307 /* GenUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +53,15 @@
 		B200000D /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
 		B200000F /* Gmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gmail.swift; sourceTree = "<group>"; };
 		B200000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B2000011 /* TripComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripComponents.swift; sourceTree = "<group>"; };
+		B2000013 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		B2000012 /* UIComponents.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = UIComponents.json; sourceTree = "<group>"; };
+		B2000014 /* A2UIRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = A2UIRenderer.swift; sourceTree = "<group>"; };
+		B2000015 /* A2UIEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = A2UIEngine.swift; sourceTree = "<group>"; };
+		B2000019 /* RawJSON+A2UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RawJSON+A2UI.swift"; sourceTree = "<group>"; };
+		B200001A /* OpenUIRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenUIRenderer.swift; sourceTree = "<group>"; };
+		B200001B /* OpenUIEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenUIEngine.swift; sourceTree = "<group>"; };
+		B200001C /* OpenUIValue+RawJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OpenUIValue+RawJSON.swift"; sourceTree = "<group>"; };
 		B2000010 /* SwiftAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -55,6 +75,8 @@
 				B2000203 /* StreamChatAI in Frameworks */,
 				B2000204 /* StreamVideo in Frameworks */,
 				B2000205 /* StreamVideoSwiftUI in Frameworks */,
+				B2000206 /* OpenUI in Frameworks */,
+				B2000207 /* GenUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,9 +107,34 @@
 				B200000A /* Assistant.swift */,
 				B200000B /* DeviceTools.swift */,
 				B200000F /* Gmail.swift */,
+				B2000011 /* TripComponents.swift */,
+				B2000013 /* Settings.swift */,
+				B2000503 /* A2UI */,
+				B2000504 /* OpenUI */,
+				B2000012 /* UIComponents.json */,
 				B200000E /* Info.plist */,
 			);
 			path = SwiftAssistant;
+			sourceTree = "<group>";
+		};
+		B2000503 /* A2UI */ = {
+			isa = PBXGroup;
+			children = (
+				B2000014 /* A2UIRenderer.swift */,
+				B2000015 /* A2UIEngine.swift */,
+				B2000019 /* RawJSON+A2UI.swift */,
+			);
+			path = A2UI;
+			sourceTree = "<group>";
+		};
+		B2000504 /* OpenUI */ = {
+			isa = PBXGroup;
+			children = (
+				B200001A /* OpenUIRenderer.swift */,
+				B200001B /* OpenUIEngine.swift */,
+				B200001C /* OpenUIValue+RawJSON.swift */,
+			);
+			path = OpenUI;
 			sourceTree = "<group>";
 		};
 		B2000502 /* Products */ = {
@@ -120,6 +167,8 @@
 				B2000303 /* StreamChatAI */,
 				B2000304 /* StreamVideo */,
 				B2000305 /* StreamVideoSwiftUI */,
+				B2000306 /* OpenUI */,
+				B2000307 /* GenUI */,
 			);
 			productName = SwiftAssistant;
 			productReference = B2000010 /* SwiftAssistant.app */;
@@ -153,6 +202,8 @@
 				B2000B01 /* XCLocalSwiftPackageReference "../../../.." */,
 				B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */,
 				B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */,
+				B2000B04 /* XCRemoteSwiftPackageReference "OpenUI" */,
+				B2000B05 /* XCRemoteSwiftPackageReference "GenUI" */,
 			);
 			productRefGroup = B2000502 /* Products */;
 			projectDirPath = "";
@@ -168,6 +219,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B2000112 /* UIComponents.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,6 +243,14 @@
 				B200010C /* Conversations.swift in Sources */,
 				B200010D /* Photos.swift in Sources */,
 				B200010F /* Gmail.swift in Sources */,
+				B2000111 /* TripComponents.swift in Sources */,
+				B2000113 /* Settings.swift in Sources */,
+				B2000114 /* A2UIRenderer.swift in Sources */,
+				B2000115 /* A2UIEngine.swift in Sources */,
+				B2000119 /* RawJSON+A2UI.swift in Sources */,
+				B200011A /* OpenUIRenderer.swift in Sources */,
+				B200011B /* OpenUIEngine.swift in Sources */,
+				B200011C /* OpenUIValue+RawJSON.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,7 +383,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/GetStream/stream-chat-swift";
 			requirement = {
-				branch = develop;
+				branch = add/generative-ui;
 				kind = branch;
 			};
 		};
@@ -333,6 +393,22 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.54.0;
+			};
+		};
+		B2000B04 /* XCRemoteSwiftPackageReference "OpenUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/martinmitrevski/OpenUI";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		B2000B05 /* XCRemoteSwiftPackageReference "GenUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/martinmitrevski/GenUI";
+			requirement = {
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -356,6 +432,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */;
 			productName = StreamVideo;
+		};
+		B2000306 /* OpenUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B04 /* XCRemoteSwiftPackageReference "OpenUI" */;
+			productName = OpenUI;
+		};
+		B2000307 /* GenUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B05 /* XCRemoteSwiftPackageReference "GenUI" */;
+			productName = GenUI;
 		};
 		B2000305 /* StreamVideoSwiftUI */ = {
 			isa = XCSwiftPackageProductDependency;

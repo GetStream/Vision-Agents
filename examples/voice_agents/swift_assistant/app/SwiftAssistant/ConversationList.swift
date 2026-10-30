@@ -1,7 +1,8 @@
 import SwiftUI
 import VisionAgentsCore
 
-/// The sidebar: a new conversation, a search, and the conversations there were, by day.
+/// The sidebar: a new conversation, the settings, a search, and the conversations there were,
+/// by day.
 struct ConversationList: View {
     @Bindable var conversations: Conversations
     /// The conversation open beside this, or nil for a new one.
@@ -9,15 +10,28 @@ struct ConversationList: View {
     let onNew: () -> Void
     let onOpen: (Session) -> Void
 
+    @State private var isShowingSettings = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: onNew) {
-                Label("New chat", systemImage: "square.and.pencil")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+            HStack(spacing: 0) {
+                Button(action: onNew) {
+                    Label("New chat", systemImage: "square.and.pencil")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .buttonStyle(.plain)
+                Button {
+                    isShowingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.headline)
+                        .padding()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Settings")
             }
-            .buttonStyle(.plain)
 
             TextField("Search conversations", text: $conversations.searchText)
                 .textFieldStyle(.roundedBorder)
@@ -60,6 +74,9 @@ struct ConversationList: View {
                 guard !Task.isCancelled else { return }
             }
             await conversations.reload()
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsScreen()
         }
     }
 
