@@ -179,6 +179,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### An app may have at most 1000 sessions open at once
 
 Every agent session counts against its app's cap, however it was opened (`POST /v1/agents/sessions`, a fork or a reopened conversation, the agent socket, a call to one of the app's numbers, a channel or chat message, a run, a scheduled task, a campaign), and so does every model stream of `/v1/{modality}/stream`, counted in Redis across routers. One over it is refused, over HTTP with a 429 `concurrency_limited` and `Retry-After: 5`; an arriving call over it is hung up, as one nobody can answer is. A session holds its place until it ends, and one on a router that died frees it within a minute. `ROUTER_SESSIONS_CONCURRENT_PER_APP` (`sessions.concurrent_per_app`) sets the cap, `1000` by default; `0` turns it off, and so does a router with no Redis.
+### An id reused once its utterance has finished counts against credit
+
+On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
+
 ### A text or call whose limits cannot be checked is not sent
 
 When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
