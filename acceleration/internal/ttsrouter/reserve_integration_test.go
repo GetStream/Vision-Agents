@@ -181,14 +181,14 @@ func TestASentenceSpokenAgainAfterABargeInIsBilledOnItsOwn(t *testing.T) {
 	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
 	require.NoError(t, session.Interrupt())
 	require.NoError(t, session.Synthesize(tts.Request{ID: "u1", Text: "bcdefgh", Final: true}))
-	// The voice starts the new sentence before the interrupted one's completion comes back.
-	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
-	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 1, Interrupted: true})
-	spoken(t, session, provider, "u1", 9)
 	go func() {
 		for range session.Events() {
 		}
 	}()
+	// The voice starts the new sentence before the interrupted one's completion comes back.
+	provider.emitter.Send(tts.SynthesisStarted{SynthesisID: "u1", At: time.Now()})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 1, Interrupted: true})
+	provider.emitter.Send(tts.SynthesisComplete{SynthesisID: "u1", Characters: 9})
 
 	var rows []store.Request
 	require.Eventually(t, func() bool {
