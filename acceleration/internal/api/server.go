@@ -99,6 +99,9 @@ type serverSideContextKey struct{}
 // name when one person's sessions are kept from another's.
 type kindContextKey struct{}
 
+// requestKeyContextKey holds the key of the app the proxy vouched for the request with.
+type requestKeyContextKey struct{}
+
 // clientAccessibleExtension is what the spec marks the few operations an end user's device
 // may reach with. Everything else is server-side only, and the check reads the mark from
 // the operations themselves rather than from a list kept here, so what a generated SDK documents
@@ -1146,6 +1149,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
+			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
@@ -1205,6 +1209,16 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 	if err := s.stream.KeepToken(ctx, customer, strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), token); err != nil {
 		s.logger.Warn("stream: could not keep the server token the proxy forwarded", "customer_id", customer, "error", err)
 	}
+}
+
+// vouchedKey is the app's key the proxy forwarded a server token with, which is the key the
+// caller used. A proxy that could not mint that token names the key it authenticated the
+// caller with instead. It is believed only where that token is, from a proxy that declares kinds.
+func (s *Server) vouchedKey(r *http.Request, principal auth.Principal) string {
+	if s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return ""
+	}
+	return cmp.Or(strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), principal.APIKey)
 }
 
 // recordUser writes down the end user a request is for, so an app can ask who its users
@@ -1344,6 +1358,12 @@ func CallerFrom(ctx context.Context) routing.Caller {
 func KindFrom(ctx context.Context) auth.Kind {
 	kind, _ := ctx.Value(kindContextKey{}).(auth.Kind)
 	return kind
+}
+
+// requestKeyFrom is the app's key the request was made with, empty where no proxy said.
+func requestKeyFrom(ctx context.Context) string {
+	key, _ := ctx.Value(requestKeyContextKey{}).(string)
+	return key
 }
 
 // OwnerFrom is who the request may reach sessions as: the customer, the end user behind
