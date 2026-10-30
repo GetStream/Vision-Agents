@@ -677,7 +677,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		s.typeInto(text)
 	}
 	told := text
-	if note := persistent.DescribeUIAction(action); note != "" {
+	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
 		told += "\n\n" + note
 	}
 	turnID, err := s.current().RespondTo(ctx, told, images, asked)

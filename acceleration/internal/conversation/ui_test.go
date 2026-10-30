@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,7 +76,7 @@ func TestOnlyASmallNamedUIActionIsRecorded(t *testing.T) {
 	require.True(t, ValidUIAction(map[string]any{"message_id": "m1", "format": "openui", "name": "continue_conversation"}))
 	require.False(t, ValidUIAction(map[string]any{"format": "openui", "name": "continue_conversation"}))
 	require.False(t, ValidUIAction(map[string]any{"message_id": "m1", "format": "openui", "name": "x", "payload": string(make([]byte, MaxUIAction))}))
-	require.Empty(t, DescribeUIAction(nil))
+	require.Empty(t, DescribeUIAction(nil, ""))
 }
 
 func TestAReplysUIIsStoredBesideItsWordsAndReadBack(t *testing.T) {
@@ -114,4 +115,158 @@ func TestAReplysUIIsStoredBesideItsWordsAndReadBack(t *testing.T) {
 	require.Len(t, history, 2)
 	require.Contains(t, history[0].Content, "(They did this in the openui UI of your earlier reply: continue_conversation")
 	require.Contains(t, history[1].Content, "```openui-lang\nroot = Card([title])")
+}
+
+// A program of empty strings doubles as JSON, each quote escaped: 33 KB of it is 55 KB of
+// custom data, over Stream's 50 KB.
+var escapedProgram = "[" + strings.Repeat(`"",`, 11000) + `""]`
+
+func TestAUIIsSetOnlyWhenItFitsBesideTheRestOfTheCustomData(t *testing.T) {
+	words := map[string]any{"text": strings.Repeat("words ", 20000), "ai_ui": map[string]any{"content": "[]"}}
+	require.Nil(t, uiUnset(words), "a message's text is not custom data")
+	require.Contains(t, words, "ai_ui")
+
+	escaped := map[string]any{"text": "A plan.", "ai_ui": map[string]any{"content": escapedProgram}}
+	require.Less(t, len(escapedProgram), maxMessageCustom)
+	require.Equal(t, []string{"ai_ui"}, uiUnset(escaped), "an update leaving the UI out unsets the one set before")
+	require.NotContains(t, escaped, "ai_ui")
+
+	created := map[string]any{"source": "agent", "ai_ui": map[string]any{"content": escapedProgram}}
+	require.True(t, fitUI(created))
+	require.NotContains(t, created, "ai_ui")
+	require.Nil(t, uiUnset(map[string]any{"text": "No UI."}))
+}
+
+func TestAUITooLargeForStreamLeavesTheReplyItsWords(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("command-1", "Plan a weekend in Ohrid", "")
+	require.NoError(t, err)
+
+	c.Observe(agent.ResponseDelta{Text: "A weekend in Ohrid.\n```ui:a2ui\n" + escapedProgram + "\n```"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	reply := db.messages[receipt.AssistantMessageID]
+	db.mu.Unlock()
+	require.Equal(t, "A weekend in Ohrid.", reply["text"])
+	require.NotContains(t, reply["custom"], "ai_ui", "Stream would refuse it, holding back every write after it")
+	_, err = c.BeginCommand("command-2", "Thanks", "")
+	require.NoError(t, err, "the conversation goes on")
+}
+
+func TestAPersonsMessageKeepsTheUIBlockTheyWrote(t *testing.T) {
+	db, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	question := "Please fix this UI:\n```ui:a2ui\n[{\"version\":\"v1.0\"}]\n```"
+	receipt, err := c.BeginCommand("command-1", question, "")
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "It needs a createSurface."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	stored := db.messages[receipt.UserMessageID]
+	db.mu.Unlock()
+	require.Equal(t, question, stored["text"])
+	require.NotContains(t, stored["custom"], "ai_ui", "only the agent writes UI")
+	c.Release()
+	service.Close()
+
+	// Reopened, the model reads what the person sent, and the same question retried is the
+	// same command.
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	page, err := recovered.HistoryForCaller(t.Context(), "customer", "agent", c.CID(), "", "employee")
+	require.NoError(t, err)
+	history, _ := history(page)
+	require.Equal(t, question, history[0].Content)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	replay, err := c.BeginCommand("command-1", question, "")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+}
+
+func TestARetryCarryingAnotherActionIsAnotherCommand(t *testing.T) {
+	_, client := newChat(t)
+	service := NewForChat(client)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	active := map[string]any{"message_id": "m0", "format": "a2ui", "name": "update_plan", "payload": map[string]any{"pace": "active"}}
+	relaxed := map[string]any{"message_id": "m0", "format": "a2ui", "name": "update_plan", "payload": map[string]any{"pace": "relaxed"}}
+	_, err = c.BeginCommandWithAction("command-1", "Update the plan", "", active)
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "An active weekend."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	conflicts := func(c *Conversation) {
+		t.Helper()
+		_, err := c.BeginCommandWithAction("command-1", "Update the plan", "", relaxed)
+		require.ErrorIs(t, err, ErrCommandConflict, "other values are another command")
+		_, err = c.BeginCommand("command-1", "Update the plan", "")
+		require.ErrorIs(t, err, ErrCommandConflict, "the same words without the action are another command")
+		replay, err := c.BeginCommandWithAction("command-1", "Update the plan", "", active)
+		require.NoError(t, err)
+		require.True(t, replay.Duplicate)
+	}
+	conflicts(c)
+	c.Release()
+	service.Close()
+
+	// A restart keeps nothing local: the action is read back from Stream with the words.
+	recovered := NewForChat(client)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	conflicts(c)
+}
+
+func TestAnActionTellsTheModelWhichReplyItWasIn(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+	plan, err := c.BeginCommand("command-1", "Plan a weekend in Ohrid", "")
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "A weekend in Ohrid, by the lake.\n```openui-lang\nroot = Card([])\n```"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	other, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+	elsewhere, err := other.BeginCommand("command-1", "Plan a weekend in Paris", "")
+	require.NoError(t, err)
+	other.Observe(agent.ResponseDelta{Text: "A weekend in Paris."})
+	other.Observe(agent.Responded{})
+	saved(t, other)
+
+	action := map[string]any{"message_id": plan.AssistantMessageID, "format": "openui", "name": "update_plan", "payload": map[string]any{"pace": "relaxed"}}
+	require.Equal(t, "A weekend in Ohrid, by the lake.", c.ActedOn(t.Context(), action))
+	require.Empty(t, c.ActedOn(t.Context(), map[string]any{"message_id": plan.UserMessageID}), "a person's message is no reply")
+	require.Empty(t, c.ActedOn(t.Context(), map[string]any{"message_id": elsewhere.AssistantMessageID}), "another conversation's reply is not read")
+	require.Empty(t, c.ActedOn(t.Context(), map[string]any{"message_id": "gone"}))
+	require.Equal(t,
+		`(They did this in the openui UI of your earlier reply "A weekend in Ohrid, by the lake.": update_plan, with {"pace":"relaxed"})`,
+		DescribeUIAction(action, c.ActedOn(t.Context(), action)))
+	long := DescribeUIAction(action, strings.Repeat("Ohrid ", 100))
+	require.Contains(t, long, `"`+strings.Repeat("Ohrid ", 33)+"Oh…\"")
+
+	// History names the reply too.
+	_, err = c.BeginCommandWithAction("command-2", "Update the plan", "", action)
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "A relaxed weekend."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	page, err := s.History(t.Context(), "customer", "juno", c.CID(), "")
+	require.NoError(t, err)
+	history, _ := history(page)
+	require.Contains(t, history[2].Content, `your earlier reply "A weekend in Ohrid, by the lake."`)
 }

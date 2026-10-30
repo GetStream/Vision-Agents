@@ -81,7 +81,8 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	} else {
 		told := request.Body.Text
-		if note := conversation.DescribeUIAction(action); note != "" {
+		// A session not kept in Stream Chat has no reply to read the words of.
+		if note := conversation.DescribeUIAction(action, ""); note != "" {
 			told += "\n\n" + note
 		}
 		responseID, err = found.Respond(ctx, told, parts, asked)

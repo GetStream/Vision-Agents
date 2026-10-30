@@ -51,11 +51,20 @@ final class OpenUIRenderer: AIUIRenderer {
     }
 }
 
-/// Runs the tools of `Query()` and `Mutation()` with the host's tools.
+/// Runs the tools of `Query()` and `Mutation()` with the host's tools. It keeps the host weakly,
+/// as the engine does: the host keeps the engine, which keeps this.
 struct HostToolProvider: OpenUIToolProvider {
-    let host: any AIUIHosting
+    weak var host: (any AIUIHosting)?
 
     func callTool(_ name: String, arguments: OpenUIObject) async throws -> OpenUIValue {
-        try await host.runTool(name, arguments: arguments.rawJSON).openUIValue
+        guard let host else { throw ConversationClosedError(toolName: name) }
+        return try await host.runTool(name, arguments: arguments.rawJSON).openUIValue
     }
+}
+
+/// A tool a reply's UI ran after its conversation was closed.
+struct ConversationClosedError: LocalizedError {
+    let toolName: String
+
+    var errorDescription: String? { "\(toolName) can't run: the conversation was closed." }
 }
