@@ -59,6 +59,9 @@ type Response struct {
 	// limit, before the model finished. It failed for whoever was waiting, so its status is
 	// StatusFailed, but the provider did nothing wrong and billed what it had read and written.
 	TimedOut bool
+	// Refused is a response a screen refused (Stream.Screen). It failed, so its status is
+	// StatusFailed, but the provider answered as asked.
+	Refused bool
 	// ServiceTier is the tier the provider says it served the response at, such as
 	// OpenAI's default, flex or fast, which it bills at different rates. Empty for a
 	// provider that does not say.
