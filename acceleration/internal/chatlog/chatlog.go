@@ -730,6 +730,7 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 				Set: map[string]any{
 					"text": writing.text, generatingField: true, SourceField: source,
 				},
+				SkipEnrichUrl: skipLinks(source),
 			})
 	}
 	if err != nil {
@@ -819,7 +820,7 @@ func (w *writer) settle(turnID, text string) {
 		finished[purposeField] = writing.named.purpose
 	}
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
-		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: finished})
+		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: finished, SkipEnrichUrl: skipLinks(SourceAgent)})
 	if err != nil {
 		w.log.logger.Error("could not store a finished reply", "turn", turnID, "error", err)
 	}
@@ -902,7 +903,7 @@ func (w *writer) patchWith(writing *reply, text string, interrupted bool, source
 	}
 	maps.Copy(set, more)
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
-		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: set})
+		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: set, SkipEnrichUrl: skipLinks(source)})
 	if err != nil {
 		w.log.logger.Error("could not close an interrupted reply", "error", err)
 	}
@@ -1083,8 +1084,9 @@ func (w *writer) annotate(turnID string, held *turnRecord) {
 	defer cancel()
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, held.reply.id,
 		&getstream.UpdateMessagePartialRequest{
-			UserID: &held.reply.author.ID,
-			Set:    map[string]any{"text": text, conversation.TimingsField: held.timings.fields},
+			UserID:        &held.reply.author.ID,
+			Set:           map[string]any{"text": text, conversation.TimingsField: held.timings.fields},
+			SkipEnrichUrl: skipLinks(SourceAgent),
 		})
 	if err != nil {
 		w.log.logger.Error("could not show a reply's timings", "turn", turnID, "error", err)
@@ -1151,7 +1153,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 		request.ID = &id
 	}
 	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel,
-		&getstream.SendMessageRequest{Message: request})
+		&getstream.SendMessageRequest{Message: request, SkipEnrichUrl: skipLinks(source)})
 	if err != nil {
 		if id == "" || !w.rewrite(ctx, author, id, text, custom) {
 			return "", err
@@ -1171,9 +1173,20 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 func (w *writer) rewrite(ctx context.Context, author User, line, text string, custom map[string]any) bool {
 	set := maps.Clone(custom)
 	set["text"] = text
+	source, _ := custom[SourceField].(string)
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, line,
-		&getstream.UpdateMessagePartialRequest{UserID: &author.ID, Set: set})
+		&getstream.UpdateMessagePartialRequest{UserID: &author.ID, Set: set, SkipEnrichUrl: skipLinks(source)})
 	return err == nil
+}
+
+// skipLinks is whether Stream is told not to fetch the links in a line from source to preview
+// them: a line the agent wrote can carry what it read in a link's address, which that fetch
+// sends out with nobody clicking it.
+func skipLinks(source string) *bool {
+	if source != SourceAgent {
+		return nil
+	}
+	return getstream.PtrTo(true)
 }
 
 func (l *Log) upsert(ctx context.Context, user User) error {

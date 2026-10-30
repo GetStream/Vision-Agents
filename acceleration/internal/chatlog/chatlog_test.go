@@ -222,6 +222,29 @@ func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
 	s.Equal([]string{"hi there"}, chat.Messages(s.log.channel), "the finished reply is still stored")
 }
 
+func (s *ChatLogSuite) TestWhatTheAgentSaidIsWrittenWithoutStreamFetchingItsLinks() {
+	chat := s.useChat()
+	writer := newWriter(s.log)
+
+	writer.handle(message{author: s.log.agent, text: "It is at https://example.com/r?id=42", turnID: "turn-1", kind: piece})
+	writer.show()
+	writer.handle(message{author: s.log.agent, text: " if you want it.", turnID: "turn-1", kind: piece})
+	writer.show()
+	writer.handle(message{author: s.log.agent, text: "It is at https://example.com/r?id=42 if you want it.", turnID: "turn-1", kind: prepared})
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
+
+	s.Equal([]string{"It is at https://example.com/r?id=42 if you want it."}, chat.Messages(s.log.channel))
+	written := 0
+	for _, asked := range chat.Requests("test") {
+		if !asked.Writes() || !strings.HasSuffix(asked.Path, "/message") && !strings.Contains(asked.Path, "/messages/") {
+			continue
+		}
+		written++
+		s.True(asked.SkipEnrichURL, "%s %s left Stream to fetch a link the agent wrote", asked.Method, asked.Path)
+	}
+	s.GreaterOrEqual(written, 3, "the reply was not created, shown and finished")
+}
+
 func (s *ChatLogSuite) TestASavedArtifactIsStoredEvenWithoutASpokenReply() {
 	s.useChat()
 	s.log.visible = []string{"save_*"}

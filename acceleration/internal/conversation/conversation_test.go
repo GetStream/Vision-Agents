@@ -37,6 +37,9 @@ type chatStore struct {
 	liveAttempts int
 	// uploads are the files stored on a channel, by the endpoint that took them.
 	uploads []upload
+	// wrote counts the writes of each message, and fetched those that left Stream to fetch
+	// the links in its text.
+	wrote, fetched map[string]int
 }
 
 // upload is one file a channel was sent.
@@ -53,7 +56,8 @@ type sentEvent struct {
 
 func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 	t.Helper()
-	db := &chatStore{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}}
+	db := &chatStore{channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
+		wrote: map[string]int{}, fetched: map[string]int{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		db.mu.Lock()
 		defer db.mu.Unlock()
@@ -82,6 +86,12 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		}
 		parts := strings.Split(r.URL.Path, "/")
 		result := map[string]any{}
+		counted := func(id string) {
+			db.wrote[id]++
+			if body["skip_enrich_url"] != true {
+				db.fetched[id]++
+			}
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/event"):
 			event := body["event"].(map[string]any)
@@ -120,6 +130,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		case strings.HasSuffix(r.URL.Path, "/message"):
 			m := body["message"].(map[string]any)
 			id := m["id"].(string)
+			counted(id)
 			if _, exists := db.messages[id]; !exists {
 				db.order = append(db.order, id)
 				m["cid"] = "agent:" + parts[len(parts)-2]
@@ -137,6 +148,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 			id := parts[len(parts)-1]
 			if id == "ephemeral" {
 				id = parts[len(parts)-2]
+				counted(id)
 				db.liveAttempts++
 				if db.rateLimited {
 					w.Header().Set("Retry-After", "1")
@@ -146,6 +158,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				}
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
+				counted(id)
 				db.updates++
 				for k, v := range body["set"].(map[string]any) {
 					if k == "attachments" {
@@ -176,6 +189,25 @@ func current(c *Conversation) Message {
 func saved(t *testing.T, c *Conversation) {
 	t.Helper()
 	require.Eventually(t, func() bool { return current(c).Saved }, 8*time.Second, 20*time.Millisecond)
+}
+
+func TestTheAgentsRepliesAreWrittenWithoutStreamFetchingTheirLinks(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "session-one", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("where is the report?"))
+	c.Observe(agent.ResponseDelta{Text: "It is at https://example.com/r?id=42"})
+	reply := current(c).ID
+	c.Observe(agent.ResponseDelta{Text: " if you want it."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.NotZero(t, db.wrote[reply], "the reply was never written")
+	require.Zero(t, db.fetched[reply], "a write of the reply left Stream to fetch the link the agent wrote")
 }
 
 // TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt covers the resume a page does.
