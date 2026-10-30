@@ -67,6 +67,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
@@ -1170,6 +1171,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	})
 	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
+	})
+	// An analyst that thinks for longer than the analysis's own cap before it writes.
+	reasoning.Register("pondering", func(routing.Spec) (llmrouter.Provider, error) {
+		return &llmtest.Thinker{Thinks: 3500, Answer: `{"summary": "Callers asking about refunds were not helped.", "causes": []}`}, nil
 	})
 	// A guardrail judge that finds every turn against its policy.
 	reasoning.Register("judging", func(routing.Spec) (llmrouter.Provider, error) {

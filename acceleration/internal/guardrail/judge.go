@@ -91,7 +91,7 @@ func (j *judge) Check(ctx context.Context, turnID, text string) (Verdict, error)
 		ID:              "guardrail-" + turnID,
 		Instructions:    judgeInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: asked}},
-		MaxOutputTokens: judgeTokens,
+		MaxOutputTokens: judgeTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {

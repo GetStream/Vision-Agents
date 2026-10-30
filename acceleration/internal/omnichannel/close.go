@@ -298,7 +298,7 @@ func (c *Closer) ask(ctx context.Context, config store.AgentConfig, episode stor
 		ID:              "summary-" + episode.ID,
 		Instructions:    summaryInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: string(envelope)}},
-		MaxOutputTokens: summaryTokens,
+		MaxOutputTokens: summaryTokens + llm.ThinkingRoom,
 	})
 	if err != nil {
 		return "", err
