@@ -275,12 +275,22 @@ func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 		return fmt.Errorf("line %d: a connector needs a name", node.Line)
 	}
 	if c.Tools != nil && len(*c.Tools) == 0 {
-		return fmt.Errorf("line %d: connector %q: tools: [] grants nothing; leave tools out for every tool", node.Line, c.Name)
+		return fmt.Errorf("line %d: connector %q: tools: [] grants nothing; leave tools out for every tool", keyLine(node, "tools"), c.Name)
 	}
 	if c.Connection != nil && *c.Connection == "" {
-		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", node.Line, c.Name)
+		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", keyLine(node, "connection"), c.Name)
 	}
 	return nil
+}
+
+// keyLine is the line of a mapping's key, or the mapping's own line when it has none.
+func keyLine(node *yaml.Node, name string) int {
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == name {
+			return node.Content[index].Line
+		}
+	}
+	return node.Line
 }
 
 // connectorList is the connectors list. yaml.v3 drops a null element of a plain

@@ -187,6 +187,7 @@ func TestAPageErrorNamesItsLineInTheFile(t *testing.T) {
 		{"a key nobody knows", "- https://example.com/a\n- url: https://example.com/plans\n  heading: Plans\n", `line 3: "heading"`},
 		{"a key nobody knows after a comment", "# pages\n\n- url: https://example.com/plans\n  # why\n  heading: Plans\n", `line 5: "heading"`},
 		{"a key nobody knows, flow style", "- https://example.com/a\n- {url: https://example.com/plans, heading: Plans}\n", `line 2: "heading"`},
+		{"a key nobody knows, the value on its own line", "- url: https://example.com/plans\n  heading:\n\n    Plans\n", `line 2: "heading"`},
 		{"refresh_hours below 1", "- https://example.com/a\n- url: https://example.com/plans\n  refresh_hours: 0\n", "line 3: refresh_hours is how many hours"},
 		{"refresh_hours below 1, the value on its own line", "- url: https://example.com/plans\n  refresh_hours:\n\n    -2\n", "line 4: refresh_hours is how many hours"},
 		{"a page that is a list", "- https://example.com/a\n\n- [https://example.com/plans]\n", "line 3: a page is a url"},
@@ -688,8 +689,10 @@ func TestAConnectorEntryRefusedAfterItReadsNamesItsLine(t *testing.T) {
 		{"a commented-out entry", "name: concierge\nconnectors:\n  - linear\n\n  - # github\n", `line 5: a connector needs a name`},
 		{"an entry without a name", "name: concierge\nconnectors:\n  - linear\n  - connector: github\n", `line 4: a connector needs a name`},
 		{"an empty name", "name: concierge\nconnectors:\n  - linear\n\n  - name: \"\"\n", `line 5: a connector needs a name`},
-		{"an empty tool list", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: []\n", `line 4: connector "github": tools: []`},
-		{"an empty connection", "name: concierge\nconnectors:\n  - linear\n\n  - name: github\n    connection: \"\"\n", `line 5: connector "github": connection must be`},
+		{"an empty tool list", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: []\n", `line 5: connector "github": tools: []`},
+		{"an empty connection", "name: concierge\nconnectors:\n  - linear\n\n  - name: github\n    connection: \"\"\n", `line 6: connector "github": connection must be`},
+		{"an empty tool list, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    connection: work\n\n    # none\n    tools: []\n", `line 8: connector "github": tools: []`},
+		{"an empty connection, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: [issues]\n\n    connection: \"\"\n", `line 7: connector "github": connection must be`},
 		{"connectors that are not a list", "name: concierge\n\nconnectors: linear\n", `line 3: connectors must be a list`},
 	}
 	for _, c := range cases {
