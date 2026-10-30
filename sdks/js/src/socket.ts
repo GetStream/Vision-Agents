@@ -53,12 +53,14 @@ export class Socket {
         resolve(new Socket(raw));
       };
       // A browser is told nothing about why an upgrade was refused, so the reason the
-      // router gave is not available to report. The URL is, and is usually the answer.
+      // router gave is not available to report. Where it was refused is, and is usually the
+      // answer. The query is left out, since it carries the credential.
       const refused = () => {
         raw.removeEventListener("open", opened);
         raw.removeEventListener("error", refused);
         raw.removeEventListener("close", refused);
-        reject(new SocketClosedError(`the router refused the socket at ${url}`));
+        const where = new URL(url);
+        reject(new SocketClosedError(`the router refused the socket at ${where.origin}${where.pathname}`));
       };
 
       raw.addEventListener("open", opened);

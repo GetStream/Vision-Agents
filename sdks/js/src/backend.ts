@@ -75,6 +75,12 @@ export type WebSocketLike = Pick<
 
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
+/** Node's WebSocket, which takes the headers of the upgrade request beside the URL. */
+type HeadersWebSocketConstructor = new (
+  url: string,
+  init: { headers: Record<string, string> },
+) => WebSocketLike;
+
 export interface BackendOptions {
   /**
    * The router's base URL. Falls back to `region`, then `STREAM_ACCELERATION_URL`, then
@@ -382,6 +388,7 @@ export class Backend {
    * The WebSocket URL for a path on the router, credentials included.
    *
    * They go in the query string because a browser WebSocket carries no headers of its own.
+   * On Node, `openSocket` moves the token back into a header before it dials.
    * A socket never says it is a backend: `Stream-Auth-Type: server` has no query counterpart
    * on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is what it
    * reads for a user whoever the token is for.
@@ -419,12 +426,22 @@ export class Backend {
     return url.toString();
   }
 
-  /** Opens a socket with the runtime's WebSocket, or the one that was passed in. */
+  /**
+   * Opens a socket with the runtime's WebSocket, or the one that was passed in.
+   *
+   * Node's own WebSocket takes headers, so there the token leaves the URL for the header a
+   * request carries it in, out of the access logs a URL is kept in. A browser's cannot, and
+   * one passed in may not, so they are handed the URL as `socketURL` wrote it.
+   */
   openSocket(url: string): WebSocketLike {
     if (!this.webSocketImpl) {
       throw new ConfigurationError(
         "there is no WebSocket here; pass one as the webSocket option or run on Node 22 or newer",
       );
+    }
+    if (this.webSocketImpl === nodeWebSocket()) {
+      const { address, headers } = credentialHeaders(url);
+      return new (this.webSocketImpl as unknown as HeadersWebSocketConstructor)(address, { headers });
     }
     return new this.webSocketImpl(url);
   }
@@ -594,6 +611,46 @@ function routerUrl(options: BackendOptions): string {
 
 function globalWebSocket(): WebSocketConstructor | undefined {
   return (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
+}
+
+/**
+ * Node's own WebSocket, undefined anywhere else. Bun and Deno say they are Node as well, and
+ * are left on the query rather than trusted to read headers the same way.
+ */
+function nodeWebSocket(): WebSocketConstructor | undefined {
+  const versions = (globalThis as { process?: { versions?: Record<string, string | undefined> } })
+    .process?.versions;
+  if (!versions?.node || versions.bun || versions.deno) {
+    return undefined;
+  }
+  return globalWebSocket();
+}
+
+/**
+ * A socket URL with its token moved to the headers a request carries it in.
+ *
+ * Behind the proxy the key and the auth type go with it, as on a request, and stay `jwt`: a
+ * socket never says it is a backend. A router reached directly reads the token from
+ * `Authorization` as it reads `token`, and the key from the query as before. Everything else
+ * stays in the query.
+ */
+function credentialHeaders(url: string): { address: string; headers: Record<string, string> } {
+  const parsed = new URL(url);
+  const query = parsed.searchParams;
+  const token = query.get("token");
+  if (token === null) {
+    return { address: url, headers: {} };
+  }
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  query.delete("token");
+  if (query.has("authorization")) {
+    headers["api_key"] = query.get("api_key") ?? "";
+    headers["stream-auth-type"] = query.get("stream-auth-type") ?? "jwt";
+    for (const name of ["authorization", "api_key", "stream-auth-type"]) {
+      query.delete(name);
+    }
+  }
+  return { address: parsed.toString(), headers };
 }
 
 /** Reads a variable written as a flag, the way the Go client reads the same one. */

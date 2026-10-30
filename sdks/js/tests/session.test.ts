@@ -7,6 +7,7 @@ import {
   ConfigurationError,
   Session,
   Socket,
+  SocketClosedError,
   Tools,
   type ToolCall,
 } from "../src/index.js";
@@ -23,6 +24,47 @@ describe("Socket", () => {
 
   afterEach(async () => {
     await router.stop();
+  });
+
+  it("carries a socket's token in a header on Node, out of its URL", async () => {
+    const keyed = new Client({ url: router.url, apiKey: "key", token: "device-token" });
+
+    const opening = Socket.open(keyed.backend, await keyed.backend.socketURL("/v1/stt/stream"));
+    const connection = await router.socket();
+    (await opening).close();
+
+    assert.equal(connection.headers["authorization"], "Bearer device-token");
+    assert.equal(connection.headers["stream-auth-type"], undefined, "a socket never says it is a backend");
+    assert.equal(connection.query.get("token"), null);
+    assert.equal(connection.query.get("api_key"), "key");
+  });
+
+  it("hands the proxy a socket's credential in the headers it reads a request's from, on Node", async () => {
+    const proxied = new Client({ url: router.url, apiKey: "key", token: "device-token", authenticate: true });
+
+    const opening = Socket.open(proxied.backend, await proxied.backend.socketURL("/v1/stt/stream"));
+    const connection = await router.socket();
+    (await opening).close();
+
+    assert.equal(connection.headers["authorization"], "Bearer device-token");
+    assert.equal(connection.headers["api_key"], "key");
+    assert.equal(connection.headers["stream-auth-type"], "jwt");
+    for (const name of ["token", "authorization", "api_key", "stream-auth-type"]) {
+      assert.equal(connection.query.get(name), null, name);
+    }
+  });
+
+  it("says where a refused socket was without the token its URL carries", async () => {
+    // Nothing listens on port 1, so the upgrade is refused before it reaches a router.
+    const keyed = new Client({ url: "http://127.0.0.1:1", apiKey: "key", token: "device-token" });
+    const url = await keyed.backend.socketURL("/v1/stt/stream");
+
+    await assert.rejects(Socket.open(keyed.backend, url), (raised: unknown) => {
+      assert.ok(raised instanceof SocketClosedError);
+      assert.match(raised.message, /ws:\/\/127\.0\.0\.1:1\/v1\/stt\/stream/);
+      assert.doesNotMatch(raised.message, /device-token/);
+      return true;
+    });
   });
 
   it("yields the frames the router sends, in order", async () => {

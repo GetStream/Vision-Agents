@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A socket's token stays out of the JS and Dart SDKs' errors, and out of the URL on Node
+
+A JS socket the router refused said so with its whole URL, which carries the token (a server token, with `apiSecret`) in its query, so the token reached the app's logs and error reports. It now names the URL without its query. On Node the token is no longer in the URL at all: `openSocket` sends it as `Authorization: Bearer`, and behind the proxy `api_key` and `stream-auth-type: jwt` go as headers with it, as on a request. A browser, and a `webSocket` passed in, still put it in the query, since a browser WebSocket sets no headers. The Dart SDK's `TransportException` for a socket that did not open no longer repeats the URL's query.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

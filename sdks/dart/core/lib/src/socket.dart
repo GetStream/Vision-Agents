@@ -35,7 +35,8 @@ final class SessionSocket {
     try {
       socket = await WebSocket.connect(uri);
     } on WebSocketException catch (error) {
-      throw TransportException(error);
+      // The VM's message repeats the URL, and its query carries the token.
+      throw TransportException('WebSocketException: ${_withoutQueries(error.message)}');
     }
     _socket = socket;
     return _read(socket);
@@ -67,6 +68,10 @@ final class SessionSocket {
       // Already gone, which is what closing wanted.
     }
   }
+
+  /// [message] with the query cut off every URL in it.
+  static String _withoutQueries(String message) =>
+      message.replaceAll(RegExp(r"""\?[^\s'"]*"""), '');
 
   Stream<AgentEvent> _read(WebSocket socket) async* {
     await for (final event in socket.events) {
