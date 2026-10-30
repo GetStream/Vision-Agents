@@ -1348,3 +1348,68 @@ func (s *AgentSuite) TestANativeGoodbyeLostToASessionSwapStillEndsTheCall() {
 	s.Eventually(func() bool { return s.ender.ends() == 1 }, settleFor, time.Millisecond, "the call was held open for a goodbye that was lost")
 	s.Eventually(func() bool { return countOf[Left](s.events.seen()) == 1 }, settleFor, time.Millisecond)
 }
+
+// endsTwice has the native model call end_call twice in one reply, and returns the two
+// answers it was given.
+func (s *AgentSuite) endsTwice(ender *stubEnder) (*nativePeer, []string) {
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.edge.holdSpeech(true)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call2","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	answers := []string{
+		string(s.nativeFrame(peer, "conversation.item.create")["item"]),
+		string(s.nativeFrame(peer, "conversation.item.create")["item"]),
+	}
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+	return peer, answers
+}
+
+func (s *AgentSuite) TestASecondNativeEndCallIsToldTheCallIsAlreadyEnding() {
+	// Two hang-ups waiting on one goodbye means one of them is not the goodbye the caller's
+	// voice cancels, and it ends the call on them later.
+	ender := &stubEnder{}
+	_, answers := s.endsTwice(ender)
+
+	pending := 0
+	for _, answer := range answers {
+		if strings.Contains(answer, "already ending") {
+			pending++
+		}
+	}
+	s.Equal(1, pending, "exactly one end_call should wait on the goodbye: %v", answers)
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+	s.Equal(1, ender.ends())
+}
+
+func (s *AgentSuite) TestACallerSpeakingAfterTwoNativeEndCallsKeepsTheCall() {
+	ender := &stubEnder{}
+	peer, _ := s.endsTwice(ender)
+
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.nativeListening
+	}, "the caller was never heard")
+	s.edge.holdSpeech(false)
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}

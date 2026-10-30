@@ -56,9 +56,16 @@ const goodbyeWait = 10 * time.Second
 // open, and billing, as an outbound call left in a voicemail box does.
 const goodbyeLength = time.Minute
 
+// endCallPending is what a native model is told when it calls end_call again while the
+// call is already ending, so only one hang-up waits on the goodbye.
+const endCallPending = "The call is already ending: it ends as soon as you finish speaking. " + endCallStillOpen
+
 // goodbye is the reply a native model gives once told end_call ran.
 type goodbye struct {
-	// cancel keeps the call: the caller spoke before it ended.
+	// call is the end_call that asked for it.
+	call string
+	// ctx is the hang-up's own, and cancel keeps the call: the caller spoke before it ended.
+	ctx    context.Context
 	cancel context.CancelFunc
 	// reply is the goodbye, once it has begun.
 	reply   string
@@ -696,32 +703,19 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if model := a.speech(); model != nil {
 		defer a.noteToolDone(hold)
 		if ctx.Err() == nil {
-			var bye *goodbye
-			var hangUp context.Context
 			a.mu.Lock()
 			a.nativeAwaiting = true
-			// Set before answering, so the reply the answer brings cannot start unseen.
-			if requested.Call.Name == toolEndCall && ran && err == nil {
-				bye = &goodbye{started: make(chan struct{}), done: make(chan struct{})}
-				hangUp, bye.cancel = context.WithCancel(a.ctx)
-				a.goodbye = bye
-			}
 			a.mu.Unlock()
 			err := model.Answer(requested.Call.ID, result, nil)
 			if err == nil {
 				a.askedApproval(requested.Call.ID)
-				if bye != nil {
-					go a.hangUpAfter(hangUp, bye)
+				if bye := a.goodbyeOf(requested.Call.ID, false); bye != nil {
+					go a.hangUpAfter(bye)
 				}
 			} else {
+				a.goodbyeOf(requested.Call.ID, true)
 				a.mu.Lock()
 				a.nativeAwaiting = false
-				if bye != nil {
-					bye.cancel()
-					if a.goodbye == bye {
-						a.goodbye = nil
-					}
-				}
 				a.mu.Unlock()
 				capabilities := model.Capabilities()
 				if a.switching.Load() {
@@ -732,6 +726,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 					a.fail(err, "sts")
 				}
 			}
+		} else {
+			a.goodbyeOf(requested.Call.ID, true)
 		}
 		if left {
 			go func() {
@@ -830,8 +826,17 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 			return nil, false, errors.New("agent: this call cannot be ended")
 		}
 		// A native model says its goodbye after the result, so the call ends after that
-		// (hangUpAfter) rather than here.
+		// (hangUpAfter) rather than here. The goodbye is set before the answer goes, so the
+		// reply the answer brings cannot start unseen.
 		if a.native() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.goodbye != nil {
+				return llm.TextParts(endCallPending), false, nil
+			}
+			bye := &goodbye{call: call.ID, started: make(chan struct{}), done: make(chan struct{})}
+			bye.ctx, bye.cancel = context.WithCancel(a.ctx)
+			a.goodbye = bye
 			return llm.TextParts(endCallNative), false, nil
 		}
 		result, left, err := a.endCall(ctx)
@@ -1142,10 +1147,28 @@ func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
 	return "You have ended the call.", true, nil
 }
 
+// goodbyeOf returns the goodbye the end_call call set, if it is still the pending one.
+// With drop, it is cancelled and forgotten instead: its answer never reached the model.
+func (a *Agent) goodbyeOf(call string, drop bool) *goodbye {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bye := a.goodbye
+	if bye == nil || bye.call != call {
+		return nil
+	}
+	if drop {
+		bye.cancel()
+		a.goodbye = nil
+		return nil
+	}
+	return bye
+}
+
 // hangUpAfter ends the call once a native model's goodbye has been heard, or once it has
 // gone goodbyeWait without starting one or goodbyeLength without finishing it. The caller
-// speaking before the call ends cancels ctx, which keeps the call.
-func (a *Agent) hangUpAfter(ctx context.Context, bye *goodbye) {
+// speaking before the call ends cancels its context, which keeps the call.
+func (a *Agent) hangUpAfter(bye *goodbye) {
+	ctx := bye.ctx
 	defer func() {
 		a.mu.Lock()
 		if a.goodbye == bye {
