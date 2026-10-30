@@ -8,6 +8,19 @@ namespace GetStream.VisionAgents.Tests;
 public sealed class ClientTests
 {
     [Fact]
+    public void TheOptionsPrintNeitherTheSecretNorTheToken()
+    {
+        var shown = new VisionAgentsOptions { ApiKey = "vak_live_x", ApiSecret = "vas_live_shh", Token = "token-shh" }.ToString();
+        var edge = new EdgeOptions { ApiKey = "vak_live_x", ApiSecret = "vas_live_shh" }.ToString();
+
+        Assert.DoesNotContain("vas_live_shh", shown);
+        Assert.DoesNotContain("token-shh", shown);
+        Assert.Contains("vak_live_x", shown);
+        Assert.DoesNotContain("vas_live_shh", edge);
+        Assert.Contains("vak_live_x", edge);
+    }
+
+    [Fact]
     public async Task ARouterThatTrustsACustomerIsToldWhichOne()
     {
         await using var router = await TestRouter.StartAsync();

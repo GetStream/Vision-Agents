@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -55,6 +56,32 @@ type Options struct {
 	MonitorBaseURL string
 }
 
+// String is the options with the secret left out, so printing them never writes it.
+func (o Options) String() string {
+	return fmt.Sprintf("edge.Options{APIKey: %q, APISecret: %q, MonitorBaseURL: %q}",
+		o.APIKey, redacted(o.APISecret), o.MonitorBaseURL)
+}
+
+// GoString is String, so %#v leaves the secret out too.
+func (o Options) GoString() string { return o.String() }
+
+// LogValue is the options as slog writes them, without the secret.
+func (o Options) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("api_key", o.APIKey),
+		slog.String("api_secret", redacted(o.APISecret)),
+		slog.String("monitor_base_url", o.MonitorBaseURL),
+	)
+}
+
+// redacted says whether a secret is set without saying what it is.
+func redacted(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return "[REDACTED]"
+}
+
 // Edge creates calls and mints the tokens for watching them.
 type Edge struct {
 	apiKey     string
@@ -62,6 +89,14 @@ type Edge struct {
 	monitorURL string
 	client     *getstream.Stream
 }
+
+// String names the edge by its app key, leaving the secret out.
+func (e *Edge) String() string {
+	return fmt.Sprintf("edge.Edge{APIKey: %q, MonitorBaseURL: %q}", e.apiKey, e.monitorURL)
+}
+
+// GoString is String, so %#v leaves the secret out too.
+func (e *Edge) GoString() string { return e.String() }
 
 // New reads whatever the options leave empty out of the environment.
 func New(options Options) (*Edge, error) {

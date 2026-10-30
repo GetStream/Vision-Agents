@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -131,6 +132,41 @@ type Backend struct {
 	// HTTPClient is used for both the REST calls and the socket handshake. Nil uses the
 	// default client.
 	HTTPClient *http.Client
+}
+
+// String is the backend with its secret and token left out, so printing one with %v, %+v
+// or %s never writes a credential.
+func (b Backend) String() string {
+	return fmt.Sprintf("stream.Backend{URL: %q, Region: %q, CustomerID: %q, Authenticate: %t, "+
+		"APIKey: %q, APISecret: %q, UserID: %q, Token: %q, ActingFor: %q}",
+		b.URL, b.Region, b.CustomerID, b.Authenticate, b.APIKey, redacted(b.APISecret),
+		b.UserID, redacted(b.Token), b.ActingFor)
+}
+
+// GoString is String, so %#v leaves the credentials out too.
+func (b Backend) GoString() string { return b.String() }
+
+// LogValue is the backend as slog writes it, without its secret and token.
+func (b Backend) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("url", b.URL),
+		slog.String("region", b.Region),
+		slog.String("customer_id", b.CustomerID),
+		slog.Bool("authenticate", b.Authenticate),
+		slog.String("api_key", b.APIKey),
+		slog.String("api_secret", redacted(b.APISecret)),
+		slog.String("user_id", b.UserID),
+		slog.String("token", redacted(b.Token)),
+		slog.String("acting_for", b.ActingFor),
+	)
+}
+
+// redacted says whether a credential is set without saying what it is.
+func redacted(credential string) string {
+	if credential == "" {
+		return ""
+	}
+	return "[REDACTED]"
 }
 
 // Resolve fills in whatever the environment knows and refuses a backend nobody is billed for.

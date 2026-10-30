@@ -64,6 +64,15 @@ public sealed record VisionAgentsOptions
     /// this router is reached.
     /// </remarks>
     public bool? Authenticate { get; init; }
+
+    /// <summary>
+    /// The options with <see cref="ApiSecret"/> and <see cref="Token"/> left out, so logging
+    /// them writes neither.
+    /// </summary>
+    public override string ToString() =>
+        $"VisionAgentsOptions {{ Url = {Url}, Region = {Region}, CustomerId = {CustomerId}, ApiKey = {ApiKey}, "
+        + $"ApiSecret = {Backend.Redacted(ApiSecret)}, Token = {Backend.Redacted(Token)}, UserId = {UserId}, "
+        + $"Authenticate = {Authenticate} }}";
 }
 
 /// <summary>
@@ -71,6 +80,10 @@ public sealed record VisionAgentsOptions
 /// </summary>
 internal sealed class Backend
 {
+    /// <summary>Whether a credential is set, without what it is.</summary>
+    internal static string? Redacted(string? credential) =>
+        string.IsNullOrEmpty(credential) ? credential : "[REDACTED]";
+
     /// <summary>Stream's hosted router, which is where a client goes when nothing says otherwise.</summary>
     public const string DefaultUrl = "https://accelerate-us-east4.gcp.stream-io-api.com";
     public const string UrlEnv = "STREAM_ACCELERATION_URL";

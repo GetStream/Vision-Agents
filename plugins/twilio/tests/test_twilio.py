@@ -41,6 +41,12 @@ class TestTwilioCall:
         assert call.call_status == "ringing"
         assert call.ended_at is None
 
+    def test_repr_leaves_the_token_out(self):
+        call = twilio.TwilioCall(call_sid="CA123456")
+
+        assert call.token not in repr(call)
+        assert "CA123456" in repr(call)
+
     def test_end_call(self):
         """Test ending a call."""
         call = twilio.TwilioCall(call_sid="CA123456")

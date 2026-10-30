@@ -40,7 +40,7 @@ final readonly class Edge
      */
     public function __construct(
         ?string $apiKey = null,
-        ?string $apiSecret = null,
+        #[\SensitiveParameter] ?string $apiSecret = null,
         string $baseUrl = self::STREAM_API,
         ?string $monitorUrl = null,
         ?ClientInterface $http = null,
@@ -52,6 +52,17 @@ final readonly class Edge
         }
         $this->monitorUrl = rtrim($monitorUrl ?? Backend::env('EXAMPLE_BASE_URL') ?? self::DEFAULT_MONITOR_URL, '/');
         $this->video = new VideoClient($this->apiKey, $secret, $baseUrl, new StreamTransport($http ?? Http::client(), Http::requests(), Http::streams()));
+    }
+
+    /**
+     * What `var_dump` and `print_r` show: the app and the demo, without Stream's client,
+     * which holds the secret.
+     *
+     * @return array<string, string>
+     */
+    public function __debugInfo(): array
+    {
+        return ['apiKey' => $this->apiKey, 'monitorUrl' => $this->monitorUrl];
     }
 
     /**

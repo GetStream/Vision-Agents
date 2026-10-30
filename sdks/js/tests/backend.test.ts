@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { inspect } from "node:util";
 
-import { Backend, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
+import {
+  Backend,
+  Client,
+  ConfigurationError,
+  DEFAULT_URL,
+  regionUrl,
+  signToken,
+} from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -405,6 +413,22 @@ describe("Backend", () => {
       assert.equal(response.status, 200);
     } finally {
       globalThis.fetch = real;
+    }
+  });
+
+  it("prints and serializes a client without its secret or its token", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "vas_live_shh" });
+    const device = new Client({ url: router.url, apiKey: "vak_live_x", token: "token-shh" });
+
+    for (const shown of [
+      inspect(backend),
+      inspect(new Client(backend), { depth: Infinity }),
+      inspect(device, { depth: Infinity }),
+      JSON.stringify(backend),
+      JSON.stringify(device.backend),
+    ]) {
+      assert.doesNotMatch(shown, /vas_live_shh|token-shh/);
+      assert.match(shown, /vak_live_x/, "the key, which is not secret, still says which app");
     }
   });
 

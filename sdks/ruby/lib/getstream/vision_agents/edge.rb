@@ -38,6 +38,12 @@ module GetStream
         @stream = GetStreamRuby.manual(api_key: @api_key, api_secret: @api_secret, **options)
       end
 
+      # Leaves the secret out, and Stream's own client, which holds it too.
+      def inspect
+        "#<#{self.class.name} api_key=#{@api_key.inspect} api_secret=#{Backend.redacted(@api_secret)} " \
+          "monitor_url=#{@monitor_url.inspect}>"
+      end
+
       # Creates the call the backend will join, or returns the one already under that id.
       #
       # An empty id names a new call after a random one, which is what a one-off conversation

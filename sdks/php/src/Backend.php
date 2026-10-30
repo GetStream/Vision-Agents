@@ -73,8 +73,8 @@ final readonly class Backend
         ?string $url = null,
         ?string $customerId = null,
         ?string $apiKey = null,
-        ?string $apiSecret = null,
-        string $token = '',
+        #[\SensitiveParameter] ?string $apiSecret = null,
+        #[\SensitiveParameter] string $token = '',
         string $userId = '',
         ?bool $authenticate = null,
         string $onBehalfOf = '',
@@ -100,6 +100,25 @@ final readonly class Backend
     }
 
     /**
+     * What `var_dump` and `print_r` show: the secret and the token left out.
+     *
+     * @return array<string, string|bool>
+     */
+    public function __debugInfo(): array
+    {
+        return [
+            'url' => $this->url,
+            'customerId' => $this->customerId,
+            'apiKey' => $this->apiKey,
+            'apiSecret' => $this->apiSecret === '' ? '' : '[REDACTED]',
+            'token' => $this->token === '' ? '' : '[REDACTED]',
+            'userId' => $this->userId,
+            'onBehalfOf' => $this->onBehalfOf,
+            'authenticate' => $this->authenticate,
+        ];
+    }
+
+    /**
      * Whether this speaks for a process the customer runs rather than for a device.
      *
      * Only a server-side caller reaches the operations the spec does not mark client
@@ -115,7 +134,7 @@ final readonly class Backend
      *
      * A token is the whole credential, so the result is no longer a backend.
      */
-    public function asUser(string $userId, string $token): self
+    public function asUser(string $userId, #[\SensitiveParameter] string $token): self
     {
         if ($userId === '') {
             throw new ConfigurationException('a user needs an id');

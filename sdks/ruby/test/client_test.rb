@@ -3,6 +3,18 @@
 require_relative "test_helper"
 
 class TestClient < LocalRouterTest
+  def test_inspect_shows_neither_the_secret_nor_the_token
+    backend = VA::Backend.new(url: @router.url, api_key: "vak_live_x", api_secret: "vas_live_shh")
+    device = VA::Client.new(url: @router.url, api_key: "vak_live_x", token: "token-shh")
+    edge = VA::Edge.new(api_key: "vak_live_x", api_secret: "vas_live_shh", base_url: @router.url)
+
+    [backend.inspect, device.inspect, edge.inspect].each do |shown|
+      refute_includes shown, "vas_live_shh"
+      refute_includes shown, "token-shh"
+      assert_includes shown, "vak_live_x"
+    end
+  end
+
   def test_a_request_carries_the_customer_and_the_spec_path
     @router.on(:get, "/v1/agents/configs", body: [{ "name" => "docs" }])
 

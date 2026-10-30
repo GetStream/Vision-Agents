@@ -20,7 +20,8 @@ class TelnyxCall:
     """
 
     call_control_id: str
-    token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    # Left out of the repr, so a logged call does not show what admits its media stream.
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     webhook_data: Optional[dict[str, Any]] = None
     telnyx_stream: Optional["TelnyxMediaStream"] = None
     stream_call: Optional[Any] = None

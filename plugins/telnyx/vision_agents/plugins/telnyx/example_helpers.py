@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature
@@ -41,7 +41,7 @@ class TelnyxAPIError(RuntimeError):
 
 @dataclass(frozen=True)
 class TelnyxConfig:
-    api_key: str
+    api_key: str = field(repr=False)
     call_control_app_id: str
     phone_number: str
     ngrok_url: str

@@ -56,13 +56,26 @@ impl From<String> for Call {
 /// A Stream app, as far as creating calls and minting tokens goes.
 ///
 /// Server side only, because it holds the app secret.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StreamApp {
     api_key: String,
     api_secret: String,
     base_url: String,
     monitor_url: String,
     http: reqwest::Client,
+}
+
+/// Written by hand so `{:?}` never prints the app secret.
+impl std::fmt::Debug for StreamApp {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StreamApp")
+            .field("api_key", &self.api_key)
+            .field("api_secret", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .field("monitor_url", &self.monitor_url)
+            .finish_non_exhaustive()
+    }
 }
 
 impl StreamApp {
@@ -204,4 +217,19 @@ impl StreamApp {
 fn random_id() -> String {
     let bytes: [u8; 8] = rand::random();
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_leaves_the_app_secret_out() {
+        let app = StreamApp::new("key123", "secret-shh").unwrap();
+
+        let shown = format!("{app:?}");
+
+        assert!(!shown.contains("secret-shh"), "{shown}");
+        assert!(shown.contains("key123"), "{shown}");
+    }
 }

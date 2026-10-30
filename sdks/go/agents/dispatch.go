@@ -112,6 +112,13 @@ type Dispatch struct {
 	held map[string]*Conversation
 }
 
+// String names the dispatch by its backend, which leaves the credentials out. Without it fmt
+// prints the unexported backend field by reflection, secret and all.
+func (d *Dispatch) String() string { return "agents.Dispatch{" + d.backend.String() + "}" }
+
+// GoString is String, so %#v leaves the credentials out too.
+func (d *Dispatch) GoString() string { return d.String() }
+
 // NewDispatch describes a worker without connecting it.
 func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 	logger := options.Logger

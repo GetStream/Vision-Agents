@@ -46,6 +46,13 @@ type Client struct {
 	streamed *getstream.Stream
 }
 
+// String names the client by its backend, which leaves the credentials out. Without it fmt
+// prints the unexported backend field by reflection, secret and all.
+func (c *Client) String() string { return "client.Client{" + c.backend.String() + "}" }
+
+// GoString is String, so %#v leaves the credentials out too.
+func (c *Client) GoString() string { return c.String() }
+
 // New resolves the backend and refuses one that cannot be reached or billed.
 //
 // The zero Backend reads the environment, which is what a program deployed next to a router

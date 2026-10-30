@@ -63,7 +63,7 @@ fn hosted(url: &str) -> bool {
 /// a key and secret for a process the customer runs, and a key and a user token for anything
 /// acting on one person's behalf. Every field left `None` falls back to the environment the
 /// Go, Python and JavaScript SDKs read.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ClientOptions {
     /// The router's base URL. Falls back to `region`, then `STREAM_ACCELERATION_URL`, then
     /// `STREAM_ACCELERATION_REGION`, then Stream's hosted router, so only a self-hosted or
@@ -95,7 +95,7 @@ pub struct ClientOptions {
     pub http: Option<reqwest::Client>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Backend {
     pub url: String,
     pub customer_id: String,
@@ -107,6 +107,45 @@ pub(crate) struct Backend {
     /// token, so what is written is still the server's and the model answers it.
     pub acting_for: String,
     pub authenticate: bool,
+}
+
+/// Whether a credential is set, without what it is, for a `Debug` that leaves it out.
+fn redacted(credential: &str) -> Option<&'static str> {
+    (!credential.is_empty()).then_some("[REDACTED]")
+}
+
+/// Written by hand so `{:?}` never prints the secret or the token.
+impl std::fmt::Debug for ClientOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClientOptions")
+            .field("url", &self.url)
+            .field("region", &self.region)
+            .field("customer_id", &self.customer_id)
+            .field("api_key", &self.api_key)
+            .field("api_secret", &self.api_secret.as_deref().and_then(redacted))
+            .field("token", &self.token.as_deref().and_then(redacted))
+            .field("user_id", &self.user_id)
+            .field("authenticate", &self.authenticate)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Written by hand so `{:?}`, and the client's own, never print the secret or the token.
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Backend")
+            .field("url", &self.url)
+            .field("customer_id", &self.customer_id)
+            .field("api_key", &self.api_key)
+            .field("api_secret", &redacted(&self.api_secret))
+            .field("token", &redacted(&self.token))
+            .field("user_id", &self.user_id)
+            .field("acting_for", &self.acting_for)
+            .field("authenticate", &self.authenticate)
+            .finish()
+    }
 }
 
 impl Backend {
@@ -335,6 +374,29 @@ mod tests {
         (API_KEY_ENV, "ntv9"),
         (API_SECRET_ENV, "shh"),
     ];
+
+    #[test]
+    fn debug_shows_neither_the_secret_nor_the_token() {
+        let options = ClientOptions {
+            url: Some("http://localhost:8080".into()),
+            api_key: Some("vak_live_x".into()),
+            api_secret: Some("vas_live_shh".into()),
+            token: Some("token-shh".into()),
+            authenticate: Some(true),
+            ..Default::default()
+        };
+        let client = crate::Client::new(options.clone()).unwrap();
+
+        for shown in [
+            format!("{options:?}"),
+            format!("{:#?}", Backend::new(&options).unwrap()),
+            format!("{client:?}"),
+        ] {
+            assert!(!shown.contains("vas_live_shh"), "{shown}");
+            assert!(!shown.contains("token-shh"), "{shown}");
+            assert!(shown.contains("vak_live_x"), "{shown}");
+        }
+    }
 
     #[test]
     fn a_region_is_the_hosted_router_there() {

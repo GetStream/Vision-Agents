@@ -95,8 +95,9 @@ class Backend:
     url: Optional[str] = None
     customer_id: Optional[str] = None
     api_key: Optional[str] = None
-    api_secret: Optional[str] = None
-    token: str = ""
+    # The secret and the token are left out of the repr, so a logged backend shows neither.
+    api_secret: Optional[str] = field(default=None, repr=False)
+    token: str = field(default="", repr=False)
     user_id: str = ""
     authenticate: Optional[bool] = None
     user: dict[str, object] = field(default_factory=dict)

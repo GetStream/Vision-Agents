@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { inspect } from "node:util";
 
 import {
   Agent,
@@ -915,6 +916,15 @@ describe("Agent", () => {
 describe("Edge", () => {
   it("refuses to create a call without the credentials to create one with", () => {
     assert.throws(() => new Edge({ apiKey: "", apiSecret: "" }), ConfigurationError);
+  });
+
+  it("prints and serializes without the app secret", () => {
+    const edge = new Edge({ apiKey: "key", apiSecret: "secret-shh", fetch: streamCallCreated });
+
+    for (const shown of [inspect(edge), JSON.stringify(edge)]) {
+      assert.doesNotMatch(shown, /secret-shh/);
+      assert.match(shown, /key/);
+    }
   });
 
   it("refuses a call nobody created", async () => {

@@ -64,6 +64,13 @@ def test_create_call():
     assert call.ended_at is None
 
 
+def test_call_repr_leaves_the_token_out():
+    call = telnyx.TelnyxCall(call_control_id="v2:abc123")
+
+    assert call.token not in repr(call)
+    assert "v2:abc123" in repr(call)
+
+
 def test_end_call():
     call = telnyx.TelnyxCall(call_control_id="v2:abc123")
     assert call.ended_at is None

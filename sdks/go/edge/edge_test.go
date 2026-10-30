@@ -1,6 +1,8 @@
 package edge
 
 import (
+	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"testing"
@@ -86,5 +88,21 @@ func TestThereIsNoLinkToACallThatDoesNotExist(t *testing.T) {
 	}
 	if _, err := transport.MonitorURL(Call{ID: "call-1"}, User{}); err == nil {
 		t.Fatal("somebody has to be watching")
+	}
+}
+
+func TestTheSecretIsNotPrinted(t *testing.T) {
+	options := Options{APIKey: "key123", APISecret: "secret123"}
+	transport := credentials(t)
+	var logged strings.Builder
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("starting", "options", options)
+
+	for _, written := range []string{
+		fmt.Sprintf("%+v", options), fmt.Sprintf("%#v", options),
+		fmt.Sprintf("%+v", transport), fmt.Sprintf("%#v", transport), logged.String(),
+	} {
+		if strings.Contains(written, "secret123") {
+			t.Errorf("the secret was printed: %s", written)
+		}
 	}
 }

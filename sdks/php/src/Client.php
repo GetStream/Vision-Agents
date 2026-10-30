@@ -56,7 +56,7 @@ final readonly class Client
     /**
      * The same router and transport, acting for one end user with the token that proves it.
      */
-    public function asUser(string $userId, string $token): self
+    public function asUser(string $userId, #[\SensitiveParameter] string $token): self
     {
         return $this->withBackend($this->backend->asUser($userId, $token));
     }

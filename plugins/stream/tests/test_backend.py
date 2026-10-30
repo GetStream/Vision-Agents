@@ -29,6 +29,20 @@ class TestBackend:
         assert backend.url == DEFAULT_URL
         assert backend.authenticate is True
 
+    def test_repr_shows_neither_the_secret_nor_the_token(self):
+        backend = Backend(
+            url="http://localhost:8080",
+            api_key="vak_live_x",
+            api_secret="vas_live_shh",
+            token="token-shh",
+        )
+
+        shown = repr(backend)
+
+        assert "vas_live_shh" not in shown
+        assert "token-shh" not in shown
+        assert "vak_live_x" in shown
+
     def test_leaves_the_proxy_off_for_a_router_it_was_pointed_at(self):
         backend = Backend(url="http://localhost:8080", customer_id="examples")
 

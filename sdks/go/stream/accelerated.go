@@ -226,6 +226,13 @@ type Pipeline struct {
 	firstRetry time.Duration
 }
 
+// String names the pipeline by its backend, which leaves the credentials out. Without it fmt
+// prints the unexported backend field by reflection, secret and all.
+func (p *Pipeline) String() string { return "stream.Pipeline{" + p.backend.String() + "}" }
+
+// GoString is String, so %#v leaves the credentials out too.
+func (p *Pipeline) GoString() string { return p.String() }
+
 // Accelerated configures a pipeline to run remotely.
 //
 //	llm := stream.Accelerated(stream.Config{LLM: "gemma4", STT: "parakeet", TTS: "sonic_36"})

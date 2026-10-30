@@ -137,6 +137,20 @@ module GetStream
         [raw].pack("m0").tr("+/", "-_").delete("=")
       end
 
+      # Leaves the secret and the token out, so printing or logging a backend, or a client
+      # holding one, shows neither.
+      def inspect
+        "#<#{self.class.name} url=#{@url.inspect} customer_id=#{@customer_id.inspect} " \
+          "api_key=#{@api_key.inspect} api_secret=#{Backend.redacted(@api_secret)} " \
+          "token=#{Backend.redacted(@token)} user_id=#{@user_id.inspect} " \
+          "acting_for=#{@acting_for.inspect} authenticate=#{@authenticate.inspect}>"
+      end
+
+      # Whether a credential is set, without what it is.
+      def self.redacted(credential)
+        credential.to_s.empty? ? '""' : "[REDACTED]"
+      end
+
       # The hosted router held to one region: requests to it are served there and nowhere
       # else, even when that region is full or down.
       def self.region_url(name)

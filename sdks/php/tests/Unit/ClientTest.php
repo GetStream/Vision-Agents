@@ -6,6 +6,7 @@ namespace GetStream\VisionAgents\Tests\Unit;
 
 use GetStream\VisionAgents\Backend;
 use GetStream\VisionAgents\Client;
+use GetStream\VisionAgents\Edge;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\ErrorType;
@@ -30,6 +31,25 @@ final class ClientTest extends TestCase
     protected function tearDown(): void
     {
         $this->router->stop();
+    }
+
+    public function testDumpingABackendOrAnEdgeShowsNeitherTheSecretNorTheToken(): void
+    {
+        // Long enough for Stream's client to sign with, as the Edge in AgentTest is.
+        $secret = 'vas_live_shh' . str_repeat('s', 32);
+        $backend = new Backend(url: $this->router->url, apiKey: 'vak_live_x', apiSecret: $secret);
+        $device = new Client(new Backend(url: $this->router->url, apiKey: 'vak_live_x', token: 'token-shh'));
+        $edge = new Edge('vak_live_x', $secret, $this->router->url);
+
+        foreach ([$backend, $device, $edge] as $value) {
+            ob_start();
+            var_dump($value);
+            $shown = (string) ob_get_clean() . print_r($value, true);
+
+            self::assertStringNotContainsString('vas_live_shh', $shown);
+            self::assertStringNotContainsString('token-shh', $shown);
+            self::assertStringContainsString('vak_live_x', $shown);
+        }
     }
 
     public function testNamingNoRouterGoesToTheHostedOneThroughTheProxy(): void

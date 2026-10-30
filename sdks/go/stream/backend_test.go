@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -494,5 +495,29 @@ func TestALocalRouterToldOnlyWhoToBillIsNotSentTheEnvironmentsCredential(t *test
 	}
 	if resolved.Authenticate {
 		t.Error("a key and secret lying around turned authentication on for a local router")
+	}
+}
+
+// Printing a backend, or anything holding one, is how a credential reaches a log line.
+func TestNeitherTheSecretNorTheTokenIsPrinted(t *testing.T) {
+	backend := Backend{URL: "http://router.local", APIKey: "key123", APISecret: "secret-shh", Token: "token-shh"}
+	client, err := NewClient(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged strings.Builder
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("starting", "backend", backend)
+
+	for _, written := range []string{
+		fmt.Sprint(backend), fmt.Sprintf("%+v", backend), fmt.Sprintf("%#v", backend),
+		fmt.Sprintf("%+v", client), fmt.Sprintf("%#v", client),
+		fmt.Sprintf("%+v", Router{Backend: backend}), logged.String(),
+	} {
+		if strings.Contains(written, "secret-shh") || strings.Contains(written, "token-shh") {
+			t.Errorf("a credential was printed: %s", written)
+		}
+		if !strings.Contains(written, "key123") {
+			t.Errorf("the key, which is not secret, is what tells backends apart: %s", written)
+		}
 	}
 }

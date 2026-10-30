@@ -26,6 +26,11 @@ public sealed record EdgeOptions
 
     /// <summary>The <see cref="HttpClient"/> Stream's SDK sends with, for <c>IHttpClientFactory</c>.</summary>
     public HttpClient? HttpClient { get; init; }
+
+    /// <summary>The options with <see cref="ApiSecret"/> left out, so logging them never writes it.</summary>
+    public override string ToString() =>
+        $"EdgeOptions {{ ApiKey = {ApiKey}, ApiSecret = {Backend.Redacted(ApiSecret)}, BaseUrl = {BaseUrl}, "
+        + $"MonitorUrl = {MonitorUrl} }}";
 }
 
 /// <summary>

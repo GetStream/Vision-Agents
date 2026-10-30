@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Printing or logging an SDK client no longer shows its secret or token
+
+Every SDK's object that holds the app secret or a user token now leaves both out of what printing it shows, so a client written to a log or an error report carries no credential. The key, the URL and the user stay. Go: `stream.Backend` and `edge.Options` get `String`, `GoString` and `LogValue`, and the types holding a backend (`stream.Client`, `stream.Pipeline`, `stream.Dispatch`, `client.Client`, `agents.Dispatch`, `edge.Edge`) get `String` and `GoString`. Python: the stream plugin's `Backend` repr leaves out `api_secret` and `token`, and Telnyx's and Twilio's calls and `TelnyxConfig` leave out their token and key. JavaScript: `Backend` and `Edge` get `toJSON` and a Node `util.inspect` view. Rust: `ClientOptions`, the client and `StreamApp` print `[REDACTED]` under `{:?}`. .NET: `VisionAgentsOptions` and `EdgeOptions` override `ToString`. Ruby: `Backend` and `Edge` override `inspect`. PHP: `Backend` and `Edge` get `__debugInfo`, and the secret and token parameters are marked `#[\SensitiveParameter]` for stack traces.
+
 ### A guest who turns out to be a full user is no longer re-minted as a guest
 
 A user id first recorded from the app's own guest token (`role: guest`) is recorded as authenticated once that user calls with their own full token, so `POST /v1/agents/guests` refuses that id with `400`, as it refuses any account's. A guest seen only as a guest, and a guest the router minted, are re-minted and claimed as before. A backend naming a user does not change which kind they are recorded as (AI-1734).

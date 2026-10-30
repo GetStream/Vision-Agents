@@ -324,3 +324,15 @@ def test_preflight_inbound_requires_phone_number_to_route_to_app():
 
     with pytest.raises(TelnyxSetupError, match="not routed"):
         preflight_inbound(client, config=config, telnyx_phone_number_id="phone-id")
+
+
+def test_config_repr_leaves_the_api_key_out():
+    config = TelnyxConfig(
+        api_key="KEY-shh",
+        call_control_app_id="app-id",
+        phone_number="+15551234567",
+        ngrok_url="example.ngrok-free.app",
+    )
+
+    assert "KEY-shh" not in repr(config)
+    assert "app-id" in repr(config)

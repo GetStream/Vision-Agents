@@ -67,6 +67,12 @@ export interface StreamCredentials {
   token: string;
 }
 
+/**
+ * The key Node's `util.inspect`, and so `console.log`, looks a custom view up under. Named
+ * with `Symbol.for` so a browser bundle needs no `node:util`.
+ */
+export const INSPECT = Symbol.for("nodejs.util.inspect.custom");
+
 /** The subset of the WebSocket constructor this SDK uses. */
 export type WebSocketLike = Pick<
   WebSocket,
@@ -331,6 +337,28 @@ export class Backend {
   }
 
   /**
+   * Where this points and who it is, with the secret and the token left out: what
+   * `JSON.stringify` writes, so a logger that serializes a client writes neither.
+   */
+  toJSON(): Record<string, unknown> {
+    return {
+      url: this.url,
+      customerId: this.customerId,
+      apiKey: this.apiKey,
+      apiSecret: redacted(this.apiSecret),
+      token: redacted(this.token),
+      userId: this.userIdValue,
+      actingFor: this.actingForValue,
+      authenticate: this.authenticate,
+    };
+  }
+
+  /** What `console.log` and `util.inspect` show on Node: `toJSON`, credentials left out. */
+  [INSPECT](): Record<string, unknown> {
+    return this.toJSON();
+  }
+
+  /**
    * What every request to the router carries.
    *
    * Minted per call, so a client left idle longer than a token lasts does not wake up
@@ -563,6 +591,11 @@ function base64urlBytes(bytes: Uint8Array): string {
  * A browser has none, and reaching for `process` there would throw rather than fall back,
  * so the read goes through the global object.
  */
+/** Whether a credential is set, without what it is. */
+export function redacted(credential: unknown): string {
+  return credential ? "[REDACTED]" : "";
+}
+
 export function env(name: string): string | undefined {
   const values = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process?.env;
