@@ -211,6 +211,7 @@ func (s *RouterStartSuite) TestAStartingRouterRetiresTheStatusURLsOfOldCalls() {
 	s.Require().NoError(stop())
 	// startPhoneSweeper is the sweep's frame (cmd/router/phonesweep.go); its goroutine ends with
 	// the context the router hands it.
+	// 10 s: the sweeper's goroutine ends as soon as run's ctx does; the deadline only covers scheduling under load, as the 10 s dial wait in idletimeout_test.go does.
 	s.Eventually(func() bool { return !strings.Contains(goroutines(), "startPhoneSweeper") },
 		10*time.Second, 50*time.Millisecond, "the phone sweep went on after the router stopped")
 }
