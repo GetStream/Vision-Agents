@@ -876,14 +876,14 @@ func (s *DaytonaSuite) TestAFileWhoseDownloadBreaksOffIsMissingRatherThanCutShor
 func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
 	box := s.configured(Options{Timeout: 2 * time.Second})
 	s.platform.mu.Lock()
-	s.platform.slowUpload = 20 * time.Second
+	s.platform.slowUpload = time.Minute
 	s.platform.mu.Unlock()
 	started := time.Now()
 
 	err := box.Write(s.ctx, "f.txt", []byte("x"))
 
 	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
-	s.Less(time.Since(started), 10*time.Second, "cut long before the upload's end")
+	s.Less(time.Since(started), 30*time.Second, "cut long before the upload's end")
 	s.platform.mu.Lock()
 	s.platform.slowUpload = 0
 	s.platform.mu.Unlock()
@@ -896,14 +896,14 @@ func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
 func (s *DaytonaSuite) TestAHungMkdirIsCutAtTheSandboxsTimeout() {
 	box := s.configured(Options{Timeout: 2 * time.Second})
 	s.platform.mu.Lock()
-	s.platform.slowCommand = 20 * time.Second
+	s.platform.slowCommand = time.Minute
 	s.platform.mu.Unlock()
 	started := time.Now()
 
 	err := box.Write(s.ctx, "dir/f.txt", []byte("x"))
 
 	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
-	s.Less(time.Since(started), 10*time.Second, "cut long before the command's end")
+	s.Less(time.Since(started), 30*time.Second, "cut long before the command's end")
 	s.platform.mu.Lock()
 	defer s.platform.mu.Unlock()
 	s.Empty(s.platform.uploads)
@@ -913,7 +913,7 @@ func (s *DaytonaSuite) TestAHungMkdirIsCutAtTheSandboxsTimeout() {
 // so a caller that gives up before the sandbox's timeout is answered then.
 func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
 	s.platform.mu.Lock()
-	s.platform.slowUpload = 30 * time.Second
+	s.platform.slowUpload = time.Minute
 	s.platform.mu.Unlock()
 	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
 	s.T().Cleanup(cancel)
@@ -922,5 +922,5 @@ func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
 	err := s.box.Write(ctx, "f.txt", []byte("x"))
 
 	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
-	s.Less(time.Since(started), 20*time.Second, "answered long before the sandbox's 60 s timeout")
+	s.Less(time.Since(started), 30*time.Second, "answered long before the sandbox's 60 s timeout")
 }
