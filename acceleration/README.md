@@ -2351,6 +2351,9 @@ go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
 ```
 
+The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
+`--source-auth server` is for a source router reached directly.
+
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
 however the file was edited on the way. An import upserts and refuses a row whose primary
