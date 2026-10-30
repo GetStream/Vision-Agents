@@ -163,9 +163,14 @@ func load(ctx context.Context, client *http.Client, source string) ([]byte, erro
 	return clip, nil
 }
 
+// demuxers are the containers a clip is read in, by FFmpeg's names: MP4 and QuickTime, Matroska
+// and WebM, AVI and MPEG-TS. The clip is the caller's bytes, and FFmpeg left to guess their
+// format also reads playlists and concat scripts, which open other files on this machine.
+const demuxers = "mov,mp4,matroska,webm,avi,mpegts"
+
 // duration is how long the clip at path plays for.
 func duration(ctx context.Context, path string) (time.Duration, error) {
-	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
+	out, err := tool(ctx, "ffprobe", "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", demuxers,
 		"-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path).Output()
 	seconds, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
 	if err != nil || parseErr != nil || seconds <= 0 {
@@ -177,7 +182,7 @@ func duration(ctx context.Context, path string) (time.Duration, error) {
 // frameAt is the frame showing at a moment of the clip, as a JPEG.
 func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error) {
 	var stderr bytes.Buffer
-	command := exec.CommandContext(ctx, "ffmpeg", "-v", "error",
+	command := tool(ctx, "ffmpeg", "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", demuxers,
 		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 3, 64), "-i", path,
 		"-frames:v", "1", "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", frameWidth),
 		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")
@@ -187,6 +192,14 @@ func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error)
 		return nil, stack.Wrap(fmt.Errorf("video: reading the frame at %s: %s", at, strings.TrimSpace(stderr.String())))
 	}
 	return jpeg, nil
+}
+
+// tool runs ffprobe or ffmpeg on a clip with none of the router's environment, which holds
+// its secrets.
+func tool(ctx context.Context, name string, args ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Env = []string{}
+	return command
 }
 
 // publicClient fetches only from the public internet, and never through a proxy, which
