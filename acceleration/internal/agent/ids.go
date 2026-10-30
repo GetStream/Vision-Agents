@@ -278,16 +278,18 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 			sources = append(sources, message.Content)
 		}
 	}
-	wanted := digitGroups(arguments.To)
+	wanted := strings.Join(digitGroups(arguments.To), "")
 	for _, source := range sources {
-		if strings.Contains(source, arguments.To) {
+		if wanted == "" && strings.Contains(source, arguments.To) {
 			return "", false
 		}
-	}
-	if len(wanted) == 1 && slices.ContainsFunc(digitGroups(sources...), func(given string) bool {
-		return strings.Contains(given, wanted[0])
-	}) {
-		return "", false
+		for _, run := range writtenNumber.FindAllString(source, -1) {
+			given := strings.Join(digitGroups(run), "")
+			// A US number written without its country code is the same line.
+			if given == wanted || (len(given) == 10 && "1"+given == wanted) {
+				return "", false
+			}
+		}
 	}
 	return arguments.To, true
 }
@@ -355,6 +357,10 @@ var digitRun = regexp.MustCompile(`\d+`)
 // numberGroup is one number as written, its dashes and brackets included: "512-555-0178".
 // Numbers apart are kept apart, so "2745, last four 6305" holds no 5630.
 var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
+
+// writtenNumber is a number as people write it, its spaces, dots, dashes and brackets
+// included: "+1 (555) 000-1111". Digits split by more than a separator or two are not one number.
+var writtenNumber = regexp.MustCompile(`\d(?:[\s().-]{0,2}\d)*`)
 
 func allDigits(text string) bool {
 	return strings.IndexFunc(text, func(r rune) bool { return !unicode.IsDigit(r) }) < 0

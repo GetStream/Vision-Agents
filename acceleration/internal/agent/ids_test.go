@@ -379,3 +379,24 @@ func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
 	assert.True(t, got, "the word right after the spelling")
 	assert.Equal(t, "jones", spelled)
 }
+
+func TestUnsourcedTransfer(t *testing.T) {
+	call := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+15550001111"}`}
+	for told, accepted := range map[string]bool{
+		"Hand off to +15550001111.":      true,
+		"Hand off to +1 555 000 1111":    true,
+		"Hand off to +1 (555) 000-1111.": true,
+		"Hand off to +1.555.000.1111":    true,
+		"Hand off to 1-555-000-1111":     true,
+		"Hand off to (555) 000-1111":     true,
+		"Hand off to +15550001112":       false,
+		"Hand off to +1 555 000 1112":    false,
+		"Hand off to +155500011112":      false,
+		"Hand off to (555) 000-1112":     false,
+		"Hand off to +44 555 000 1111":   false,
+		"Hand off to 555 000 1111 2222":  false,
+	} {
+		_, unsourced := unsourcedTransfer(nil, call, told)
+		assert.Equal(t, accepted, !unsourced, told)
+	}
+}
