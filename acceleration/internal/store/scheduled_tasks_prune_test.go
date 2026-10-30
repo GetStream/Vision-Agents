@@ -274,17 +274,17 @@ func (s *StoreSuite) TestPruneLeavesTheRowsAnotherPruneHoldsAndDoesNotWait() {
 	s.Empty(s.taskIDs())
 }
 
-// The prune reads each table through an index of its own, not by scanning it once per batch.
-// Sequential scans are off so the plan shows which index the planner can use: the tables of a
-// test are too small for it to prefer one.
+// The prune reads each table through an index of its own, with the cut as the index's
+// condition, not a filter on a scan of the whole index. Sequential scans are off so the plan
+// shows which index the planner can use: the tables of a test are too small for it to prefer one.
 func (s *StoreSuite) TestPruneReadsItsIndexes() {
 	for _, c := range []struct {
 		name, query string
 		batch       int
-		index       string
+		index, cond string
 	}{
-		{"runs", pruneScheduledTaskRunsSQL, scheduledTaskRunsPruned, "scheduled_task_runs_finished_idx"},
-		{"tasks", pruneScheduledTasksSQL, scheduledTasksPruned, "scheduled_tasks_pruned_idx"},
+		{"runs", pruneScheduledTaskRunsSQL, scheduledTaskRunsPruned, "scheduled_task_runs_finished_idx", "(finished_at <"},
+		{"tasks", pruneScheduledTasksSQL, scheduledTasksPruned, "scheduled_tasks_pruned_idx", "(updated_at <"},
 	} {
 		var plan []string
 		err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -296,5 +296,6 @@ func (s *StoreSuite) TestPruneReadsItsIndexes() {
 		s.Require().NoError(err, c.name)
 		read := strings.Join(plan, "\n")
 		s.Contains(read, c.index, "%s: %s", c.name, read)
+		s.Contains(read, "Index Cond: "+c.cond, "the index is walked by the cut, not filtered after it: %s: %s", c.name, read)
 	}
 }
