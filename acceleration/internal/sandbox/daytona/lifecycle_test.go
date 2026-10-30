@@ -298,11 +298,12 @@ func (s *LifecycleSuite) TestASandboxNotDeletedWhenTheRunItsCloseGaveUpOnEndsIsD
 	run.release()
 
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned")
-	s.Contains(s.logs.String(), `msg="could not close a sandbox once the run its Close gave up on ended"`)
 	s.daytona.RefuseDeletes(false)
 
 	s.told("created sandbox-1 1 vCPU 1 GiB 3 GiB container", "orphaned", "gone")
 	s.Equal([]string{"sandbox-1"}, s.daytona.Deleted(), "deleted once it idled, by its own timer")
+	// The warning is written before the gate is let go, so by the timer's delete it is there.
+	s.Contains(s.logs.String(), `msg="could not close a sandbox once the run its Close gave up on ended"`)
 }
 
 func (s *LifecycleSuite) TestASandboxIsDeletedWhenItsRunEndsAsCloseGivesUp() {
