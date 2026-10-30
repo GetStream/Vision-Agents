@@ -16,12 +16,12 @@ typedef CameraPicture = ({Uint8List jpeg, DateTime capturedAt});
 /// and cannot be called off: a picture asked of a track that still owes one shares that one
 /// rather than asking again.
 final class CameraShots {
-  /// [camera] gives the picture to take now, or null when there is no camera sending video;
-  /// [encode] makes each picture into the JPEG the agent is sent.
+  /// `camera` gives the picture to take now, or null when there is no camera sending video;
+  /// `encode` makes each picture into the JPEG the agent is sent.
   CameraShots(this._camera, this._encode);
 
-  /// How far apart the pictures are when the agent asks for more than one, so they show what
-  /// moved.
+  /// How far apart the pictures are asked for when the agent wants more than one, so they
+  /// show what moved.
   static const between = Duration(milliseconds: 500);
 
   final CameraShot? Function() _camera;
@@ -33,7 +33,10 @@ final class CameraShots {
   /// Counts [stop]s, so a look under way can tell it was stopped.
   int _generation = 0;
 
-  /// Takes [limit] pictures, [between] apart, starting now.
+  /// Completes when [stop] is called, so a picture a stalled track owes is not waited for.
+  Completer<void> _stopped = Completer<void>();
+
+  /// Takes [limit] pictures, asked for [between] apart, starting now.
   ///
   /// [at], the moment the question was taken, is not looked back to: nothing from before the
   /// agent asked is kept. A picture the camera could not take or that is not a picture is left
@@ -41,10 +44,16 @@ final class CameraShots {
   /// once [stop] is called.
   Future<List<CameraPicture>> look(DateTime at, int limit) async {
     final generation = _generation;
+    final stopped = _stopped.future;
     final pictures = <CameraPicture>[];
+    Future<void>? next;
     for (var taken = 0; taken < limit; taken += 1) {
-      if (taken > 0) {
-        await Future<void>.delayed(between);
+      // The first picture is asked for at once, with nothing awaited before it.
+      if (next != null) {
+        await next;
+      }
+      if (taken + 1 < limit) {
+        next = Future<void>.delayed(between);
       }
       final shot = _camera();
       if (generation != _generation || shot == null) {
@@ -54,7 +63,7 @@ final class CameraShots {
       // camera gives.
       final capturedAt = DateTime.now();
       try {
-        final picture = await _take(shot);
+        final picture = await Future.any([_take(shot), stopped.then((_) => null)]);
         if (picture != null && generation == _generation) {
           pictures.add((jpeg: await _encode(picture), capturedAt: capturedAt));
         }
@@ -66,9 +75,13 @@ final class CameraShots {
     return generation == _generation ? pictures : const [];
   }
 
-  /// Stops every look under way. A picture a track still owes stays owed, so a camera turned
-  /// back on shares it rather than asking for a second.
-  void stop() => _generation += 1;
+  /// Stops every look under way, at once even when a track still owes it a picture. That
+  /// picture stays owed, so a camera turned back on shares it rather than asking for a second.
+  void stop() {
+    _generation += 1;
+    _stopped.complete();
+    _stopped = Completer<void>();
+  }
 
   Future<Uint8List?> _take(CameraShot shot) {
     final track = shot.track;

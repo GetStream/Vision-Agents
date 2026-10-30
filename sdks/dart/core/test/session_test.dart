@@ -686,6 +686,39 @@ void main() {
         await chat.close();
       });
 
+      test('asks for eight pictures when the number is past what a double holds', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        // 1e400 decodes as infinity, which jsonEncode refuses to write.
+        socket.send(request().replaceFirst(r'\"limit\":2', r'\"limit\":1e400'));
+        await socket.next();
+
+        expect(asking, 8);
+        await chat.close();
+      });
+
+      test('asks for at least one picture', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        socket.send(request(arguments: {'at_ms': asked.millisecondsSinceEpoch, 'limit': 0}));
+        await socket.next();
+
+        expect(asking, 1);
+        await chat.close();
+      });
+
       test('takes a moment past what a date holds as now, rather than failing', () async {
         final chat = await agents.chat();
         DateTime? asking;

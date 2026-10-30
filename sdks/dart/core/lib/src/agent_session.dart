@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import 'agent_event.dart';
 import 'backend.dart';
 import 'command.dart';
@@ -19,6 +21,12 @@ import 'tools.dart';
 /// dropped without a word. Nothing is lost by it: the transcript and tool calls are handled
 /// by the session, not by whoever is reading events.
 const _bufferedEvents = 256;
+
+/// A picture for the agent: a JPEG, and when the camera took it.
+typedef CameraPicture = ({Uint8List jpeg, DateTime capturedAt});
+
+/// Takes `limit` pictures, 1 to 8, for a question the agent took at `at`.
+typedef CameraHandler = Future<List<CameraPicture>> Function(DateTime at, int limit);
 
 /// Whether the socket is carrying the conversation.
 sealed class Connection {
@@ -89,11 +97,12 @@ final class AgentSession {
   /// Takes pictures with this device's camera when the agent asks to see, or null to leave
   /// the asking to somebody else.
   ///
-  /// The hook `vision_agents_rtc` answers the agent's vision skill through while the call's
-  /// camera is on. It is called with the moment the question was taken and how many pictures
-  /// are wanted, 1 to 8, and returns JPEGs with when each was taken. None at all tells the
-  /// agent the camera has shown nothing recent.
-  Future<List<({Uint8List jpeg, DateTime capturedAt})>> Function(DateTime at, int limit)? camera;
+  /// Set by `vision_agents_rtc` while the call's camera is on, and not for apps. It is called
+  /// with the moment the question was taken and how many pictures are wanted, 1 to 8, and
+  /// returns JPEGs with when each was taken. None at all tells the agent the camera has shown
+  /// nothing recent.
+  @internal
+  CameraHandler? camera;
 
   final Backend _backend;
   final Sessions _sessions;
@@ -370,10 +379,7 @@ final class AgentSession {
   /// then the pictures, oldest first. A camera with nothing to show is said as the answer
   /// rather than as a failure, as the router's own video workers say it, so the agent can ask
   /// the person to show it again. A request the router cancels is not answered.
-  void _show(
-    Future<List<({Uint8List jpeg, DateTime capturedAt})>> Function(DateTime at, int limit) camera,
-    ToolCall call,
-  ) {
+  void _show(CameraHandler camera, ToolCall call) {
     final arguments = call.argumentValues;
     final at = switch (arguments['at_ms']) {
       // Past what a DateTime holds is not a moment the router could have meant.
@@ -381,22 +387,18 @@ final class AgentSession {
       _ => DateTime.now(),
     };
     final limit = switch (arguments['limit']) {
-      final num limit => limit.toInt().clamp(1, _mostPictures),
+      // Clamped before it is made an int, which an infinite number cannot be.
+      final num limit => limit.clamp(1, _mostPictures).toInt(),
       _ => 1,
     };
-    _running.add(call.id);
-    unawaited(() async {
-      List<({Uint8List jpeg, DateTime capturedAt})> pictures;
+    _reply(call, () async {
+      List<CameraPicture> pictures;
       try {
         pictures = [...await camera(at, limit)]
           ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
       } catch (_) {
         // A camera that could not take a picture has shown nothing.
         pictures = const [];
-      }
-      _running.remove(call.id);
-      if (_cancelled.remove(call.id) || !isConnected) {
-        return;
       }
       final frames = <Map<String, Object>>[];
       for (final picture in pictures) {
@@ -415,49 +417,49 @@ final class AgentSession {
                   AgentImage('data:image/jpeg;base64,${base64Encode(picture.jpeg)}'),
               ],
             );
-      try {
-        _socket?.send(
-          ToolResultCommand(
-            call.id,
-            output: output.text,
-            images: output.images,
-            requestId: call.requestId,
-            turnId: call.turnId,
-          ),
-        );
-      } on SocketClosedException {
-        // The conversation ended while the camera was looking; there is nobody left to show.
-      }
-    }());
+      return ToolResultCommand(
+        call.id,
+        output: output.text,
+        images: output.images,
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    });
   }
 
   /// Runs a tool and sends back what it returned.
   ///
-  /// On its own, not awaited, so a slow tool holds up neither the transcript nor the
-  /// `tool_cancel` that might be on its way for it. A tool that throws is answered with the
-  /// error: the model is waiting, and can only say something useful about a tool that did
-  /// not work if it is told so.
-  void _run(ToolCall call, AgentTool tool) {
+  /// A tool that throws is answered with the error: the model is waiting, and can only say
+  /// something useful about a tool that did not work if it is told so.
+  void _run(ToolCall call, AgentTool tool) => _reply(call, () async {
+    try {
+      final output = await tool.run(call.argumentValues);
+      return ToolResultCommand(
+        call.id,
+        output: output.text,
+        images: output.images,
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    } catch (error) {
+      return ToolResultCommand(
+        call.id,
+        error: '$error',
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    }
+  });
+
+  /// Sends back the result [answer] comes to for [call], unless the router cancelled the call
+  /// or the conversation ended meanwhile.
+  ///
+  /// On its own, not awaited, so a slow answer holds up neither the transcript nor the
+  /// `tool_cancel` that might be on its way for it. [answer] does not throw.
+  void _reply(ToolCall call, Future<ToolResultCommand> Function() answer) {
     _running.add(call.id);
     unawaited(() async {
-      ToolResultCommand result;
-      try {
-        final output = await tool.run(call.argumentValues);
-        result = ToolResultCommand(
-          call.id,
-          output: output.text,
-          images: output.images,
-          requestId: call.requestId,
-          turnId: call.turnId,
-        );
-      } catch (error) {
-        result = ToolResultCommand(
-          call.id,
-          error: '$error',
-          requestId: call.requestId,
-          turnId: call.turnId,
-        );
-      }
+      final result = await answer();
       _running.remove(call.id);
       if (_cancelled.remove(call.id) || !isConnected) {
         return;
@@ -465,7 +467,7 @@ final class AgentSession {
       try {
         _socket?.send(result);
       } on SocketClosedException {
-        // The conversation ended while the tool ran; there is nobody left to tell.
+        // The conversation ended while answering; there is nobody left to tell.
       }
     }());
   }

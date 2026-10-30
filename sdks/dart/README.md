@@ -132,10 +132,9 @@ await voice.join(camera: true); // or later: await voice.setCameraEnabled(true);
 ```
 
 The camera is the back lens. When the agent's `vision` skill needs to see, the router asks the
-session what the camera shows (`get_video_frames`), and `voice.session` answers with a picture of
-the call's own video taken then, at most 1024 px on its longest side, as a JPEG. An agent set to
-look at several frames gets them half a second apart. Nothing is taken until the agent asks, and
-nothing is declared as a tool, so the model is never offered it. With the camera off the session
+session what the camera shows (`get_video_frames`), and `voice.session` answers with pictures of
+the call's own video, taken then, as JPEGs. Nothing is taken until the agent asks, and nothing is
+declared as a tool, so the model is never offered it. With the camera off the session
 does not answer, so a video worker in your backend can. The agent needs the `vision` skill, and
 the call a subagent to run it on.
 

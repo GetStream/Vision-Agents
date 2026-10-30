@@ -12,9 +12,8 @@ or on the app's own handed over with `agents.useVideo(client)`.
 
 With the camera on (`voice.join(camera: true)` or `voice.setCameraEnabled(true)`, on the back
 lens) the agent can look through it: when the agent's vision skill asks what the camera shows,
-the session takes a picture of the call's own video then, or several half a second apart, and
-answers with them as JPEGs at most 1024 px on their longest side. Nothing is taken until the agent
-asks.
+the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken
+until the agent asks.
 
 The host app declares the microphone, and the camera if it shows one: `RECORD_AUDIO`,
 `MODIFY_AUDIO_SETTINGS`, `CAMERA`, `BLUETOOTH_CONNECT`, `INTERNET` and `ACCESS_NETWORK_STATE` on

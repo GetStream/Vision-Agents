@@ -37,7 +37,7 @@ void main() {
       });
     });
 
-    test('waits half a second after one picture before taking the next', () {
+    test('asks for the next picture half a second after asking for one', () {
       fakeAsync((async) {
         var asking = 0;
         final shots = CameraShots(camera(() async => Uint8List.fromList([asking += 1])), asTaken);
@@ -47,6 +47,25 @@ void main() {
         expect(asking, 1);
 
         async.elapse(const Duration(milliseconds: 1));
+        expect(asking, 2);
+      });
+    });
+
+    test('counts the half second from asking for a picture, not from getting it', () {
+      fakeAsync((async) {
+        var asking = 0;
+        final shots = CameraShots(
+          camera(() async {
+            asking += 1;
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+            return Uint8List.fromList([asking]);
+          }),
+          asTaken,
+        );
+
+        shots.look(asked, 2);
+        async.elapse(CameraShots.between);
+
         expect(asking, 2);
       });
     });
@@ -158,6 +177,20 @@ void main() {
         async.elapse(const Duration(seconds: 2));
 
         expect(asking, 1);
+      });
+    });
+
+    test('comes back with nothing when stopped while a track owes a picture', () {
+      fakeAsync((async) {
+        final shots = CameraShots(camera(() => Completer<Uint8List?>().future), asTaken);
+        List<CameraPicture>? looked;
+
+        shots.look(asked, 1).then((pictures) => looked = pictures);
+        async.flushMicrotasks();
+        shots.stop();
+        async.flushMicrotasks();
+
+        expect(looked, isEmpty);
       });
     });
 

@@ -102,10 +102,6 @@ final class VoiceSession {
   bool _joining = false;
   late final _shots = CameraShots(_shot, cameraJpeg);
 
-  /// What [session] takes pictures with while the camera is on, kept so it can be told apart
-  /// from one the app set.
-  late final _camera = _shots.look;
-
   LiveValue<VoiceState> get state => _state;
   video.Call? get call => _state.value.call;
 
@@ -172,9 +168,8 @@ final class VoiceSession {
 
   /// Turns this device's camera on or off. Turning it back on keeps the back lens.
   ///
-  /// While it is on, the agent can look through it: its vision skill asks for what the camera
-  /// showed when a question was put, and [session] answers with those frames. Turned off,
-  /// what it showed is forgotten.
+  /// While it is on, the agent can look through it: when its vision skill asks, [session]
+  /// answers with pictures the camera takes then. Nothing is taken until it asks.
   Future<void> setCameraEnabled(bool enabled) async {
     final call = this.call;
     if (call == null) {
@@ -240,14 +235,14 @@ final class VoiceSession {
     if (!identical(this.call, call)) {
       return;
     }
-    session.camera = _camera;
+    // ignore: invalid_use_of_internal_member
+    session.camera = _shots.look;
   }
 
   void _stopLooking() {
     _shots.stop();
-    if (identical(session.camera, _camera)) {
-      session.camera = null;
-    }
+    // ignore: invalid_use_of_internal_member
+    session.camera = null;
   }
 
   /// The picture to take with the call's camera now, or null when it is not sending video.
