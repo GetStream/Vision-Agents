@@ -124,3 +124,21 @@ func (s *RedisSuite) TestNothingListeningIsAnErrorAtTheDeadline() {
 	s.GreaterOrEqual(time.Since(start), 1200*time.Millisecond, "a refused connection was given up on at once")
 	s.Less(time.Since(start), 5*time.Second)
 }
+
+func (s *RedisSuite) TestAFailureIsNotWaitedOutAgainForTheSameAddress() {
+	original := ready
+	ready = 300 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	address := listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	first := Ready(address)
+	s.Require().Error(first)
+
+	start := time.Now()
+	second := Ready(address)
+
+	s.Equal(first, second)
+	s.Less(time.Since(start), 100*time.Millisecond, "the second call waited out the deadline again")
+}

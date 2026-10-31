@@ -14,7 +14,7 @@ import (
 // before the run answered 12.9 s after `docker run` returned, with the machine loaded;
 // 60 s leaves room above that without hiding a Redis that is not coming. With no Redis at
 // the address, Ready spends all of it once per process, then fails.
-const ready = 60 * time.Second
+var ready = 60 * time.Second
 
 // redisAttempt bounds one PING: a connection that is accepted and then left unanswered
 // must not use up the whole wait.
