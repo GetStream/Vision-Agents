@@ -408,6 +408,25 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNo
 	s.Zero(stored.ConsecutiveFailures)
 }
 
+// A channel before the call failing does not hide the call: the run says
+// already_called, so the occurrence is not counted a failure.
+func (s *ScheduledTasksSuite) TestAnOccurrenceThatRangAlreadyAfterAFailedChannelIsNotCountedFailed() {
+	s.retryAtOnce()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"whatsapp", "phone"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(scheduling.ReasonRungAlready, *run.Error)
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State, "that call may have carried the task out")
+	s.Zero(stored.ConsecutiveFailures)
+}
+
 // A channel before the call that may land later keeps the occurrence retried, but the
 // channel after the call is not tried even then.
 func (s *ScheduledTasksSuite) TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed() {
@@ -416,7 +435,7 @@ func (s *ScheduledTasksSuite) TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlie
 	_, err := s.deliverNow(task, time.Now(), "the-earlier-call")
 
 	failure := s.failure(err)
-	s.Equal(scheduling.ReasonUnreachable, failure.Reason)
+	s.Equal(scheduling.ReasonRungAlready, failure.Reason, "the call counts, not the channel before it")
 	s.False(failure.Final, "WhatsApp may open by the next attempt")
 	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
 }
@@ -738,7 +757,7 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailur
 	_, err := s.deliverNow(task, time.Now(), "the-earlier-call")
 
 	failure := s.failure(err)
-	s.Equal(scheduling.ReasonUnreachable, failure.Reason)
+	s.Equal(scheduling.ReasonRungAlready, failure.Reason, "the call counts, not the channel before it")
 	s.False(failure.Final, "WhatsApp may open by the next attempt, though the call is not placed again")
 }
 

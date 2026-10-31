@@ -279,6 +279,8 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		// A call taken with its end never written (a failed give-back or
 		// reason write) counts too: see rangAlready.
 		if rangAlready(err) {
+			// The call decides how the occurrence counts, not a channel before it.
+			reason = scheduling.ReasonRungAlready
 			break
 		}
 	}

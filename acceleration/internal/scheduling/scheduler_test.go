@@ -638,6 +638,32 @@ func (s *SchedulerSuite) TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceK
 	s.Equal(ReasonRungAlready, *runs[0].Error, "the settle keeps the run's reason")
 }
 
+// The same for a one-shot: the call may have carried it out, so it is
+// completed, not failed.
+func (s *SchedulerSuite) TestAOneShotSettledAsCalledAlreadyBeforeItsAdvanceIsCompleted() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	started := due.Add(-time.Minute)
+	reason := ReasonRungAlready
+	run := store.ScheduledTaskRun{
+		CustomerID: task.CustomerID, TaskID: task.ID, ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunFailed, Error: &reason,
+		Attempts: 2, StartedAt: &started, FinishedAt: &due,
+	}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &run))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State != store.ScheduledTaskActive
+	}, 10*time.Second, 10*time.Millisecond)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskCompleted, read.State)
+	s.Zero(read.ConsecutiveFailures)
+	s.Empty(deliver.callsFor(task.ID))
+}
+
 // stalling holds every delivery until its context ends, and records the
 // attempts and why the last one ended. Any other task is delivered at once.
 type stalling struct {
