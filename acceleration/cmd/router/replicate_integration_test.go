@@ -153,3 +153,25 @@ func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForADeleted
 		"left 1 scheduled tasks paused: their agent config is deleted or missing here\n", out.String())
 	s.Equal(store.ScheduledTaskPaused, s.state("st-active"))
 }
+
+func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForWantOfRoom() {
+	_, err := s.store.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 1}' WHERE id = 'config-1'`)
+	s.Require().NoError(err)
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &store.ScheduledTask{
+		ID: "st-here", CustomerID: "acme", ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
+		Title: "Hydrate", Instructions: "Remind Sam to drink.", StartLocal: next, Timezone: "UTC",
+		NextRunAt: &next, CreatedBy: "api",
+	}, 25))
+	s.imported("st-1", store.ScheduledTaskActive)
+	s.imported("st-2", store.ScheduledTaskActive)
+
+	var out bytes.Buffer
+	s.Require().NoError(resumeMove(s.ctx, s.store, "acme", &out))
+
+	s.Equal("resumed 0 scheduled tasks\n"+
+		"left 2 scheduled tasks paused: their user already holds the most active tasks the agent config allows. "+
+		"Run --resume again once the user has made room; the oldest are resumed first\n", out.String())
+	s.Equal(store.ScheduledTaskPaused, s.state("st-1"))
+}

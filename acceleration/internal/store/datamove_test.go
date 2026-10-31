@@ -898,6 +898,129 @@ func (s *DataMoveSuite) TestATaskPausedAtTheSourceIsNotResumedWhateverMarkItCarr
 	s.Equal(ScheduledTaskPaused, state)
 }
 
+// limitHere sets how many active tasks a user may hold on config-1 on the destination.
+func (s *DataMoveSuite) limitHere(limit int) {
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"UPDATE agent_configs SET scheduling = jsonb_build_object('max_tasks_per_user', ?::int) WHERE id = 'config-1'", limit)
+	s.Require().NoError(err)
+}
+
+// madeHere is an active task a user made on the destination before the cut-over.
+func (s *DataMoveSuite) madeHere(id, user, config string) {
+	next := time.Date(2026, 12, 2, 9, 0, 0, 0, time.UTC)
+	s.Require().NoError(s.destination.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: id, CustomerID: "moved", ConfigID: config, UserID: user, CallerKind: "authenticated",
+		Title: "Hydrate", Instructions: "Remind them to drink.", StartLocal: next, Timezone: "UTC",
+		State: ScheduledTaskActive, NextRunAt: &next, CreatedBy: "api",
+	}, 100))
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesAUserOnlyUpToTheRoomTheirLimitLeaves() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, skipped, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed, "one place is left under the limit of 2")
+	s.Zero(skipped)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskActive, state, "the oldest takes the place")
+	s.False(s.movePausedOn("st-1"))
+	for _, id := range []string{"st-2", "st-3"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+		s.True(s.movePausedOn(id), "%s is still owed its resume", id)
+	}
+	held, err := s.destination.ActiveScheduledTaskCount(s.ctx, "moved", "sam", "config-1")
+	s.Require().NoError(err)
+	s.Equal(2, held)
+}
+
+// The mark kept on a task left over the limit is what lets a second cut-over resume it.
+func (s *DataMoveSuite) TestTheCutOverRunAgainResumesWhatItLeftOnceTheUserHasRoom() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+	_, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	s.Require().NoError(err)
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-here'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-2")
+	s.Equal(ScheduledTaskActive, state, "the next oldest")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-3")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// Control: the limit is a user's on one config, and a task they paused here uses no place.
+func (s *DataMoveSuite) TestTheCutOverResumesEveryTaskThatFitsUnderTheLimit() {
+	s.seedScheduledTask("st-sam-1", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-sam-other-config", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-kim", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id = 'st-sam-other-config';
+UPDATE scheduled_tasks SET user_id = 'kim' WHERE id = 'st-kim'`)
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+	s.madeHere("st-here-other-config", "sam", "config-2")
+	s.madeHere("st-here-paused", "sam", "config-1")
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'paused' WHERE id = 'st-here-paused'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(3), resumed, "sam's second place on config-1, their task on the other config, and kim's")
+	s.Zero(overLimit)
+}
+
+func (s *DataMoveSuite) TestTheCutOverHoldsAConfigWithoutALimitToTheDefault() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	for i := range 25 {
+		s.madeHere(fmt.Sprintf("st-here-%d", i), "sam", "config-1")
+	}
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesNothingForAUserAlreadyAboveALoweredLimit() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	s.madeHere("st-here-1", "sam", "config-1")
+	s.madeHere("st-here-2", "sam", "config-1")
+	s.limitHere(1)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+}
+
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused() {
 	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
 	s.move("acme", "moved")
