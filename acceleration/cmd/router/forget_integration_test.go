@@ -59,6 +59,7 @@ func (s *ForgetUserSuite) SetupSuite() {
 	}
 	s.usageDSN = usagetest.Database(s.T(), "usage_forget")
 	s.counters = usagetest.Redis(s.T())
+	s.Require().NoError(testenv.WaitForRedis(address))
 	routers, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(routers.Close)

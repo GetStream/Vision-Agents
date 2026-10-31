@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // CallLogSuite is the "connector call failed" line a session's dispatcher logs for a call that
@@ -537,6 +538,7 @@ func (s *CallLogSuite) sendWrongToken(connection string) {
 
 // limiter is a limiter over the suite's Redis, with a client of its own.
 func (s *CallLogSuite) limiter() *core.Limiter {
+	s.Require().NoError(testenv.WaitForRedis(s.address))
 	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{s.address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)

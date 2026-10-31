@@ -22,7 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // org is Daytona's secret API as a sweep uses it: List, which matches the name anywhere in a
@@ -175,6 +175,7 @@ func (s *SweepSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
+	s.Require().NoError(testenv.WaitForRedis(address))
 	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.redis, s.ctx = client, context.Background()

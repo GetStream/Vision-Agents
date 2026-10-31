@@ -17,7 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // LLMQuotaSuite covers what a session does about a daily limit. It needs a Redis to count
@@ -39,6 +39,7 @@ func (s *LLMQuotaSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR must be set")
 	}
+	s.Require().NoError(testenv.WaitForRedis(address))
 	client, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{address},
 		DisableCache: true,

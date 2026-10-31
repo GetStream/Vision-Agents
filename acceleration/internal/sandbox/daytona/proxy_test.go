@@ -23,7 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
-	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // ProxySuite is the sandbox Daytona is asked for when the egress proxy is the broker.
@@ -46,6 +46,7 @@ func (s *ProxySuite) SetupSuite() {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
 	var err error
+	s.Require().NoError(testenv.WaitForRedis(address))
 	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)

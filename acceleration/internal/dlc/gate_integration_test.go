@@ -52,6 +52,7 @@ func (s *GateSuite) SetupSuite() {
 	s.ctx = context.Background()
 	s.money = policytest.Start(s.T(), "dlc_gate")
 	var err error
+	s.Require().NoError(testenv.WaitForRedis(address))
 	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)

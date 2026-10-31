@@ -88,6 +88,7 @@ func RedisURL(t testing.TB) string {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, testenv.WaitForRedis(address))
 	return "redis://" + address + "/" + strconv.Itoa(RedisDB)
 }
 
