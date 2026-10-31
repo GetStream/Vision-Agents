@@ -1195,8 +1195,10 @@ func (s *ScheduledTasksSuite) TestACallerThatHangsUpAfterTheDeleteStillLeavesIts
 
 // The pause after a delete gives up at auditWriteTimeout (AI-2183): it runs without its
 // caller's cancellation, so a task row locked for longer would hold the request open. The
-// test locks the task's row until two seconds past the bound and reads how long the delete
-// took to return.
+// test locks the task's row and lets it go a second past the bound, counted from when the
+// pause is seen waiting on it: a pause still waiting then takes the row and pauses the task,
+// and one that gave up leaves it active. The delete's own reads before the pause and its
+// audit row after it are not the pause's, and a stalled database slows them by seconds.
 func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLocked() {
 	config := s.agentWithScheduling(nil)
 	created := s.createTask(s.data.createUser(), taskRequest(config))
@@ -1204,18 +1206,34 @@ func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLo
 	hold, err := s.store.DB().BeginTx(ctx, nil)
 	s.Require().NoError(err)
 	defer func() { _ = hold.Rollback() }()
+	var holder int
+	s.Require().NoError(hold.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder))
 	_, err = hold.ExecContext(ctx, "SELECT 1 FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id)
 	s.Require().NoError(err)
-	release := time.AfterFunc(auditWriteTimeout+2*time.Second, func() { _ = hold.Rollback() })
-	defer release.Stop()
 
 	request := context.WithValue(context.WithValue(ctx, customerContextKey{}, s.customerID()), serverSideContextKey{}, true)
-	start := time.Now()
-	_, err = s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
-	took := time.Since(start)
+	answered := make(chan error, 1)
+	go func() {
+		_, err := s.router.deleteAgentConfig(request, &deleteAgentConfigRequest{Id: config})
+		answered <- err
+	}()
+	s.Require().Eventually(func() bool {
+		var waiting int
+		err := s.store.DB().QueryRowContext(ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", holder).Scan(&waiting)
+		return err == nil && waiting > 0
+	}, time.Minute, 10*time.Millisecond, "the delete never reached its config's tasks")
+	release := time.AfterFunc(auditWriteTimeout+time.Second, func() { _ = hold.Rollback() })
+	defer release.Stop()
+	select {
+	case err := <-answered:
+		s.Require().NoError(err)
+	case <-time.After(time.Minute):
+		s.FailNow("the delete never answered")
+	}
 
-	s.Require().NoError(err)
-	s.Less(took, auditWriteTimeout+time.Second, "the pause waits on a locked task past its bound")
+	s.Equal(store.ScheduledTaskActive, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State,
+		"the pause waits on a locked task past its bound")
 }
 
 func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
