@@ -210,12 +210,16 @@ func (s *ReplicateResumeSuite) TestResumeDoesNotDeliverAgainARepeatsOccurrenceTh
 func (s *ReplicateResumeSuite) TestResumeClosesAOneShotWhoseTimeCameBeforeIt() {
 	due := s.overdue("st-once", "", store.ScheduledTaskActive)
 	s.overdue("st-twice", "", store.ScheduledTaskActive)
+	// The prune deletes a completed task by when it last changed, read on the database's clock.
+	var before time.Time
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT now()").Scan(&before))
 
 	s.Equal("resumed 0 scheduled tasks\n", s.cutOver())
 
 	for _, id := range []string{"st-once", "st-twice"} {
 		task := s.task(id)
 		s.Equal(store.ScheduledTaskCompleted, task.State, id)
+		s.False(task.UpdatedAt.Before(before), "%s was completed at the cut-over, so its history is kept from then", id)
 		s.Nil(task.NextRunAt, id)
 		s.False(task.MovePaused, id)
 		var state, reason string

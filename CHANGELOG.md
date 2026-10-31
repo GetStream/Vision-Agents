@@ -180,6 +180,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### `router replicate --resume` does not deliver again what the source delivered
+
+The source goes on delivering between the last `router replicate --once` and its stop, and what it delivers then never reaches the copy, so a task's next run there was one the source had already delivered: the cut-over resumed it, and the destination delivered that occurrence a second time. The cut-over now resumes each moved task at its first occurrence after the cut-over, as any resume counts from now; a moved task with no occurrence left is completed, a one-shot with a `missed` run. Run `--resume` right after stopping the source: an occurrence due between the two is delivered by neither. Until the last `--once` the source is the truth: a change it makes to a row overwrites what was done to that row on the destination, a delete included, so a config deleted there comes back when the source edits it; once SDKs point at the destination, stop writing at the source (AI-2406, AI-2408).
+
 ### A bad connector or knowledge page in a Go agent folder names its line
 
 `agents.Load` now says which line of `agent.yaml` or `knowledge/urls.yaml` a refused connector entry (no name, `tools: []`, an empty `connection`, `connectors` that is not a list) or knowledge page (an unknown key, `refresh_hours` below 1, an entry that is neither a url nor a mapping) is on, as it already did for an unknown connector key. The same files are refused as before (AI-2009).

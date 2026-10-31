@@ -34,8 +34,13 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --poll        how often to ask for changes once the copy is done
   --once        stop as soon as there is nothing left to catch up on
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
-                the scheduled tasks the copy paused because they were active there, and
-                name the campaigns that were running there, to start here
+                the scheduled tasks the copy paused because they were active there, each
+                at its first occurrence after now, and name the campaigns that were
+                running there, to start here
+
+Until the last --once the deployment copied from is the truth: a change it makes to a
+row overwrites what was done to that row here, a delete included. Once SDKs point here,
+stop writing there.
 `
 
 // tokenLifetime is how long the token this command signs for itself is good for. It is
