@@ -1029,6 +1029,17 @@ type AgentScheduling struct {
 	DefaultTimezone string `json:"default_timezone,omitempty"`
 }
 
+// DefaultMaxActiveTasks is the cap on a user's active tasks when the config sets none.
+const DefaultMaxActiveTasks = 25
+
+// MaxActive is how many active tasks one user may hold on this config.
+func (a AgentScheduling) MaxActive() int {
+	if a.MaxTasksPerUser > 0 {
+		return a.MaxTasksPerUser
+	}
+	return DefaultMaxActiveTasks
+}
+
 // Lines are the channels named, by kind.
 func (c AgentChannels) Lines() map[string]string {
 	named := map[string]string{}

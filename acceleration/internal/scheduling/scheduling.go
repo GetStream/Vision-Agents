@@ -71,7 +71,7 @@ func CheckMove(next time.Time, current *time.Time, now time.Time) error {
 
 // MaxActivePerUser is the default cap on a user's active tasks, used when the
 // agent config does not set one.
-const MaxActivePerUser = 25
+const MaxActivePerUser = store.DefaultMaxActiveTasks
 
 const (
 	maxCount = 1000

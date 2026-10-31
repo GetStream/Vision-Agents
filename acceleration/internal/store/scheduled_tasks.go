@@ -207,14 +207,9 @@ func (s *Store) CreateScheduledTask(ctx context.Context, task *ScheduledTask, ma
 			return err
 		}
 		if maxActive > 0 {
-			count, err := tx.NewSelect().Model((*ScheduledTask)(nil)).
-				Where("customer_id = ?", task.CustomerID).
-				Where("user_id = ?", task.UserID).
-				Where("config_id = ?", task.ConfigID).
-				Where("state = ?", ScheduledTaskActive).
-				Count(ctx)
+			count, err := activeScheduledTasks(ctx, tx, task.CustomerID, task.UserID, task.ConfigID)
 			if err != nil {
-				return fmt.Errorf("store: count scheduled tasks: %w", err)
+				return err
 			}
 			if count >= maxActive {
 				return ErrTooManyScheduledTasks
@@ -512,14 +507,19 @@ func (s *Store) SetScheduledTaskSession(ctx context.Context, customerID, taskID,
 // ActiveScheduledTaskCount is how many active tasks a user holds on one agent
 // config, which is what that config's limit counts.
 func (s *Store) ActiveScheduledTaskCount(ctx context.Context, customerID, userID, configID string) (int, error) {
-	count, err := s.db.NewSelect().Model((*ScheduledTask)(nil)).
+	count, err := activeScheduledTasks(ctx, s.db, customerID, userID, configID)
+	return count, stack.Wrap(err)
+}
+
+func activeScheduledTasks(ctx context.Context, db bun.IDB, customerID, userID, configID string) (int, error) {
+	count, err := db.NewSelect().Model((*ScheduledTask)(nil)).
 		Where("customer_id = ?", customerID).
 		Where("user_id = ?", userID).
 		Where("config_id = ?", configID).
 		Where("state = ?", ScheduledTaskActive).
 		Count(ctx)
 	if err != nil {
-		return 0, stack.Wrap(fmt.Errorf("store: count scheduled tasks: %w", err))
+		return 0, fmt.Errorf("store: count scheduled tasks: %w", err)
 	}
 	return count, nil
 }

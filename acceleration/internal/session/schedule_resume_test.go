@@ -88,7 +88,7 @@ func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentPausesIsLeftPaused
 		Arguments: `{"id":"` + task.ID + `","action":"pause"}`})
 	s.Require().NoError(err)
 
-	resumed, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
+	resumed, _, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
 	s.Require().NoError(err)
 	s.Zero(resumed, "the user asked the agent to pause it")
 	stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)
@@ -128,7 +128,7 @@ func (s *ScheduleResumeSuite) TestATaskAMovePausedThatTheAgentMovesIsStillResume
 			s.Require().NotNil(moved.NextRunAt)
 			s.Require().False(task.NextRunAt.Equal(*moved.NextRunAt), "the agent moved it: %s", parts[0].Text)
 
-			resumed, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
+			resumed, _, _, _, err := s.store.ResumeMovedRows(s.ctx, task.CustomerID)
 			s.Require().NoError(err)
 			s.Equal(int64(1), resumed, "the user only moved it")
 			stored, err := s.store.ScheduledTask(s.ctx, task.CustomerID, task.ID)

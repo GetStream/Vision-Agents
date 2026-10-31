@@ -804,7 +804,7 @@ func (s *DataMoveSuite) TestAScheduledTaskChangeAppliedLaterArrivesPausedToo() {
 
 // resume is the cut-over on the destination: what it resumed, and the campaigns left to start.
 func (s *DataMoveSuite) resume(customerID string) (int64, []string) {
-	resumed, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
+	resumed, _, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
 	s.Require().NoError(err)
 	return resumed, campaigns
 }
@@ -905,7 +905,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused
 	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
 	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "every occurrence would fail on the deleted agent")
@@ -931,7 +931,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHereBefore
 	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
 	s.Require().True(s.movePausedOn("st-active"), "the catch-up marked it again")
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "its config is deleted here")
@@ -949,7 +949,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigIsAnotherCustomersHe
 	s.Require().NoError(err)
 	s.move("acme", "moved")
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "the customer has no config-1 here to run it on")
@@ -974,7 +974,7 @@ func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		resumed, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		resumed, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 		done <- outcome{resumed, err}
 	}()
 	// Commit the delete once the cut-over waits on it; a cut-over that does not wait has
@@ -1011,7 +1011,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 		"UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-active'")
 	s.Require().NoError(err)
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed)
