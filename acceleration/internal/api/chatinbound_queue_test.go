@@ -149,7 +149,6 @@ func (s *ChatInboundQueueSuite) TestThePeerPathRefusesWhatNoPeerHandedOver() {
 // message or customer than the row is stored with, or a row that is gone, is no such delivery,
 // and nothing is answered.
 func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
-	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	otherApp := int64(suiteStreamApp + 1)
 	for name, change := range map[string]func(*queuedChatInbound){
 		"another customer's app": func(q *queuedChatInbound) {
@@ -162,6 +161,7 @@ func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
 		"a row that is not there": func(q *queuedChatInbound) { q.Seq = 0 },
 	} {
 		s.Run(name, func() {
+			other, worker, logged := s.otherNodeWithAWorkerLogging()
 			row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
 			handed := queuedFrom(row)
 			change(&handed)
@@ -209,7 +209,6 @@ func (s *ChatInboundQueueSuite) TestAPeerAnswersADeliveryHandedOverAsItsRowIsSto
 // A per-app row (a customer's own app, not the deployment's) handed over as stored is answered
 // for that customer, and one handed over naming the deployment instead is refused.
 func (s *ChatInboundQueueSuite) TestAPeerAnswersAPerAppDeliveryHandedOverAsItsRowIsStored() {
-	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	id := "queued-" + s.utils.uuid()
 	queued, err := s.store.QueueChatInbound(context.Background(), store.ChatInbound{
 		StreamApp: suiteStreamApp, MessageID: id, CustomerID: s.customerID(), Body: []byte(s.message(suiteStreamApp,
@@ -223,20 +222,23 @@ func (s *ChatInboundQueueSuite) TestAPeerAnswersAPerAppDeliveryHandedOverAsItsRo
 		"as the deployment's":  func(q *queuedChatInbound) { q.Deployment = true },
 		"for another customer": func(q *queuedChatInbound) { q.CustomerID = "someone-" + s.utils.uuid() },
 	} {
+		other, worker, logged := s.otherNodeWithAWorkerLogging()
 		handed := queuedFrom(row)
 		change(&handed)
 		answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), handed)
 		s.Require().NoError(err)
 		s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "%s, body: %s", name, answer.GetBody())
 		s.False(s.reachesWorker(worker), "a per-app delivery handed over %s was answered", name)
+		s.Contains(logged.String(), refusedInLog, name)
 	}
-	s.Contains(logged.String(), refusedInLog)
 
+	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
 	s.Equal(s.channelID, s.handed(worker).ChannelID)
 	s.Equal(store.ChatInboundDone, s.row(id).State)
+	s.NotContains(logged.String(), refusedInLog)
 }
 
 // What a peer answers is the row's event, whatever event the payload carries.
