@@ -100,8 +100,9 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errUnknownCall)
 		return
 	}
-	// The asker sends this only once the call's row says nobody answered, so a valid ask finds
-	// that row.
+	// The asker sends this once its own call's row says nobody answered. Read returns the newest
+	// call placed into the session, so with two calls in one session an ask for the older one is
+	// refused while the newer rings: ending the session would strand that call.
 	call, err := s.phone.Outcomes().Read(r.Context(), asked.CustomerID, asked.SessionID)
 	switch {
 	case errors.Is(err, outcome.ErrUnknownCall), err == nil && !call.NobodyAnswered():

@@ -521,9 +521,6 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 // as the phone service opens one for a placed call.
 func (s *CallStatusSuite) peerHolding(logged *lockedLog) (*httptest.Server, *session.Manager, string) {
 	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
-	// The node shares the suite's phone service, and the last node made takes its unanswered
-	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
-	s.router.phone.OnUnanswered(s.router.endUnanswered)
 	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
 		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
@@ -585,6 +582,29 @@ func (s *CallStatusSuite) TestAPeersAskForACallThatStillRingsIsRefused() {
 	s.placedFor(id)
 
 	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+// A session can have two calls placed into it; the stored call is the newest, and the asking
+// node decided on the one its vendor reported. An ask is refused unless the newest says
+// nobody answered, since ending the session would strand a call that still rings.
+func (s *CallStatusSuite) TestAPeersAskWhileANewerCallInTheSessionStillRingsIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+	s.placedFor(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskWhileAnOlderCallInTheSessionStillRingsEndsItsSession() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.placedFor(id)
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusNoContent), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(sessions.Running(id), "the session waits for its start timeout")
 }
 
 func (s *CallStatusSuite) TestAPeersAskForACallSomebodyAnsweredIsRefused() {
