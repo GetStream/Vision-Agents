@@ -2360,6 +2360,10 @@ the move; a change carried later sets the mark again from the source's state, so
 paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
 any other edit keeps it.
 
+Until the last `--once`, the source is the truth: each change carried writes the row as the source
+has it, over whatever was done to that row here, a delete included. A config deleted here comes
+back if the source edits it afterwards. So once SDKs point here, stop writing at the source.
+
 Cut over once SDKs point here:
 
 1. Run `replicate --from … --once` one last time, to pick up the last writes.
@@ -2372,7 +2376,14 @@ Cut over once SDKs point here:
    ```
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
-at the next run the source had not delivered, and lists the marked campaigns. A marked task whose
+at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
+and lists the marked campaigns. The source went on delivering between the last `--once` and its
+stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
+the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
+the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
+hold ends. A marked task with no occurrence left is
+completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
+step 2: an occurrence due between the two is delivered by neither. A marked task whose
 agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
 and the command prints how many it left that way. A campaign rings
 only from the router that started it, so start each one here with
