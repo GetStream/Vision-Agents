@@ -587,6 +587,19 @@ func (s *AgentSuite) TestWorkANativeModelHandsOverInAReplyWithNoIDIsNotAskedAsSc
 	s.Equal([]bool{false}, s.subagent.askedScheduled())
 }
 
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAReplyWithNoIDIsAskedAsScheduledDuringAScheduledTurn() {
+	// A call tied to no reply is not taken for the reply that answered the caller, whose ID
+	// is not known either: during a scheduled turn it is the task's.
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled())
+}
+
 func (s *AgentSuite) TestAToolsPictureInAScheduledNativeTurnIsLookedAtAsScheduledWhenTheCallerCutsInWhileItRuns() {
 	running := make(chan struct{}, 1)
 	release := make(chan struct{})
