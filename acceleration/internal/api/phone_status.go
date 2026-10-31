@@ -95,7 +95,7 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if s.phone == nil || s.phone.Outcomes() == nil || asked.CustomerID == "" || asked.SessionID == "" {
+	if s.phone == nil || s.phone.Outcomes() == nil {
 		writeError(w, errUnknownCall)
 		return
 	}
