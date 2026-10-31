@@ -1223,7 +1223,11 @@ func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLo
 			"SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", holder).Scan(&waiting)
 		return err == nil && waiting > 0
 	}, time.Minute, 10*time.Millisecond, "the delete never reached its config's tasks")
-	release := time.AfterFunc(auditWriteTimeout+time.Second, func() { _ = hold.Rollback() })
+	released := make(chan struct{})
+	release := time.AfterFunc(auditWriteTimeout+time.Second, func() {
+		_ = hold.Rollback()
+		close(released)
+	})
 	defer release.Stop()
 	select {
 	case err := <-answered:
@@ -1231,9 +1235,21 @@ func (s *ScheduledTasksSuite) TestThePauseAfterADeleteGivesUpWhenATaskRowStaysLo
 	case <-time.After(time.Minute):
 		s.FailNow("the delete never answered")
 	}
+	select {
+	case <-released:
+	case <-time.After(time.Minute):
+		s.FailNow("the lock was never released")
+	}
 
-	s.Equal(store.ScheduledTaskActive, s.taskReloaded(store.ScheduledTask{ID: created.Id}).State,
-		"the pause waits on a locked task past its bound")
+	// The read takes the row's lock, so it queues behind a pause that still waits on it:
+	// that pause commits first, and the read sees the task paused.
+	read, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = read.Rollback() }()
+	var state string
+	s.Require().NoError(read.QueryRowContext(ctx,
+		"SELECT state FROM scheduled_tasks WHERE id = ? FOR UPDATE", created.Id).Scan(&state))
+	s.Equal(store.ScheduledTaskActive, state, "the pause waits on a locked task past its bound")
 }
 
 func (s *ScheduledTasksSuite) TestATaskOfADeletedConfigCannotBeResumedOverTheAPI() {
