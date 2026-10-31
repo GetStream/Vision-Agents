@@ -176,6 +176,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A bad connector or knowledge page in a Go agent folder names its line
+
+`agents.Load` now says which line of `agent.yaml` or `knowledge/urls.yaml` a refused connector entry (no name, `tools: []`, an empty `connection`, `connectors` that is not a list) or knowledge page (an unknown key, `refresh_hours` below 1, an entry that is neither a url nor a mapping) is on, as it already did for an unknown connector key. The same files are refused as before (AI-2009).
+
 ### A rescheduled task runs its whole COUNT from now
 
 `PATCH /v1/agents/scheduled-tasks/{id}` with a new `schedule`, and the agent's `update_scheduled_task` reschedule with `at` or `in`, count a repeat's `COUNT` from the next occurrence, as a create does. Before, a daily 09:00 task made at 12:00 with `COUNT=3` ran three times, but "make it 08:00" at 12:00 left it two, since the written start had passed (AI-2018).
