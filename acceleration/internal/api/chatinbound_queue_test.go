@@ -149,7 +149,7 @@ func (s *ChatInboundQueueSuite) TestThePeerPathRefusesWhatNoPeerHandedOver() {
 // message or customer than the row is stored with, or a row that is gone, is no such delivery,
 // and nothing is answered.
 func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
-	other, worker := s.otherNodeWithAWorker()
+	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	otherApp := int64(suiteStreamApp + 1)
 	for name, change := range map[string]func(*queuedChatInbound){
 		"another customer's app": func(q *queuedChatInbound) {
@@ -171,6 +171,7 @@ func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
 			s.Require().NoError(err)
 			s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
 			s.False(s.reachesWorker(worker), "a delivery its row does not match was answered")
+			s.Contains(logged.String(), refusedInLog)
 			s.Equal(store.ChatInboundQueued, s.row(row.MessageID).State)
 		})
 	}
@@ -178,7 +179,7 @@ func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
 
 // A row deleted since it was handed over is no such delivery either.
 func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryWhoseRowIsGone() {
-	other, worker := s.otherNodeWithAWorker()
+	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
 	_, err := s.store.DB().NewDelete().Model((*store.ChatInbound)(nil)).Where("seq = ?", row.Seq).Exec(context.Background())
 	s.Require().NoError(err)
@@ -188,11 +189,12 @@ func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryWhoseRowIsGone() {
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
 	s.False(s.reachesWorker(worker), "a delivery whose row is gone was answered")
+	s.Contains(logged.String(), refusedInLog)
 }
 
 // A delivery handed over as its row is stored is answered on the peer, settled there.
 func (s *ChatInboundQueueSuite) TestAPeerAnswersADeliveryHandedOverAsItsRowIsStored() {
-	other, worker := s.otherNodeWithAWorker()
+	other, worker, logged := s.otherNodeWithAWorkerLogging()
 	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
 
 	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
@@ -201,6 +203,40 @@ func (s *ChatInboundQueueSuite) TestAPeerAnswersADeliveryHandedOverAsItsRowIsSto
 	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
 	s.Equal(s.channelID, s.handed(worker).ChannelID)
 	s.Equal(store.ChatInboundDone, s.row(row.MessageID).State)
+	s.NotContains(logged.String(), refusedInLog)
+}
+
+// A per-app row (a customer's own app, not the deployment's) handed over as stored is answered
+// for that customer, and one handed over naming the deployment instead is refused.
+func (s *ChatInboundQueueSuite) TestAPeerAnswersAPerAppDeliveryHandedOverAsItsRowIsStored() {
+	other, worker, logged := s.otherNodeWithAWorkerLogging()
+	id := "queued-" + s.utils.uuid()
+	queued, err := s.store.QueueChatInbound(context.Background(), store.ChatInbound{
+		StreamApp: suiteStreamApp, MessageID: id, CustomerID: s.customerID(), Body: []byte(s.message(suiteStreamApp,
+			deliveredConfig(&s.RouterSuite, s.customerID()), "")), NextAttemptAt: time.Now(),
+	})
+	s.Require().NoError(err)
+	s.Require().True(queued)
+	row := s.row(id)
+
+	for name, change := range map[string]func(*queuedChatInbound){
+		"as the deployment's":  func(q *queuedChatInbound) { q.Deployment = true },
+		"for another customer": func(q *queuedChatInbound) { q.CustomerID = "someone-" + s.utils.uuid() },
+	} {
+		handed := queuedFrom(row)
+		change(&handed)
+		answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), handed)
+		s.Require().NoError(err)
+		s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "%s, body: %s", name, answer.GetBody())
+		s.False(s.reachesWorker(worker), "a per-app delivery handed over %s was answered", name)
+	}
+	s.Contains(logged.String(), refusedInLog)
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Equal(s.channelID, s.handed(worker).ChannelID)
+	s.Equal(store.ChatInboundDone, s.row(id).State)
 }
 
 // What a peer answers is the row's event, whatever event the payload carries.
@@ -232,12 +268,40 @@ func (s *ChatInboundQueueSuite) handed(worker <-chan dispatch.Message) dispatch.
 // otherNodeWithAWorker is another node with a dispatch worker of the suite's customer waiting
 // on it, and what that worker is handed.
 func (s *ChatInboundQueueSuite) otherNodeWithAWorker() (*httptest.Server, <-chan dispatch.Message) {
+	other, worker, _ := s.otherNodeWithAWorkerLogging()
+	return other, worker
+}
+
+// otherNodeWithAWorkerLogging is otherNodeWithAWorker with what the node logs.
+func (s *ChatInboundQueueSuite) otherNodeWithAWorkerLogging() (*httptest.Server, <-chan dispatch.Message, *loggedText) {
 	workers := dispatch.NewPool()
-	other := s.otherNodeDispatching(workers)
+	logged := &loggedText{}
+	other, _ := s.otherRouterSealedBy(workers, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
 	worker, release := workers.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	s.T().Cleanup(release)
-	return other, worker.Messages()
+	return other, worker.Messages(), logged
 }
+
+// loggedText is a log a node writes from its own goroutines and a test reads.
+type loggedText struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (l *loggedText) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.text.Write(p)
+}
+
+func (l *loggedText) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.text.String()
+}
+
+// refusedInLog is what a peer logs on refusing a delivery its row does not match.
+const refusedInLog = "refused a queued chat inbound message a peer handed over"
 
 // A peer that could not place the message says so, so the router that handed it over tries
 // again rather than record it answered.
