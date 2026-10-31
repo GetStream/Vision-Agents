@@ -288,7 +288,7 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Known limit (any header, AI-1976, accepted): Daytona substitutes the placeholder in any request
   header to a granted host, not only `Authorization` (https://www.daytona.io/docs/en/secrets.md,
   «Substitution scope»; the live suite sends it in `X-Probe`). The proxy broker substitutes only in
-  `Authorization` (`internal/sandbox/egress/AGENTS.md`, step 5).
+  `Authorization` (`internal/sandbox/egress/AGENTS.md`, step 5). A granted host that echoes that header would hand the token to the sandbox.
 - Known limit (Daytona lag): after the router withdraws a secret (connection deleted or needs a
   reconnect), Daytona keeps substituting it for a while. The withdrawal is an update, which takes
   effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md); a live probe on
