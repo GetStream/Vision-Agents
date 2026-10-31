@@ -145,19 +145,112 @@ func (s *ChatInboundQueueSuite) TestThePeerPathRefusesWhatNoPeerHandedOver() {
 	s.False(s.reachesWorker(worker.Messages()))
 }
 
+// A peer's word on a queued delivery is checked against its row: a payload naming another app,
+// message or customer than the row is stored with, or a row that is gone, is no such delivery,
+// and nothing is answered.
+func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryItsRowDoesNotMatch() {
+	other, worker := s.otherNodeWithAWorker()
+	otherApp := int64(suiteStreamApp + 1)
+	for name, change := range map[string]func(*queuedChatInbound){
+		"another customer's app": func(q *queuedChatInbound) {
+			q.StreamApp, q.CustomerID, q.Deployment = otherApp, streamapp.CustomerOf(otherApp), false
+		},
+		"another app":             func(q *queuedChatInbound) { q.StreamApp = otherApp },
+		"another customer":        func(q *queuedChatInbound) { q.CustomerID = "someone-" + s.utils.uuid() },
+		"another message":         func(q *queuedChatInbound) { q.MessageID = "queued-" + s.utils.uuid() },
+		"not the deployment's":    func(q *queuedChatInbound) { q.Deployment = false },
+		"a row that is not there": func(q *queuedChatInbound) { q.Seq = 0 },
+	} {
+		s.Run(name, func() {
+			row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
+			handed := queuedFrom(row)
+			change(&handed)
+
+			answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), handed)
+
+			s.Require().NoError(err)
+			s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+			s.False(s.reachesWorker(worker), "a delivery its row does not match was answered")
+			s.Equal(store.ChatInboundQueued, s.row(row.MessageID).State)
+		})
+	}
+}
+
+// A row deleted since it was handed over is no such delivery either.
+func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryWhoseRowIsGone() {
+	other, worker := s.otherNodeWithAWorker()
+	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
+	_, err := s.store.DB().NewDelete().Model((*store.ChatInbound)(nil)).Where("seq = ?", row.Seq).Exec(context.Background())
+	s.Require().NoError(err)
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(s.reachesWorker(worker), "a delivery whose row is gone was answered")
+}
+
+// A delivery handed over as its row is stored is answered on the peer, settled there.
+func (s *ChatInboundQueueSuite) TestAPeerAnswersADeliveryHandedOverAsItsRowIsStored() {
+	other, worker := s.otherNodeWithAWorker()
+	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Equal(s.channelID, s.handed(worker).ChannelID)
+	s.Equal(store.ChatInboundDone, s.row(row.MessageID).State)
+}
+
+// What a peer answers is the row's event, whatever event the payload carries.
+func (s *ChatInboundQueueSuite) TestAPeerAnswersTheEventItsRowIsStoredWith() {
+	other, worker := s.otherNodeWithAWorker()
+	config := deliveredConfig(&s.RouterSuite, s.customerID())
+	row := s.row(s.queue(s.message(suiteStreamApp, config, "")))
+	handed := queuedFrom(row)
+	handed.Body = []byte(strings.Replace(s.message(suiteStreamApp, config, ""), s.channelID, "chat-"+s.utils.uuid(), 1))
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), handed)
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Equal(s.channelID, s.handed(worker).ChannelID, "answered in the channel the payload names")
+}
+
+// handed is the message a worker is handed, failing the test when none comes.
+func (s *ChatInboundQueueSuite) handed(worker <-chan dispatch.Message) dispatch.Message {
+	select {
+	case message := <-worker:
+		return message
+	case <-time.After(settleFor):
+		s.Fail("no message reached the worker")
+		return dispatch.Message{}
+	}
+}
+
+// otherNodeWithAWorker is another node with a dispatch worker of the suite's customer waiting
+// on it, and what that worker is handed.
+func (s *ChatInboundQueueSuite) otherNodeWithAWorker() (*httptest.Server, <-chan dispatch.Message) {
+	workers := dispatch.NewPool()
+	other := s.otherNodeDispatching(workers)
+	worker, release := workers.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	s.T().Cleanup(release)
+	return other, worker.Messages()
+}
+
 // A peer that could not place the message says so, so the router that handed it over tries
 // again rather than record it answered.
 func (s *ChatInboundQueueSuite) TestAPeerThatCouldNotPlaceADeliveryAnswersUnavailable() {
 	other := s.otherNodeDispatching(dispatch.NewPool())
 	address := other.Listener.Addr().String()
 
-	answer, err := s.router.handChatInboundToPeer(context.Background(), address,
-		queuedChatInbound{StreamApp: suiteStreamApp, Deployment: true, Body: []byte("not a delivery")})
+	answer, err := s.router.handChatInboundToPeer(context.Background(), address, queuedFrom(s.row(s.queue("not a delivery"))))
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusBadRequest), answer.GetStatus(), "body: %s", answer.GetBody())
 
-	answer, err = s.router.handChatInboundToPeer(context.Background(), address, queuedChatInbound{StreamApp: suiteStreamApp,
-		Deployment: true, Body: []byte(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))})
+	answer, err = s.router.handChatInboundToPeer(context.Background(), address,
+		queuedFrom(s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))))
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusServiceUnavailable), answer.GetStatus(), "body: %s", answer.GetBody())
 }
@@ -198,8 +291,8 @@ func (s *ChatInboundQueueSuite) TestADeliveryAPeerHandedOverIsNotHandedOnAgain()
 	s.await(waiting, "ready")
 	other := s.otherNodeDispatching(dispatch.NewPool())
 
-	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedChatInbound{StreamApp: suiteStreamApp,
-		Deployment: true, Body: []byte(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))})
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(),
+		queuedFrom(s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))))
 
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusServiceUnavailable), answer.GetStatus(), "body: %s", answer.GetBody())
