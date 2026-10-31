@@ -2378,8 +2378,10 @@ Cut over once SDKs point here:
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
 and lists the marked campaigns. The source went on delivering between the last `--once` and its
-stop, and nothing it delivered then reached this copy, so an occurrence that came due before the
-cut-over was the source's: it is not delivered here. A marked task with no occurrence left is
+stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
+the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
+the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
+hold ends. A marked task with no occurrence left is
 completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
 step 2: an occurrence due between the two is delivered by neither. A marked task whose
 agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,

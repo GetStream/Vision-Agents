@@ -596,7 +596,8 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 // run came at or before the cut-over on to its next occurrence after it, as a resume counts a
 // paused task's next run from now. The source went on delivering after the last catch-up
 // until it was stopped, and what it delivered then never reached this copy, so such an
-// occurrence was delivered there or slept through. next is the task's next occurrence after
+// occurrence was delivered there or slept through, unless the source held its run past the
+// cut-over. next is the task's next occurrence after
 // the cut-over, or nil with the missed run to record, if any, when it has none left: then the
 // task is completed and loses the mark.
 func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID string, cutOver time.Time,
@@ -609,6 +610,12 @@ func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID str
 			Where("move_paused").
 			Where("state = ?", ScheduledTaskPaused).
 			Where("next_run_at <= ?", cutOver).
+			// An occurrence the source held for quiet hours past the cut-over was never
+			// delivered there: the worker here takes its run over when the hold ends.
+			Where(`NOT EXISTS (SELECT 1 FROM scheduled_task_runs AS str
+				WHERE str.customer_id = st.customer_id AND str.task_id = st.id
+				AND str.scheduled_for = st.next_run_at AND str.state = ? AND str.postponed_until > ?)`,
+				ScheduledTaskRunRunning, cutOver).
 			For("UPDATE").
 			Scan(ctx); err != nil {
 			return fmt.Errorf("store: moved scheduled tasks due before the cut-over: %w", err)

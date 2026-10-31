@@ -208,8 +208,11 @@ func (s *ReplicateResumeSuite) TestResumeDoesNotDeliverAgainARepeatsOccurrenceTh
 }
 
 func (s *ReplicateResumeSuite) TestResumeClosesAOneShotWhoseTimeCameBeforeIt() {
-	due := s.overdue("st-once", "", store.ScheduledTaskActive)
-	s.overdue("st-twice", "", store.ScheduledTaskActive)
+	// Each call reads the clock on its own, so each task keeps its own time.
+	due := map[string]time.Time{
+		"st-once":  s.overdue("st-once", "", store.ScheduledTaskActive),
+		"st-twice": s.overdue("st-twice", "", store.ScheduledTaskActive),
+	}
 	// The prune deletes a completed task by when it last changed, read on the database's clock.
 	var before time.Time
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT now()").Scan(&before))
@@ -229,7 +232,7 @@ func (s *ReplicateResumeSuite) TestResumeClosesAOneShotWhoseTimeCameBeforeIt() {
 			Scan(&state, &reason, &scheduledFor, &created), id)
 		s.Equal(store.ScheduledTaskRunMissed, state, id)
 		s.Equal(scheduling.ReasonPaused, reason, id)
-		s.Equal(due, scheduledFor.UTC(), "the time it slept through here is on record")
+		s.Equal(due[id], scheduledFor.UTC(), "the time it slept through here is on record")
 		s.WithinDuration(time.Now(), created, time.Hour, id)
 	}
 	s.Empty(s.claimed())
@@ -257,6 +260,63 @@ VALUES ('run-source', 'st-once', 'acme', ?, 'running', now())`, due)
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 		"SELECT string_agg(id, ',') FROM scheduled_task_runs WHERE task_id = 'st-once'").Scan(&id))
 	s.Equal("run-source", id, "the source's run of the occurrence is the one on record")
+}
+
+// The source held the occurrence for quiet hours past the cut-over, so it never delivered it.
+func (s *ReplicateResumeSuite) TestResumeLeavesAnOccurrenceTheSourceHeldPastItToTheWorker() {
+	for name, rrule := range map[string]string{"daily": "FREQ=DAILY", "one-shot": ""} {
+		s.Run(name, func() {
+			s.SetupTest()
+			// Due an hour ago, so its run is old enough for the worker to take over.
+			due := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+			s.importedTask(store.ScheduledTask{ID: "st-held", RRule: rrule, StartLocal: due, NextRunAt: &due}, store.ScheduledTaskActive)
+			_, err := s.store.DB().ExecContext(s.ctx, `
+INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, state, started_at, postponed_until, attempts)
+VALUES ('run-held', 'st-held', 'acme', ?, 'running', ?, ?, 1)`, due, due, time.Now().UTC().Add(8*time.Hour))
+			s.Require().NoError(err)
+
+			s.Equal("resumed 1 scheduled tasks\n", s.cutOver())
+
+			task := s.task("st-held")
+			s.Equal(store.ScheduledTaskActive, task.State)
+			s.Require().NotNil(task.NextRunAt)
+			s.Equal(due, task.NextRunAt.UTC(), "the held occurrence is still to deliver")
+			claims, err := s.store.ClaimDueScheduledTasks(s.ctx, 10, time.Minute)
+			s.Require().NoError(err)
+			var runs []string
+			for _, claim := range claims {
+				runs = append(runs, claim.Run.ID)
+			}
+			s.Equal([]string{"run-held"}, runs, "the worker here takes the held run over")
+		})
+	}
+}
+
+func (s *ReplicateResumeSuite) TestResumeMovesOnlyTheOverdueTaskOfTheCustomer() {
+	s.overdue("st-daily", "FREQ=DAILY", store.ScheduledTaskActive)
+	s.overdue("st-once", "", store.ScheduledTaskActive)
+	ahead := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	s.importedTask(store.ScheduledTask{ID: "st-ahead", RRule: "FREQ=WEEKLY", StartLocal: ahead, NextRunAt: &ahead}, store.ScheduledTaskActive)
+
+	s.Equal("resumed 2 scheduled tasks\n", s.cutOver())
+
+	task := s.task("st-ahead")
+	s.Equal(store.ScheduledTaskActive, task.State, "the one-shot's completion is its own")
+	s.Require().NotNil(task.NextRunAt)
+	s.Equal(ahead, task.NextRunAt.UTC(), "the daily task's skip is its own")
+}
+
+// A daily task two runs behind: the source delivered both before it stopped.
+func (s *ReplicateResumeSuite) TestResumeSkipsEveryOccurrenceThatCameBeforeIt() {
+	start := time.Now().UTC().Add(-47 * time.Hour).Truncate(time.Second)
+	s.importedTask(store.ScheduledTask{ID: "st-daily", RRule: "FREQ=DAILY", StartLocal: start, NextRunAt: &start}, store.ScheduledTaskActive)
+
+	s.Equal("resumed 1 scheduled tasks\n", s.cutOver())
+
+	task := s.task("st-daily")
+	s.Require().NotNil(task.NextRunAt)
+	s.Equal(start.Add(48*time.Hour), task.NextRunAt.UTC(), "it goes on from its first occurrence after the cut-over")
+	s.Empty(s.claimed())
 }
 
 func (s *ReplicateResumeSuite) TestResumeCompletesARepeatWithNoOccurrenceLeft() {
