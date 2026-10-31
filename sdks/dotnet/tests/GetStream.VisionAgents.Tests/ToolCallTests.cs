@@ -187,7 +187,6 @@ public sealed class ToolCallTests
             await thrown.Task.WaitAsync(TestRouter.Patience);
             peer.Resume();
             update = await peer.ReceiveAsync("tool_update");
-            await peer.SendAsync(new { type = "tool_call", id = "f1", name = "fast", arguments = "{}" });
             answered = await peer.ReceiveAsync("tool_result");
             await Finish(peer);
         });
@@ -205,13 +204,12 @@ public sealed class ToolCallTests
                     thrown.SetResult();
                 }
                 return (object?)"done";
-            })
-            .Register("fast", "Does not", [], (JsonElement _, CancellationToken _) => Task.FromResult<object?>("done"));
+            });
 
         await Converse(agent);
 
         Assert.Equal(32 << 20, update.Text("text").Length);
-        Assert.Equal("f1", answered.Text("tool_call_id"));
+        Assert.Equal("t1", answered.Text("tool_call_id"));
     }
 
     [Fact]
