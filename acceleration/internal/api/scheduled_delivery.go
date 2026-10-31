@@ -247,7 +247,8 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // deliverChain walks a task's channels in order against the session its
 // conversation is held in, and stops at the first that lands. A failure
 // names every channel tried, for the logs, and is recorded under the first
-// channel's reason. It is final when every channel's failure is, and missed
+// channel's reason, except a call placed already (rangAlready), which gives
+// already_called. It is final when every channel's failure is, and missed
 // when every channel found the occurrence too late. A call placed for the
 // occurrence whose end the run does not record ends the walk (rangAlready).
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
