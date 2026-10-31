@@ -8,7 +8,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -46,6 +45,9 @@ type NamespacePlaces interface {
 	// ClaimKnowledgePlace keeps the base at place unless it is kept somewhere already, and
 	// answers where it is kept.
 	ClaimKnowledgePlace(ctx context.Context, customerID, namespace string, place store.KnowledgePlace) (store.KnowledgePlace, error)
+	// ForgetKnowledgePlace forgets where a dropped base was kept, so a base made again under its
+	// name is kept where its first write goes.
+	ForgetKnowledgePlace(ctx context.Context, customerID, namespace string) error
 }
 
 // AccountBackend is the backend of a customer's own account at the knowledge vendor in region,
@@ -55,7 +57,7 @@ type AccountBackend func(region, key string) (knowledge.Backend, error)
 // Knowledge holds the knowledge backends, one per region. A Store or a Writer comes only from
 // For, which needs an owner, so nothing can be looked up or written that nobody is charged for.
 //
-// A knowledge base stays in the region it was first written in. Work naming a region
+// A knowledge base stays in the region it was first written in until it is dropped. Work naming a region
 // (routing.Owner.Region, an agent's) reads and writes a base kept in it, makes one nothing was
 // written to there, and is refused one kept in another rather than having it moved. Work naming
 // none, as the knowledge API's, goes where the base is kept, and makes a new one in the default
@@ -75,9 +77,6 @@ type Knowledge struct {
 	// keys and account reach a customer's own account. Nil keeps every base in the deployment's.
 	keys    routing.CustomerKeys
 	account AccountBackend
-	// kept is the place of each base whose place is recorded, by customer and namespace. A
-	// recorded place never changes, so it is kept for the life of the process.
-	kept sync.Map
 }
 
 // NewKnowledge meters a backend in the default region, recording through recorder as knowledge
@@ -236,21 +235,13 @@ func (k *Knowledge) Place(ctx context.Context, customerID, namespace string) (st
 }
 
 // keptAt is where a customer's knowledge base is kept, and false for one nothing has been
-// written to or with no places recorded.
+// written to or with no places recorded. It is read from places every time: the router that
+// drops a base forgets its place for every other.
 func (k *Knowledge) keptAt(ctx context.Context, customerID, namespace string) (store.KnowledgePlace, bool, error) {
 	if k.places == nil || strings.TrimSpace(namespace) == "" {
 		return store.KnowledgePlace{}, false, nil
 	}
-	key := customerID + "\x00" + namespace
-	if place, ok := k.kept.Load(key); ok {
-		return place.(store.KnowledgePlace), true, nil
-	}
-	place, ok, err := k.places.KnowledgePlace(ctx, customerID, namespace)
-	if err != nil || !ok {
-		return store.KnowledgePlace{}, false, err
-	}
-	k.kept.Store(key, place)
-	return place, true, nil
+	return k.places.KnowledgePlace(ctx, customerID, namespace)
 }
 
 // OwnedKnowledge is a knowledge.Store and a knowledge.Writer for one owner. Each call is a
@@ -355,6 +346,38 @@ func (o OwnedKnowledge) Delete(ctx context.Context, namespace string, ids []stri
 	return nil
 }
 
+// Drop deletes a whole knowledge base, one row as a write, where it is kept as Delete does, then
+// forgets where it was kept, and reports whether the provider had it. Like Delete it is not
+// admitted.
+func (o OwnedKnowledge) Drop(ctx context.Context, namespace string) (bool, error) {
+	place, kept, err := o.knowledge.keptAt(ctx, o.owner.CustomerID, namespace)
+	if err != nil {
+		return false, err
+	}
+	if !kept {
+		if place, err = o.unwritten(ctx, o.region()); err != nil {
+			return false, err
+		}
+	}
+	backend, err := o.knowledge.at(ctx, o.owner.CustomerID, namespace, place)
+	if err != nil {
+		return false, err
+	}
+	scoped := o.scoped(namespace)
+	dropped, err := routing.Call(ctx, o.knowledge.meter(o.owner, backend, place, KnowledgeWrite), func(ctx context.Context) (knowledge.Dropped, error) {
+		return backend.Drop(ctx, scoped)
+	})
+	if err != nil {
+		return false, err
+	}
+	if o.knowledge.places != nil {
+		if err := o.knowledge.places.ForgetKnowledgePlace(ctx, o.owner.CustomerID, namespace); err != nil {
+			return false, err
+		}
+	}
+	return dropped.Existed, nil
+}
+
 // Keep keeps a knowledge base nothing has been written to where the owner's first write would,
 // so later work naming no region, such as a page's refresh, finds it there. A base kept in
 // another region than the one the work names is refused, as a write is. The vendor is asked
@@ -430,7 +453,6 @@ func (o OwnedKnowledge) writing(ctx context.Context, namespace string) (knowledg
 	if err != nil {
 		return nil, store.KnowledgePlace{}, err
 	}
-	o.knowledge.kept.Store(o.owner.CustomerID+"\x00"+namespace, kept)
 	switch {
 	// Another router's first write in another region landed first.
 	case kept.Region != place.Region:

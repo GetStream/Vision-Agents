@@ -291,6 +291,21 @@ func (s *Store) Delete(ctx context.Context, namespace string, ids []string) (kno
 	return billed, nil
 }
 
+// Drop deletes a namespace and everything in it, which turbopuffer cannot bring back. Its
+// answer carries no billing, so it is one request.
+func (s *Store) Drop(ctx context.Context, namespace string) (knowledge.Dropped, error) {
+	if strings.TrimSpace(namespace) == "" {
+		return knowledge.Dropped{}, stack.Wrap(errors.New("turbopuffer: a namespace is required"))
+	}
+
+	var response map[string]any
+	found, err := s.call(ctx, http.MethodDelete, "/v2/namespaces/"+url.PathEscape(namespace), nil, &response)
+	if err != nil {
+		return knowledge.Dropped{}, stack.Wrap(err)
+	}
+	return knowledge.Dropped{Existed: found, Billed: knowledge.Billed{Requests: 1}}, nil
+}
+
 // Fetch reads passages back by id, which is how somebody sees what a document became, and
 // says what turbopuffer billed every query it took.
 func (s *Store) Fetch(ctx context.Context, namespace string, ids []string) (knowledge.Found, error) {

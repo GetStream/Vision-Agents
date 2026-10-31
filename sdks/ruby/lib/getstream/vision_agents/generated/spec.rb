@@ -284,6 +284,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteKnowledge" => {
+          method: :delete, path: "/v1/agents/knowledge",
+          path_params: [].freeze, query: %w[namespace].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteKnowledgeDocument" => {
           method: :delete, path: "/v1/agents/knowledge/documents/{id}",
           path_params: %w[id].freeze, query: [].freeze,
