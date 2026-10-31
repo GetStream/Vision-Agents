@@ -294,8 +294,9 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 // records no reason that call ended under (callEnded). That call may have
 // carried the task out, or been cut off with the user on it, so no later
 // channel says the task again (AI-2021). The same holds when the end could not
-// be written: a call that was not placed whose give-back failed, or a
-// not_answered whose reason write failed, leaves the call taken with no end.
+// be written: a call that was not placed whose give-back failed, or any failed
+// reason write after the call was placed (callEnded: not_answered, failed or
+// held), leaves the call taken with no end.
 // A call whose end is recorded, such as not_answered, leaves the next channel
 // to carry the task.
 func rangAlready(err error) bool {
