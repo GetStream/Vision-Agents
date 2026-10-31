@@ -102,8 +102,12 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestSchedulerSuite/TestAOneShotMoreThanADayLateIsMissedNotDelivered`,
   `TestSchedulerSuite/TestARecurringTaskSkipsOccurrencesOlderThanAnHour`,
   `TestSchedulerSuite/TestReplayingAMissedRunKeepsTheFailureStreak`.
-- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`).
-  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`.
+- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`). A run
+  failed `already_called` is not counted (`countsAsFailure`, AI-2404).
+  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`,
+  `TestSchedulerSuite/TestARunWhoseCallMayHaveCarriedItOutKeepsTheFailureStreak`,
+  `TestSchedulerSuite/TestAOneShotWhoseCallMayHaveCarriedItOutIsCompletedNotFailed`,
+  `TestSchedulerSuite/TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceKeepsTheFailureStreak`.
 - **A final failure is not retried.** `TestSchedulerSuite/TestAFinalFailureIsNotRetried`,
   `TestScheduledTasksSuite/TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailureIs`.
 - **Quiet hours hold, never fail, and age counts from the hold's end.** A run made by hand is
@@ -143,7 +147,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   record (delivered, or cut off with the worker) is `already_called`, and no channel after
   `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
   next channel to carry the task. A call taken whose end a failed store write never recorded
-  (the give-back of a call not placed, or the `not_answered` reason) is the same.
+  (the give-back of a call not placed, or any reason write after the call was placed) is the
+  same. A run that ends `already_called` keeps the failure streak as it is and moves the task
+  on as a run that did not fail would: that call may have carried the task out (AI-2404).
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
