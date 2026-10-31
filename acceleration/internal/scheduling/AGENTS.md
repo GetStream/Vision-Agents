@@ -292,9 +292,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   active tasks on a config, the limit the API resume and the agent's tools use: the cut-over resumes a
   user's marked tasks oldest first while the room lasts, and leaves the rest paused and still marked,
   counted in the command's output, so running it again resumes them once the user has made room.
-  `TestDataMoveSuite/TestTheCutOverResumes*Limit*`, `TestTheCutOverRunAgain*`,
-  `TestReplicateResumeSuite/TestResumeSaysHowManyTasksItLeftPausedForWantOfRoom`. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
-  `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`, `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
   `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or

@@ -942,6 +942,28 @@ func (s *DataMoveSuite) TestTheCutOverResumesAUserOnlyUpToTheRoomTheirLimitLeave
 	s.Equal(2, held)
 }
 
+// A client chooses the id of its task, so id order is not age order.
+func (s *DataMoveSuite) TestTheCutOverResumesTheOldestTaskWhateverItsId() {
+	for _, id := range []string{"st-c", "st-b", "st-a"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-c")
+	s.Equal(ScheduledTaskActive, state, "st-c was made first, though its id sorts last")
+	for _, id := range []string{"st-b", "st-a"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+	}
+}
+
 // The mark kept on a task left over the limit is what lets a second cut-over resume it.
 func (s *DataMoveSuite) TestTheCutOverRunAgainResumesWhatItLeftOnceTheUserHasRoom() {
 	for _, id := range []string{"st-1", "st-2", "st-3"} {
@@ -1133,23 +1155,32 @@ func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
 func (s *DataMoveSuite) TestTheCutOverDoesNotResumeATaskThatChangedWhileItReadTheRest() {
 	s.seedScheduledTask("st-ended", "acme", ScheduledTaskActive)
 	s.seedScheduledTask("st-paused", "acme", ScheduledTaskActive)
+	// Two tasks on a config deleted here, which the cut-over leaves paused and unmarks
+	// unless they change meanwhile.
+	s.seedScheduledTask("st-gone-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-gone-paused", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id IN ('st-gone-ended', 'st-gone-paused')`)
+	s.Require().NoError(err)
 	s.move("acme", "moved")
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-2"))
 	changing, err := s.destination.DB().BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	defer func() { _ = changing.Rollback() }()
 	_, err = changing.ExecContext(s.ctx, `
-UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-ended';
-UPDATE scheduled_tasks SET move_paused = false WHERE id = 'st-paused'`)
+UPDATE scheduled_tasks SET state = 'completed' WHERE id IN ('st-ended', 'st-gone-ended');
+UPDATE scheduled_tasks SET move_paused = false WHERE id IN ('st-paused', 'st-gone-paused')`)
 	s.Require().NoError(err)
 
 	type outcome struct {
-		resumed int64
-		err     error
+		resumed, skipped int64
+		err              error
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		resumed, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
-		done <- outcome{resumed, err}
+		resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, skipped, err}
 	}()
 	// Commit the changes once the cut-over waits on them: it read the tasks as they were.
 	deadline := time.Now().Add(30 * time.Second)
@@ -1172,10 +1203,13 @@ UPDATE scheduled_tasks SET move_paused = false WHERE id = 'st-paused'`)
 	s.Require().NotNil(result, "the cut-over neither finished nor waited")
 	s.Require().NoError(result.err)
 	s.Zero(result.resumed)
+	s.Zero(result.skipped, "a task that changed meanwhile was not left paused by the cut-over")
 	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-ended")
 	s.Equal(ScheduledTaskCompleted, state)
 	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
 	s.Equal(ScheduledTaskPaused, state, "the user's pause, which cleared the mark, stands")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-gone-ended")
+	s.Equal(ScheduledTaskCompleted, state)
 }
 
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
