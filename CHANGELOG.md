@@ -180,6 +180,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A call that may have carried out a scheduled task no longer counts as a failure
+
+A scheduled task's run that ends `already_called` (a call was placed for the occurrence and its end was never recorded, as when the router holding the call stopped) no longer adds to the task's `consecutive_failures`, and the task moves on as after a run that did not fail: a one-shot is `completed`, not `failed`, and a repeat is not failed by five such runs in a row. The run is still `failed` with error `already_called` (AI-2404, AI-2405).
+
 ### A .NET tool cancelled while it sends no longer ends the session
 
 In the .NET SDK a tool's `UpdateAsync` or `SayAsync`, or any session send, given a token that was cancelled while the frame was being written, aborted the whole WebSocket (`ClientWebSocket` does that), so a router `tool_cancel` that landed mid-send ended the session with nothing said. A send is now written whole once it starts; a token cancelled meanwhile only stops the caller from waiting for it.
