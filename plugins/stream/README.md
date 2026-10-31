@@ -313,6 +313,91 @@ message and `status`, `type`, `code` (what to branch on; new ones appear), `doc_
 such as a proxy's error page, is the message as it was, with `type`, `code` and `doc_url`
 left None; so is a refused socket, whose body aiohttp never reads.
 
+## Spend limits, teams and usage categories
+
+A spend limit is what one subject may spend in each day, week, two weeks or month: the
+organization, an app, a key, an end user, a team, or a usage category of the customer's own.
+Work for a subject with nothing left is refused with `RouterError` `402
+spend_limit_reached`, or `429 user_limit_reached` for one end user's limit. Server side only.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from vision_agents.plugins import stream
+
+api = stream.Client()  # STREAM_API_KEY and STREAM_API_SECRET from the environment
+
+await api.spend_limits.create("organization", interval="monthly", usd=2000)
+await api.spend_limits.create("user", app_id="1234", interval="daily", usd=5)
+await api.spend_limits.create("team", team="finance", interval="weekly", usd="250")
+
+# The same for a team, in one call that creates or updates
+await api.teams.set_limit("finance", interval="weekly", usd=250)
+await api.teams.set_limit("finance", app_id="1234", interval="daily", usd=40)
+
+# A one-time $5,000 extra for finance until 15 November, across its daily, weekly and
+# monthly limits; the organization's own limit still applies
+grant = await api.teams.grant(
+    "finance",
+    usd=5_000,
+    reason="Q4 close",
+    expires_at=datetime(2026, 11, 15, tzinfo=timezone.utc),
+)
+await api.spend_limits.revoke_grant(grant.id, reason="close finished early")
+
+# "$10 more today" for one user is a grant that ends at midnight UTC
+midnight = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+    hour=0, minute=0, second=0, microsecond=0
+)
+await api.spend_limits.grant(
+    "user",
+    app_id="1234",
+    user_id="user-42",
+    usd=10,
+    reason="support ticket 8812",
+    expires_at=midnight,
+)
+
+# A reset: user-42's limits count from now until each window ends
+await api.spend_limits.reset(
+    "user", app_id="1234", user_id="user-42", reason="refunded a broken session"
+)
+
+# A user joins a team through its token; categories are for any other grouping
+token = api.create_user_token(
+    "user-42", team="finance", usage_categories=["project:onboarding"]
+)
+alice = api.for_user("user-42", team="finance")  # a backend running work for user-42
+
+for team in await api.teams.list():
+    print(team.name, team.apps, [stream.usd(w.spent_micros) for w in team.spent])
+
+# Stream's spend limit for the organization, when Stream set one
+account = await api.account.get()
+if account.spend_hard_limit and account.spend_hard_limit.daily:
+    print("room today:", stream.usd(account.spend_hard_limit.daily.room_micros))
+```
+
+- **Money** is dollars as a `Decimal`, an `int` or a `str`, converted to the router's
+  millionths of a dollar exactly. A `float` raises `TypeError`. Answers keep the router's
+  `*_micros` fields, and `stream.usd(micros)` reads one back as a `Decimal`.
+- **The level** follows the ids: `subject="user"` with `user_id` is that user's own limit,
+  with only `app_id` the default for every user of the app, and alone the default for every
+  user of the organization. Keys go the same way, and `level=` overrides it. A team or a
+  category with `app_id` is the one within that app.
+- **A team has no members list.** A user is in the team its token names, from
+  `create_user_token` or `for_user`, fixed when the token is signed. A client's own work is
+  counted the same way: `stream.Client(team="finance", usage_categories=["project:x"])`.
+  A team is 1 to 59 characters of `A-Z a-z 0-9 _ . -`; a category 1 to 64 of
+  `A-Z a-z 0-9 _ . : -`, never starting `team:`; at most 10 together. Anything else raises
+  `ValueError` before a token is signed.
+- **Grants** are the one way past a spent limit. A grant never lifts a parent's limit, or
+  Stream's spend limit for the organization, `402 system_limit_reached`, which only
+  Stream's staff change and `spend_hard_limit` on the account shows.
+- **Spend over time:** `await api.usage.spend(start=..., end=..., group_by="who:team")`.
+- **Refusals** carry `code`: `limit_above_parent`, `limit_exists`, `no_limit`, `use_team`,
+  `invalid_expiry`, `too_many_grants` and `server_side_only`.
+
 ## Tools hosted for an agent
 
 A session's own functions run in the process that opened it. `dispatch.host` is the other

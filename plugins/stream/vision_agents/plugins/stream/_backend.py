@@ -6,7 +6,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 from ._errors import raise_refusal
 from ._generated import AuthenticatedClient
@@ -21,6 +21,17 @@ AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 
 CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
+# Where a caller the proxy is not in front of names its usage categories, its team among them
+# as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
+# and the proxy deletes this header.
+USAGE_CATEGORIES_HEADER = "X-Stream-Usage-Categories"
+
+# The rule the router and the proxy hold usage categories to. A team is a category of its own,
+# team:<name>, which is why its name is shorter and has no ':'.
+TEAM_PREFIX = "team:"
+MAX_CATEGORIES = 10
+_CATEGORY = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+_TEAM = re.compile(r"[A-Za-z0-9_.-]{1,59}")
 # Stream's hosted router, which is where a client goes when nothing says otherwise.
 DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
 
@@ -44,6 +55,50 @@ def region_url(name: str) -> str:
     if not _REGION.fullmatch(name):
         raise ValueError(f"{name!r} is not a region, such as us-east4")
     return _REGION_PREFIX + name + _REGION_SUFFIX
+
+
+def check_team(team: str) -> str:
+    """The team, or ValueError naming why the router would refuse it."""
+    if not isinstance(team, str) or not _TEAM.fullmatch(team):
+        raise ValueError(
+            f"team {team!r} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -"
+        )
+    return team
+
+
+def check_category(category: str) -> str:
+    """The usage category, or ValueError naming why the router would refuse it."""
+    if not isinstance(category, str) or not _CATEGORY.fullmatch(category):
+        raise ValueError(
+            f"usage category {category!r} is not 1 to 64 characters of "
+            "A-Z, a-z, 0-9, _ . : and -"
+        )
+    # In any case, as the proxy reads it: Team:finance would be a second team.
+    if category[: len(TEAM_PREFIX)].lower() == TEAM_PREFIX:
+        raise ValueError(
+            f"usage category {category!r} names a team: use team= for a team"
+        )
+    return category
+
+
+def checked_categories(
+    team: Optional[str], categories: Sequence[str]
+) -> tuple[str, ...]:
+    """The categories each once and sorted, as the proxy keeps them, or ValueError naming the
+    entry the router would refuse."""
+    if isinstance(categories, str):
+        raise ValueError(
+            f"usage_categories is a list of categories, not the one string {categories!r}"
+        )
+    kept = tuple(sorted({check_category(category) for category in categories}))
+    if team is not None:
+        check_team(team)
+    if len(kept) + (team is not None) > MAX_CATEGORIES:
+        raise ValueError(
+            f"at most {MAX_CATEGORIES} usage categories, the team included; "
+            f"these are {len(kept) + (team is not None)}"
+        )
+    return kept
 
 
 def _hosted(url: str) -> bool:
@@ -90,6 +145,16 @@ class Backend:
             router reads; a name is what a transcript shows without a second lookup.
         acting_for: The end user a server-side credential speaks for. Unlike ``user_id``
             it keeps the app's own credential, so the request is still the server's.
+        team: The customer's team the work is counted against, such as ``finance``: its
+            spend and its spend limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        usage_categories: The customer's own groupings the work is counted against, such
+            as ``project:onboarding``: at most 10 together with the team, each 1 to 64
+            characters of A-Z, a-z, 0-9, _ . : and -, and none starting ``team:``. Kept
+            sorted, each once.
+
+    The team and the categories are signed into every token minted here, and sent in
+    ``X-Stream-Usage-Categories`` to a router with no proxy in front of it. A token handed
+    in carries whatever it was signed with, so neither can be passed beside one.
     """
 
     url: Optional[str] = None
@@ -102,8 +167,17 @@ class Backend:
     user: dict[str, object] = field(default_factory=dict)
     acting_for: str = ""
     region: Optional[str] = None
+    team: Optional[str] = None
+    usage_categories: Sequence[str] = ()
 
     def __post_init__(self):
+        self.team = self.team or None
+        self.usage_categories = checked_categories(self.team, self.usage_categories)
+        if self.token and (self.team or self.usage_categories):
+            raise ValueError(
+                "a token handed in carries the team and usage categories it was signed "
+                "with; mint it with create_user_token(..., team=..., usage_categories=...)"
+            )
         # A URL that is the region's own router is not a contradiction, and has to be let
         # through: ``dataclasses.replace`` builds a copy from the resolved fields, which hold
         # both.
@@ -204,7 +278,52 @@ class Backend:
         headers = self._credentials()
         if self.acting_for:
             headers[USER_HEADER] = self.acting_for
+        headers.update(self._category_header())
         return headers
+
+    def _category_header(self) -> dict[str, str]:
+        """The team and categories as a router with no proxy in front of it reads them.
+
+        Behind the proxy they are on the token, and the proxy deletes the header.
+        """
+        if self.authenticate or not (self.team or self.usage_categories):
+            return {}
+        named = list(self.usage_categories)
+        if self.team:
+            named.append(TEAM_PREFIX + self.team)
+        return {USAGE_CATEGORIES_HEADER: ",".join(sorted(named))}
+
+    def _category_claims(self) -> dict[str, object]:
+        """The team and categories as claims on a token signed here."""
+        return category_claims(self.team, self.usage_categories)
+
+    def user_token(
+        self,
+        user_id: str,
+        team: Optional[str] = None,
+        usage_categories: Sequence[str] = (),
+        validity_seconds: int = TOKEN_VALIDITY_SECONDS,
+    ) -> str:
+        """A token for one end user to hold, naming their team and usage categories.
+
+        The claims are fixed when it is signed, so a device holding it cannot move its own
+        work to another team or category. Needs the secret.
+        """
+        if not self.api_secret:
+            raise ValueError(
+                "a user token is signed with the app's secret, which only a backend holds"
+            )
+        if not user_id:
+            raise ValueError("a user token needs the user's id")
+        if validity_seconds <= 0:
+            raise ValueError("a user token has to be valid for some seconds")
+        team = team or None
+        categories = checked_categories(team, usage_categories)
+        return _sign(
+            {"user_id": user_id, **category_claims(team, categories)},
+            str(self.api_secret),
+            validity_seconds,
+        )
 
     def _credentials(self) -> dict[str, str]:
         """Who is calling, as headers."""
@@ -242,12 +361,15 @@ class Backend:
         """
         refusals = {"event_hooks": {"response": [raise_refusal]}}
         if not self.api_key:
+            headers = self._category_header()
+            if self.acting_for:
+                headers[USER_HEADER] = self.acting_for
             return AuthenticatedClient(
                 base_url=str(self.url),
                 token=str(self.customer_id),
                 auth_header_name=CUSTOMER_HEADER,
                 prefix="",
-                headers={USER_HEADER: self.acting_for} if self.acting_for else {},
+                headers=headers,
                 httpx_args=refusals,
             )
 
@@ -295,7 +417,10 @@ class Backend:
         return {
             "api_key": self.api_key,
             "user": user,
-            "token": _sign({"user_id": self.user_id}, str(self.api_secret)),
+            "token": _sign(
+                {"user_id": self.user_id, **self._category_claims()},
+                str(self.api_secret),
+            ),
         }
 
     def _server_token(self) -> str:
@@ -304,7 +429,7 @@ class Backend:
         It names no user by definition: one that named a user would be a token minted for
         that user to hold. Which of its users a backend is acting for goes in a header.
         """
-        return _sign({"server": True}, str(self.api_secret))
+        return _sign({"server": True, **self._category_claims()}, str(self.api_secret))
 
     def _proxy_token(self) -> str:
         """The token the proxy is given, which names a user where there is one.
@@ -316,8 +441,23 @@ class Backend:
         if self.token:
             return self.token
         if self.user_id:
-            return _sign({"user_id": self.user_id}, str(self.api_secret))
+            return _sign(
+                {"user_id": self.user_id, **self._category_claims()},
+                str(self.api_secret),
+            )
         return self._server_token()
+
+
+def category_claims(
+    team: Optional[str], categories: Sequence[str]
+) -> dict[str, object]:
+    """The ``team`` and ``usage_categories`` claims, each only when there is one."""
+    claims: dict[str, object] = {}
+    if team:
+        claims["team"] = team
+    if categories:
+        claims["usage_categories"] = list(categories)
+    return claims
 
 
 def _sign(
