@@ -498,6 +498,15 @@ When the provider lists a granted tool with another schema than the one approved
 
 ## Breaking Changes
 
+### The Dart SDK has no views of its own
+
+`vision_agents_ui` is gone, as the Swift and Kotlin SDKs' views went before it. A conversation is
+shown with Stream Chat's AI components (`stream_chat_flutter_ai`) instead, and
+`examples/voice_agents/flutter_demo` shows how: `AIConversationView` over the session's channel,
+each reply's steps and live reasoning, tool approvals answered with `session.decide`, and the
+voice glow on a call. `LiveValueBuilder` and `LiveValueNotifier` went with it; a `StreamBuilder`
+over a `LiveValue`'s `stream` with `initialData:` its `value` does the same (#1327).
+
 ### A Dart tool's `run` returns a `ToolOutput`
 
 `AgentTool.run` in the Dart SDK returns a `ToolOutput` rather than a `String`, as Swift's and Kotlin's `run` do, so a tool that shows pictures is the same type as one that answers in words. The `AgentTool(...)` constructor still takes a handler returning a `String` and wraps it, but is no longer `const`; `AgentTool.withPictures` is. Code that called `tool.run(arguments)` itself reads `.text` from what it returns (FLU-1126).
