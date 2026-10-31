@@ -489,6 +489,9 @@ type Agent struct {
 	// scheduledReply is the last native reply begun while scheduled was set, so a tool call
 	// of that reply that arrives after the caller is heard is still the scheduled task's.
 	scheduledReply string
+	// nativeAnswerDue says the caller stopped and no reply has begun since, so the next one
+	// answers their speech, not a scheduled turn typed in between.
+	nativeAnswerDue bool
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart

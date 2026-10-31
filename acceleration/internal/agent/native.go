@@ -188,10 +188,13 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		case sts.ResponseStarted:
 			// Kept here, in order with the tool calls and the caller's speech, so a call of
 			// this reply that arrives after the caller is heard is still the task's.
+			// The first reply after the caller stopped answers them, even when a scheduled
+			// turn was typed in before it began: the server answers that turn after it.
 			a.mu.Lock()
-			if a.scheduled {
+			if a.scheduled && !a.nativeAnswerDue {
 				a.scheduledReply = typed.ResponseID
 			}
+			a.nativeAnswerDue = false
 			a.mu.Unlock()
 		case sts.SpeechStarted:
 			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
@@ -202,8 +205,12 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.scheduled = false
 			a.mu.Unlock()
 		case sts.SpeechStopped:
+			// Every stop is answered by the next reply: the one the server opens for it, or,
+			// when a reply was still open, the one asked for after that reply ends
+			// (openairealtime's owe).
 			a.mu.Lock()
 			a.nativeListening = false
+			a.nativeAnswerDue = true
 			a.mu.Unlock()
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
