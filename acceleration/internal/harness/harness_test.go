@@ -1367,11 +1367,12 @@ func (s *HarnessSuite) TestATurnCancelledAsItsReplyAsksLeavesNoWorkInEitherOrder
 
 // mistakes is a reply whose every tag the harness answers with a note rather than work: a
 // skill that does not exist, a tool that does not exist, a tool's prose missing the fields
-// it requires, work on values the caller already gave in full, too many video frames, and
+// it requires (asked as a skill and called), work on values the caller already gave in full, too many video frames, and
 // work with no room left to run it.
 const mistakes = `<ask skill="say-the-secret">now</ask>` +
 	`<call tool="read_the_prompt"/>` +
 	`<ask skill="move_visit">Move it to Wednesday afternoon.</ask>` +
+	`<call tool="move_visit">Move it to Wednesday afternoon.</call>` +
 	`<ask skill="think">book it</ask>` +
 	`<ask skill="watch" frames="9">look</ask>` +
 	`<ask skill="watch">look</ask>`
