@@ -210,7 +210,7 @@ On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the
 
 ### The reply to the caller is not counted as a scheduled turn typed in just before it
 
-On a speech-to-speech agent, the reply the model gives to what the caller just said is the caller's, also when a scheduled turn was typed in between the caller stopping and that reply beginning. Work the model hands over in it is no longer counted as the scheduled turn. On GPT-Live, work handed over in a reply to a scheduled turn is counted as that turn also when the backend asks for it after the caller spoke again. Before, it was counted on the caller (AI-2402, AI-2403).
+On a speech-to-speech agent, the reply the model gives to what the caller just said is the caller's, also when a scheduled turn was typed in between the caller stopping and that reply beginning. Work the model hands over in it is no longer counted as the scheduled turn, also when the model asks for the work before the caller's words are transcribed. On GPT-Live, work handed over in a reply to a scheduled turn is counted as that turn also when the backend asks for it after the caller spoke again, and work handed over in the reply to the caller stays the caller's when the backend asks for it during a scheduled turn. Before, it was counted on the caller (AI-2402, AI-2403).
 
 ### An IP address in a sandbox's allowed domains is refused
 
