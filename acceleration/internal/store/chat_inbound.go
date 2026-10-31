@@ -19,6 +19,9 @@ const (
 	ChatInboundFailed = "failed"
 )
 
+// ErrNoChatInbound is a queued Stream Chat message no row is stored for (ChatInboundBySeq).
+var ErrNoChatInbound = errors.New("store: no such queued chat inbound message")
+
 // chatInboundDoneKeep is how long an answered message's row is kept, so a delivery Stream
 // makes again queues nothing. It is channelMessageKeep, the span thread channels already drop
 // a message's second delivery in.
@@ -153,6 +156,19 @@ func (s *Store) claimChatInbound(ctx context.Context, query string, now time.Tim
 		return nil, stack.Wrap(fmt.Errorf("store: claim chat inbound: %w", err))
 	}
 	return claimed, nil
+}
+
+// ChatInboundBySeq returns the message queued as seq, in whatever state it is.
+func (s *Store) ChatInboundBySeq(ctx context.Context, seq int64) (ChatInbound, error) {
+	var delivery ChatInbound
+	err := s.db.NewRaw("SELECT "+chatInboundColumns+" FROM chat_inbound AS cd WHERE cd.seq = ?", seq).Scan(ctx, &delivery)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChatInbound{}, stack.Wrap(fmt.Errorf("%w: %d", ErrNoChatInbound, seq))
+	}
+	if err != nil {
+		return ChatInbound{}, stack.Wrap(fmt.Errorf("store: chat inbound: %w", err))
+	}
+	return delivery, nil
 }
 
 // NextChatInboundAt is when the queued message due first is due, leased ones at the end of
