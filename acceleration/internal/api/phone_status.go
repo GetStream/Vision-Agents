@@ -95,6 +95,7 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// A node without a store keeps no calls to check an ask against.
 	if s.phone == nil || s.phone.Outcomes() == nil {
 		writeError(w, errUnknownCall)
 		return
