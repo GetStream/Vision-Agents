@@ -8,16 +8,16 @@ import (
 )
 
 // redisReady is how long WaitForRedis waits for an answer. A Redis container started just
-// before the run has been seen to take 13 s, with the machine loaded; 30 s leaves room
-// above that without hiding a Redis that is not coming.
-const redisReady = 30 * time.Second
+// before the run has been seen to take 13 s and 28 s to answer, with the machine loaded;
+// 60 s leaves room above that without hiding a Redis that is not coming.
+const redisReady = 60 * time.Second
 
 // redisAttempt bounds one PING: a connection that is accepted and then left unanswered
 // must not use up the whole wait.
 const redisAttempt = time.Second
 
 // WaitForRedis returns once the Redis at address answers PING, or an error when it does
-// not within 30 s.
+// not within 60 s.
 //
 // A Redis container that has only just started accepts the connection (Docker's port
 // forwarding does) before Redis replies. A client dialled then sits in its handshake until
