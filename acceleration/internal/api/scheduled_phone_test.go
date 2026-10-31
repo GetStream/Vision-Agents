@@ -402,6 +402,10 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNo
 	s.Equal(scheduling.ReasonRungAlready, *run.Error)
 	s.Empty(run.DeliveredTo)
 	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
+	// That call may have carried the task out: the one-shot is over, not failed.
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State)
+	s.Zero(stored.ConsecutiveFailures)
 }
 
 // A channel before the call that may land later keeps the occurrence retried, but the
@@ -792,6 +796,9 @@ func (s *ScheduledTasksSuite) TestAFinalFailureOnTheNodeHoldingTheConversationIs
 	run := s.settledRun(task)
 	s.Equal(store.ScheduledTaskRunFailed, run.State)
 	s.Equal(scheduling.ReasonRungAlready, *run.Error, "the peer's reason crossed back")
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State, "the peer's call may have carried the task out")
+	s.Zero(stored.ConsecutiveFailures)
 }
 
 func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsItsReasonAndIsRetried() {
