@@ -436,7 +436,12 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 	if a.toolScheduled == nil {
 		a.toolScheduled = map[string]bool{}
 	}
-	a.toolScheduled[requested.Call.ID] = a.scheduled || requested.TurnID != "" && requested.TurnID == a.scheduledReply
+	// A call is the scheduled task's when its reply is known to be (scheduledReply), or when
+	// the last thing is a scheduled turn and the call's reply is not known to be the one that
+	// answered the caller (answerReply).
+	known := requested.TurnID != ""
+	a.toolScheduled[requested.Call.ID] = a.scheduled && !(known && requested.TurnID == a.answerReply) ||
+		known && requested.TurnID == a.scheduledReply
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}

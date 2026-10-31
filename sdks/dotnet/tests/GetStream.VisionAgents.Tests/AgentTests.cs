@@ -896,7 +896,7 @@ public sealed class AgentTests : IDisposable
 
     private static async Task<SessionEvent> FirstAsync(Session session)
     {
-        using var patience = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var patience = new CancellationTokenSource(TestRouter.Patience);
         await foreach (var happened in session.EventsAsync(patience.Token))
         {
             return happened;
