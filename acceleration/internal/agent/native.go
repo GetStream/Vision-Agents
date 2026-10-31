@@ -191,7 +191,9 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			// The first reply after the caller stopped answers them, even when a scheduled
 			// turn was typed in before it began: the server answers that turn after it.
 			a.mu.Lock()
-			if a.scheduled && !a.nativeAnswerDue {
+			if a.nativeAnswerDue {
+				a.answerReply = typed.ResponseID
+			} else if a.scheduled {
 				a.scheduledReply = typed.ResponseID
 			}
 			a.nativeAnswerDue = false

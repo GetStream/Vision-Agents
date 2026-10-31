@@ -492,6 +492,9 @@ type Agent struct {
 	// nativeAnswerDue says the caller stopped and no reply has begun since, so the next one
 	// answers their speech, not a scheduled turn typed in between.
 	nativeAnswerDue bool
+	// answerReply is the last native reply that answered the caller's stop, so a tool call of
+	// it is the caller's even when it arrives while a scheduled turn is the last thing.
+	answerReply string
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart

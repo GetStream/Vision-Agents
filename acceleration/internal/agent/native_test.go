@@ -501,6 +501,40 @@ func (s *AgentSuite) TestWorkGPTLiveHandsOverInAScheduledTurnIsAskedAsScheduledW
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")
 }
 
+func (s *AgentSuite) TestWorkANativeModelHandsOverInTheReplyToTheCallersStopIsNotAskedAsScheduledWhenItsCallComesBeforeTheirWords() {
+	// The transcript of what the caller said runs alongside the reply, so a call of the reply
+	// answering them can arrive while the scheduled turn typed in before it is the last thing.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r0"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r0","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller's reply is theirs")
+}
+
+func (s *AgentSuite) TestWorkGPTLiveHandsOverInTheCallersReplyIsNotAskedAsScheduledWhenItsCallComesInAScheduledTurn() {
+	// The backend asks for the work after a scheduled turn was typed in, but the work was
+	// handed over in the reply answering the caller.
+	peer := s.joinLiveDelegating(50 * time.Millisecond)
+	s.nativeSend(peer, `{"type":"session.input_transcript.delta","delta":"Price eight seats"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.nativeSend(peer, `{"type":"session.delegation.created","delegation":{"id":"d0","type":"responses","target":"responses"}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the caller's reply never ended")
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeSend(peer, `{"type":"response.event","delegation_id":"d0","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the work is the caller's")
+}
+
 // geminiAudio is a server message with a tenth of a second of the model's speech.
 func geminiAudio() string {
 	return `{"serverContent":{"modelTurn":{"role":"model","parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"` +
