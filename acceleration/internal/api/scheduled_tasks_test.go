@@ -3801,7 +3801,7 @@ func (s *ScheduledTasksSuite) TestTheConversationAfterACutOffTextChannelRunsTheT
 
 	s.Require().NoError(err)
 	s.Equal(store.ScheduledTaskDeliveredConversation, deliveredTo)
-	s.Eventually(func() bool { return s.scheduledTurns() == 2 }, settleFor, 20*time.Millisecond,
+	s.Eventually(func() bool { return s.scheduledTurns() == 2 }, deliveryWait, 20*time.Millisecond,
 		"the conversation was not given the task again")
 	s.Empty(s.sink.to(writer))
 }
