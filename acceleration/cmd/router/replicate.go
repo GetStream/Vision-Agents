@@ -88,12 +88,16 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	cancel()
 	pgStore.SetStreamPins(streamPins(streamClients))
 
-	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, options.as, logger)
+	reservation, err := pgStore.ReserveImportedIDs(ctx)
+	if err != nil {
+		return err
+	}
+	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, reservation, options.as, logger)
 	if err != nil {
 		return err
 	}
 
-	return follow(ctx, options.source, pgStore, customerID, cursor, options.poll, options.once, logger)
+	return follow(ctx, options.source, pgStore, reservation, customerID, cursor, options.poll, options.once, logger)
 }
 
 // replicateOptions is what the command line asked replicate for.
@@ -153,7 +157,7 @@ func parseReplicate(args []string) (replicateOptions, error) {
 
 // copyEverything reads the export and writes it here, returning who it turned out to be
 // and the cursor its changes carry on from.
-func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, as string, logger *slog.Logger) (string, int64, error) {
+func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, as string, logger *slog.Logger) (string, int64, error) {
 	body, err := source.get(ctx, "/v1/data/export", nil)
 	if err != nil {
 		return "", 0, err
@@ -180,6 +184,9 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 				// customer_id holds and what --app-id on `keys create` is for.
 				customerID = customerOf(line.Row)
 			}
+			if err := reservation.Cover(ctx, line.Table, line.Row); err != nil {
+				return "", 0, err
+			}
 			if err := pgStore.ImportRow(ctx, customerID, line.Table, line.Row); err != nil {
 				return "", 0, err
 			}
@@ -204,7 +211,7 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 
 // follow replays what happens at the source from the cursor onwards, until there is
 // nothing left and the caller asked to stop, or until the process is interrupted.
-func follow(ctx context.Context, source *deployment, pgStore *store.Store, customerID string, cursor int64, poll time.Duration, once bool, logger *slog.Logger) error {
+func follow(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, customerID string, cursor int64, poll time.Duration, once bool, logger *slog.Logger) error {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 
@@ -223,6 +230,14 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 		}
 
 		if len(page.Changes) > 0 {
+			for _, change := range page.Changes {
+				if change.Op == store.ChangeDelete {
+					continue
+				}
+				if err := reservation.Cover(ctx, change.Table, change.Payload); err != nil {
+					return err
+				}
+			}
 			if err := pgStore.ApplyChanges(ctx, customerID, page.Changes); err != nil {
 				return err
 			}
