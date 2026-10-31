@@ -1126,6 +1126,55 @@ func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
 	s.Equal(ScheduledTaskPaused, state)
 }
 
+// A task the user or its delivery changed after the cut-over read it is not resumed by what it read.
+func (s *DataMoveSuite) TestTheCutOverDoesNotResumeATaskThatChangedWhileItReadTheRest() {
+	s.seedScheduledTask("st-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-paused", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	changing, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = changing.Rollback() }()
+	_, err = changing.ExecContext(s.ctx, `
+UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-ended';
+UPDATE scheduled_tasks SET move_paused = false WHERE id = 'st-paused'`)
+	s.Require().NoError(err)
+
+	type outcome struct {
+		resumed int64
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		resumed, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, err}
+	}()
+	// Commit the changes once the cut-over waits on them: it read the tasks as they were.
+	deadline := time.Now().Add(30 * time.Second)
+	var result *outcome
+	for result == nil && time.Now().Before(deadline) {
+		select {
+		case got := <-done:
+			result = &got
+		case <-time.After(50 * time.Millisecond):
+			var waiting int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+			if waiting > 0 {
+				s.Require().NoError(changing.Commit())
+				got := <-done
+				result = &got
+			}
+		}
+	}
+	s.Require().NotNil(result, "the cut-over neither finished nor waited")
+	s.Require().NoError(result.err)
+	s.Zero(result.resumed)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-ended")
+	s.Equal(ScheduledTaskCompleted, state)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
+	s.Equal(ScheduledTaskPaused, state, "the user's pause, which cleared the mark, stands")
+}
+
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
 	s.move("acme", "moved")
