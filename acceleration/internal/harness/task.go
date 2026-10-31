@@ -34,6 +34,9 @@ const (
 	ReasonDeadline = "deadline"
 	// ReasonClosed means the conversation ended.
 	ReasonClosed = "closed"
+	// ReasonRefused means the prompt injection screen refused the turn that asked for it,
+	// so it was asked on input nothing may act on.
+	ReasonRefused = "refused"
 )
 
 // Result is a finished task.

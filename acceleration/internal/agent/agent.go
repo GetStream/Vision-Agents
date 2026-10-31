@@ -2642,6 +2642,13 @@ func (a *Agent) handle(event llm.Event) {
 		}
 
 	case llm.ResponseFailed:
+		refused := errors.Is(typed.Err, policy.ErrPromptInjection)
+		if refused {
+			// The reply's skill tags were acted on as it streamed, before the verdict, so the
+			// work they handed over was asked on the refused input. It goes with the turn, a
+			// turn the caller already talked over included.
+			a.harness.CancelTurn(typed.ResponseID, harness.ReasonRefused)
+		}
 		// A reply the agent gave up on is over already, and its stream breaking as it was cut
 		// off is part of the cut. Reported, it would end as failed whatever the conversation
 		// is on, before the interruption ends it as cancelled.
@@ -2649,7 +2656,7 @@ func (a *Agent) handle(event llm.Event) {
 			a.logger.Debug("a reply failed after it was abandoned", "turn", typed.ResponseID, "error", typed.Err)
 			return
 		}
-		if errors.Is(typed.Err, policy.ErrPromptInjection) {
+		if refused {
 			a.refusedReply = typed.ResponseID
 			// A refusal is an outcome of the input, one any caller can bring about at will,
 			// not a failure of the agent: it is reported as one, and logged below error.
