@@ -495,8 +495,9 @@ func (s *Server) pauseScheduledTask(ctx context.Context, request *pauseScheduled
 	if err != nil {
 		return nil, err
 	}
-	if task.State == store.ScheduledTaskActive {
-		task.State = store.ScheduledTaskPaused
+	// A task a data move paused is paused by the user once they say so, so the cut-over leaves it.
+	if task.State == store.ScheduledTaskActive || (task.State == store.ScheduledTaskPaused && task.MovePaused) {
+		task.State, task.MovePaused = store.ScheduledTaskPaused, false
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
 			return nil, err
 		}
@@ -560,7 +561,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskActive, &next
 		}
-		task.ConsecutiveFailures = 0
+		task.ConsecutiveFailures, task.MovePaused = 0, false
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
 			if errors.Is(err, store.ErrNoAgentConfig) {
 				return nil, errUnknownConfig

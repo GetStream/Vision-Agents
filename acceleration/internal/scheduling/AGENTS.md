@@ -280,8 +280,17 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns` (`internal/store`; `internal/api` has a suite of the same name).
 - **A moved task arrives paused and unclaimed.** The deployment it left delivers it until the cut-over,
   so every import of a task, the copy and each change, writes `active` as `paused` and clears the claim
-  (`pauseImportedTask`). `TestDataMoveSuite/TestAnActiveScheduledTaskArrivesPausedAndUnclaimed`,
+  (`pauseImported`). `TestDataMoveSuite/TestAnActiveScheduledTaskArrivesPausedAndUnclaimed`,
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
+- **The cut-over resumes what the move paused, never what the user paused.** An import marks the task
+  `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
+  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have.
+  A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
+  a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
+  missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
+  task again whatever happened to its config here. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
+  `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
   paused task stays; its old runs do not. Each delete reads its table by an index

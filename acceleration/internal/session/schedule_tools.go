@@ -398,7 +398,8 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		if task.State == store.ScheduledTaskCompleted {
 			return refusal(conflictCode, "that task has already finished; there is nothing to pause"), nil
 		}
-		task.State = store.ScheduledTaskPaused
+		// Paused by the user's say, so a data move's cut-over leaves it.
+		task.State, task.MovePaused = store.ScheduledTaskPaused, false
 	case "resume":
 		if task.State == store.ScheduledTaskCompleted {
 			return refusal(conflictCode, "that task has finished; schedule a new one instead"), nil
@@ -422,6 +423,7 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		task.State = store.ScheduledTaskActive
 		task.NextRunAt = &next
 		task.ConsecutiveFailures = 0
+		task.MovePaused = false
 	case "reschedule":
 		parsed, parts := r.rescheduled(&task, args, now)
 		if parts != nil {

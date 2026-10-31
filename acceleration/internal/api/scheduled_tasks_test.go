@@ -2202,6 +2202,77 @@ func (s *ScheduledTasksSuite) TestPauseAndResumeCountsFromNow() {
 	s.True(next.Before(time.Now().Add(25*time.Hour)), "a daily task is due within a day")
 }
 
+// movePaused leaves a task as a data move imports one that was active where it came from:
+// paused, and marked for the cut-over to resume (store.ResumeMovedRows).
+func (s *ScheduledTasksSuite) movePaused(id string) {
+	_, err := s.store.DB().NewUpdate().Model((*store.ScheduledTask)(nil)).
+		Set("state = ?", store.ScheduledTaskPaused).Set("move_paused = true").
+		Where("customer_id = ?", s.customerID()).Where("id = ?", id).
+		Exec(context.Background())
+	s.Require().NoError(err)
+}
+
+// cutOver is `router replicate --resume` for the suite's customer: how many tasks it resumed.
+func (s *ScheduledTasksSuite) cutOver() int64 {
+	resumed, _, _, err := s.store.ResumeMovedRows(context.Background(), s.customerID())
+	s.Require().NoError(err)
+	return resumed
+}
+
+func (s *ScheduledTasksSuite) TestATaskAMovePausedThatTheUserPausesIsLeftPausedByTheCutOver() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	s.movePaused(created.Id)
+
+	var rendered ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/pause", nil, &rendered))
+
+	s.Zero(s.cutOver(), "it was paused already, but now the user paused it")
+	task, err := s.store.ScheduledTask(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.Equal(store.ScheduledTaskPaused, task.State)
+}
+
+func (s *ScheduledTasksSuite) TestATaskAMovePausedThatTheUserResumesLosesTheMovesMark() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	s.movePaused(created.Id)
+
+	var rendered ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/resume", nil, &rendered))
+	s.Require().Equal(store.ScheduledTaskActive, rendered.State)
+
+	// Paused later by the router (an unreadable schedule), the cut-over must not take it for the move's.
+	task, err := s.store.ScheduledTask(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.False(task.MovePaused, "the user decided what it does here")
+}
+
+func (s *ScheduledTasksSuite) TestATaskAMovePausedThatTheUserRetitlesIsStillTheCutOversToResume() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	body := taskRequest(config)
+	body.Schedule.Repeat = pointerTo("FREQ=DAILY")
+	created := s.createTask(user, body)
+	s.movePaused(created.Id)
+
+	var updated ScheduledTask
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPatch, "/v1/agents/scheduled-tasks/"+created.Id,
+		UpdateScheduledTaskRequest{Title: pointerTo("Stretch break")}, &updated))
+
+	s.Equal(int64(1), s.cutOver(), "an edit is not a pause: the source still delivers it until the cut-over")
+	task, err := s.store.ScheduledTask(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.Equal(store.ScheduledTaskActive, task.State)
+	s.Equal("Stretch break", task.Title)
+}
+
 func (s *ScheduledTasksSuite) TestAOneShotResumedAfterItsTimeRecordsTheOccurrenceAsMissed() {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()

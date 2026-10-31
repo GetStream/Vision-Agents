@@ -97,7 +97,11 @@ type ScheduledTask struct {
 	// NextRunAt is the next occurrence as an instant. Nil when there is none.
 	NextRunAt *time.Time `bun:"next_run_at"`
 	State     string     `bun:"state,notnull"`
-	Channels  []string   `bun:"channels,type:jsonb,notnull"`
+	// MovePaused is set on a task a data move imported paused because it was active where
+	// it came from: the cut-over resumes it (ResumeMovedRows). A pause or a resume by the
+	// user or the agent clears it, since they have decided; any other change keeps it.
+	MovePaused bool     `bun:"move_paused,notnull"`
+	Channels   []string `bun:"channels,type:jsonb,notnull"`
 	// QuietHours is the span of the user's local day an occurrence is held
 	// through rather than delivered into. Nil is no hold.
 	QuietHours *ScheduledTaskQuietHours `bun:"quiet_hours,type:jsonb"`
