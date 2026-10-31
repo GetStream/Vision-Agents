@@ -221,7 +221,10 @@ internal sealed class Socket : IAsyncDisposable
         await _sending.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _socket.SendAsync(payload, type, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+            // Not cancellable: ClientWebSocket aborts the whole socket when a send is cancelled
+            // part way, so a tool cancelled mid-send would end the session. The token only
+            // decides whether the frame starts.
+            await _socket.SendAsync(payload, type, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception failure) when (failure is WebSocketException or ObjectDisposedException)
         {
