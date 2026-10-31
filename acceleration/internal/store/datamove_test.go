@@ -804,7 +804,7 @@ func (s *DataMoveSuite) TestAScheduledTaskChangeAppliedLaterArrivesPausedToo() {
 
 // resume is the cut-over on the destination: what it resumed, and the campaigns left to start.
 func (s *DataMoveSuite) resume(customerID string) (int64, []string) {
-	resumed, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
+	resumed, _, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
 	s.Require().NoError(err)
 	return resumed, campaigns
 }
@@ -898,6 +898,154 @@ func (s *DataMoveSuite) TestATaskPausedAtTheSourceIsNotResumedWhateverMarkItCarr
 	s.Equal(ScheduledTaskPaused, state)
 }
 
+// limitHere sets how many active tasks a user may hold on config-1 on the destination.
+func (s *DataMoveSuite) limitHere(limit int) {
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"UPDATE agent_configs SET scheduling = jsonb_build_object('max_tasks_per_user', ?::int) WHERE id = 'config-1'", limit)
+	s.Require().NoError(err)
+}
+
+// madeHere is an active task a user made on the destination before the cut-over.
+func (s *DataMoveSuite) madeHere(id, user, config string) {
+	next := time.Date(2026, 12, 2, 9, 0, 0, 0, time.UTC)
+	s.Require().NoError(s.destination.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: id, CustomerID: "moved", ConfigID: config, UserID: user, CallerKind: "authenticated",
+		Title: "Hydrate", Instructions: "Remind them to drink.", StartLocal: next, Timezone: "UTC",
+		State: ScheduledTaskActive, NextRunAt: &next, CreatedBy: "api",
+	}, 100))
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesAUserOnlyUpToTheRoomTheirLimitLeaves() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, skipped, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed, "one place is left under the limit of 2")
+	s.Zero(skipped)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskActive, state, "the oldest takes the place")
+	s.False(s.movePausedOn("st-1"))
+	for _, id := range []string{"st-2", "st-3"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+		s.True(s.movePausedOn(id), "%s is still owed its resume", id)
+	}
+	held, err := s.destination.ActiveScheduledTaskCount(s.ctx, "moved", "sam", "config-1")
+	s.Require().NoError(err)
+	s.Equal(2, held)
+}
+
+// A client chooses the id of its task, so id order is not age order.
+func (s *DataMoveSuite) TestTheCutOverResumesTheOldestTaskWhateverItsId() {
+	for _, id := range []string{"st-c", "st-b", "st-a"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-c")
+	s.Equal(ScheduledTaskActive, state, "st-c was made first, though its id sorts last")
+	for _, id := range []string{"st-b", "st-a"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+	}
+}
+
+// The mark kept on a task left over the limit is what lets a second cut-over resume it.
+func (s *DataMoveSuite) TestTheCutOverRunAgainResumesWhatItLeftOnceTheUserHasRoom() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+	_, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	s.Require().NoError(err)
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-here'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-2")
+	s.Equal(ScheduledTaskActive, state, "the next oldest")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-3")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// Control: the limit is a user's on one config, and a task they paused here uses no place.
+func (s *DataMoveSuite) TestTheCutOverResumesEveryTaskThatFitsUnderTheLimit() {
+	s.seedScheduledTask("st-sam-1", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-sam-other-config", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-kim", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id = 'st-sam-other-config';
+UPDATE scheduled_tasks SET user_id = 'kim' WHERE id = 'st-kim'`)
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+	s.limitHere(2)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 2}' WHERE id = 'config-2'`)
+	s.Require().NoError(err)
+	s.madeHere("st-here", "sam", "config-1")
+	s.madeHere("st-here-other-config", "sam", "config-2")
+	s.madeHere("st-here-paused", "sam", "config-1")
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'paused' WHERE id = 'st-here-paused'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(3), resumed, "sam's second place on config-1, their task on the other config, and kim's")
+	s.Zero(overLimit)
+}
+
+func (s *DataMoveSuite) TestTheCutOverHoldsAConfigWithoutALimitToTheDefault() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	for i := range 25 {
+		s.madeHere(fmt.Sprintf("st-here-%d", i), "sam", "config-1")
+	}
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesNothingForAUserAlreadyAboveALoweredLimit() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	s.madeHere("st-here-1", "sam", "config-1")
+	s.madeHere("st-here-2", "sam", "config-1")
+	s.limitHere(1)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+}
+
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused() {
 	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
 	s.move("acme", "moved")
@@ -905,7 +1053,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused
 	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
 	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "every occurrence would fail on the deleted agent")
@@ -931,7 +1079,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHereBefore
 	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
 	s.Require().True(s.movePausedOn("st-active"), "the catch-up marked it again")
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "its config is deleted here")
@@ -949,7 +1097,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigIsAnotherCustomersHe
 	s.Require().NoError(err)
 	s.move("acme", "moved")
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed, "the customer has no config-1 here to run it on")
@@ -974,7 +1122,7 @@ func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		resumed, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		resumed, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 		done <- outcome{resumed, err}
 	}()
 	// Commit the delete once the cut-over waits on it; a cut-over that does not wait has
@@ -1003,6 +1151,67 @@ func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
 	s.Equal(ScheduledTaskPaused, state)
 }
 
+// A task the user or its delivery changed after the cut-over read it is not resumed by what it read.
+func (s *DataMoveSuite) TestTheCutOverDoesNotResumeATaskThatChangedWhileItReadTheRest() {
+	s.seedScheduledTask("st-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-paused", "acme", ScheduledTaskActive)
+	// Two tasks on a config deleted here, which the cut-over leaves paused and unmarks
+	// unless they change meanwhile.
+	s.seedScheduledTask("st-gone-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-gone-paused", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id IN ('st-gone-ended', 'st-gone-paused')`)
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-2"))
+	changing, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = changing.Rollback() }()
+	_, err = changing.ExecContext(s.ctx, `
+UPDATE scheduled_tasks SET state = 'completed' WHERE id IN ('st-ended', 'st-gone-ended');
+UPDATE scheduled_tasks SET move_paused = false WHERE id IN ('st-paused', 'st-gone-paused')`)
+	s.Require().NoError(err)
+
+	type outcome struct {
+		resumed, skipped int64
+		err              error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, skipped, err}
+	}()
+	// Commit the changes once the cut-over waits on them: it read the tasks as they were.
+	deadline := time.Now().Add(30 * time.Second)
+	var result *outcome
+	for result == nil && time.Now().Before(deadline) {
+		select {
+		case got := <-done:
+			result = &got
+		case <-time.After(50 * time.Millisecond):
+			var waiting int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+			if waiting > 0 {
+				s.Require().NoError(changing.Commit())
+				got := <-done
+				result = &got
+			}
+		}
+	}
+	s.Require().NotNil(result, "the cut-over neither finished nor waited")
+	s.Require().NoError(result.err)
+	s.Zero(result.resumed)
+	s.Zero(result.skipped, "a task that changed meanwhile was not left paused by the cut-over")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-ended")
+	s.Equal(ScheduledTaskCompleted, state)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
+	s.Equal(ScheduledTaskPaused, state, "the user's pause, which cleared the mark, stands")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-gone-ended")
+	s.Equal(ScheduledTaskCompleted, state)
+}
+
 func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
 	s.move("acme", "moved")
@@ -1011,7 +1220,7 @@ func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
 		"UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-active'")
 	s.Require().NoError(err)
 
-	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
 
 	s.Require().NoError(err)
 	s.Zero(resumed)

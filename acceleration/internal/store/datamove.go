@@ -662,42 +662,109 @@ func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID str
 // whenever the source changes it. The config row is locked FOR SHARE, as refuseDeletedConfig
 // does, so a delete landing meanwhile either is seen or finds the task active and pauses it.
 //
-// It returns how many tasks it resumed, how many it left paused that way, and the campaigns
-// that were running there. Those it leaves paused and marked: a campaign rings only from the
-// router that starts it, so each is started here (POST /v1/agents/campaigns/{id}/start), and
-// any change of its state here clears the mark (setCampaignState). Running it again resumes
-// nothing twice.
-func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped int64, campaigns []string, err error) {
+// A user holds at most the config's limit of active tasks on it (AgentScheduling.MaxActive),
+// as the API's resume holds them to (errTooManyScheduledTasks). A user who made tasks here
+// before the cut-over has less room than the move brought tasks, so each user's marked tasks
+// are resumed oldest first while the room lasts. The rest stay paused and keep the mark: it
+// says the cut-over still owes them a resume, which running it again pays once the user has
+// cancelled or paused tasks here.
+//
+// It returns how many tasks it resumed, how many it left paused for want of a config, how many
+// for want of room, and the campaigns that were running there. Those it leaves paused and
+// marked: a campaign rings only from the router that starts it, so each is started here
+// (POST /v1/agents/campaigns/{id}/start), and any change of its state here clears the mark
+// (setCampaignState). Running it again resumes nothing twice.
+func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
-			Set("state = ?", ScheduledTaskActive).
-			Set("move_paused = false").
-			Set("updated_at = now()").
+		var marked []ScheduledTask
+		if err := tx.NewSelect().Model(&marked).
+			Column("id", "user_id", "config_id").
 			Where("customer_id = ?", customerID).
 			Where("move_paused").
 			// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
 			Where("state = ?", ScheduledTaskPaused).
-			Where("EXISTS (SELECT 1 FROM agent_configs AS ac WHERE ac.customer_id = st.customer_id AND ac.id = st.config_id AND ac.deleted_at IS NULL FOR SHARE)").
-			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			Order("created_at", "id").
+			Scan(ctx); err != nil {
+			return fmt.Errorf("store: moved scheduled tasks: %w", err)
 		}
-		if resumed, err = result.RowsAffected(); err != nil {
-			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		// The limit of each config, nil when it is deleted or missing; the active tasks of
+		// each user on each config, counting those resumed so far.
+		limits := map[string]*int{}
+		type holder struct{ user, config string }
+		held := map[holder]int{}
+		var resume, unmark []string
+		for _, task := range marked {
+			limit, read := limits[task.ConfigID]
+			if !read {
+				var config AgentConfig
+				err := tx.NewSelect().Model(&config).
+					Column("scheduling").
+					Where("customer_id = ?", customerID).
+					Where("id = ?", task.ConfigID).
+					Where("deleted_at IS NULL").
+					For("SHARE").
+					Scan(ctx)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("store: lock the config of a moved scheduled task: %w", err)
+				}
+				if err == nil {
+					room := config.Scheduling.MaxActive()
+					limit = &room
+				}
+				limits[task.ConfigID] = limit
+			}
+			if limit == nil {
+				unmark = append(unmark, task.ID)
+				continue
+			}
+			key := holder{task.UserID, task.ConfigID}
+			count, counted := held[key]
+			if !counted {
+				var err error
+				if count, err = activeScheduledTasks(ctx, tx, customerID, task.UserID, task.ConfigID); err != nil {
+					return err
+				}
+			}
+			if count >= *limit {
+				held[key] = count
+				overLimit++
+				continue
+			}
+			held[key] = count + 1
+			resume = append(resume, task.ID)
 		}
-		result, err = tx.NewUpdate().Model((*ScheduledTask)(nil)).
-			Set("move_paused = false").
-			Set("updated_at = now()").
-			Where("customer_id = ?", customerID).
-			Where("move_paused").
-			// The update above resumed every other one.
-			Where("state = ?", ScheduledTaskPaused).
-			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		if len(resume) > 0 {
+			result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+				Set("state = ?", ScheduledTaskActive).
+				Set("move_paused = false").
+				Set("updated_at = now()").
+				Where("customer_id = ?", customerID).
+				Where("id IN (?)", bun.In(resume)).
+				Where("move_paused").
+				Where("state = ?", ScheduledTaskPaused).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			}
+			if resumed, err = result.RowsAffected(); err != nil {
+				return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			}
 		}
-		if skipped, err = result.RowsAffected(); err != nil {
-			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		if len(unmark) > 0 {
+			result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+				Set("move_paused = false").
+				Set("updated_at = now()").
+				Where("customer_id = ?", customerID).
+				Where("id IN (?)", bun.In(unmark)).
+				Where("move_paused").
+				Where("state = ?", ScheduledTaskPaused).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+			}
+			if skipped, err = result.RowsAffected(); err != nil {
+				return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+			}
 		}
 		if err := tx.NewSelect().Model((*Campaign)(nil)).
 			Column("id").
@@ -710,9 +777,9 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return nil
 	})
 	if err != nil {
-		return 0, 0, nil, stack.Wrap(err)
+		return 0, 0, 0, nil, stack.Wrap(err)
 	}
-	return resumed, skipped, campaigns, nil
+	return resumed, skipped, overLimit, campaigns, nil
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text
