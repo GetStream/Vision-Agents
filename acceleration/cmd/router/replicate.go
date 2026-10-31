@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -33,8 +34,13 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --poll        how often to ask for changes once the copy is done
   --once        stop as soon as there is nothing left to catch up on
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
-                the scheduled tasks the copy paused because they were active there, and
-                name the campaigns that were running there, to start here
+                the scheduled tasks the copy paused because they were active there, each
+                at its first occurrence after now, and name the campaigns that were
+                running there, to start here
+
+Until the last --once the deployment copied from is the truth: a change it makes to a
+row overwrites what was done to that row here, a delete included. Once SDKs point here,
+stop writing there.
 `
 
 // tokenLifetime is how long the token this command signs for itself is good for. It is
@@ -82,12 +88,16 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	cancel()
 	pgStore.SetStreamPins(streamPins(streamClients))
 
-	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, options.as, logger)
+	reservation, err := pgStore.ReserveImportedIDs(ctx)
+	if err != nil {
+		return err
+	}
+	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, reservation, options.as, logger)
 	if err != nil {
 		return err
 	}
 
-	return follow(ctx, options.source, pgStore, customerID, cursor, options.poll, options.once, logger)
+	return follow(ctx, options.source, pgStore, reservation, customerID, cursor, options.poll, options.once, logger)
 }
 
 // replicateOptions is what the command line asked replicate for.
@@ -147,7 +157,7 @@ func parseReplicate(args []string) (replicateOptions, error) {
 
 // copyEverything reads the export and writes it here, returning who it turned out to be
 // and the cursor its changes carry on from.
-func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, as string, logger *slog.Logger) (string, int64, error) {
+func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, as string, logger *slog.Logger) (string, int64, error) {
 	body, err := source.get(ctx, "/v1/data/export", nil)
 	if err != nil {
 		return "", 0, err
@@ -174,6 +184,9 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 				// customer_id holds and what --app-id on `keys create` is for.
 				customerID = customerOf(line.Row)
 			}
+			if err := reservation.Cover(ctx, line.Table, line.Row); err != nil {
+				return "", 0, err
+			}
 			if err := pgStore.ImportRow(ctx, customerID, line.Table, line.Row); err != nil {
 				return "", 0, err
 			}
@@ -198,7 +211,7 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 
 // follow replays what happens at the source from the cursor onwards, until there is
 // nothing left and the caller asked to stop, or until the process is interrupted.
-func follow(ctx context.Context, source *deployment, pgStore *store.Store, customerID string, cursor int64, poll time.Duration, once bool, logger *slog.Logger) error {
+func follow(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, customerID string, cursor int64, poll time.Duration, once bool, logger *slog.Logger) error {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 
@@ -217,6 +230,14 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 		}
 
 		if len(page.Changes) > 0 {
+			for _, change := range page.Changes {
+				if change.Op == store.ChangeDelete {
+					continue
+				}
+				if err := reservation.Cover(ctx, change.Table, change.Payload); err != nil {
+					return err
+				}
+			}
 			if err := pgStore.ApplyChanges(ctx, customerID, page.Changes); err != nil {
 				return err
 			}
@@ -244,7 +265,11 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 
 // resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
-	resumed, skipped, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
+	cutOver := time.Now()
+	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
+		return err
+	}
+	resumed, skipped, overLimit, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
 	if err != nil {
 		return err
 	}
@@ -252,10 +277,30 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 	if skipped > 0 {
 		fmt.Fprintf(out, "left %d scheduled tasks paused: their agent config is deleted or missing here\n", skipped)
 	}
+	if overLimit > 0 {
+		fmt.Fprintf(out, "left %d scheduled tasks paused: their user already holds the most active tasks the agent config allows. "+
+			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
+	}
 	for _, id := range campaigns {
 		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
 	}
 	return nil
+}
+
+// nextAfter is a moved task's next occurrence after the cut-over, as a resume counts it
+// (resumeScheduledTask); with none left, a one-shot's is the missed run of the time it slept
+// through, and a repeat has none.
+func nextAfter(cutOver time.Time) func(store.ScheduledTask) (*time.Time, *store.ScheduledTaskRun, error) {
+	return func(task store.ScheduledTask) (*time.Time, *store.ScheduledTaskRun, error) {
+		schedule, err := scheduling.FromStored(task)
+		if err != nil {
+			return nil, nil, fmt.Errorf("scheduled task %s: %w", task.ID, err)
+		}
+		if next, ok := schedule.Next(cutOver); ok {
+			return &next, nil, nil
+		}
+		return nil, scheduling.SleptThrough(task), nil
+	}
 }
 
 // exportLine is a line of the export, which is either a row or the cursor that ends it.

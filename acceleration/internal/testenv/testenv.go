@@ -26,10 +26,12 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // init sets the testing environment over whatever the shell has, loads .env for the
-// credentials, and creates the test database if it is missing.
+// credentials, creates the test database if it is missing and waits for the Redis the
+// suites dial to answer.
 func init() {
 	if err := os.Setenv(config.EnvVar, config.Testing); err != nil {
 		panic(err)
@@ -42,6 +44,28 @@ func init() {
 	}
 	loadDotEnv()
 	createDatabase(settings.Postgres.DSN)
+	awaitConfiguredRedis()
+}
+
+// redisAddressVar is where the suites read the address of their Redis from.
+const redisAddressVar = "ROUTER_REDIS_ADDR"
+
+// redisAwaited is the address awaitConfiguredRedis saw answer, empty when none did.
+var redisAwaited string
+
+// awaitConfiguredRedis waits once per test process for the Redis the suites dial, so that
+// every setup that opens a client on it, through rueidis or through a constructor such as
+// live.New or appconfig.New, finds it answering. A word on stderr says when it did not.
+func awaitConfiguredRedis() {
+	address := os.Getenv(redisAddressVar)
+	if address == "" {
+		return
+	}
+	if err := redisready.Ready(address); err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		return
+	}
+	redisAwaited = address
 }
 
 // loadDotEnv loads the nearest .env at or above the working directory. A test runs with

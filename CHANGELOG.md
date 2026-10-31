@@ -4,7 +4,7 @@
 
 ### `router replicate --resume` cuts a move over
 
-`router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. A pause or resume here, by the user or the agent, clears the mark. The cut-over is three steps: a last `router replicate --once`; stop the source delivering (never by pausing its tasks before that last `--once`, which clears the marks); then `router replicate --resume --as <app id>`, which reads only this deployment and takes no `--from`. It resumes exactly the marked tasks, each from the next run the source had not delivered, and leaves the ones the user paused alone. A marked task whose agent config is deleted or missing here stays paused and loses the mark; the command prints how many. It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
+`router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. A pause or resume here, by the user or the agent, clears the mark. The cut-over is three steps: a last `router replicate --once`; stop the source delivering (never by pausing its tasks before that last `--once`, which clears the marks); then `router replicate --resume --as <app id>`, which reads only this deployment and takes no `--from`. It resumes exactly the marked tasks, each from its first occurrence after the cut-over, and leaves the ones the user paused alone. A marked task whose agent config is deleted or missing here stays paused and loses the mark; the command prints how many. A user holds at most the config's `max_tasks_per_user` active tasks (25 when unset), as with a resume over the API: where tasks the user made here before the cut-over leave less room than the move brought, the oldest are resumed, the rest stay paused and marked, and the command prints how many; run it again once the user has made room (AI-2407). It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
 
 ### An iMessage photo reaches the agent
 
@@ -180,6 +180,18 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### `router replicate --resume` does not deliver again what the source delivered
+
+The source goes on delivering between the last `router replicate --once` and its stop, and what it delivers then never reaches the copy, so a task's next run there was one the source had already delivered: the cut-over resumed it, and the destination delivered that occurrence a second time. The cut-over now resumes each moved task at its first occurrence after the cut-over, as any resume counts from now; a moved task with no occurrence left is completed, a one-shot with a `missed` run. An occurrence the source held for quiet hours past the cut-over keeps its time and is delivered here when the hold ends. Run `--resume` right after stopping the source: an occurrence due between the two is delivered by neither. Until the last `--once` the source is the truth: a change it makes to a row overwrites what was done to that row on the destination, a delete included, so a config deleted there comes back when the source edits it; once SDKs point at the destination, stop writing at the source (AI-2406, AI-2408).
+
+### A call that may have carried out a scheduled task no longer counts as a failure
+
+A scheduled task's run that ends `already_called` (a call was placed for the occurrence and its end was never recorded, as when the router holding the call stopped) no longer adds to the task's `consecutive_failures`, and the task moves on as after a run that did not fail: a one-shot is `completed`, not `failed`, and a repeat is not failed by five such runs in a row. The run is still `failed` with error `already_called` (AI-2404, AI-2405).
+
+### A .NET tool cancelled while it sends no longer ends the session
+
+In the .NET SDK a tool's `UpdateAsync` or `SayAsync`, or any session send, given a token that was cancelled while the frame was being written, aborted the whole WebSocket (`ClientWebSocket` does that), so a router `tool_cancel` that landed mid-send ended the session with nothing said. A send is now written whole once it starts; a token cancelled meanwhile only stops the caller from waiting for it.
+
 ### A bad connector or knowledge page in a Go agent folder names its line
 
 `agents.Load` now says which line of `agent.yaml` or `knowledge/urls.yaml` a refused connector entry (no name, `tools: []`, an empty `connection`, `connectors` that is not a list) or knowledge page (an unknown key, `refresh_hours` below 1, an entry that is neither a url nor a mapping) is on, as it already did for an unknown connector key. The same files are refused as before (AI-2009).
@@ -207,6 +219,10 @@ A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms
 ### Work a scheduled turn hands over is counted as the turn after a barge-in
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
+### The reply to the caller is not counted as a scheduled turn typed in just before it
+
+On a speech-to-speech agent, the reply the model gives to what the caller just said is the caller's, also when a scheduled turn was typed in between the caller stopping and that reply beginning. Work the model hands over in it is no longer counted as the scheduled turn, also when the model asks for the work before the caller's words are transcribed. On GPT-Live, work handed over in a reply to a scheduled turn is counted as that turn also when the backend asks for it after the caller spoke again, and work handed over in the reply to the caller stays the caller's when the backend asks for it during a scheduled turn. Before, it was counted on the caller (AI-2402, AI-2403).
 
 ### An IP address in a sandbox's allowed domains is refused
 

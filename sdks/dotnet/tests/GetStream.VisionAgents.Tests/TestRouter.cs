@@ -27,6 +27,13 @@ public sealed record Reply(int Status, object? Body = null, IReadOnlyDictionary<
 /// </summary>
 public sealed class TestRouter : IAsyncDisposable
 {
+    /// <summary>
+    /// How long a test waits for something that should happen at once. It only ends a test that
+    /// would hang, never paces one, so it sits well above the slowest wait seen on a loaded
+    /// machine (a whole 300 ms test took 29 s at load 100).
+    /// </summary>
+    public static readonly TimeSpan Patience = TimeSpan.FromSeconds(60);
+
     private readonly WebApplication _app;
     private readonly ConcurrentDictionary<string, Func<Seen, Reply>> _routes = new();
     private readonly ConcurrentDictionary<string, Func<Peer, Task>> _sockets = new();
@@ -136,6 +143,7 @@ public sealed class Peer : IAsyncDisposable
     private readonly Channel<JsonObject> _frames = Channel.CreateUnbounded<JsonObject>();
     private readonly Channel<byte[]> _audio = Channel.CreateUnbounded<byte[]>();
     private readonly Task _reading;
+    private volatile TaskCompletionSource _unpaused = Done();
 
     internal Peer(WebSocket socket, Seen request)
     {
@@ -156,10 +164,10 @@ public sealed class Peer : IAsyncDisposable
     public Task SendAudioAsync(byte[] payload) =>
         _socket.SendAsync(payload, WebSocketMessageType.Binary, true, CancellationToken.None);
 
-    /// <summary>The next JSON frame the client sent, or a failed test after five seconds.</summary>
+    /// <summary>The next JSON frame the client sent, or a failed test after TestRouter.Patience.</summary>
     public async Task<JsonObject> ReceiveAsync()
     {
-        using var patience = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var patience = new CancellationTokenSource(TestRouter.Patience);
         return await _frames.Reader.ReadAsync(patience.Token);
     }
 
@@ -179,9 +187,15 @@ public sealed class Peer : IAsyncDisposable
     /// <summary>The next binary frame the client sent.</summary>
     public async Task<byte[]> ReceiveAudioAsync()
     {
-        using var patience = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var patience = new CancellationTokenSource(TestRouter.Patience);
         return await _audio.Reader.ReadAsync(patience.Token);
     }
+
+    /// <summary>Stops reading from the client, so what it sends next backs up in the socket.</summary>
+    public void Pause() => _unpaused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Reads again.</summary>
+    public void Resume() => _unpaused.TrySetResult();
 
     /// <summary>Ends the connection without a close frame, the way a router being replaced does.</summary>
     public void Abort() => _socket.Abort();
@@ -218,6 +232,7 @@ public sealed class Peer : IAsyncDisposable
                 WebSocketReceiveResult received;
                 do
                 {
+                    await _unpaused.Task;
                     received = await _socket.ReceiveAsync(buffer, CancellationToken.None);
                     message.Write(buffer, 0, received.Count);
                 }
@@ -245,5 +260,12 @@ public sealed class Peer : IAsyncDisposable
             _frames.Writer.TryComplete();
             _audio.Writer.TryComplete();
         }
+    }
+
+    private static TaskCompletionSource Done()
+    {
+        var done = new TaskCompletionSource();
+        done.SetResult();
+        return done;
     }
 }

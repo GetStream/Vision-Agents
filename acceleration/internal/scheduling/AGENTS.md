@@ -102,8 +102,12 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestSchedulerSuite/TestAOneShotMoreThanADayLateIsMissedNotDelivered`,
   `TestSchedulerSuite/TestARecurringTaskSkipsOccurrencesOlderThanAnHour`,
   `TestSchedulerSuite/TestReplayingAMissedRunKeepsTheFailureStreak`.
-- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`).
-  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`.
+- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`). A run
+  failed `already_called` is not counted (`countsAsFailure`, AI-2404).
+  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`,
+  `TestSchedulerSuite/TestARunWhoseCallMayHaveCarriedItOutKeepsTheFailureStreak`,
+  `TestSchedulerSuite/TestAOneShotWhoseCallMayHaveCarriedItOutIsCompletedNotFailed`,
+  `TestSchedulerSuite/TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceKeepsTheFailureStreak`.
 - **A final failure is not retried.** `TestSchedulerSuite/TestAFinalFailureIsNotRetried`,
   `TestScheduledTasksSuite/TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailureIs`.
 - **Quiet hours hold, never fail, and age counts from the hold's end.** A run made by hand is
@@ -143,7 +147,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   record (delivered, or cut off with the worker) is `already_called`, and no channel after
   `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
   next channel to carry the task. A call taken whose end a failed store write never recorded
-  (the give-back of a call not placed, or the `not_answered` reason) is the same.
+  (the give-back of a call not placed, or any reason write after the call was placed) is the
+  same. A run that ends `already_called` keeps the failure streak as it is and moves the task
+  on as a run that did not fail would: that call may have carried the task out (AI-2404).
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
@@ -284,12 +290,22 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
 - **The cut-over resumes what the move paused, never what the user paused.** An import marks the task
   `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
-  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have.
+  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have,
+  after `SkipOccurrencesBeforeCutOver` moved a `next_run_at` at or before the cut-over to the first
+  occurrence after it, as a resume counts from now: the source delivered it after the last catch-up
+  or slept through it. One with none left is completed, a one-shot with its `missed` run. An occurrence
+  whose run the source held for quiet hours past the cut-over keeps its time, for the worker here to take over
+  (`TestReplicateResumeSuite/TestResumeDoesNotDeliverAgain*`, `TestResumeCloses*`, `TestResumeCompletes*`,
+  `TestResumeSkipsEvery*`, `TestResumeLeavesAnOccurrenceTheSourceHeld*`).
   A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
   a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
   missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
-  task again whatever happened to its config here. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
-  `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  task again whatever happened to its config here. A user holds at most `AgentScheduling.MaxActive()`
+  active tasks on a config, the limit the API resume and the agent's tools use: the cut-over resumes a
+  user's marked tasks oldest first while the room lasts, and leaves the rest paused and still marked,
+  counted in the command's output, so running it again resumes them once the user has made room.
+  `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`, `TestReplicateResumeSuite` (`cmd/router`),
+  `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
   `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
