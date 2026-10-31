@@ -217,6 +217,33 @@ func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForWantOfRo
 	s.Equal(store.ScheduledTaskPaused, s.state("st-1"))
 }
 
+// The repeat's skipped occurrence comes before the limit is counted: the repeat is resumed
+// on the room it has, and the task after it, which has no room left, stays paused.
+func (s *ReplicateResumeSuite) TestResumeCountsTheRoomAfterItSkipsAnOverdueRepeat() {
+	_, err := s.store.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 2}' WHERE id = 'config-1'`)
+	s.Require().NoError(err)
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	s.Require().NoError(s.store.CreateScheduledTask(s.ctx, &store.ScheduledTask{
+		ID: "st-here", CustomerID: "acme", ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
+		Title: "Hydrate", Instructions: "Remind Sam to drink.", StartLocal: next, Timezone: "UTC",
+		NextRunAt: &next, CreatedBy: "api",
+	}, 25))
+	due := s.overdue("st-repeat", "FREQ=DAILY", store.ScheduledTaskActive)
+	s.imported("st-later", store.ScheduledTaskActive)
+
+	s.Equal("resumed 1 scheduled tasks\n"+
+		"left 1 scheduled tasks paused: their user already holds the most active tasks the agent config allows. "+
+		"Run --resume again once the user has made room; the oldest are resumed first\n", s.cutOver())
+
+	repeat := s.task("st-repeat")
+	s.Equal(store.ScheduledTaskActive, repeat.State)
+	s.Require().NotNil(repeat.NextRunAt)
+	s.Equal(due.Add(24*time.Hour), repeat.NextRunAt.UTC(), "the occurrence before the cut-over was the source's")
+	s.Equal(store.ScheduledTaskPaused, s.state("st-later"))
+	s.Empty(s.claimed())
+}
+
 func (s *ReplicateResumeSuite) TestResumeDoesNotDeliverAgainARepeatsOccurrenceThatCameBeforeIt() {
 	due := s.overdue("st-daily", "FREQ=DAILY", store.ScheduledTaskActive)
 
