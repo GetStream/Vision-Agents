@@ -212,6 +212,10 @@ A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
 
+### The reply to the caller is not counted as a scheduled turn typed in just before it
+
+On a speech-to-speech agent, the reply the model gives to what the caller just said is the caller's, also when a scheduled turn was typed in between the caller stopping and that reply beginning. Work the model hands over in it is no longer counted as the scheduled turn, also when the model asks for the work before the caller's words are transcribed. On GPT-Live, work handed over in a reply to a scheduled turn is counted as that turn also when the backend asks for it after the caller spoke again, and work handed over in the reply to the caller stays the caller's when the backend asks for it during a scheduled turn. Before, it was counted on the caller (AI-2402, AI-2403).
+
 ### An IP address in a sandbox's allowed domains is refused
 
 Saving an agent config or syncing an agent folder answers `400` when `sandbox_options.allowed_domains` holds an IP address, such as `203.0.113.7`, `203.0.113.7:443` or `[2001:db8::7]`. Behind the egress proxy a sandbox reaches host names only, so code in the sandbox never reached that address. A name such as `203.0.113.7.example.com` is still taken.
