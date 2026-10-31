@@ -102,8 +102,12 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestSchedulerSuite/TestAOneShotMoreThanADayLateIsMissedNotDelivered`,
   `TestSchedulerSuite/TestARecurringTaskSkipsOccurrencesOlderThanAnHour`,
   `TestSchedulerSuite/TestReplayingAMissedRunKeepsTheFailureStreak`.
-- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`).
-  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`.
+- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`). A run
+  failed `already_called` is not counted (`countsAsFailure`, AI-2404).
+  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`,
+  `TestSchedulerSuite/TestARunWhoseCallMayHaveCarriedItOutKeepsTheFailureStreak`,
+  `TestSchedulerSuite/TestAOneShotWhoseCallMayHaveCarriedItOutIsCompletedNotFailed`,
+  `TestSchedulerSuite/TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceKeepsTheFailureStreak`.
 - **A final failure is not retried.** `TestSchedulerSuite/TestAFinalFailureIsNotRetried`,
   `TestScheduledTasksSuite/TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailureIs`.
 - **Quiet hours hold, never fail, and age counts from the hold's end.** A run made by hand is

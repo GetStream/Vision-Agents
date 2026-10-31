@@ -180,6 +180,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A call that may have carried out a scheduled task no longer counts as a failure
+
+A scheduled task's run that ends `already_called` (a call was placed for the occurrence and its end was never recorded, as when the router holding the call stopped) no longer adds to the task's `consecutive_failures`, and the task moves on as after a run that did not fail: a one-shot is `completed`, not `failed`, and a repeat is not failed by five such runs in a row. The run is still `failed` with error `already_called` (AI-2404, AI-2405).
+
 ### A bad connector or knowledge page in a Go agent folder names its line
 
 `agents.Load` now says which line of `agent.yaml` or `knowledge/urls.yaml` a refused connector entry (no name, `tools: []`, an empty `connection`, `connectors` that is not a list) or knowledge page (an unknown key, `refresh_hours` below 1, an entry that is neither a url nor a mapping) is on, as it already did for an unknown connector key. The same files are refused as before (AI-2009).
