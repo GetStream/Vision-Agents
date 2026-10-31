@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -244,6 +245,10 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, custo
 
 // resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
+	cutOver := time.Now()
+	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
+		return err
+	}
 	resumed, skipped, campaigns, err := pgStore.ResumeMovedRows(ctx, customerID)
 	if err != nil {
 		return err
@@ -256,6 +261,22 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
 	}
 	return nil
+}
+
+// nextAfter is a moved task's next occurrence after the cut-over, as a resume counts it
+// (resumeScheduledTask); with none left, a one-shot's is the missed run of the time it slept
+// through, and a repeat has none.
+func nextAfter(cutOver time.Time) func(store.ScheduledTask) (*time.Time, *store.ScheduledTaskRun, error) {
+	return func(task store.ScheduledTask) (*time.Time, *store.ScheduledTaskRun, error) {
+		schedule, err := scheduling.FromStored(task)
+		if err != nil {
+			return nil, nil, fmt.Errorf("scheduled task %s: %w", task.ID, err)
+		}
+		if next, ok := schedule.Next(cutOver); ok {
+			return &next, nil, nil
+		}
+		return nil, scheduling.SleptThrough(task), nil
+	}
 }
 
 // exportLine is a line of the export, which is either a row or the cursor that ends it.
