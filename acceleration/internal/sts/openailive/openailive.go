@@ -235,6 +235,7 @@ type serverEvent struct {
 	Delta        string          `json:"delta"`
 	Reason       string          `json:"reason"`
 	DelegationID string          `json:"delegation_id"`
+	Delegation   json.RawMessage `json:"delegation"`
 	Event        json.RawMessage `json:"event"`
 	Error        *apiError       `json:"error"`
 	// Usage is the seconds the session has been open, on session.usage.updated and, finally,
@@ -246,6 +247,14 @@ type serverEvent struct {
 // frame that failed to decode over it would be dropped whole, session.closed included.
 type sessionUsage struct {
 	Seconds float64 `json:"seconds"`
+}
+
+// delegationRef is the work the model handed to the backend, on session.delegation.created.
+// The backend's events carry its ID as their delegation_id:
+// https://developers.openai.com/api/docs/guides/live-delegation. It is decoded only on that
+// event, so another frame's field of the same name cannot make the frame undecodable.
+type delegationRef struct {
+	ID string `json:"id"`
 }
 
 // nestedEvent is the Responses event inside a response.event envelope.
@@ -335,6 +344,9 @@ type STS struct {
 	// the next reply ends: the model can start speaking just after it was asked.
 	owed        bool
 	unconfirmed bool
+	// delegations is the reply each delegation was made in, by its ID. Kept for the session:
+	// the backend can call a tool again after each answer.
+	delegations map[string]string
 	// carrying is whether silence is going up to move the session clock along, which only
 	// happens while waiting for something appended to be spoken.
 	carrying bool
@@ -851,7 +863,7 @@ func (s *STS) handleMessage(event serverEvent) {
 	case eventResponseEvent:
 		s.delegated(event)
 	case eventDelegationCreated:
-		s.logger.Debug("the model delegated work")
+		s.delegatedIn(event.Delegation)
 	case eventUsageUpdated:
 		s.billed(event.Usage)
 	case eventSessionClosed:
@@ -903,8 +915,8 @@ func (s *STS) delegated(envelope serverEvent) {
 			arguments = "{}"
 		}
 		s.mu.Lock()
-		var responseID string
-		if s.turn != nil {
+		responseID, known := s.delegations[envelope.DelegationID]
+		if !known && s.turn != nil {
 			responseID = s.turn.ID
 		}
 		s.mu.Unlock()
@@ -917,6 +929,32 @@ func (s *STS) delegated(envelope serverEvent) {
 			Context:  "delegation",
 		})
 	}
+}
+
+// delegatedIn keeps the reply the model handed work over in, opening one when it has said
+// nothing yet, as gemini does on a function call. The backend's calls come on their own
+// time, often after that reply ended or the caller spoke again, and are still that reply's.
+// A reply cut off here is not reopened by what is left of it, so work handed over in that
+// remainder takes the reply in flight when its call comes.
+func (s *STS) delegatedIn(raw json.RawMessage) {
+	var delegation delegationRef
+	if err := json.Unmarshal(raw, &delegation); err != nil || delegation.ID == "" {
+		s.logger.Debug("a delegation with no ID", "delegation", string(raw))
+		return
+	}
+	s.mu.Lock()
+	muted := s.muted
+	s.mu.Unlock()
+	if muted {
+		return
+	}
+	turn := s.replying()
+	s.mu.Lock()
+	if s.delegations == nil {
+		s.delegations = map[string]string{}
+	}
+	s.delegations[delegation.ID] = turn.ID
+	s.mu.Unlock()
 }
 
 // billed reports the seconds the session has been open, which the voice is billed by. The
