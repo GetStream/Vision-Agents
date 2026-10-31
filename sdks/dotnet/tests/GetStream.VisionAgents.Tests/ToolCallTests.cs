@@ -173,6 +173,95 @@ public sealed class ToolCallTests
     }
 
     [Fact]
+    public async Task ACancelledTokenStopsTheCallerWaitingForAStalledSendButNotTheFrame()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        var thrown = new TaskCompletionSource();
+        JsonObject? update = null;
+        JsonObject? answered = null;
+        router.OnSocket(Events, async peer =>
+        {
+            peer.Pause();
+            await peer.SendAsync(new { type = "tool_call", id = "t1", name = "talk", arguments = "{}" });
+            await thrown.Task.WaitAsync(TestRouter.Patience);
+            peer.Resume();
+            update = await peer.ReceiveAsync("tool_update");
+            await peer.SendAsync(new { type = "tool_call", id = "f1", name = "fast", arguments = "{}" });
+            answered = await peer.ReceiveAsync("tool_result");
+            await Finish(peer);
+        });
+        await using var agent = Agent(router);
+        agent.Tools
+            .Register("talk", "Talks at length", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken _) =>
+            {
+                using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+                try
+                {
+                    await toolCallContext.UpdateAsync(new string('x', 32 << 20), caller.Token).WaitAsync(TestRouter.Patience);
+                }
+                catch (OperationCanceledException)
+                {
+                    thrown.SetResult();
+                }
+                return (object?)"done";
+            })
+            .Register("fast", "Does not", [], (JsonElement _, CancellationToken _) => Task.FromResult<object?>("done"));
+
+        await Converse(agent);
+
+        Assert.Equal(32 << 20, update.Text("text").Length);
+        Assert.Equal("f1", answered.Text("tool_call_id"));
+    }
+
+    [Fact]
+    public async Task ACancelledCallSendsNothingMore()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        var attempted = new TaskCompletionSource();
+        JsonObject? next = null;
+        router.OnSocket(Events, async peer =>
+        {
+            await peer.SendAsync(new { type = "tool_call", id = "t1", name = "talk", arguments = "{}" });
+            await peer.SendAsync(new { type = "tool_cancel", id = "t1" });
+            await attempted.Task.WaitAsync(TestRouter.Patience);
+            await peer.SendAsync(new { type = "tool_call", id = "f1", name = "fast", arguments = "{}" });
+            next = await peer.ReceiveAsync();
+            await Finish(peer);
+        });
+        await using var agent = Agent(router);
+        agent.Tools
+            .Register("talk", "Talks", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Cancelled by the router; now try to talk anyway.
+                }
+                try
+                {
+                    await toolCallContext.UpdateAsync("late", cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    attempted.SetResult();
+                    throw;
+                }
+                attempted.SetResult();
+                return (object?)"x";
+            })
+            .Register("fast", "Does not", [], (JsonElement _, CancellationToken _) => Task.FromResult<object?>("done"));
+
+        await Converse(agent);
+
+        Assert.Equal(("tool_result", "f1"), (next.Text("type"), next.Text("tool_call_id")));
+    }
+
+    [Fact]
     public async Task ACallThatOutlastsItsTimeoutFails()
     {
         await using var router = await TestRouter.StartAsync();

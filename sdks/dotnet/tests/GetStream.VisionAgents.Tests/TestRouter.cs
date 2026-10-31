@@ -164,7 +164,7 @@ public sealed class Peer : IAsyncDisposable
     public Task SendAudioAsync(byte[] payload) =>
         _socket.SendAsync(payload, WebSocketMessageType.Binary, true, CancellationToken.None);
 
-    /// <summary>The next JSON frame the client sent, or a failed test after five seconds.</summary>
+    /// <summary>The next JSON frame the client sent, or a failed test after TestRouter.Patience.</summary>
     public async Task<JsonObject> ReceiveAsync()
     {
         using var patience = new CancellationTokenSource(TestRouter.Patience);

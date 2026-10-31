@@ -219,11 +219,17 @@ internal sealed class Socket : IAsyncDisposable
             throw new SocketClosedException("the socket is not open");
         }
         await _sending.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Not cancellable: ClientWebSocket aborts the whole socket when a send is cancelled
+        // part way, so a tool cancelled mid-send would end the session. The frame is written
+        // to the end; the token only stops the caller from waiting for it.
+        var write = SendFrameAsync(payload, type);
+        await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SendFrameAsync(ReadOnlyMemory<byte> payload, WebSocketMessageType type)
+    {
         try
         {
-            // Not cancellable: ClientWebSocket aborts the whole socket when a send is cancelled
-            // part way, so a tool cancelled mid-send would end the session. The token only
-            // decides whether the frame starts.
             await _socket.SendAsync(payload, type, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception failure) when (failure is WebSocketException or ObjectDisposedException)
