@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
@@ -512,6 +515,150 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 
 	s.Require().Eventually(func() bool { return !s.manager.Running(opened.ID()) }, 10*time.Second, 20*time.Millisecond,
 		"the session waits for its start timeout")
+}
+
+// peerHolding is a second node of the deployment, logging to logged, holding a session opened
+// as the phone service opens one for a placed call.
+func (s *CallStatusSuite) peerHolding(logged *lockedLog) (*httptest.Server, *session.Manager, string) {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	return other, sessions, opened.ID()
+}
+
+// askPeerToEnd asks other to end the session of an unanswered call the way a peer does.
+func (s *CallStatusSuite) askPeerToEnd(other *httptest.Server, asked string) *node.ForwardResponse {
+	request, err := http.NewRequest(http.MethodPost, unansweredPeerPath, strings.NewReader(asked))
+	s.Require().NoError(err)
+	credential, _ := s.sealer.Derive(node.CredentialPurpose)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	answer, err := node.NewForwarder(nil, credential).Ask(ctx, other.Listener.Addr().String(), request, []byte(asked))
+	s.Require().NoError(err)
+	return answer
+}
+
+// askedFor is the ask a peer makes for customerID's session id.
+func (s *CallStatusSuite) askedFor(customerID, id string) string {
+	asked, err := json.Marshal(unansweredPeerRequest{CustomerID: customerID, SessionID: id})
+	s.Require().NoError(err)
+	return string(asked)
+}
+
+// refusesToEnd checks that other answered an ask as no such call, said why, and still holds id.
+func (s *CallStatusSuite) refusesToEnd(answer *node.ForwardResponse, logged *lockedLog, sessions *session.Manager, id string) {
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeCallNotFound+`"`)
+	s.Contains(logged.String(), "refused a peer's ask to end a session")
+	s.Never(func() bool { return !sessions.Running(id) }, time.Second, 50*time.Millisecond,
+		"the session was ended")
+}
+
+func (s *CallStatusSuite) TestABusyStatusEndsItsSessionOnTheNodeHoldingIt() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.Require().NotEqual(other.Listener.Addr().String(), s.router.directory.Address())
+	token, _ := s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+
+	s.Require().Eventually(func() bool { return !sessions.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the node holding the session kept it")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallStoredAsUnansweredEndsItsSession() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusNoContent), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(sessions.Running(id), "the session waits for its start timeout")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallThatStillRingsIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.placedFor(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+// A session can have two calls placed into it; the stored call is the newest, and the asking
+// node decided on the one its vendor reported. An ask is refused unless the newest says
+// nobody answered, since ending the session would strand a call that still rings.
+func (s *CallStatusSuite) TestAPeersAskWhileANewerCallInTheSessionStillRingsIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+	s.placedFor(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskWhileAnOlderCallInTheSessionStillRingsEndsItsSession() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.placedFor(id)
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusNoContent), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(sessions.Running(id), "the session waits for its start timeout")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallSomebodyAnsweredIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	token, key := s.placedFor(id)
+	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, time.Now()))
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	s.Require().NoError(err)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallThatIsNotKeptIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskNamingAnotherCustomerIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor("another-"+s.utils.uuid(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskNamingNoCustomerIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor("", id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAnEmptyPeerAskIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, `{}`), logged, sessions, id)
+	s.refusesToEnd(s.askPeerToEnd(other, `null`), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerAskOfTheWrongShapeIsRefused() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.busy(id)
+
+	for _, asked := range []string{`{"customer_id":1,"session_id":"` + id + `"}`, `[]`, `not json`} {
+		answer := s.askPeerToEnd(other, asked)
+		s.Equal(int32(http.StatusBadRequest), answer.GetStatus(), "%s: %s", asked, answer.GetBody())
+	}
+	s.True(sessions.Running(id), "the session was ended")
 }
 
 // openPhoneSession opens the session id for a placed call as an SDK does, after placing it.
