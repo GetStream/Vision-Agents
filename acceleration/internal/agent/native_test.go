@@ -188,6 +188,9 @@ func (s *AgentSuite) joinNativeOver(
 	speech.Register("openai", func(spec routing.Spec) (sts.STS, error) {
 		return adapter("ws"+strings.TrimPrefix(server.URL, "http"), spec)
 	})
+	speech.Register("gemini", func(spec routing.Spec) (sts.STS, error) {
+		return adapter("ws"+strings.TrimPrefix(server.URL, "http"), spec)
+	})
 	router, err := stsrouter.New(stsrouter.Options{Config: config[routing.STS], Registry: speech})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
@@ -493,6 +496,49 @@ func (s *AgentSuite) TestWorkGPTLiveHandsOverInAScheduledTurnIsAskedAsScheduledW
 	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
 	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, settleFor, time.Millisecond, "the caller was never answered")
 	s.nativeSend(peer, `{"type":"response.event","delegation_id":"d1","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")
+}
+
+// geminiAudio is a server message with a tenth of a second of the model's speech.
+func geminiAudio() string {
+	return `{"serverContent":{"modelTurn":{"role":"model","parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"` +
+		base64.StdEncoding.EncodeToString(make([]byte, 4800)) + `"}}]}}}`
+}
+
+func (s *AgentSuite) TestWorkGeminiHandsOverInAScheduledTurnIsAskedAsScheduledAfterTheCallerWasHeardDuringAReply() {
+	// On Gemini a reply still open takes the caller's stop and none follows for it, so the
+	// next reply, a scheduled turn's, is the task's.
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		var setup map[string]json.RawMessage
+		if conn.ReadJSON(&setup) != nil {
+			return false
+		}
+		frames <- setup
+		return conn.WriteMessage(websocket.TextMessage, []byte(`{"setupComplete":{}}`)) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return gemini.New(gemini.Options{APIKey: "test", URL: url, Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions})
+	}
+	peer := s.joinNativeOver(handshake, adapter, "gemini/gemini-3.8-live", nil)
+	send := func(frame string) { s.Require().NoError(peer.conn.WriteMessage(websocket.TextMessage, []byte(frame))) }
+	send(`{"serverContent":{"inputTranscription":{"text":"What time is my table?"}}}`)
+	s.heardSpeechStart()
+	send(geminiAudio())
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, settleFor, time.Millisecond)
+	send(`{"serverContent":{"inputTranscription":{"text":"mhm"}}}`)
+	s.heardSpeechStart()
+	send(geminiAudio())
+	send(`{"serverContent":{"turnComplete":true}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the caller's reply never ended")
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	send(geminiAudio())
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, settleFor, time.Millisecond, "the scheduled turn was never answered")
+	send(`{"serverContent":{"inputTranscription":{"text":"wait"}}}`)
+	s.heardSpeechStart()
+	send(`{"toolCall":{"functionCalls":[{"id":"call1","name":"delegate_skill","args":{"skill":"think","prompt":"Work out the booking total"}}]}}`)
 	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
 
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")

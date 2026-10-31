@@ -205,12 +205,12 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.scheduled = false
 			a.mu.Unlock()
 		case sts.SpeechStopped:
-			// Every stop is answered by the next reply: the one the server opens for it, or,
+			// A stop is answered by the next reply: the one the server opens for it, or,
 			// when a reply was still open, the one asked for after that reply ends
-			// (openairealtime's owe).
+			// (openairealtime's owe). On Gemini the open reply takes it, and none follows.
 			a.mu.Lock()
 			a.nativeListening = false
-			a.nativeAnswerDue = true
+			a.nativeAnswerDue = !typed.Answered
 			a.mu.Unlock()
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
