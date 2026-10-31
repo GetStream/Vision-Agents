@@ -195,7 +195,7 @@ func (m *manager) Create(
 	}
 	// Checked under the lock CancelTurn takes, so a turn cancelled while its reply was
 	// still asking supersedes nothing and leaves no task behind, whichever came first.
-	if turnID != "" && m.cancelledTurns[turnID] {
+	if m.cancelledTurns[turnID] {
 		m.mu.Unlock()
 		return "", stack.Wrap(errTurnCancelled)
 	}
