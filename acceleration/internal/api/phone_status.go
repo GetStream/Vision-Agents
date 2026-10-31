@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 )
 
 // unansweredPeerPath is where a router asks the router holding a placed call's session to end
@@ -77,7 +79,8 @@ func (s *Server) askToEndUnanswered(ctx context.Context, address string, asked u
 
 // endUnansweredForPeer is endUnanswered's other end. Anything not handed over by a peer is
 // answered as no such route: the request names a customer outright, which is only a peer's to
-// say.
+// say. Even a peer's word is checked against the call as stored: one that is not kept, or that
+// somebody answered or is still ringing, is answered as no such call and nothing is ended.
 func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
@@ -88,8 +91,28 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, invalidRequest("the request could not be read"))
 		return
 	}
-	if s.sessions != nil {
-		s.sessions.EndUnanswered(asked.CustomerID, asked.SessionID)
+	if s.sessions == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	if s.phone == nil || s.phone.Outcomes() == nil || asked.CustomerID == "" || asked.SessionID == "" {
+		writeError(w, errUnknownCall)
+		return
+	}
+	// The asker sends this only once the call's row says nobody answered, so a valid ask finds
+	// that row.
+	call, err := s.phone.Outcomes().Read(r.Context(), asked.CustomerID, asked.SessionID)
+	switch {
+	case errors.Is(err, outcome.ErrUnknownCall), err == nil && !call.NobodyAnswered():
+		s.logger.Warn("refused a peer's ask to end a session its stored call does not say went unanswered",
+			"session", asked.SessionID)
+		writeError(w, errUnknownCall)
+		return
+	case err != nil:
+		s.logger.Error("could not read a peer's unanswered call", "session", asked.SessionID, "error", err)
+		writeError(w, internalError())
+		return
+	}
+	s.sessions.EndUnanswered(call.CustomerID, call.CallID)
 	w.WriteHeader(http.StatusNoContent)
 }
