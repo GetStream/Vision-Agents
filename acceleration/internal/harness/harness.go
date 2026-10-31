@@ -1202,9 +1202,12 @@ func (h *Harness) TakeNotes() string {
 func (h *Harness) reject(turnID, skill string, err error) {
 	result := Result{Skill: skill, State: Failed, Err: err}
 	h.mu.Lock()
-	if h.cancelledTurns[turnID] != ReasonRefused {
-		h.notes = append(h.notes, noted{skill: skill, text: note(result), asked: turnID})
+	if h.cancelledTurns[turnID] == ReasonRefused {
+		// Nothing a refused turn's tags asked for is reported: no note, no settled task.
+		h.mu.Unlock()
+		return
 	}
+	h.notes = append(h.notes, noted{skill: skill, text: note(result), asked: turnID})
 	h.mu.Unlock()
 	h.emitter.Send(Settled{Result: result})
 }
