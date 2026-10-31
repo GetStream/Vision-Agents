@@ -100,9 +100,12 @@ func (s *DataMoveSuite) SetupTest() {
 // command does, and returns the cursor their changes carry on from.
 func (s *DataMoveSuite) move(from, to string) int64 {
 	export := s.export(from)
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range export.rows {
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 	return export.cursor
@@ -111,12 +114,15 @@ func (s *DataMoveSuite) move(from, to string) int64 {
 // moveEdited is move with the rows of one table edited first, as a file the importer wrote
 // itself would carry them.
 func (s *DataMoveSuite) moveEdited(from, to, table string, edit func(map[string]any)) {
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range s.export(from).rows {
 		if row.table == table {
 			edit(row.row)
 		}
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 }
@@ -1707,4 +1713,45 @@ func (s *DataMoveSuite) TestADeletedRequestFromBeforeUsageIDsIsReplayedToo() {
 	rows := s.requestsByUsage()
 	s.NotContains(rows, moved["usage_id"], "found by the usage id its import made from its source id")
 	s.Contains(rows, kept.UsageID.String())
+}
+
+// drewNothing restarts the sequence behind a column, so the store has drawn nothing from it yet.
+// A truncate leaves sequences where they were, and the databases outlive a run.
+func (s *DataMoveSuite) drewNothing(store *Store, table, column string) {
+	_, err := store.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence(?, ?), 1, false)", table, column)
+	s.Require().NoError(err)
+}
+
+func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes() {
+	s.drewNothing(s.destination, "campaign_contacts", "seq")
+	campaign := &Campaign{CustomerID: "acme", Name: "renewals"}
+	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
+	// The source has handed out more places than the destination: its contacts' places are
+	// numbers the destination's sequence has not reached.
+	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('campaign_contacts', 'seq'), 1000)")
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000001"}}))
+
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000002"}}))
+
+	contacts, err := s.destination.CampaignContacts(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+	s.Require().Len(contacts, 2)
+	s.Equal("+15550000001", contacts[0].ToNumber, "a contact added here is rung after the ones that moved")
+	s.Equal("+15550000002", contacts[1].ToNumber)
+}
+
+func (s *DataMoveSuite) TestAMovedRequestLeavesTheSequenceOfItsIDAlone() {
+	s.drewNothing(s.destination, "requests", "id")
+	s.takenRequest(s.source, 1_000_000_000)
+
+	s.move("acme", "acme")
+	usageID := uuid.Must(uuid.NewV7())
+	s.Require().NoError(s.destination.RecordRequest(s.ctx, &Request{UsageID: usageID, Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+
+	own := s.requestsByUsage()[usageID.String()]
+	s.Require().NotNil(own)
+	s.Less(own["id"].(float64), float64(1_000_000_000), "a moved request is given an id of the destination's, so the source's is reserved nowhere")
 }
