@@ -26,6 +26,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // init sets the testing environment over whatever the shell has, loads .env for the
@@ -60,7 +61,7 @@ func awaitConfiguredRedis() {
 	if address == "" {
 		return
 	}
-	if err := awaitRedis(address, redisReady); err != nil {
+	if err := redisready.Ready(address); err != nil {
 		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
 		return
 	}
