@@ -78,6 +78,9 @@ type manager struct {
 	// bySkill is the live task for each skill, which is what makes a newer request for
 	// the same skill supersede the older one.
 	bySkill map[string]string
+	// cancelledTurns are the turns CancelTurn abandoned. A reply can still be streaming
+	// tags when its turn is cancelled, and what it asks for after that starts nothing.
+	cancelledTurns map[string]bool
 	// written are the skill files already put into the sandbox, by skill, so a skill's
 	// scripts are written once per version rather than before every run. They were written
 	// into the sandbox's generation; a sandbox made again holds none of them.
@@ -156,6 +159,8 @@ func newManager(
 		running:    map[string]*task{},
 		bySkill:    map[string]string{},
 		written:    map[string]map[string]string{},
+
+		cancelledTurns: map[string]bool{},
 	}
 	if subagent != nil {
 		ready := make(chan struct{})
@@ -164,6 +169,9 @@ func newManager(
 	}
 	return m
 }
+
+// errTurnCancelled is what Create returns for a turn CancelTurn has abandoned.
+var errTurnCancelled = errors.New("harness: the turn that asked for the work was cancelled")
 
 // Create delegates a piece of work and returns its task id. Work a turn asked for is
 // counted as that turn is (chargedAs): on the sender it names, and as scheduled when a
@@ -184,6 +192,12 @@ func (m *manager) Create(
 	if m.closed {
 		m.mu.Unlock()
 		return "", stack.Wrap(fmt.Errorf("harness: the conversation has ended"))
+	}
+	// Checked under the lock CancelTurn takes, so a turn cancelled while its reply was
+	// still asking supersedes nothing and leaves no task behind, whichever came first.
+	if turnID != "" && m.cancelledTurns[turnID] {
+		m.mu.Unlock()
+		return "", stack.Wrap(errTurnCancelled)
 	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
@@ -343,6 +357,7 @@ func (m *manager) hold(running *task, stream *llm.Stream) {
 // CancelTurn abandons work whose conversational premise was superseded.
 func (m *manager) CancelTurn(turnID, reason string) {
 	m.mu.Lock()
+	m.cancelledTurns[turnID] = true
 	var abandoned []string
 	for id, running := range m.running {
 		if running.live() && running.turnID == turnID {

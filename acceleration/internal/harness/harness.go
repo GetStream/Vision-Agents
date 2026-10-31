@@ -704,6 +704,14 @@ func (h *Harness) Close() error {
 // act carries out one request the model made of the harness.
 func (h *Harness) act(turnID string, found directive) {
 	if found.kind == kindDrop {
+		// A cancelled turn's reply can still be streaming, and the work it would drop is
+		// another turn's.
+		h.mu.Lock()
+		_, cancelled := h.cancelledTurns[turnID]
+		h.mu.Unlock()
+		if cancelled {
+			return
+		}
 		if _, offered := h.options.Tools.Lookup(found.skill); offered {
 			h.emitter.Send(ToolDropped{Name: found.skill})
 			return
@@ -773,6 +781,9 @@ func (h *Harness) act(turnID string, found directive) {
 	}
 	startedAt := time.Now().UTC()
 	taskID, err := h.tasks.Create(charged, skill, found.body, history, turnID, false)
+	if errors.Is(err, errTurnCancelled) {
+		return
+	}
 	if err != nil {
 		h.reject(skill.Name, err)
 		return
