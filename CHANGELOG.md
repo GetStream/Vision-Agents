@@ -191,6 +191,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### Work a user's turn delegates is counted on that user's day
 
 In a session a backend opened, a user types a turn. The reply was counted on that user's daily limit, but the work the turn delegated (a skill, vision, the summary of a long conversation) was counted on the backend, which has no limit. It is now counted on the user as the reply is, so once the user's day is spent the work is refused with the daily-limit error. A turn a scheduled task fired is still the customer's (AI-2000).
+
 ### A Daytona file write that hangs no longer holds the sandbox
 
 Writing a skill's files into a Daytona sandbox before `run_code` is now bounded as the check before a run is: by the sandbox's timeout, at most 60 seconds. Before, an upload Daytona never answered held the sandbox until the caller gave up, and every other run of the session waited on it (AI-2008).
@@ -214,6 +215,7 @@ Saving an agent config or syncing an agent folder answers `400` when `sandbox_op
 ### A user token works with the key the request was made with
 
 In an app called with more than one API key, `POST /v1/agents/guests`, `POST /v1/agents/calls/{id}/token` and `POST /v1/agents/chat-token` mint the token for the key of the request, so Stream accepts it with that key. The call and chat token responses name that key in `api_key`. Before, a token could be minted for another key of the app, and Stream refused it (AI-2327).
+
 ### An id reused once its utterance has finished counts against credit
 
 On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finished, or was cut by a barge-in, is now a new utterance: it is held against credit before it is sent, refused once the account has no credit left, and billed once for the characters sent, as a new id is. Text for an utterance the voice is still speaking joins it, as before. Before, it was spoken with nothing held, or added to the finished utterance's hold, so it passed a credit limit (AI-2190).
@@ -221,6 +223,7 @@ On `/v1/tts/stream`, a `speak` frame for an id whose utterance has already finis
 ### A text or call whose limits cannot be checked is not sent
 
 When the router cannot read an organization's channel counters or the calls it has up, or a sandboxed app's counters, the text or call is refused with a server error rather than sent unchecked; in `shadow` mode it is still allowed, and logged with `reason=unread`. A text or a call minute of an app whose 10DLC use cases cannot be read is billed rather than given away as the sandbox's.
+
 ### A recording callback is posted only to a public https address
 
 `POST /v1/stt/recordings` and `POST /v1/tts/recordings` refuse a `callback` that is not `https` or whose host does not resolve only to public addresses with a `400`: a private, loopback or link-local address, a name that does not resolve, userinfo, or plain `http`. A finished job is posted through the same client as connector traffic, so every connection and redirect is checked again when it is dialed, and a redirect to another host is not followed. The path and query of a public callback are kept as written. A job queued earlier with any other callback still finishes and can be read back, but its callback is not posted (AI-2298).
@@ -236,6 +239,7 @@ A user id first recorded from the app's own guest token (`role: guest`) is recor
 ### Sandbox code tells a withdrawn credential from a failing host under Daytona
 
 Under the Daytona broker, a sandbox credential withdrawn mid-session (its connection revoked or needing a reconnect, or its binding dropped) left the placeholder in the env var, and every request with it got Daytona's `502 could not reach upstream host`, the answer a failing host gets. The secret now holds a value no host takes until the session ends, so the request reaches the host without a token and the host answers it, such as GitHub's `401 Bad credentials`. The proxy broker answers as before (AI-1876).
+
 ### A call is reviewed when the review model thinks first
 
 A call's review, a simulation's ruling, a guardrail judgement, an episode summary, a conversation title, a simulated caller and a review analysis now leave a model that thinks before it answers room to do so: the thinking no longer spends the token cap meant for the answer. On Claude Opus 5.5, reviews of text sessions with no subagent were being cut off and lost as `decode review: unexpected end of JSON input`. A review or ruling that a cap still cuts off now says so, with its token counts, instead of failing to decode.
