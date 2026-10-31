@@ -256,6 +256,10 @@ A session that closed while code still ran in its sandbox had the sandbox delete
 
 The router streams each file from a Daytona sandbox and stops reading one byte past 20 MiB, so a larger file is reported missing without being read whole. It writes no copy to its own disk. A path asked for twice, also when written differently (`/tmp//a.png`), is fetched and handed back once and takes one of the 4 slots. A file of 20 MiB or less comes back as before (AI-1861).
 
+### Work a refused turn handed over is cancelled
+
+A reply hands work to a skill (`<ask skill=...>`) as it streams, before the prompt injection screen's verdict on the turn. When the screen refuses the turn, that work is now cancelled: the session socket's `task_cancelled` frame carries `reason: refused`, and an answer it already brought back is never told to the model. This holds for a reply the caller talked over before the verdict too. A tag the refused reply writes after its turn was cancelled starts, replaces or drops nothing. Work an earlier, allowed turn handed over keeps running. Work the refused reply replaced or dropped before the verdict stays cancelled: it is not asked again (AI-2303).
+
 ### A refused turn stays withheld in a conversation kept in Chat
 
 A conversation kept in a Stream Chat channel kept what a refused reply had streamed before the verdict, and a resume or a fork that read the channel back handed the model what the refused turn asked, as is. The refused reply is now emptied and marked `refused: true`, and its state stays `failed`. A resume or a fork hands back every turn since the last reply before it as `[withheld: this read as a prompt injection]`, each a turn of its own, as the live agent does. The conversation title and a closed episode's summary read it the same way. The person's own message stays in the channel and in the call transcript as they typed it. A reply that failed for any other reason is read back as before (AI-2304).

@@ -1355,6 +1355,10 @@ func (s *HarnessSuite) TestATurnCancelledAsItsReplyAsksLeavesNoWorkInEitherOrder
 
 	s.Equal([]string{"recall"}, s.harness.Working(), "a cancelled turn's work is still running")
 	s.NotContains(s.slow.interrupted(), kept)
+	// Every task a cancelled turn started settles, and as refused rather than superseded.
+	s.eventually(func() bool {
+		return len(settledIn(s.events.seen())) == len(delegatedIn(s.events.seen()))-1
+	}, "a cancelled turn's task never settled")
 	for _, settled := range settledIn(s.events.seen()) {
 		s.Equal(Cancelled, settled.State)
 		s.Equal(ReasonRefused, settled.Reason)
