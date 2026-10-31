@@ -2354,6 +2354,30 @@ go run ./cmd/router replicate --from https://old.example.com \
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
 
+A scheduled task active on the source is imported paused, and so is a campaign running there,
+since the source goes on delivering them until the move is cut over. Each is marked as paused by
+the move; a change carried later sets the mark again from the source's state, so one the user
+paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
+any other edit keeps it.
+
+Cut over once SDKs point here:
+
+1. Run `replicate --from … --once` one last time, to pick up the last writes.
+2. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
+   pauses are carried over, they clear the marks, and step 3 then resumes nothing.
+3. Run the cut-over:
+
+   ```bash
+   go run ./cmd/router replicate --resume --as <app id>
+   ```
+
+`--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
+at the next run the source had not delivered, and lists the marked campaigns. A marked task whose
+agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
+and the command prints how many it left that way. A campaign rings
+only from the router that started it, so start each one here with
+`POST /v1/agents/campaigns/{id}/start`.
+
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
 however the file was edited on the way. An import upserts and refuses a row whose primary

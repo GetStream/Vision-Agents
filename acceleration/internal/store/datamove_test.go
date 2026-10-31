@@ -719,7 +719,13 @@ func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBeh
 
 // seedScheduledTask stores a task on the source in a state, claimed by a worker there, with a
 // finished run.
+// seedScheduledTask stores a task on the source with its run, and the agent config it runs
+// on, config-1, unless the source already holds that id.
 func (s *DataMoveSuite) seedScheduledTask(id, customerID, state string) {
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', ?, 'a', 'be brief') ON CONFLICT (id) DO NOTHING",
+		customerID)
+	s.Require().NoError(err)
 	next := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
 	task := &ScheduledTask{
 		ID: id, CustomerID: customerID, ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
@@ -727,7 +733,7 @@ func (s *DataMoveSuite) seedScheduledTask(id, customerID, state string) {
 		State: state, NextRunAt: &next, CreatedBy: "api",
 	}
 	s.Require().NoError(s.source.CreateScheduledTask(s.ctx, task, 25))
-	_, err := s.source.DB().ExecContext(s.ctx,
+	_, err = s.source.DB().ExecContext(s.ctx,
 		"UPDATE scheduled_tasks SET claim_id = 'claim-1', lease_until = now() + interval '1 hour' WHERE id = ?", id)
 	s.Require().NoError(err)
 	_, err = s.source.DB().ExecContext(s.ctx, `
@@ -800,6 +806,283 @@ func (s *DataMoveSuite) TestAScheduledTaskChangeAppliedLaterArrivesPausedToo() {
 	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
 		"SELECT title FROM scheduled_tasks WHERE id = 'st-first'").Scan(&title))
 	s.Equal("Stretch more", title, "the rest of the change is applied")
+}
+
+// resume is the cut-over on the destination: what it resumed, and the campaigns left to start.
+func (s *DataMoveSuite) resume(customerID string) (int64, []string) {
+	resumed, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
+	s.Require().NoError(err)
+	return resumed, campaigns
+}
+
+// movePausedOn reads whether a task on the destination carries the move's mark.
+func (s *DataMoveSuite) movePausedOn(id string) bool {
+	var marked bool
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT move_paused FROM scheduled_tasks WHERE id = ?", id).Scan(&marked))
+	return marked
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesOnlyTheTasksTheMovePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-paused", "acme", ScheduledTaskPaused)
+	s.seedScheduledTask("st-completed", "acme", ScheduledTaskCompleted)
+	s.move("acme", "moved")
+
+	resumed, _ := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	state, claim, leased, next := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskActive, state)
+	s.Empty(claim)
+	s.False(leased)
+	s.Equal(time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC), next.UTC(), "it goes on from the run the source had not delivered")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
+	s.Equal(ScheduledTaskPaused, state, "the user paused it")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-completed")
+	s.Equal(ScheduledTaskCompleted, state)
+
+	// The user pauses it here once it is theirs; a second cut-over leaves it to them.
+	task, err := s.destination.ScheduledTask(s.ctx, "moved", "st-active")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.destination.SaveScheduledTask(s.ctx, &task))
+	again, _ := s.resume("moved")
+	s.Zero(again)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestATaskTheUserPausedAtTheSourceDuringTheMoveStaysPaused() {
+	s.capture("acme")
+	s.seedScheduledTask("st-first", "acme", ScheduledTaskActive)
+	cursor := s.move("acme", "moved")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'paused' WHERE id = 'st-first'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	resumed, _ := s.resume("moved")
+
+	s.Zero(resumed)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-first")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestATaskTheUserResumedAtTheSourceDuringTheMoveIsResumedAtTheCutOver() {
+	s.capture("acme")
+	s.seedScheduledTask("st-first", "acme", ScheduledTaskPaused)
+	cursor := s.move("acme", "moved")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'active' WHERE id = 'st-first'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-first")
+	s.Require().Equal(ScheduledTaskPaused, state, "the source still delivers it")
+
+	resumed, _ := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-first")
+	s.Equal(ScheduledTaskActive, state)
+}
+
+func (s *DataMoveSuite) TestATaskPausedAtTheSourceIsNotResumedWhateverMarkItCarries() {
+	// A source that is itself a move's destination, not cut over yet, holds a paused task
+	// marked by that move. The user did not pause it, but what this move sees is paused.
+	s.seedScheduledTask("st-chained", "acme", ScheduledTaskPaused)
+	s.moveEdited("acme", "moved", "scheduled_tasks", func(row map[string]any) { row["move_paused"] = true })
+
+	resumed, _ := s.resume("moved")
+
+	s.Zero(resumed)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-chained")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	// What deleting the config over the API does here.
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
+	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
+
+	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "every occurrence would fail on the deleted agent")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+	s.False(s.movePausedOn("st-active"), "a second cut-over has nothing of it to resume either")
+}
+
+// A repeating task the source delivers changes there each time, so the last --once imports
+// it, and marks it, again after the config was deleted here.
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHereBeforeTheLastCatchUpPaused() {
+	s.capture("acme")
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	cursor := s.move("acme", "moved")
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
+	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE scheduled_tasks SET next_run_at = next_run_at + interval '1 day', updated_at = now() WHERE id = 'st-active'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+	s.Require().True(s.movePausedOn("st-active"), "the catch-up marked it again")
+
+	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "its config is deleted here")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+	s.False(s.movePausedOn("st-active"))
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigIsAnotherCustomersHerePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	// The destination holds config-1 for somebody else, so the move cannot bring it.
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', 'resident', 'theirs', 'be brief')")
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+
+	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "the customer has no config-1 here to run it on")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// A delete in flight when the cut-over reads the config is waited for, not read past.
+func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	deleting, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(s.ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = 'config-1'")
+	s.Require().NoError(err)
+
+	type outcome struct {
+		resumed int64
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		resumed, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, err}
+	}()
+	// Commit the delete once the cut-over waits on it; a cut-over that does not wait has
+	// finished by then.
+	deadline := time.Now().Add(30 * time.Second)
+	var result *outcome
+	for result == nil && time.Now().Before(deadline) {
+		select {
+		case got := <-done:
+			result = &got
+		case <-time.After(50 * time.Millisecond):
+			var waiting int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+			if waiting > 0 {
+				s.Require().NoError(deleting.Commit())
+				got := <-done
+				result = &got
+			}
+		}
+	}
+	s.Require().NotNil(result, "the cut-over neither finished nor waited")
+	s.Require().NoError(result.err)
+	s.Zero(result.resumed, "the config was deleted before the cut-over could resume its task")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	// Resumed here by hand and delivered: the mark is what the move left, the state is not.
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-active'")
+	s.Require().NoError(err)
+
+	resumed, skipped, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Zero(skipped, "it was not left paused")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskCompleted, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverIsOnlyTheCustomersOwn() {
+	s.seedScheduledTask("st-acme", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-other", "other", ScheduledTaskActive)
+	acmeCampaign := s.seedCampaign("acme", Running)
+	otherCampaign := s.seedCampaign("other", Running)
+	s.move("acme", "moved")
+	s.move("other", "other")
+
+	resumed, campaigns := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	s.Equal([]string{acmeCampaign}, campaigns)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-other")
+	s.Equal(ScheduledTaskPaused, state, "another customer's move is cut over on its own")
+	s.True(s.movePausedOn("st-other"), "and keeps its mark for it")
+	_, campaigns = s.resume("other")
+	s.Equal([]string{otherCampaign}, campaigns)
+}
+
+// seedCampaign stores a campaign on the source in a state and returns its id.
+func (s *DataMoveSuite) seedCampaign(customerID, state string) string {
+	campaign := &Campaign{CustomerID: customerID, Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
+	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
+	if state != Draft {
+		s.Require().NoError(s.source.SetCampaignState(s.ctx, customerID, campaign.ID, state))
+	}
+	return campaign.ID
+}
+
+func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() {
+	running := s.seedCampaign("acme", Running)
+	paused := s.seedCampaign("acme", Paused)
+	draft := s.seedCampaign("acme", Draft)
+	s.move("acme", "moved")
+
+	_, campaigns := s.resume("moved")
+
+	s.Equal([]string{running}, campaigns)
+	for id, want := range map[string]string{running: Paused, paused: Paused, draft: Draft} {
+		campaign, err := s.destination.Campaign(s.ctx, "moved", id)
+		s.Require().NoError(err)
+		s.Equal(want, campaign.State, "only starting it here rings anybody")
+	}
+	source, err := s.source.Campaign(s.ctx, "acme", running)
+	s.Require().NoError(err)
+	s.Equal(Running, source.State, "the deployment it left goes on ringing")
+}
+
+func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {
+	running := s.seedCampaign("acme", Running)
+	s.move("acme", "moved")
+
+	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Running))
+	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Paused))
+
+	_, campaigns := s.resume("moved")
+	s.Empty(campaigns, "the customer paused it here")
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a

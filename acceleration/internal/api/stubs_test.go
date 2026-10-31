@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/png"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -131,6 +133,7 @@ func reasoningConfig() routing.ModalityConfig {
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "screened", Model: "screened-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "guarded", Model: "guarded-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
@@ -192,6 +195,9 @@ type scriptedLLM struct {
 	analyses bool
 	// refuses, when set, is what every request is refused with.
 	refuses error
+	// refusesQuoting, when set, has a request quoting it refused as the prompt injection
+	// screen refuses one, after a word of the reply had streamed.
+	refusesQuoting string
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -265,6 +271,11 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if s.refusesQuoting != "" && slices.ContainsFunc(params.Input, func(m llm.Message) bool { return strings.Contains(m.Content, s.refusesQuoting) }) {
+		script.OutputText("I")
+		script.Fail(fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection), "llm")
+		return script.Stream(), nil
+	}
 	script.OutputText(reply)
 	if s.usage != (llm.Usage{}) {
 		script.Usage(s.usage)

@@ -7362,7 +7362,7 @@ dev = [
 requires-dist = [
     { name = "inference-sdk", specifier = ">=0.17.0" },
     { name = "numpy", specifier = ">=2.0.0" },
-    { name = "rfdetr", specifier = ">=1.3.0" },
+    { name = "rfdetr", specifier = ">=1.4.3" },
     { name = "supervision", specifier = ">=0.21.0,<0.28" },
     { name = "vision-agents", editable = "sdks/python" },
 ]

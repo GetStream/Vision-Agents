@@ -87,7 +87,8 @@ func (s *Store) CustomerCampaigns(ctx context.Context, customerID string) ([]Cam
 
 // SetCampaignState records what a campaign is now doing. Starting one stamps when it
 // first started, and finishing one stamps when it stopped having anybody left to ring. Either
-// clears why the router last paused it.
+// clears why the router last paused it, and that a data move did (ResumeMovedRows): the
+// customer has decided what it does here.
 func (s *Store) SetCampaignState(ctx context.Context, customerID, id, state string) error {
 	return s.setCampaignState(ctx, customerID, id, state, "")
 }
@@ -107,6 +108,7 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 	query := s.db.NewUpdate().Model((*Campaign)(nil)).
 		Set("state = ?", state).
 		Set("paused_reason = NULLIF(?, '')", reason).
+		Set("move_paused = false").
 		Where("id = ?", id).
 		Where("customer_id = ?", customerID)
 	switch state {
