@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Optional, Union
+from dataclasses import dataclass, replace
+from typing import Any, Optional, Sequence, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry
 
-from ._backend import Backend
+from ._backend import TOKEN_VALIDITY_SECONDS, Backend
 from ._generated.api.default import (
     claim_guest_user,
     create_guest_user,
@@ -23,10 +23,13 @@ from ._generated.models import (
     GuestUserRequest,
     GuestUserRequestCustom,
 )
+from .account import OrganizationAccount, Usage
 from .responses import RouterError, _deleted, _unwrapped
 from .router import Router
 from .sessions import Sessions
 from .simulations import Simulations
+from .spend_limits import SpendLimits
+from .teams import Teams
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,8 @@ class Client:
         authenticate: Optional[bool] = None,
         backend: Optional[Backend] = None,
         region: Optional[str] = None,
+        team: Optional[str] = None,
+        usage_categories: Sequence[str] = (),
     ):
         """Point a client at a router.
 
@@ -98,6 +103,14 @@ class Client:
             user_id: The end user this client is acting for, if it is acting for one.
             authenticate: Whether the router is reached through Stream's proxy.
             backend: A backend to use as it is, instead of building one from the above.
+            team: The customer's team this client's work is counted against, such as
+                ``finance``: its spend and its spend limits.
+            usage_categories: The customer's own groupings this client's work is counted
+                against, such as ``project:onboarding``. At most 10 with the team.
+
+        Raises:
+            ValueError: A team or usage category the router would refuse, naming it, or
+                either one beside a ``token``, which carries the ones it was signed with.
         """
         self.backend = backend or Backend(
             url=url,
@@ -108,9 +121,15 @@ class Client:
             user_id=user_id,
             authenticate=authenticate,
             region=region,
+            team=team,
+            usage_categories=usage_categories,
         )
         self.memories = Memories(self.backend)
         self.simulations = Simulations(self.backend)
+        self.spend_limits = SpendLimits(self.backend)
+        self.teams = Teams(self.backend, self.spend_limits)
+        self.account = OrganizationAccount(self.backend)
+        self.usage = Usage(self.backend)
 
     @property
     def server_side(self) -> bool:
@@ -126,6 +145,69 @@ class Client:
         which user a request was for depend on when it happened to run.
         """
         return Client(backend=self.backend.as_user(user, token))
+
+    def for_user(
+        self,
+        user_id: str,
+        *,
+        team: Optional[str] = None,
+        usage_categories: Sequence[str] = (),
+    ) -> "Client":
+        """A server-side client running work for one end user, still holding the app's
+        credential.
+
+        The work counts against that user's spend limits, and against the team and usage
+        categories given here, which are this user's alone: the parent client's are not
+        carried over. Server side only.
+
+        Example:
+            ```python
+            alice = api.for_user("user-42", team="finance")
+            ```
+        """
+        if not self.server_side:
+            raise ValueError(
+                "working for a user keeps the app's credential, which only a backend holds; "
+                "a device holds its user's token (as_user)"
+            )
+        if not user_id:
+            raise ValueError("working for a user needs the user's id")
+        return Client(
+            backend=replace(
+                self.backend,
+                user_id="",
+                user={},
+                acting_for=user_id,
+                team=team,
+                usage_categories=usage_categories,
+            )
+        )
+
+    def create_user_token(
+        self,
+        user_id: str,
+        *,
+        team: Optional[str] = None,
+        usage_categories: Sequence[str] = (),
+        validity_seconds: int = TOKEN_VALIDITY_SECONDS,
+    ) -> str:
+        """The token a backend hands to one user's device.
+
+        It names the user's team and usage categories, fixed when it is signed, so the
+        device cannot move its work to another team. A team has no members list anywhere:
+        the token is the membership. Needs the secret.
+
+        Example:
+            ```python
+            token = api.create_user_token("user-42", team="finance")
+            ```
+        """
+        return self.backend.user_token(
+            user_id,
+            team=team,
+            usage_categories=usage_categories,
+            validity_seconds=validity_seconds,
+        )
 
     def as_guest(self, guest: GuestUser) -> "Client":
         """A client acting for a guest, which is what their conversations belong to.
