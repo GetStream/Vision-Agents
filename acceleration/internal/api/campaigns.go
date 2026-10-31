@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
@@ -133,7 +134,20 @@ func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaign
 	if err != nil {
 		return nil, err
 	}
-	return &listCampaignContactsResponse{Body: contactsOf(stored)}, nil
+	var calls map[string]outcome.Call
+	if s.phone != nil {
+		callIDs := make([]string, 0, len(stored))
+		for _, contact := range stored {
+			if contact.CallID != "" {
+				callIDs = append(callIDs, contact.CallID)
+			}
+		}
+		calls, err = s.phone.Outcomes().ReadMany(ctx, customerID, callIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &listCampaignContactsResponse{Body: contactsOf(stored, calls)}, nil
 }
 
 // addCampaignContacts adds people to ring.
@@ -169,7 +183,7 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 	if err := s.store.AddContacts(ctx, contacts); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &addCampaignContactsResponse{Body: contactsOf(contacts)}, nil
+	return &addCampaignContactsResponse{Body: contactsOf(contacts, nil)}, nil
 }
 
 // startCampaign starts ringing. It returns once the campaign is running rather than once
@@ -252,10 +266,16 @@ func campaignOf(campaign store.Campaign) Campaign {
 	return rendered
 }
 
-// contactsOf renders contacts for the wire.
-func contactsOf(contacts []store.Contact) []Contact {
+// contactsOf renders contacts for the wire, with how each one's call ended from calls, by
+// call id.
+func contactsOf(contacts []store.Contact, calls map[string]outcome.Call) []Contact {
 	rendered := make([]Contact, 0, len(contacts))
 	for _, contact := range contacts {
+		var decided *CallOutcome
+		if call, ok := calls[contact.CallID]; ok && call.Outcome != "" {
+			shown := CallOutcome(call.Outcome)
+			decided = &shown
+		}
 		rendered = append(rendered, Contact{
 			Id:           contact.ID,
 			ToNumber:     contact.ToNumber,
@@ -265,6 +285,7 @@ func contactsOf(contacts []store.Contact) []Contact {
 			CallId:       optional(contact.CallID),
 			VendorCallId: optional(contact.VendorCallID),
 			Error:        optional(contact.Error),
+			Outcome:      decided,
 		})
 	}
 	return rendered
@@ -490,6 +511,7 @@ type Contact struct {
 	Error        *string      `json:"error,omitempty" doc:"Why they could not be rung, when they could not be."`
 	Id           string       `json:"id"`
 	Instructions *string      `json:"instructions,omitempty"`
+	Outcome      *CallOutcome `json:"outcome,omitempty" doc:"How the call to them ended, once it has. The state still says only whether they were rung."`
 	State        ContactState `json:"state" enum:"pending,calling,done,failed"`
 	ToNumber     string       `json:"to_number"`
 	VendorCallId *string      `json:"vendor_call_id,omitempty"`

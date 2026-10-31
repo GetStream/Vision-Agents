@@ -238,24 +238,24 @@ func (s *CadenceSuite) TestARunTheTranscriberDoesNotNumberIsSaidWhole() {
 }
 
 func (s *CadenceSuite) TestAFinalThatGrowsAnAnsweredIdentifierIsStillHeard() {
-	// Healthcare golden lost the last digit of ABC123456 because Gemini's final of the
-	// same utterance was dropped as a restatement.
+	// A final of the same utterance that adds a digit to an identifier already answered is
+	// the identifier growing, not a restatement of what was answered.
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{
 		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
-		Text: "Maya Chen member ID ABC12345",
+		Text: "Ines Moreau member ID KTR58302",
 	})
 	answered := s.ready()
 	s.Require().True(s.cadence.Resolve(answered.ID, false))
 
 	s.cadence.Observe(stt.Transcript{
 		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
-		Text: "Maya Chen member ID ABC123456",
+		Text: "Ines Moreau member ID KTR583026",
 	})
 
 	grown := s.ready()
-	s.Equal("Maya Chen member ID ABC123456", grown.Text)
-	s.Equal("Maya Chen member ID ABC123456", grown.Said(), "a longer last token is not new words")
+	s.Equal("Ines Moreau member ID KTR583026", grown.Text)
+	s.Equal("Ines Moreau member ID KTR583026", grown.Said(), "a longer last token is not new words")
 }
 
 func (s *CadenceSuite) TestSayingTheSameThingAgainLaterIsHeardAgain() {
@@ -354,14 +354,15 @@ func (s *CadenceSuite) TestNewWordsSupersedeAControllerDecision() {
 }
 
 func (s *CadenceSuite) TestAClockTimeSplitAcrossUtterancesIsHeardAsOneTurn() {
-	// Gemini endpointing invents a period after "7:00" and emits "thirty patio..." as a
-	// new utterance. Answering only the tail is how the agent booked a party of one.
+	// A transcriber can end an utterance after "6:00." and open the next with "fifteen",
+	// splitting one clock time across two utterances. The turn is both of them, not the
+	// tail alone.
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Utterance:   1,
-		Text:        "Hi, I'd like to book the table for four this Saturday at 7:00.",
+		Text:        "Hi, could I get a table for three this Friday at 6:00.",
 	})
 	first := s.ready()
 
@@ -369,12 +370,12 @@ func (s *CadenceSuite) TestAClockTimeSplitAcrossUtterancesIsHeardAsOneTurn() {
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Utterance:   2,
-		Text:        "thirty patio if you have it, a high chair, and one of us has a peanut allergy",
+		Text:        "fifteen somewhere quiet if you can, it's a birthday dinner",
 	})
 
 	s.Equal(first.ID, superseded)
-	s.Contains(saying, "table for four")
-	s.Contains(saying, "thirty patio")
+	s.Contains(saying, "table for three")
+	s.Contains(saying, "fifteen somewhere quiet")
 	s.Equal(saying, s.ready().Text)
 }
 
@@ -499,7 +500,7 @@ func TestWhatALineSaysWithoutWhatWasAlreadyHeard(t *testing.T) {
 	for _, tc := range []struct{ text, repeats, want string }{
 		{"Okay. Okay. Thanks.", "Okay.", "Okay. Thanks."},
 		{"What is it like today? And tomorrow?", "what is it like today", "And tomorrow?"},
-		{"Member ID ABC123456", "member id abc12345", "Member ID ABC123456"},
+		{"Member ID KTR583027", "member id ktr58302", "Member ID KTR583027"},
 		{"Hello there", "", "Hello there"},
 		{"Okay.", "Okay", ""},
 	} {
@@ -515,7 +516,7 @@ func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenate
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Utterance:   1,
-		Text:        "Saturday at 7:00",
+		Text:        "Friday at 6:00",
 	})
 	s.ready()
 
@@ -523,9 +524,9 @@ func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenate
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Utterance:   1,
-		Text:        "Saturday at 7:30 patio",
+		Text:        "Friday at 6:15 by the window",
 	})
-	s.Equal("Saturday at 7:30 patio", saying)
+	s.Equal("Friday at 6:15 by the window", saying)
 }
 
 func (s *CadenceSuite) TestAFinalCopyDoesNotDriveOrDelayCadence() {
@@ -565,7 +566,7 @@ func (s *CadenceSuite) TestAFinalEndingOnDigitsStillWaitsForThemToGrow() {
 	patient := newCadence(400*time.Millisecond, 800*time.Millisecond, time.Second, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(patient.Close)
 	alice := stt.Participant{ID: "alice"}
-	patient.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "my member id is ABC12345"})
+	patient.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "my member id is KTR58302"})
 
 	select {
 	case ready := <-patient.Ready():
@@ -595,21 +596,21 @@ func (s *CadenceSuite) TestAnIncompleteIdentifierWaitsTheRetryGap() {
 	s.cadence.Observe(stt.Transcript{
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
-		Text:        "member ID ABC12345",
+		Text:        "member ID KTR58302",
 	})
 	select {
 	case ready := <-s.cadence.Ready():
 		s.FailNowf("an incomplete identifier became ready on the short gap", "got %q", ready.Text)
 	case <-time.After(7 * time.Millisecond):
 	}
-	s.Equal("member ID ABC12345", s.ready().Text)
+	s.Equal("member ID KTR58302", s.ready().Text)
 }
 
 func (s *CadenceSuite) TestIncompleteIdentifiersAreTheOnesThatStillHaveADigitTail() {
-	s.True(incompleteIdentifier("member ID ABC12345"))
-	s.True(incompleteIdentifier("Saturday at 7:30"))
-	s.True(incompleteIdentifier("callback 512-555-0142"))
-	s.True(incompleteIdentifier("PIN 4471"))
+	s.True(incompleteIdentifier("member ID KTR58302"))
+	s.True(incompleteIdentifier("Friday at 6:15"))
+	s.True(incompleteIdentifier("callback 512-555-0178"))
+	s.True(incompleteIdentifier("PIN 3825"))
 	s.False(incompleteIdentifier("book a table"))
 	s.False(incompleteIdentifier("party of 4"))
 }

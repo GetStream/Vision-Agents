@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,12 @@ var (
 	inboundStartTimeout  = 30 * time.Second
 )
 
+// greetingDelay is the time from when the first participant joins to when the greeting
+// starts. The SFU reports a participant before their client plays audio from the agent.
+// Without this delay, the participant does not hear the start of the greeting. Tests change
+// this value.
+var greetingDelay = 100 * time.Millisecond
+
 // presence is who is in the call one agent run is on. Its lock is taken before s.mu, which
 // the timeout calls take, and never while holding s.mu.
 type presence struct {
@@ -32,6 +39,28 @@ type presence struct {
 	settled bool
 	// retired is set once the session moved off this run, whose late leaves are stale.
 	retired bool
+	// pendingGreeting says the greeting when the first participant joins. It is nil after
+	// the agent says the greeting, or when there is no greeting.
+	pendingGreeting func()
+}
+
+// holdGreeting keeps the greeting until the first participant joins. Call it before the
+// agent joins the call, so that the agent also greets a participant who is already in the
+// call.
+func (run *presence) holdGreeting(greet func()) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	run.pendingGreeting = greet
+}
+
+// sayGreeting returns a function that says the greeting in spec. The function logs an error
+// and does not return it, because no caller waits for it.
+func (s *Session) sayGreeting(ctx context.Context, held *agent.Agent, spec Spec) func() {
+	return func() {
+		if err := held.Greet(context.WithoutCancel(ctx), spec.Greeting, spec.VaryGreeting); err != nil {
+			s.logger.Warn("could not greet the call", "session", s.id, "error", err)
+		}
+	}
 }
 
 func newPresence() *presence {
@@ -105,6 +134,16 @@ func (s *Session) observe(run *presence, event Event) {
 			return
 		}
 		run.people[reported.Participant.ID] = struct{}{}
+		// Say the greeting in a different goroutine, because the events of the greeting come
+		// back through this event loop.
+		if greet := run.pendingGreeting; greet != nil {
+			run.pendingGreeting = nil
+			delay := greetingDelay
+			s.running.Go(func() {
+				time.Sleep(delay)
+				greet()
+			})
+		}
 		if _, ok := phone.CallerNumber(reported.Participant.UserID); ok {
 			s.callerSeen.Store(true)
 		}

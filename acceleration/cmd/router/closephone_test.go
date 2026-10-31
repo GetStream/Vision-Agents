@@ -594,7 +594,7 @@ func TestARouterServesOnTheSocketItInherited(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	inherited, err := listen("", inheritedFD)
+	inherited, err := listen("", inheritedFD, "listen_fd")
 	require.NoError(t, err)
 	server := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),

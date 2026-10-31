@@ -11,6 +11,7 @@ import {
   type GuestStore,
   type Schemas,
 } from "../src/index.js";
+import { inPage, offPage } from "./device.js";
 import { TestRouter, type Connection } from "./router.js";
 
 /** A session as the router describes one, with only the fields a test cares about set. */
@@ -168,6 +169,91 @@ describe("sessions", () => {
     const body = router.received[0]?.body as Record<string, unknown>;
     assert.deepEqual(body["model_overwrites"], { thinking: "high" });
     await held.close();
+  });
+
+  /** The bodies of every session the test opened, in order. */
+  function created(): Record<string, unknown>[] {
+    return router
+      .requestsTo("POST", "/v1/agents/sessions")
+      .map((one) => one.body as Record<string, unknown>);
+  }
+
+  it("opens a session from a page in the device's own zone", async () => {
+    await inPage("Europe/Lisbon", async () => {
+      const { session: held } = await open();
+      await held.close();
+    });
+    await inPage("UTC", async () => {
+      const { session: held } = await open();
+      await held.close();
+    });
+
+    assert.deepEqual(
+      created().map((body) => body["timezone"]),
+      ["Europe/Lisbon", "UTC"],
+    );
+  });
+
+  it("sends the app's own zone over the device's", async () => {
+    await inPage("Europe/Lisbon", async () => {
+      const { session: held } = await open({ timezone: "America/New_York" });
+      await held.close();
+    });
+
+    assert.equal(created()[0]?.["timezone"], "America/New_York");
+  });
+
+  it("sends no zone from a page that opts out with an empty one", async () => {
+    await inPage("Europe/Lisbon", async () => {
+      const { session: held } = await open({ timezone: "" });
+      await held.close();
+    });
+
+    assert.equal("timezone" in (created()[0] ?? {}), false);
+  });
+
+  it("sends no zone when what the browser reports does not read as one, so the session still opens", async () => {
+    const reported = [undefined, "", "GMT+05:30", "+05:30", "Etc/Unknown", 42, new RangeError("no ICU")];
+    for (const zone of reported) {
+      await inPage(zone, async () => {
+        const { session: held } = await open();
+        await held.close();
+      });
+    }
+
+    const bodies = created();
+    assert.equal(bodies.length, reported.length);
+    for (const [index, body] of bodies.entries()) {
+      assert.equal("timezone" in body, false, `${String(reported[index])} was sent`);
+    }
+  });
+
+  it("reads no zone off a machine that is not a page, whatever it holds", async () => {
+    const asUser = new Client({ url: router.url, apiKey: "key", token: "token-for-jlahey" });
+    await offPage("Europe/Lisbon", async () => {
+      const { session: asBackend } = await open();
+      await asBackend.close();
+
+      router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+      const opening = asUser.agent("docs").sessions.create();
+      await router.socket();
+      await (await opening).close();
+    });
+
+    const bodies = created();
+    assert.equal(bodies.length, 2);
+    for (const body of bodies) {
+      assert.equal("timezone" in body, false, "a server's zone is not the caller's");
+    }
+  });
+
+  it("sends a zone the app names off a page, too", async () => {
+    await offPage("Europe/Lisbon", async () => {
+      const { session: held } = await open({ timezone: "Asia/Tokyo" });
+      await held.close();
+    });
+
+    assert.equal(created()[0]?.["timezone"], "Asia/Tokyo");
   });
 
   it("puts a query on the wire as the filter the router reads", async () => {

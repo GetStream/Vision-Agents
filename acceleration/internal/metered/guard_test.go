@@ -114,6 +114,7 @@ var notVendors = map[string]string{
 	"internal/phone/siptrunk":          "the customer's own SIP trunk, which is no vendor of Stream's",
 	"internal/phone/vendors":           "the phone vendors' registry",
 	"internal/phone/region":            "which country a phone number is in, for prices and the channel limits",
+	"internal/phone/outcome":           "how a placed call ended, whichever vendor placed it",
 	"internal/knowledge/ingest":        "how a document is cut into passages, whichever store they go to",
 	"internal/knowledge/urls":          "the pages a knowledge base is kept filled from, written through internal/metered",
 	"internal/sandbox/egress":          "the egress proxy that holds a sandbox's connector credentials, whichever provider runs it",

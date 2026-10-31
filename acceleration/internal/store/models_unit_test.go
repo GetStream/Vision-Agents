@@ -35,3 +35,9 @@ func TestARowNeverPricesANegativePrompt(t *testing.T) {
 
 	require.Equal(t, pricing.Quantities{pricing.CachedInputTokens: 1_000}, used)
 }
+
+func TestAConfigWithoutALimitAllowsTheDefaultOfActiveTasks(t *testing.T) {
+	for limit, want := range map[int]int{0: 25, -3: 25, 1: 1, 7: 7, 100: 100} {
+		require.Equal(t, want, AgentScheduling{MaxTasksPerUser: limit}.MaxActive(), "limit %d", limit)
+	}
+}

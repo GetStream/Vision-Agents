@@ -228,6 +228,8 @@ class Agent:
         cost_tracking: Optional[dict[str, str]] = None,
         # Which memories a remote call may recall
         memory_filter: Optional[dict[str, str]] = None,
+        # The zone the agent's calls are in unless a call names its own
+        timezone: str = "",
         # Where outbound calls are placed, for agents that ring people
         phone: Optional[Telephony] = None,
         # A stored agent config on the acceleration backend. Fills in edge, llm,
@@ -275,6 +277,12 @@ class Agent:
             cost_tracking: Labels attributed to every request a remote call makes,
                 so spend can be attributed to more than a model.
             memory_filter: Scope keys narrowing which memories a remote call recalls.
+            timezone: The IANA zone the agent's calls are in, such as ``Europe/Lisbon``,
+                unless a call names its own: `join`, `answer`, `outbound_call` and `chat`
+                each take one for the person on that call. The agent tells the date and
+                the hour in it, so a time a caller gives is theirs. Empty leaves it to the
+                backend, which knows a returning user's zone. Only for a pipeline that
+                runs remotely.
             phone: Where `outbound_call` places calls, e.g. `stream.Phone()`. Without one
                 the agent can be joined to calls but cannot ring anybody.
             config: The name of a stored agent config. When set, the Go backend handles
@@ -304,6 +312,8 @@ class Agent:
         self.call: Optional[Call] = None
         self._call_type = "agent"
         self._phone: Optional[RemotePhone] = None
+        # The zone of the person on the call being held, for as long as it is held.
+        self._timezone = ""
 
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -330,6 +340,8 @@ class Agent:
         self.harness = harness
         self.cost_tracking = cost_tracking
         self.memory_filter = memory_filter
+        _remote_only(llm, timezone)
+        self.timezone = timezone
 
         self.responses = Responses(self)
 
@@ -665,6 +677,7 @@ class Agent:
         call_id: str = "",
         participant_wait_timeout: Optional[float] = 10.0,
         wait_for_end: bool = True,
+        timezone: str = "",
     ) -> AsyncIterator[None]:
         """
         Join the given call.
@@ -686,6 +699,8 @@ class Agent:
             wait_for_end: Whether leaving the block waits for the call to end, the way
                  ending it with `finish()` does. `False` hangs up as soon as the body
                  is done.
+            timezone: The IANA zone of the person on this call, when the app knows it,
+                 over the agent's own `timezone`. Empty uses the agent's.
 
         Returns:
 
@@ -695,6 +710,7 @@ class Agent:
             call_id=call_id,
             participant_wait_timeout=participant_wait_timeout,
             wait_for_end=wait_for_end,
+            timezone=timezone,
         ):
             yield
 
@@ -706,8 +722,10 @@ class Agent:
         participant_wait_timeout: Optional[float] = 10.0,
         wait_for_end: bool = True,
         phone: Optional[RemotePhone] = None,
+        timezone: str = "",
     ) -> AsyncIterator[None]:
         """`join`, with the phone call the call is, which lasts only as long as this join."""
+        _remote_only(self.llm, timezone)
         join_started = time.perf_counter()
         if isinstance(call, str):
             # One name is a call of the default `agent` type; two are the type and the id,
@@ -734,6 +752,7 @@ class Agent:
         try:
             await self._join_lock.acquire()
             self._phone = phone
+            self._timezone = timezone or self.timezone
             self._start_tracing(call)
             self.call = call
             self.conversation = None
@@ -826,6 +845,7 @@ class Agent:
                 raise
         finally:
             self._phone = None
+            self._timezone = ""
             await self.close()
             self._end_tracing()
             self._join_lock.release()
@@ -842,6 +862,7 @@ class Agent:
         headers: Optional[dict[str, str]] = None,
         custom: Optional[dict[str, str]] = None,
         wait_for_end: bool = True,
+        timezone: str = "",
     ) -> AsyncIterator[PlacedCall]:
         """Ring somebody and join the call their answer lands in.
 
@@ -865,6 +886,8 @@ class Agent:
             headers: Custom SIP headers carried to the person's leg.
             custom: Fields put on the call, where the agent in it can read them.
             wait_for_end: Whether leaving the block waits for the call to end.
+            timezone: The IANA zone of the person being rung, when the app knows it, over the
+                agent's own `timezone`. Empty uses the agent's.
 
         Yields:
             What was placed, whose `vendor_call_id` names the ringing leg.
@@ -872,6 +895,7 @@ class Agent:
         Raises:
             ValueError: If the agent was built without a `phone`.
         """
+        _remote_only(self.llm, timezone)
         if self.phone is None:
             raise ValueError(
                 "placing a call needs somewhere to place it; pass phone= to Agent, "
@@ -904,6 +928,7 @@ class Agent:
                 vendor_call_id=placed.vendor_call_id,
                 ring_timeout=ring_timeout,
             ),
+            timezone=timezone,
         ):
             yield placed
 
@@ -913,6 +938,7 @@ class Agent:
         call: InboundCall,
         participant_wait_timeout: Optional[float] = 30.0,
         wait_for_end: bool = True,
+        timezone: str = "",
     ) -> AsyncIterator[None]:
         """Join a call somebody has rung in to.
 
@@ -935,6 +961,8 @@ class Agent:
                 Unlike an outbound call this waits by default, because there is somebody
                 there: greeting a caller before they have joined talks to nobody.
             wait_for_end: Whether leaving the block waits for the call to end.
+            timezone: The IANA zone of the caller, when the app knows it, over the
+                agent's own `timezone`. Empty uses the agent's.
 
         Raises:
             ValueError: If the call names no call to join.
@@ -956,11 +984,12 @@ class Agent:
             participant_wait_timeout=participant_wait_timeout,
             wait_for_end=wait_for_end,
             phone=RemotePhone(number=call.called_number),
+            timezone=timezone,
         ):
             yield
 
     @asynccontextmanager
-    async def chat(self, agent_id: str = "") -> AsyncIterator[None]:
+    async def chat(self, agent_id: str = "", timezone: str = "") -> AsyncIterator[None]:
         """Hold the conversation in writing rather than on a call.
 
         The same instructions, skills and knowledge a call would have had, without the
@@ -978,6 +1007,8 @@ class Agent:
 
         Args:
             agent_id: The conversation to answer in. Empty starts one of the agent's own.
+            timezone: The IANA zone of the person writing, when the app knows it, over
+                the agent's own `timezone`. Empty uses the agent's.
 
         Raises:
             RuntimeError: If the agent's LLM is not a pipeline running elsewhere. A written
@@ -998,6 +1029,7 @@ class Agent:
                     with self.span("mcp_manager.connect_all"):
                         await self.mcp_manager.connect_all()
 
+                self._timezone = timezone or self.timezone
                 with self.span("llm.join_remote"):
                     await self.llm.join_remote(self._remote_call("", agent_id))
                 self.logger.info(
@@ -1189,6 +1221,7 @@ class Agent:
             cost_tracking=self.cost_tracking,
             memory_filter=self.memory_filter,
             phone=self._phone,
+            timezone=self._timezone,
         )
 
     async def _join_video_worker(self, call: Call) -> None:
@@ -2060,6 +2093,15 @@ def _component_info(component: Component) -> dict[str, MetadataValue]:
     if model and isinstance(model, str):
         info["model"] = model
     return info
+
+
+def _remote_only(llm: object, timezone: str) -> None:
+    """Refuse a timezone for a pipeline that runs here: only the backend tells a model the
+    date in a person's zone, and one given to a local pipeline would be dropped unseen."""
+    if timezone and not isinstance(llm, RemotePipeline):
+        raise ValueError(
+            "a timezone is told to a pipeline that runs remotely, e.g. Agent(config=...)"
+        )
 
 
 def _accelerated_defaults(

@@ -2447,9 +2447,12 @@ llm:
         retention: unspecified
 
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
-    # The rates below convert Baseten's H100 rate of $0.10833/min at an assumed 1500 output
+    # The rates below convert Baseten's 1x H100 rate of $0.10833/min at an assumed 1500 output
     # tokens per second across the batch, with prefill taken as five times cheaper than
     # decode. They are an estimate of what this deployment costs us, not a published price.
+    # Gemma now runs on Nebius, 1x H200 (AI-1664), so the rates no longer describe the host.
+    # When the host or the GPU changes, recompute them from the new per-minute rate and
+    # update prices/vendor.json to match.
     # Thinking stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: gemma
       model: gemma-4-26B-A4B-it

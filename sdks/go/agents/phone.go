@@ -57,8 +57,13 @@ func (a *Agent) WaitForCall(ctx context.Context, number string) (*Session, error
 	if err != nil {
 		return nil, err
 	}
-	if _, err := telephony.Attach(ctx, number); err != nil {
+	attached, err := telephony.Attach(ctx, number)
+	if err != nil {
 		return nil, err
+	}
+	// The router answers these calls itself, so no dispatch would ever arrive.
+	if attached.AgentConfigId != nil {
+		return nil, fmt.Errorf("agents: %s is answered by agent config %s; remove the agent to answer it with a worker", number, *attached.AgentConfigId)
 	}
 	backend, err := a.options.LLM.Backend()
 	if err != nil {
@@ -127,7 +132,8 @@ func (a *Agent) Answer(ctx context.Context, call InboundCall) (*Session, error) 
 // StartCall rings somebody and holds the conversation when they answer.
 //
 // The agent placed this call, so it is told it is navigating: recordings are let finish and
-// menus are answered rather than talked over.
+// menus are answered rather than talked over. A call that was busy, or ended otherwise
+// unanswered, before the session opened is a *stream.RouterError with Code call_unanswered.
 func (a *Agent) StartCall(ctx context.Context, from, to string) (*Session, error) {
 	if from == "" || to == "" {
 		return nil, errors.New("agents: a call needs a number to ring from and one to ring")

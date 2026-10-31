@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
@@ -58,6 +59,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	liveClient, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
@@ -73,6 +75,7 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	logger := slog.New(slog.DiscardHandler)
 	liveClient, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
@@ -98,8 +101,8 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 // with no sessions holds nothing, with or without an idle scheduled-task
 // worker, as before the worker counted.
 func TestAnIdleRouterHoldsTheDrainForNothing(t *testing.T) {
-	require.Zero(t, running(nil, nil))
-	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil)))
+	require.Zero(t, running(nil, nil, nil, nil))
+	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil), nil, nil))
 }
 
 // TestKnowledgeURLsAreNotServedWithoutRedis: with a database, a knowledge base and a crawler

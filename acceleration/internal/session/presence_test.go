@@ -347,3 +347,56 @@ func (s *SessionSuite) TestASocketSessionWithPhoneGetsNoTimeout() {
 
 	s.outlivesPhoneTimeouts(created)
 }
+
+// stillRuns checks the session was left running.
+func (s *SessionSuite) stillRuns(created *Session) {
+	s.Equal(Live, created.State(), "the session ended")
+	s.True(s.manager.Running(created.ID()), "the session was taken off")
+}
+
+func (s *SessionSuite) TestAnUnansweredOutboundSessionEndsAtOnce() {
+	s.manages()
+	created := s.rings(outbound())
+	s.settles(created)
+
+	s.True(s.manager.EndUnanswered("acme", created.ID()))
+
+	s.Equal(Ended, created.State(), "the session waits for its start timeout")
+	s.False(s.manager.Running(created.ID()), "the session is still held")
+}
+
+func (s *SessionSuite) TestAnUnansweredOutcomeLeavesASessionWhoseCallerJoined() {
+	s.manages()
+	created := s.rings(outbound(), caller)
+	s.eventually(created.CallerJoined, "the caller never joined")
+
+	s.True(s.manager.EndUnanswered("acme", created.ID()))
+
+	s.stillRuns(created)
+}
+
+func (s *SessionSuite) TestAnotherCustomersSessionIsNotEnded() {
+	s.manages()
+	created := s.rings(outbound())
+	s.settles(created)
+
+	s.manager.EndUnanswered("another", created.ID())
+
+	s.stillRuns(created)
+}
+
+func (s *SessionSuite) TestASessionWithoutPhoneIsNotEnded() {
+	s.manages()
+	created := s.rings(Spec{})
+	s.settles(created)
+
+	s.True(s.manager.EndUnanswered("acme", created.ID()))
+
+	s.stillRuns(created)
+}
+
+func (s *SessionSuite) TestASessionHeldElsewhereIsNotHere() {
+	s.manages()
+
+	s.False(s.manager.EndUnanswered("acme", "held-elsewhere"))
+}

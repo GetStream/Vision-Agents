@@ -51,9 +51,9 @@ and billing as a direct API call.
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
-| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM Truss, thinking off, live on Baseten `qvmmvrrq` |
+| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM recipe, thinking off: a Truss for Baseten, the same flags for Nebius |
 
-Three providers are therefore unreachable until someone deploys them. `s2pro` is under the
+Two providers are therefore unreachable until someone deploys them. `s2pro` is under the
 Fish Audio Research License and wants an H100, so both questions are worth settling before
 the push; the hosted `fish` provider serves the same model in the meantime. `breeze` is in
 the same position under the BreezeBlue Research and Non-Commercial License, and there its
@@ -122,6 +122,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
 | `ROUTER_KNOWLEDGE_REGIONS` | `knowledge.regions`: each region knowledge is kept in and the turbopuffer region serving it, as `region=turbopuffer region` pairs, such as `eu=aws-eu-central-1`. `us` is always served: left out, at `TURBOPUFFER_REGION`, then `gcp-us-central1`, as before. One `TURBOPUFFER_API_KEY` serves every region. See [Regions](#regions) |
 | `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
+| `ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD` | A listening socket inherited from a supervisor, served instead of `ROUTER_CODE_SANDBOX_PROXY_ADDR`, as `ROUTER_LISTEN_FD` is for the API, so no sandbox's connection is refused while an old router hands the proxy over to a new one. Unset, the default, listens on the address. Needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`, and a descriptor other than `ROUTER_LISTEN_FD`'s |
 | `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
@@ -167,8 +168,8 @@ the other commands that read them there.
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
-| `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
-| `GEMMA_API_KEY`         | Optional; the bearer token for `GEMMA_BASE_URL` when it is not on Baseten. `BASETEN_API_KEY` is used when unset |
+| `GEMMA_BASE_URL`        | The root of any OpenAI-compatible Gemma 4 endpoint, ending in `/v1`. On Baseten: `https://model-<model id>.api.baseten.co/environments/production/sync/v1`. On Nebius: `https://<managed host>/v1`, where the host is the endpoint's `https://` public endpoint. See `deploy/gemma-4` |
+| `GEMMA_API_KEY`         | Optional; the host's bearer token for `GEMMA_BASE_URL`. `BASETEN_API_KEY` is used when unset |
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
@@ -301,9 +302,13 @@ signs the header, so it cannot promote a request on its own, and a server token 
 a browser that sends the client header is used by a browser and treated as one. Stream's own
 convention is the same one, so a token minted by a Stream server SDK already fits.
 
-The auth type has no query parameter, unlike the key and the token. A browser WebSocket
-cannot set a header, so there is nothing for one to say, which is what stops a browser
-opening a dispatch socket and answering somebody else's callers.
+A browser WebSocket cannot set a header, so a socket in `proxy` mode, with no proxy that
+declares kinds, may name its auth type in the `stream-auth-type` query parameter instead. It
+is read only as `jwt` or `anonymous`, only when the header is absent, and only in that mode,
+where saying nothing already makes a caller a backend: the parameter can only make a socket
+weaker, never a backend. It is what lets a device's socket be the device that created its
+session, so the router asks it to run that device's tools. A plain request may send it too,
+and is read the same way.
 
 The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
 specific answer gives nothing away, and one told "unauthenticated" would go looking for a
@@ -1469,7 +1474,8 @@ benchmark's simulated caller, and everything between hearing and answering is th
 own, the cadence, the flow controller, speculation and barge-in included.
 
 The first frame is `{"type": "start", "sample_rate": 16000, "session": {...}}`, where
-`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out. The
+`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out.
+`sample_rate` is from 8000 to 192000, 16000 when left out; any other rate is refused. The
 answer is `{"type": "session", "session": {...}, "sample_rate": 16000}`. From then on
 binary frames are PCM16 mono at that rate both ways: the caller's audio in, and the agent's
 speech out in 20 ms frames at the pace it is heard on a call, so a reply the caller cuts
@@ -2344,6 +2350,48 @@ the copy, which is what makes the switchover free of a window where writes are l
 go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
 ```
+
+The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
+`--source-auth server` is for a source router reached directly.
+
+A scheduled task active on the source is imported paused, and so is a campaign running there,
+since the source goes on delivering them until the move is cut over. Each is marked as paused by
+the move; a change carried later sets the mark again from the source's state, so one the user
+paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
+any other edit keeps it.
+
+Until the last `--once`, the source is the truth: each change carried writes the row as the source
+has it, over whatever was done to that row here, a delete included. A config deleted here comes
+back if the source edits it afterwards. So once SDKs point here, stop writing at the source.
+
+Cut over once SDKs point here:
+
+1. Run `replicate --from … --once` one last time, to pick up the last writes.
+2. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
+   pauses are carried over, they clear the marks, and step 3 then resumes nothing.
+3. Run the cut-over:
+
+   ```bash
+   go run ./cmd/router replicate --resume --as <app id>
+   ```
+
+`--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
+at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
+and lists the marked campaigns. The source went on delivering between the last `--once` and its
+stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
+the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
+the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
+hold ends. A marked task with no occurrence left is
+completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
+step 2: an occurrence due between the two is delivered by neither. A marked task whose
+agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
+and the command prints how many it left that way. A user holds at most the config's
+`max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
+made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
+and the rest stay paused and marked. The command prints how many; run it again once the user
+has made room. A campaign rings
+only from the router that started it, so start each one here with
+`POST /v1/agents/campaigns/{id}/start`.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app

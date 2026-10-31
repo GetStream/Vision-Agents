@@ -1,9 +1,9 @@
-// Package gemma reaches a Gemma 4 model served by vLLM on our own deployment: Baseten, or
-// any other OpenAI-compatible host.
+// Package gemma reaches a Gemma 4 model served by vLLM on our own deployment: Nebius,
+// Baseten, or any other OpenAI-compatible host.
 //
 // Unlike DeepSeek, Gemma is not on Baseten's shared Model APIs: it has to be deployed,
-// which gives it its own endpoint. The Truss recipe is in deploy/gemma-4. Until someone
-// pushes it, GEMMA_BASE_URL is unset and New fails, so routing moves to the next candidate
+// which gives it its own endpoint. The recipe for both hosts is in deploy/gemma-4. While
+// GEMMA_BASE_URL is unset, New fails, so routing moves to the next candidate
 // and a capability shortcut still resolves.
 package gemma
 
@@ -27,11 +27,11 @@ const ProviderName = "gemma"
 const apiKeyEnvVar = "GEMMA_API_KEY"
 
 // basetenAPIKeyEnvVar is read when apiKeyEnvVar is empty, so a deployment on Baseten needs
-// no key of its own.
+// no key of its own. A Nebius endpoint has its own token, so it needs GEMMA_API_KEY.
 const basetenAPIKeyEnvVar = "BASETEN_API_KEY"
 
-// baseURLEnvVar is the deployment's OpenAI-compatible endpoint, which Baseten prints once
-// the model is pushed.
+// baseURLEnvVar is the deployment's OpenAI-compatible endpoint root, ending in /v1: the
+// host prints the URL once the model is deployed.
 const baseURLEnvVar = "GEMMA_BASE_URL"
 
 // modelOwner is the prefix vLLM serves these under, matching the Hugging Face repo. The

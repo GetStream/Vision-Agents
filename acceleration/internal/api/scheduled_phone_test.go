@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -385,6 +387,76 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnanswere
 	s.Equal(scheduling.ReasonNotAnswered, *run.Error, "how the call went, not that it was placed")
 }
 
+// A worker that rang, and stopped before it settled the run, may have carried the task
+// out on the call: the worker taking the run over texts nothing after it (AI-2021).
+func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNotTextedToo() {
+	s.retryLate()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"phone", "sms"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Require().Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Equal(scheduling.ReasonRungAlready, *run.Error)
+	s.Empty(run.DeliveredTo)
+	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
+	// That call may have carried the task out: the one-shot is over, not failed.
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State)
+	s.Zero(stored.ConsecutiveFailures)
+}
+
+// A channel before the call failing does not hide the call: the run says
+// already_called, so the occurrence is not counted a failure.
+func (s *ScheduledTasksSuite) TestAnOccurrenceThatRangAlreadyAfterAFailedChannelIsNotCountedFailed() {
+	s.retryAtOnce()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"whatsapp", "phone"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(scheduling.ReasonRungAlready, *run.Error)
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State, "that call may have carried the task out")
+	s.Zero(stored.ConsecutiveFailures)
+}
+
+// A channel before the call that may land later keeps the occurrence retried, but the
+// channel after the call is not tried even then.
+func (s *ScheduledTasksSuite) TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed() {
+	task := s.silentTask([]string{"whatsapp", "phone", "sms"})
+
+	_, err := s.deliverNow(task, time.Now(), "the-earlier-call")
+
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonRungAlready, failure.Reason, "the call counts, not the channel before it")
+	s.False(failure.Final, "WhatsApp may open by the next attempt")
+	s.Empty(s.sink.to(s.numberRungFor(task)), "the user was rung for this occurrence, so it is not texted too")
+}
+
+// A call whose end the run records went unanswered, so the next channel carries the task.
+func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel() {
+	s.retryLate()
+	user := s.data.createUser()
+	due := time.Now().Add(-14 * time.Minute).UTC().Truncate(time.Second)
+	task := s.phoneTask(user, []string{"phone", "sms"}, due)
+	s.ranAlready(task, due, nil, "the-earlier-call")
+	s.Require().NoError(s.store.SetScheduledTaskRunCallReason(context.Background(), task.CustomerID,
+		s.runsOf(task)[0].ID, "the-earlier-call", scheduling.ReasonNotAnswered))
+	s.runWorker()
+
+	run := s.settledRun(task)
+	s.Equal(store.ScheduledTaskRunDelivered, run.State)
+	s.Equal("sms", run.DeliveredTo)
+	s.Equal([]string{"Done."}, s.sink.to(s.numberRungFor(task)))
+}
+
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall() {
 	s.shortCalls(2*time.Second, 10*time.Second)
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
@@ -597,6 +669,36 @@ func (s *ScheduledTasksSuite) TestACallThatWasPlacedIsNotGivenBackWhenItFails() 
 	s.Len(s.sink.to(rung), 1, "an attempt after the one that rang rings nobody")
 }
 
+func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() {
+	s.placingCalls()
+	reported := make(chan error, 1)
+	s.sink.mu.Lock()
+	s.sink.dialled = func(statusURL string) {
+		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Busy, "busy")
+		reported <- err
+	}
+	s.sink.mu.Unlock()
+	s.T().Cleanup(func() {
+		s.sink.mu.Lock()
+		s.sink.dialled = nil
+		s.sink.mu.Unlock()
+	})
+	task := s.silentTask([]string{"phone"})
+	run := s.runOf(task, time.Now(), "")
+
+	_, _, err := s.router.DeliverScheduledTask(context.Background(), store.ClaimedScheduledTask{Task: task, Run: run})
+
+	select {
+	case err := <-reported:
+		s.Require().NoError(err)
+	case <-time.After(5 * time.Second):
+		s.Fail("the vendor was sent no status URL to report the busy to")
+	}
+	failure := s.failure(err)
+	s.Equal(scheduling.ReasonNotAnswered, failure.Reason)
+	s.True(failure.Final, "the user was rung already")
+}
+
 // placingCalls has the router place calls for the test: Telnyx is the suite's
 // channel sink, which takes the call, and the trunk and rule the call rings
 // into are made at the suite's Stream.
@@ -620,8 +722,10 @@ func (s *ScheduledTasksSuite) placingCalls() {
 		Registry: registry,
 		Store:    s.store,
 		Gate:     s.gate,
-		Stream:   phone.NewStreamFromClient(bound.Client),
-		Logger:   slog.New(slog.DiscardHandler),
+		// So the vendor is sent a status URL, which the sink can report a call's end to.
+		PublicURL: "https://router.test",
+		Stream:    phone.NewStreamFromClient(bound.Client),
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	kept := s.router.phone
@@ -653,7 +757,7 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailur
 	_, err := s.deliverNow(task, time.Now(), "the-earlier-call")
 
 	failure := s.failure(err)
-	s.Equal(scheduling.ReasonUnreachable, failure.Reason)
+	s.Equal(scheduling.ReasonRungAlready, failure.Reason, "the call counts, not the channel before it")
 	s.False(failure.Final, "WhatsApp may open by the next attempt, though the call is not placed again")
 }
 
@@ -711,6 +815,9 @@ func (s *ScheduledTasksSuite) TestAFinalFailureOnTheNodeHoldingTheConversationIs
 	run := s.settledRun(task)
 	s.Equal(store.ScheduledTaskRunFailed, run.State)
 	s.Equal(scheduling.ReasonRungAlready, *run.Error, "the peer's reason crossed back")
+	stored := s.taskReloaded(task)
+	s.Equal(store.ScheduledTaskCompleted, stored.State, "the peer's call may have carried the task out")
+	s.Zero(stored.ConsecutiveFailures)
 }
 
 func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsItsReasonAndIsRetried() {

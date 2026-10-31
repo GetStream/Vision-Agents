@@ -291,7 +291,7 @@ type CreateSessionRequest struct {
 	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
 	Tools                *[]SessionTool     `json:"tools,omitempty"`
 	Tts                  *string            `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
-	UserId               *string            `json:"user_id,omitempty" doc:"Who the agent joins the call as." default:"vision-agent"`
+	UserId               *string            `json:"user_id,omitempty" doc:"The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id." default:"vision-agent"`
 	UserName             *string            `json:"user_name,omitempty" default:"Vision Agent"`
 	Video                *SessionVideo      `json:"video,omitempty"`
 	Voice                *string            `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
@@ -793,6 +793,7 @@ type Session struct {
 	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
 	AgentId          string                  `json:"agent_id"`
 	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
+	CallOutcome      *SessionCallOutcome     `json:"call_outcome,omitempty" doc:"How the call the router placed for this session ended. Read by a backend only."`
 	CallType         string                  `json:"call_type"`
 	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
 	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
@@ -821,7 +822,7 @@ type Session struct {
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`
-	UserId           string                  `json:"user_id"`
+	UserId           string                  `json:"user_id" doc:"The name the agent joined the call as. It is not the owner of the session."`
 	Usage            *CallUsage              `json:"usage,omitempty" doc:"What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only."`
 	Video            *SessionVideo           `json:"video,omitempty"`
 	Voice            *string                 `json:"voice,omitempty" doc:"The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none."`
@@ -916,6 +917,41 @@ type SessionPhone struct {
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
+}
+
+// SessionCallOutcome is how the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
+	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has."`
+}
+
+func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the call the router placed for a session ended."
+	return schema
+}
+
+// CallOutcome is how a placed call ended.
+type CallOutcome string
+
+const (
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
+		"completed: the person answered and the call ended.\n"+
+		"busy: the line was busy or the person declined.\n"+
+		"no_answer: it rang and nobody answered.\n"+
+		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
+		"canceled: the vendor says the call was hung up before an answer.\n"+
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
 }
 
 // SessionRespondCommand is the SessionRespondCommand schema.

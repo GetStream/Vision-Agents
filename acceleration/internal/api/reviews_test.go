@@ -72,6 +72,16 @@ func (s *ReviewsSuite) TestTheCausesExplainOnlyTheBadlyReviewedCallsThatWereRead
 	s.ElementsMatch([]string{bad, passedOn}, analysis.Causes[0].CallIds)
 }
 
+func (s *ReviewsSuite) TestAnAnalystThatThinksBeforeItWritesStillWritesTheWholeAnalysis() {
+	s.reviewed(1, time.Minute)
+
+	var analysis ReviewAnalysis
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
+		"/v1/agents/calls/reviews/analysis", s.analysis("pondering/pondering-model"), &analysis))
+
+	s.Equal("Callers asking about refunds were not helped.", analysis.Summary)
+}
+
 func (s *ReviewsSuite) TestNothingIsAskedWhenNoCallWentBadly() {
 	s.reviewed(4, time.Minute)
 

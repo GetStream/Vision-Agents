@@ -43,7 +43,7 @@ func (s *SessionVoiceSuite) TestStartingVoicePutsTheAgentOnTheCallNamedAfterTheS
 }
 
 func (s *SessionVoiceSuite) TestASessionHeldByAStringIdIsOnTheCallNamedAfterIt() {
-	id := "order_4471-" + s.utils.uuid()[24:]
+	id := "order_3825-" + s.utils.uuid()[24:]
 	request := textSession(&id)
 	request.StartVoice = pointerTo(true)
 
@@ -307,7 +307,7 @@ func (s *SessionVoiceSuite) TestStoppingVoiceCarriesTheConversationOnInWriting()
 	request.Llm = pointerTo("recites/recites-model")
 	opened := s.serverClient.createSession(request)
 	s.startVoice(opened.Id)
-	s.answerTo(opened.Id, "Where is order 4471?")
+	s.answerTo(opened.Id, "Where is order 3825?")
 
 	var stopped Session
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodDelete,
@@ -315,7 +315,7 @@ func (s *SessionVoiceSuite) TestStoppingVoiceCarriesTheConversationOnInWriting()
 
 	s.Empty(stopped.CallId)
 	s.Equal(value(opened.ConversationId), value(stopped.ConversationId))
-	s.Contains(s.answerTo(opened.Id, "And when?"), "Where is order 4471?",
+	s.Contains(s.answerTo(opened.Id, "And when?"), "Where is order 3825?",
 		"what was typed while voice was on is part of the conversation")
 }
 

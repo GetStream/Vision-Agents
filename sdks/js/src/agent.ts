@@ -230,6 +230,15 @@ export interface AgentOptions {
   costTracking?: Record<string, string>;
   /** Who the memories are about, under `user_id`, and what narrows recall. */
   memoryFilter?: Record<string, string>;
+  /**
+   * The IANA zone the agent's sessions are in, such as `Europe/Lisbon`, unless a call names
+   * its own: `join`, `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take one
+   * for the person on that call, since one agent serves callers in many zones. The agent
+   * tells the date and the hour in it, so a time a caller gives is theirs. Empty sends none,
+   * which leaves the user's stored zone, then the agent config's default, to decide. Nothing
+   * is read from the machine the agent runs on, whose zone is not the caller's.
+   */
+  timezone?: string;
   /** Who the agent joins a call as. Empty is derived from the name. */
   userId?: string;
   /** The caller's own functions. One is created when none is passed. */
@@ -240,8 +249,18 @@ export interface AgentOptions {
   edge?: Edge;
 }
 
+/** How a session the agent opens is watched, and whose zone it is in. */
+export interface CallOptions extends SessionOptions {
+  /**
+   * The IANA zone of the person on this call, when the app knows it, over the agent's own
+   * `timezone`. Empty uses the agent's. A zone the router does not know is refused with a 400
+   * `invalid_timezone`, and the session is not opened.
+   */
+  timezone?: string;
+}
+
 /** How a conversation is held. */
-export interface ChatOptions extends SessionOptions {
+export interface ChatOptions extends CallOptions {
   /**
    * The conversation being answered, which names the channel replies are written into.
    *
@@ -367,7 +386,7 @@ export class Agent {
    * that session is opened here with voice on. The number they reached is carried into it,
    * which is what lets the agent transfer them.
    */
-  async answer(call: InboundCall, options: SessionOptions = {}): Promise<Session> {
+  async answer(call: InboundCall, options: CallOptions = {}): Promise<Session> {
     if (!call.sessionId) {
       throw new ConfigurationError("the call names no session; attach its number again");
     }
@@ -387,7 +406,7 @@ export class Agent {
    * The reply is written as the agent the message was addressed to, so whoever wrote it is
    * already reading the answer as it is generated.
    */
-  reply(message: InboundMessage, options: SessionOptions = {}): Promise<Session> {
+  reply(message: InboundMessage, options: CallOptions = {}): Promise<Session> {
     return this.chat({ ...options, agentId: message.agentId });
   }
 
@@ -397,7 +416,7 @@ export class Agent {
    * The agent placed this call, so it is told it is navigating: recordings are let finish
    * and menus are answered rather than talked over.
    */
-  async startCall(from: string, to: string, options: SessionOptions = {}): Promise<Session> {
+  async startCall(from: string, to: string, options: CallOptions = {}): Promise<Session> {
     if (!from || !to) {
       throw new ConfigurationError("a call needs a number to ring from and one to ring");
     }
@@ -437,7 +456,7 @@ export class Agent {
    *
    * For more than one call at a time, wait on the dispatch socket instead.
    */
-  async waitForCall(number: string, options: SessionOptions = {}): Promise<Session> {
+  async waitForCall(number: string, options: CallOptions = {}): Promise<Session> {
     if (!number) {
       throw new ConfigurationError("there is no number to answer on");
     }
@@ -629,12 +648,17 @@ export class Agent {
     );
   }
 
-  /** Renders the agent's configuration into a session and opens it. */
+  /**
+   * Renders the agent's configuration into a session and opens it. The call's own zone wins
+   * over the agent's, and neither set sends none.
+   */
   private async open(
     call: Schemas["CreateSessionRequest"],
-    options: SessionOptions,
+    options: CallOptions,
   ): Promise<Session> {
+    const { timezone, ...watching } = options;
     const pipeline = this.options.pipeline ?? {};
+    const zone = timezone || this.options.timezone;
     const request: Schemas["CreateSessionRequest"] = {
       user_id: this.userId,
       user_name: this.name,
@@ -642,10 +666,11 @@ export class Agent {
       ...(await this.pipelineRequest(pipeline)),
       ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
       ...(this.memoryRequest()),
+      ...(zone ? { timezone: zone } : {}),
       ...call,
     };
 
-    return Session.open(this.client, request, { tools: this.tools, ...options });
+    return Session.open(this.client, request, { tools: this.tools, ...watching });
   }
 
   private async pipelineRequest(

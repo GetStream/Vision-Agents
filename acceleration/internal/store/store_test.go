@@ -128,12 +128,12 @@ func (s *StoreSuite) SetupTest() {
 				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
 				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
 				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
-				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting,"+
+				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting, channel_thread_inbound, chat_inbound,"+
 				" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
 				" scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
-				" limits, usage_resets, limit_grants, limit_grant_reconciles CASCADE",
+				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls CASCADE",
 		)
 		s.Require().NoError(err)
 	}
@@ -329,6 +329,76 @@ func (s *StoreSuite) TestRollupIgnoresRequestsOutsideTheWindow() {
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 1)
 	s.EqualValues(1000, buckets[0].AudioMsTotal)
+}
+
+func (s *StoreSuite) TestRollupStopsAtTheBucketHoldingTheEndOfTheWindow() {
+	s.record("acme", s.base, 1000, 100, true)
+	s.record("acme", s.base.Add(time.Hour), 9999, 100, true)
+
+	affected, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(1, affected, "a request at the window's end opens the next bucket, which is not touched")
+
+	buckets := s.rolledUp("stats_hourly", "acme")
+	s.Require().Len(buckets, 1)
+	s.Equal(s.base, buckets[0].Bucket.UTC())
+	s.EqualValues(1000, buckets[0].AudioMsTotal)
+}
+
+func (s *StoreSuite) TestRollupOverPartOfABucketRecomputesAllOfIt() {
+	for _, window := range []struct {
+		name     string
+		from, to time.Duration
+	}{
+		{"starting inside the hour", 30 * time.Minute, 90 * time.Minute},
+		{"ending inside the hour", -time.Hour, 30 * time.Minute},
+		{"inside the hour", 35 * time.Minute, 41 * time.Minute},
+	} {
+		s.Run(window.name, func() {
+			// A customer of its own, so each window starts from no rollup.
+			customer := window.name
+			project := map[string]string{"project": "support"}
+			s.tagged(customer, s.base.Add(10*time.Minute), 1000, project)
+			s.tagged(customer, s.base.Add(40*time.Minute), 2000, project)
+			_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+			s.Require().NoError(err)
+
+			_, err = s.store.Rollup(s.ctx, Hourly, s.base.Add(window.from), s.base.Add(window.to))
+			s.Require().NoError(err)
+
+			buckets := s.rolledUp("stats_hourly", customer)
+			s.Require().Len(buckets, 1)
+			s.EqualValues(3000, buckets[0].AudioMsTotal, "the bucket keeps both requests")
+			s.EqualValues(2, buckets[0].RequestCount)
+
+			tagged, err := s.store.CustomerTagStats(s.ctx, "stt", customer, "project", Hourly, s.base, s.base.Add(time.Hour))
+			s.Require().NoError(err)
+			s.Require().Len(tagged, 1)
+			s.EqualValues(3000, tagged[0].AudioMsTotal, "so does the label's")
+		})
+	}
+}
+
+func (s *StoreSuite) TestDailyRollupOverAnHourRecomputesTheWholeDay() {
+	s.record("acme", s.base.Add(time.Hour), 1000, 100, true)
+	s.record("acme", s.base.Add(5*time.Hour), 2000, 100, true)
+	_, err := s.store.Rollup(s.ctx, Daily, s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+
+	_, err = s.store.Rollup(s.ctx, Daily, s.base.Add(time.Hour), s.base.Add(2*time.Hour))
+	s.Require().NoError(err)
+
+	buckets := s.rolledUp("stats_daily", "acme")
+	s.Require().Len(buckets, 1)
+	s.EqualValues(3000, buckets[0].AudioMsTotal, "the day keeps the request outside the hour asked for")
+}
+
+// rolledUp is what a rollup table holds for a customer, oldest first.
+func (s *StoreSuite) rolledUp(table, customer string) []Bucket {
+	var buckets []Bucket
+	err := s.store.shard.NewSelect().Table(table).Where("customer_id = ?", customer).Order("bucket").Scan(s.ctx, &buckets)
+	s.Require().NoError(err)
+	return buckets
 }
 
 func (s *StoreSuite) TestCustomerStatsAreIsolatedPerCustomer() {
@@ -1089,6 +1159,49 @@ func (s *StoreSuite) TestACancelledRequestIsSpendButNeitherAnErrorNorALatency() 
 	bucket = filtered[0]
 	check("raw rows", bucket.RequestCount, bucket.ErrorCount, bucket.AudioMsTotal, bucket.CostMicrosTotal,
 		bucket.LatencyP50Ms, bucket.Uptime)
+}
+
+func (s *StoreSuite) TestARefusedRequestIsSpendButNeitherAnErrorNorALatency() {
+	served, refused := 100.0, 900.0
+	for index, request := range []Request{
+		{LatencyMs: &served, Success: true},
+		{LatencyMs: &refused, Success: false, ErrorCode: ErrorRefused},
+	} {
+		request.Modality, request.CustomerID, request.Provider, request.Model = "llm", "acme", "openai", "gpt"
+		request.Tags = map[string]string{"project": "support"}
+		request.StartedAt = s.base.Add(time.Duration(index+1) * time.Minute)
+		request.OutputTokens, request.CostMicros = 10, 25
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &request))
+	}
+	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+
+	check := func(name string, requests, errors, cost int64, p50 *float64) {
+		s.EqualValues(2, requests, name+": a refused request is still a request")
+		s.EqualValues(0, errors, name+": and is no error of the provider's")
+		s.EqualValues(50, cost, name+": and still billed")
+		s.Require().NotNil(p50, name)
+		s.InDelta(100.0, *p50, 0.001, name+": its latency is not one the provider had")
+	}
+	byProvider, err := s.store.CustomerStats(s.ctx, "llm", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(byProvider, 1)
+	check("rollup", byProvider[0].RequestCount, byProvider[0].ErrorCount, byProvider[0].CostMicrosTotal, byProvider[0].LatencyP50Ms)
+	s.Require().NotNil(byProvider[0].Uptime)
+	s.InDelta(1.0, *byProvider[0].Uptime, 0.001, "nor is it downtime")
+
+	byTag, err := s.store.CustomerTagStats(s.ctx, "llm", "acme", "project", Hourly, s.base, s.base.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(byTag, 1)
+	check("tag rollup", byTag[0].RequestCount, byTag[0].ErrorCount, byTag[0].CostMicrosTotal, byTag[0].LatencyP50Ms)
+
+	filtered, err := s.store.CustomerStats(s.ctx, "llm", "acme", Hourly, s.base, s.base.Add(time.Hour),
+		map[string]string{"project": "support"})
+	s.Require().NoError(err)
+	s.Require().Len(filtered, 1)
+	check("raw rows", filtered[0].RequestCount, filtered[0].ErrorCount, filtered[0].CostMicrosTotal, filtered[0].LatencyP50Ms)
+	s.Require().NotNil(filtered[0].Uptime)
+	s.InDelta(1.0, *filtered[0].Uptime, 0.001, "raw rows: nor is it downtime")
 }
 
 // usageRow is a request with a usage id of its own, defaulting what a test does not care about.

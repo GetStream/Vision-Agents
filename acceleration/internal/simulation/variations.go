@@ -66,7 +66,7 @@ func expand(
 		ID:              id,
 		Instructions:    expandInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: asked}},
-		MaxOutputTokens: expandTokens,
+		MaxOutputTokens: expandTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {

@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -313,12 +314,44 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		}
 		request.RingingTimer = seconds
 	}
+	if outbound.StatusURL != "" {
+		request.EventURL, request.EventMethod = []string{outbound.StatusURL}, http.MethodPost
+	}
 
 	var placed dialedCall
 	if err := p.doVoice(ctx, http.MethodPost, "/v1/calls", request, &placed); err != nil {
 		return phone.Dialed{}, err
 	}
 	return phone.Dialed{VendorCallID: placed.UUID, Status: placed.Status}, nil
+}
+
+// ReadStatus reads the JSON event Vonage posts to a call's event_url. A status that does not
+// end the call is a report that is not final.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/json" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("vonage: a call status is json, not %q", contentType))
+	}
+	var event struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("vonage: read a call status: %w", err))
+	}
+	if event.Status == "" {
+		return phone.CallStatus{}, stack.Wrap(errors.New("vonage: a call status without a status"))
+	}
+	return phone.CallStatus{Result: finalStatuses[event.Status], Word: event.Status}, nil
+}
+
+// finalStatuses are the event statuses that end a call.
+var finalStatuses = map[string]phone.CallResult{
+	"completed":  phone.CallCompleted,
+	"busy":       phone.CallBusy,
+	"rejected":   phone.CallBusy,
+	"unanswered": phone.CallNoAnswer,
+	"timeout":    phone.CallNoAnswer,
+	"failed":     phone.CallFailed,
+	"cancelled":  phone.CallCanceled,
 }
 
 // SendDigits is not wrapped for Vonage, since nothing here places a Vonage call to press on.
@@ -567,6 +600,9 @@ type callRequest struct {
 	NCCO []action `json:"ncco"`
 	// RingingTimer is how long to ring before giving up, in seconds.
 	RingingTimer int `json:"ringing_timer,omitempty"`
+	// EventURL is where Vonage posts the call's events, as JSON.
+	EventURL    []string `json:"event_url,omitempty"`
+	EventMethod string   `json:"event_method,omitempty"`
 }
 
 // endpoint is one end of a call: a telephone, or a SIP address.

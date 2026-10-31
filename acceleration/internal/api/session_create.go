@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -56,6 +57,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if errors.Is(err, session.ErrNoAgentCallType) {
 		return nil, errNoAgentCallType
 	}
+	if unanswered, ok := errors.AsType[*session.CallUnansweredError](err); ok {
+		return nil, callUnanswered(unanswered.Outcome)
+	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
@@ -88,6 +92,13 @@ func (s *Server) rememberTimezone(ctx context.Context, customerID string, spec s
 	if err := s.store.SetUserTimezone(ctx, customerID, caller.UserID, kind, spec.Timezone); err != nil {
 		s.logger.Error("could not store the user's timezone", "user", caller.UserID, "error", err)
 	}
+}
+
+// callUnanswered refuses a phone session whose placed call already ended, nobody having
+// answered; ended is how.
+func callUnanswered(ended outcome.Outcome) APIError {
+	return APIError{Type: ErrorTypeConflict, Code: codeCallUnanswered,
+		Message: "the call ended without an answer: " + string(ended)}
 }
 
 // errDeviceHistory refuses a history sent by an end user's device.
@@ -243,7 +254,7 @@ func (s *Server) registerSessionCreate(api huma.API) {
 		DefaultStatus: http.StatusCreated,
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The agent is in the call"},
-			"409": errorResponse("A session with that id already exists"),
+			"409": errorResponse("A session with that id already exists, or the call placed for this phone session ended without an answer (call_unanswered)"),
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createSession)

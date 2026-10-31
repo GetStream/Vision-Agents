@@ -1,12 +1,14 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -27,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -160,6 +163,10 @@ type ManagerOptions struct {
 	// environment in every credential a broker leaves with the sandbox provider. A session
 	// with a sandbox binding is refused without it.
 	SandboxSecretPrefix string
+	// GuardrailHTTP posts a webhook guardrail's checks. Nil is the guardrail's own default,
+	// egress's client, which dials public addresses alone; tests pass one that reaches their
+	// local receiver.
+	GuardrailHTTP *http.Client
 	// DetachedGrace is how long a persistent text session outlives its last watcher.
 	// Zero is defaultDetachedGrace.
 	DetachedGrace time.Duration
@@ -180,6 +187,9 @@ type Manager struct {
 	conversations *persistent.Service
 	options       ManagerOptions
 	logger        *slog.Logger
+	// outcomes is how each call the router placed ended, which a phone session is refused
+	// on when nobody answered. Nil without a store.
+	outcomes *outcome.Keeper
 	// calls records conversations so they can be found after this process is gone. Nil
 	// without a store, in which case a call is only ever what is happening now.
 	calls *callRecorder
@@ -266,6 +276,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now)
 		written = newSessionRecorder(options.Store, options.Logger)
 		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
@@ -409,6 +420,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if taken {
 			return nil, stack.Wrap(ErrSessionExists)
 		}
+	}
+	// Before anything is joined or paid for: a vendor often says a call was busy before its
+	// session opens.
+	if err := m.unanswered(ctx, spec); err != nil {
+		return nil, err
 	}
 
 	if m.records != nil && !spec.Incognito {
@@ -651,6 +667,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			spec.Timezone, created.spec.Timezone = zone, zone
 		}
 	}
+	// A user with no zone of their own is in the config's default one, the zone a task they
+	// scheduled would take, so the agent's clock line and the scheduling tools agree.
+	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
 	// The scheduling tools are offered beside the plugins, inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
@@ -737,7 +756,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Edge:          edge,
 			Text:          spec.Text,
 			Instructions:  spec.prompt(),
-			Timezone:      spec.Timezone,
+			Timezone:      zone,
 			CustomerID:    spec.CustomerID,
 			Attribution:   spec.Attribution,
 			Caller:        spec.Caller,
@@ -874,10 +893,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.records = m.records
 	}
 
+	run := created.track(built)
+	if spec.Greeting != "" && run != nil {
+		run.holdGreeting(created.sayGreeting(ctx, built, spec))
+	}
 	// The fan-out starts before joining so nothing said between joining and the first
 	// watcher attaching is lost to a channel nobody is reading.
 	created.running.Add(1)
-	go created.consume(built, created.transcript, created.track(built))
+	go created.consume(built, created.transcript, run)
 
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
@@ -887,7 +910,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(err)
 	}
 
-	if spec.Greeting != "" {
+	// If the call does not report its participants, or if the session is text only, the
+	// agent says the greeting immediately after it joins.
+	if spec.Greeting != "" && run == nil {
 		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
 			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
@@ -940,6 +965,32 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.Directory != nil {
 		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
 	}
+	// Asked again now the session is held: a status that came while the call was being
+	// joined found no session to end, and one that comes after this finds it. The session
+	// has joined by now, so a refusal here ends it rather than never opening it.
+	err = m.unanswered(ctx, spec)
+	if err != nil {
+		opened = true
+		m.end(created, TimeoutUnanswered)
+	}
+	m.mu.Lock()
+	held, present := m.sessions[created.id]
+	m.mu.Unlock()
+	if err == nil && held != created {
+		// Ended between going into the map and here, by a status, a takeover or shutdown:
+		// the id is taken and nothing is left to answer with.
+		opened = true
+		err = stack.Wrap(ErrSessionExists)
+	}
+	if err != nil {
+		// An end before the hold above found no claim to take back, so the hold would
+		// otherwise be renewed for a session nobody holds. One reopened under the id since
+		// holds its own.
+		if !present {
+			m.release(created.id)
+		}
+		return nil, err
+	}
 	// A phone call's episode card, once the session holds the call (T41).
 	m.cards.started(created, stream)
 
@@ -947,6 +998,37 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	opened = true
 	return created, nil
+}
+
+// CallUnansweredError refuses a session for a placed call that already ended with nobody
+// answering: the agent would join a call nobody will ever be on.
+type CallUnansweredError struct {
+	Outcome outcome.Outcome
+}
+
+func (e *CallUnansweredError) Error() string {
+	return "session: the call ended without an answer: " + string(e.Outcome)
+}
+
+// unanswered is the CallUnansweredError a phone session is refused with, or nil. A call it
+// cannot read is opened as before.
+func (m *Manager) unanswered(ctx context.Context, spec Spec) error {
+	if spec.Phone == nil || m.outcomes == nil {
+		return nil
+	}
+	call, err := m.outcomes.Read(ctx, spec.CustomerID, spec.ID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		m.logger.Warn("could not read whether a session's placed call went unanswered",
+			"session", spec.ID, "error", err)
+		return nil
+	}
+	if call.NobodyAnswered() {
+		return stack.Wrap(&CallUnansweredError{Outcome: call.Outcome})
+	}
+	return nil
 }
 
 // replaces reports whether a session being reopened may take the place of the one held under
@@ -1068,6 +1150,17 @@ func (o Owner) Reaches(other Owner) bool {
 	}
 	return o.Kind == other.Kind ||
 		(other.Kind == auth.KindServer && o.Kind.Verified() && o.UserID != "")
+}
+
+// reachedKinds is the kinds of caller whose sessions under this owner's user id the owner
+// Reaches: always its own, and a backend's when the owner is somebody a backend may open a
+// session for. Never empty, so it always narrows.
+func (o Owner) reachedKinds() []string {
+	kinds := []string{string(o.Kind)}
+	if o.Reaches(Owner{CustomerID: o.CustomerID, UserID: o.UserID, Kind: auth.KindServer}) {
+		kinds = append(kinds, string(auth.KindServer))
+	}
+	return kinds
 }
 
 // Get returns a session its owner may have. Two customers cannot see each other's and
@@ -1228,6 +1321,9 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 			return nil, nil
 		}
 		filter.UserID = owner.UserID
+		// The kind is narrowed too, in the query rather than after it so a page is still
+		// full: a row is listed on exactly the terms its session is reached by id.
+		filter.CallerKinds = owner.reachedKinds()
 	}
 
 	found := make([]Found, 0, filter.Limit)
@@ -1397,7 +1493,7 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 	return true, found.Close()
 }
 
-// end ends found when its timeout is reached, as Close does but interrupting the agent:
+// end ends found when its timeout is reached, or its call will not be answered, as Close does but interrupting the agent:
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
@@ -1419,8 +1515,24 @@ func (m *Manager) end(found *Session, reason TimeoutReason) {
 	}()
 	m.release(found.id)
 
-	m.logger.Info("ending the session at its timeout", "session", found.id, "timeout", reason)
+	m.logger.Info("ending the session", "session", found.id, "reason", reason)
 	found.abandon()
+}
+
+// EndUnanswered ends the customer's phone session id if this node holds it and no phone caller
+// has joined it, reporting whether this node holds it.
+func (m *Manager) EndUnanswered(customerID, id string) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID == customerID && spec.Phone != nil && !found.CallerJoined() {
+		m.end(found, TimeoutUnanswered)
+	}
+	return true
 }
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
@@ -1679,6 +1791,7 @@ func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Ide
 		LLM:        m.options.LLM,
 		Secret:     stream.Secret.Reveal(),
 		APIKey:     ownKey(spec.CustomerID, stream),
+		HTTPClient: m.options.GuardrailHTTP,
 		Logger:     m.logger,
 	})
 }

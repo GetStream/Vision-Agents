@@ -72,6 +72,7 @@ from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
 from .call_direction import CallDirection
 from .call_event import CallEvent
+from .call_outcome import CallOutcome
 from .call_tags import CallTags
 from .call_token import CallToken
 from .call_token_request import CallTokenRequest
@@ -424,6 +425,7 @@ from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
 from .session import Session
 from .session_call import SessionCall
+from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
 from .session_filter import SessionFilter
@@ -449,6 +451,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .set_number_agent_request import SetNumberAgentRequest
 from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
@@ -639,6 +642,7 @@ __all__ = (
     "Call",
     "CallDirection",
     "CallEvent",
+    "CallOutcome",
     "CallTags",
     "CallToken",
     "CallTokenRequest",
@@ -989,6 +993,7 @@ __all__ = (
     "SearchResult",
     "Session",
     "SessionCall",
+    "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
     "SessionFilter",
@@ -1014,6 +1019,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SetNumberAgentRequest",
     "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",

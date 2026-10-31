@@ -104,6 +104,7 @@ type Config struct {
 	RateLimit  RateLimit  `koanf:"rate_limit"`
 	DataMove   DataMove   `koanf:"data_move"`
 	Stream     Stream     `koanf:"stream"`
+	Chat       Chat       `koanf:"chat"`
 	Agent      Agent      `koanf:"agent"`
 	Connectors Connectors `koanf:"connectors"`
 	Runs       Runs       `koanf:"runs"`
@@ -329,6 +330,15 @@ func (s Stream) EffectiveFallback() string {
 	return s.Fallback
 }
 
+// Chat is the settings of the router's side of Stream Chat's own delivery of messages.
+type Chat struct {
+	// InboundKeys are the ed25519 public keys Stream Chat signs its own delivery of messages
+	// with, each the standard base64 of 32 bytes: one, or two while Stream rotates. Only
+	// Stream holds the private key, and no app's secret is one. None leaves the inbound
+	// endpoint off.
+	InboundKeys []string `koanf:"inbound_keys"`
+}
+
 // Agent is how an agent holds a conversation, where that is the deployment's choice.
 type Agent struct {
 	// SpeculativeReplies starts a reply while the flow controller is still deciding
@@ -413,6 +423,11 @@ type CodeSandbox struct {
 	// ProxyAddr is where the router serves the sandbox egress proxy (internal/sandbox/egress),
 	// such as :8091; empty serves none.
 	ProxyAddr string `koanf:"proxy_addr"`
+	// ProxyListenFD is a listening socket this process inherited, served in place of
+	// ProxyAddr, as ListenFD is for Addr: a supervisor that keeps it open across processes
+	// passes it, so no sandbox's CONNECT is refused while one router hands over to the next.
+	// Zero means listen on ProxyAddr, which must still be set to serve the proxy at all.
+	ProxyListenFD int `koanf:"proxy_listen_fd"`
 	// ProxyCACert and ProxyCAKey are the PEM certificate and private key of the CA the proxy
 	// signs each granted host's certificate with. Both are needed when ProxyAddr is set.
 	ProxyCACert string `koanf:"proxy_ca_cert"`
@@ -516,6 +531,8 @@ var variables = map[string]string{
 	"stream.mint_url":   "ROUTER_STREAM_MINT_URL",
 	"stream.mint_token": "ROUTER_STREAM_MINT_TOKEN",
 
+	"chat.inbound_keys": "ROUTER_CHAT_INBOUND_KEYS",
+
 	"rate_limit.messages_per_day": "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY",
 	"rate_limit.tokens_per_day":   "ROUTER_RATE_LIMIT_TOKENS_PER_DAY",
 
@@ -541,6 +558,7 @@ var variables = map[string]string{
 	"code_sandbox.broker":           "ROUTER_CODE_SANDBOX_BROKER",
 	"code_sandbox.secret_prefix":    "ROUTER_CODE_SANDBOX_SECRET_PREFIX",
 	"code_sandbox.proxy_addr":       "ROUTER_CODE_SANDBOX_PROXY_ADDR",
+	"code_sandbox.proxy_listen_fd":  "ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD",
 	"code_sandbox.proxy_ca_cert":    "ROUTER_CODE_SANDBOX_PROXY_CA_CERT",
 	"code_sandbox.proxy_ca_key":     "ROUTER_CODE_SANDBOX_PROXY_CA_KEY",
 	"code_sandbox.proxy_public_url": "ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL",
@@ -566,7 +584,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"trusted_proxies": true}
+var lists = map[string]bool{"trusted_proxies": true, "chat.inbound_keys": true}
 
 // pairs are the settings written as a comma-separated variable of name=value and as a
 // mapping in YAML.
@@ -793,6 +811,9 @@ func (c Config) validate() error {
 		return errors.New("config: code_sandbox.broker is proxy, so this router serves the proxy: set " +
 			"code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR)")
 	}
+	if err := c.validateProxyListenFD(); err != nil {
+		return err
+	}
 	if strings.Contains(c.CodeSandbox.ProxyCACert, "PRIVATE KEY") {
 		return errors.New("config: code_sandbox.proxy_ca_cert (ROUTER_CODE_SANDBOX_PROXY_CA_CERT) holds a private key, " +
 			"which every sandbox would be given: keep the certificate there and the key in proxy_ca_key")
@@ -880,9 +901,9 @@ func (c Config) validateUsage() error {
 // none. The sandbox may reach that address alone, through Daytona's network allow list, which
 // takes IP ranges, so it has no DNS to look a name up with, and no IPv6 route (live probe,
 // 2026-10-22). The address must be public: a sandbox reaches no loopback, private (RFC 1918),
-// link-local (169.254/16, the metadata address too), unspecified or broadcast address, and the
-// range would let it reach that address of the provider's network. The port is 1 to 65535, and
-// the URL has no path, query or fragment.
+// link-local (169.254/16, the metadata address too), unspecified or broadcast address, nor one
+// of reservedRanges, and the range would let it reach that address of the provider's network.
+// The port is 1 to 65535, and the URL has no path, query or fragment.
 func ProxyURL(raw string) (*url.URL, bool) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.User != nil || parsed.Opaque != "" || parsed.Path != "" ||
@@ -890,11 +911,47 @@ func ProxyURL(raw string) (*url.URL, bool) {
 		return nil, false
 	}
 	address, err := netip.ParseAddr(parsed.Hostname())
-	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() {
+	if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() ||
+		slices.ContainsFunc(reservedRanges, func(reserved netip.Prefix) bool { return reserved.Contains(address) }) {
 		return nil, false
 	}
 	port, err := strconv.Atoi(parsed.Port())
 	return parsed, err == nil && port >= 1 && port <= 65535
+}
+
+// reservedRanges are the IPv4 ranges IsGlobalUnicast and IsPrivate let through that IANA's IPv4
+// Special-Purpose Address Registry (RFC 6890,
+// https://www.iana.org/assignments/iana-ipv4-special-registry) marks not globally reachable or
+// deprecated: no host a proxy runs on has an address in them. egress.IsPublic refuses them too,
+// and also the documentation ranges (RFC 5737), which are left out so a test can stand in a
+// public address with one.
+var reservedRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "This network", RFC 791 section 3.2: a source, never a destination
+	netip.MustParsePrefix("100.64.0.0/10"), // Shared Address Space, RFC 6598: a carrier's NAT
+	// IETF Protocol Assignments, RFC 6890 section 2.1. Its two globally reachable addresses,
+	// 192.0.0.9 and 192.0.0.10 (RFC 7723, RFC 8155), are anycast services, not a proxy.
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"), // 6to4 Relay Anycast, deprecated by RFC 7526
+	netip.MustParsePrefix("198.18.0.0/15"),  // Benchmarking, RFC 2544
+	netip.MustParsePrefix("240.0.0.0/4"),    // Reserved, RFC 1112 section 4
+}
+
+// validateProxyListenFD refuses an inherited proxy socket the router would not serve: one
+// without the proxy on, a descriptor that cannot be one, or the public listener's own.
+func (c Config) validateProxyListenFD() error {
+	fd := c.CodeSandbox.ProxyListenFD
+	switch {
+	case fd == 0:
+		return nil
+	case fd < 0:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is a file descriptor, got %d", fd)
+	case c.CodeSandbox.ProxyAddr == "":
+		return errors.New("config: code_sandbox.proxy_listen_fd (ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD) is the proxy's socket, " +
+			"and the proxy is served only with code_sandbox.proxy_addr (ROUTER_CODE_SANDBOX_PROXY_ADDR) set")
+	case fd == c.ListenFD:
+		return fmt.Errorf("config: code_sandbox.proxy_listen_fd and listen_fd are both %d: the proxy and the API need a socket each", fd)
+	}
+	return nil
 }
 
 // validateShard refuses shard settings that would write a shard's calls where no reader
@@ -996,6 +1053,7 @@ func (c Config) export() error {
 		"stream.app_id":                 appID(c.Stream.AppID),
 		"stream.mint_url":               c.Stream.MintURL,
 		"stream.mint_token":             c.Stream.MintToken,
+		"chat.inbound_keys":             strings.Join(c.Chat.InboundKeys, ","),
 		"data_move.retention":           c.DataMove.Retention.String(),
 		"rate_limit.messages_per_day":   fmt.Sprint(c.RateLimit.MessagesPerDay),
 		"rate_limit.tokens_per_day":     fmt.Sprint(c.RateLimit.TokensPerDay),
@@ -1014,6 +1072,7 @@ func (c Config) export() error {
 		"code_sandbox.broker":           c.CodeSandbox.Broker,
 		"code_sandbox.secret_prefix":    c.CodeSandbox.SecretPrefix,
 		"code_sandbox.proxy_addr":       c.CodeSandbox.ProxyAddr,
+		"code_sandbox.proxy_listen_fd":  listenFD(c.CodeSandbox.ProxyListenFD),
 		"code_sandbox.proxy_ca_cert":    c.CodeSandbox.ProxyCACert,
 		"code_sandbox.proxy_ca_key":     c.CodeSandbox.ProxyCAKey,
 		"code_sandbox.proxy_public_url": c.CodeSandbox.ProxyPublicURL,

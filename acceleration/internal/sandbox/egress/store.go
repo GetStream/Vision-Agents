@@ -180,7 +180,8 @@ func (s *Store) Put(ctx context.Context, credential string, record Record, ttl t
 }
 
 // Delete ends credential at once, the tunnels to a grant's host it opened included. A tunnel to an
-// allowed domain, which carries no token, lasts until either end closes it.
+// allowed domain, which carries no token, lasts until either end closes it or it is idle for the
+// proxy's idle timeout.
 func (s *Store) Delete(ctx context.Context, credential string) error {
 	return stack.Wrap(s.redis.Do(ctx, s.redis.B().Del().Key(key(credential)).Build()).Error())
 }

@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +67,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
@@ -212,6 +215,10 @@ type RouterSuite struct {
 	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
 	// writes, so a test names its caller with proxiedClient rather than a key.
 	proxied bool
+	// byCustomer authenticates as a local router in proxy mode with nothing in front, as
+	// every example runs: a caller names its customer itself and is a backend unless it
+	// declares otherwise.
+	byCustomer bool
 	// shipping ships the conversation model's rows to a usage service of the suite's own,
 	// usage, as cmd/router's writer does.
 	shipping bool
@@ -236,13 +243,18 @@ type RouterSuite struct {
 	deploymentKnown bool
 	// database gives the suite a database of its own, named after it, in place of the one
 	// the suites share, for a suite whose tests act on rows other tests made: a
-	// scheduled-task worker claims every task due in its database, whoever made it. A
-	// suite sets it before SetupSuite runs.
+	// scheduled-task worker claims every task due in its database, whoever made it, and the
+	// channel bridge's inbound worker every queued message. A suite sets it before SetupSuite
+	// runs.
 	database string
 	server   *httptest.Server
 	// router is the suite's router itself, for what cmd/router calls on it besides serving.
 	router *Server
 	app    testApp
+	// handOffs, while a test holds them (holdHandOffs), and handedOver, the hand-offs and their
+	// turns running, are the inbound worker's hand-offs to the agent (answerQueued).
+	handOffs   atomic.Pointer[chan struct{}]
+	handedOver atomic.Int32
 
 	// streams, modalities and conversations are what the suite's router was built from,
 	// kept so that otherNode can build a second one over the same routing.
@@ -360,7 +372,9 @@ type RouterSuite struct {
 	// channelProvider, set by a suite about the channel bridge before it starts the harness,
 	// gives the router the real bridge (internal/channelbridge), whose replies dial the address
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
-	// provider. Nil leaves bridge as the suite set it.
+	// provider. Nil leaves bridge as the suite set it. Such a suite has a database of its own
+	// (database): the bridge's inbound worker writes every message queued in its database into
+	// its own suite's Stream Chat, whoever queued it.
 	channelProvider func() string
 	// logs, set by a suite before it starts the harness, is where the router logs, as text at
 	// debug and up, for a suite about what it warns of. Nil discards them.
@@ -368,6 +382,10 @@ type RouterSuite struct {
 	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
 	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
 	telnyxPublicKey ed25519.PublicKey
+	// chatInboundKeys, set by a suite about Stream Chat's delivery endpoint before it starts
+	// the harness, are what its deliveries are checked against, on every node. Nil leaves it
+	// unconfigured.
+	chatInboundKeys []ed25519.PublicKey
 	// telnyxConnectionID is the TeXML application the router's Telnyx numbers are on, for the
 	// same suite to set. Empty is a router with none, which answers no Telnyx call.
 	telnyxConnectionID string
@@ -417,6 +435,9 @@ type RouterSuite struct {
 	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
 	// loopback. Nil reaches only public hosts.
 	imageHTTP *http.Client
+	// callbackHTTP is what a finished recording is posted to its callback with, for a suite
+	// whose receiver listens on loopback. Nil reaches only public hosts.
+	callbackHTTP *http.Client
 	// events subscribes configs to their plugins' events.
 	events *pluginevents.Service
 
@@ -451,6 +472,12 @@ type RouterSuite struct {
 	// phoneNow, set by a suite before it starts the harness, is the clock the phone service
 	// times call legs and months by. Nil is the wall clock.
 	phoneNow func() time.Time
+	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
+	// the harness. Nil is every vendor the router knows, with no credentials.
+	phoneVendors *phone.Registry
+	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
+	// suite to set before it starts the harness. Off, a session with a number cannot open.
+	sessionTelephony bool
 	// registrar10DLC is the router's 10DLC service, for a suite to poll and bill with.
 	registrar10DLC *dlc.Service
 	// manageOff builds the router with no manage key, as a deployment that never set
@@ -515,6 +542,9 @@ func (s *RouterSuite) SetupSuite() {
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
 	// place and the calls, sessions and requests in another.
 	options := store.Options{DSN: testDatabase(s.T(), dsn)}
+	if s.channelProvider != nil && s.database == "" {
+		s.T().Fatal("a suite with the real channel bridge needs a database of its own: its inbound worker takes every queued message there")
+	}
 	if s.database != "" {
 		options.DSN = testenv.Database(options.DSN, s.database)
 	}
@@ -596,14 +626,14 @@ func (s *RouterSuite) SetupSuite() {
 		NewClient: loopbackClients(s.connectorHTTP)})
 	s.Require().NoError(err)
 	s.transports = transports
+	// Every text, call and number asks the same admission as a model, as in cmd/router.
+	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
+	s.phoneRecorder = s.telephonyRecorder(logger)
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
 	// A nil client reaches public hosts alone, and every auth server here is a local one.
 	public := &plugins.Auth{HTTP: http.DefaultClient}
 	s.events = s.pluginEvents(sessions, public, logger)
-	// Every text, call and number asks the same admission as a model, as in cmd/router.
-	s.gate = dlc.NewGate(pgStore, liveClient.Redis(), s.sandbox, logger).Charging(policies).Limiting(s.limitsMode)
-	s.phoneRecorder = s.telephonyRecorder(logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -618,9 +648,6 @@ func (s *RouterSuite) SetupSuite() {
 		routing.Detection:     streams.Detection,
 	}
 
-	if s.channelProvider != nil {
-		s.bridge = s.channelBridge(logger)
-	}
 	if s.forwardHTTP != nil {
 		s.forwarder, err = eventforward.New(eventforward.Options{
 			Store: pgStore, Secrets: s.sealer, HTTP: s.forwardHTTP, PublicURL: loopbackOrPublic, Logger: logger,
@@ -630,6 +657,11 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 		s.forwarder.Start()
 		s.T().Cleanup(s.forwarder.Close)
+	}
+	// After the forwarder, which the bridge hands the deliveries of the messages it gives up,
+	// as cmd/router builds them.
+	if s.channelProvider != nil {
+		s.bridge = s.channelBridge(logger)
 	}
 
 	if s.mcpEventsOn {
@@ -709,6 +741,7 @@ func (s *RouterSuite) SetupSuite() {
 		Stream:             s.stream,
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
+		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
@@ -718,6 +751,7 @@ func (s *RouterSuite) SetupSuite() {
 		ProxyCallsPerMinute:   s.proxyCallsPerMinute,
 		RunsPerApp:            s.runsPerApp,
 		ImageHTTP:             s.imageHTTP,
+		CallbackHTTP:          s.callbackHTTP,
 		ConnectorEventSecrets: s.eventSecrets,
 		ChannelBridge:         s.bridge,
 		EventForwarder:        s.forwarder,
@@ -733,12 +767,183 @@ func (s *RouterSuite) SetupSuite() {
 	s.server = listener
 	s.router = server
 	s.T().Cleanup(s.server.Close)
+	// After the server, which answers what the worker writes, as cmd/router starts it.
+	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
+		bridge.Start(context.Background(), s.answerQueued)
+	}
+}
+
+// answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It
+// waits while the test holds hand-offs (holdHandOffs) and counts the hand-offs and the turns
+// they hand over, which each test waits for at its end (useApp): a reply that leaves later goes
+// to the next test's provider (channelProvider).
+func (s *RouterSuite) answerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
+	s.handedOver.Add(1)
+	if held := s.handOffs.Load(); held != nil {
+		select {
+		case <-*held:
+		case <-ctx.Done():
+			s.handedOver.Add(-1)
+			return nil, ctx.Err()
+		}
+	}
+	turn, err := s.router.AnswerQueued(ctx, thread, written)
+	if turn == nil {
+		s.handedOver.Add(-1)
+		return nil, err
+	}
+	return func() {
+		defer s.handedOver.Add(-1)
+		turn()
+	}, nil
+}
+
+// holdHandOffs holds the inbound worker's hand-offs to the agent until release, at the latest
+// at the test's end, for a test that opens a session on a thread channel before the agent is
+// handed its first message.
+func (s *RouterSuite) holdHandOffs() (release func()) {
+	held := make(chan struct{})
+	s.handOffs.Store(&held)
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			s.handOffs.Store(nil)
+			close(held)
+		})
+	}
+	s.T().Cleanup(release)
+	return release
+}
+
+// turnsEnded waits until the inbound worker is done with the test's messages and no hand-off
+// of it, turn it handed over, reply not yet written to Stream (conversation.Service.Writing),
+// or reply the bridge sends runs: a reply that leaves later dials the next test's provider
+// (channelProvider) while its SetupTest replaces it. They are read in the order a reply passes
+// them, so one between two of them is still seen.
+func (s *RouterSuite) turnsEnded() {
+	bridge, built := s.bridge.(*channelbridge.Bridge)
+	if !built {
+		return
+	}
+	s.Eventually(func() bool {
+		return s.inboundRows(store.ChannelInboundQueued) == 0 && s.handedOver.Load() == 0 && !s.conversations.Writing() &&
+			bridge.Replying() == 0
+	}, settleFor, 10*time.Millisecond, "the inbound worker, a turn it handed over or a reply still runs")
+}
+
+// Never is testify's Never with its condition run on the test's goroutine. testify runs each
+// check on a goroutine of its own and returns at the deadline without waiting for the last
+// one, which then reads the suite's fakes while the next test's SetupTest replaces them.
+func (s *RouterSuite) Never(condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
+	s.T().Helper()
+	deadline := time.Now().Add(waitFor)
+	for {
+		if condition() {
+			return s.Fail("Condition satisfied", msgAndArgs...)
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(tick)
+	}
 }
 
 // channelBridge is the router's channel bridge over the suite's store, Stream Chat and
 // resolver, whose replies leave through core.Transports, as cmd/router builds it, with a
-// client that dials channelProvider instead of the egress client, which refuses loopback.
+// client that dials channelProvider instead of the egress client, which refuses loopback. Its
+// worker starts once the server is built.
 func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
+	bridge, err := channelbridge.New(s.channelBridgeOptions(logger))
+	s.Require().NoError(err)
+	s.T().Cleanup(bridge.Close)
+	// As cmd/router hands it the finished replies of the conversations on thread channels.
+	s.conversations.OnFinishedReply(bridge.Reply)
+	return bridge
+}
+
+// writtenByTheInboundWorker requires a thread channel's one person's message to be the one its
+// inbound worker wrote from the queue: its row is done, and the message has the id the worker
+// gives it, the channel's and the provider's for the message (channelbridge.inboundMessageID).
+func (s *RouterSuite) writtenByTheInboundWorker(channel string) {
+	var providerID string
+	s.Require().Eventually(func() bool {
+		return s.store.DB().QueryRowContext(context.Background(),
+			"SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = ? AND state = 'done'", channel).Scan(&providerID) == nil
+	}, settleFor, 10*time.Millisecond, "no written row of %s", channel)
+	stored := s.bridged(channel)
+	s.Require().Len(stored, 1)
+	sum := sha256.Sum256([]byte(providerID))
+	s.Contains([]string{channel + "-" + providerID, channel + "=" + hex.EncodeToString(sum[:])}, stored[0]["id"])
+}
+
+// bridged are the people's messages the channel bridge wrote into a thread channel
+// (channelbridge.BridgedField), in order: the agent's replies beside them are not.
+func (s *RouterSuite) bridged(channel string) []map[string]any {
+	var written []map[string]any
+	for _, message := range s.chat.Stored(channel) {
+		if custom, _ := message["custom"].(map[string]any); custom[channelbridge.BridgedField] == true {
+			written = append(written, message)
+		}
+	}
+	return written
+}
+
+// settled waits until the inbound worker is done with every message the test's customer
+// queued: none of its rows is queued any more. Deliver queues a message before it answers, so
+// what the worker records when it admits one (opt-outs, a chat's person and members) can be
+// read once it returns, and what it held back is held back for good.
+func (s *RouterSuite) settled() {
+	s.Require().Eventually(func() bool { return s.inboundRows(store.ChannelInboundQueued) == 0 }, settleFor, 10*time.Millisecond,
+		"the inbound worker left messages queued")
+}
+
+// inboundRows is how many of the test customer's queued inbound messages are in state.
+func (s *RouterSuite) inboundRows(state string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = ?", s.customerID(), state).Scan(&count))
+	return count
+}
+
+// failedOnce waits until the first attempt of one of the test customer's queued inbound messages
+// failed, for a test that broke the store to mend it before the row is given up.
+func (s *RouterSuite) failedOnce() {
+	s.Require().Eventually(func() bool {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'queued' AND attempts > 0", s.customerID()).Scan(&count))
+		return count > 0
+	}, settleFor, 5*time.Millisecond, "no attempt failed")
+}
+
+// trigger runs body before each op on table for a row where when holds, until the test ends or
+// drop. The table is in the suite's own database (database), and when names the test's
+// customer, so no other test's rows meet it.
+func (s *RouterSuite) trigger(name, table, op, when, body string) (drop func()) {
+	db := s.store.DB()
+	_, err := db.ExecContext(context.Background(), "CREATE OR REPLACE FUNCTION "+name+"() RETURNS trigger AS $$ BEGIN IF "+when+" THEN "+body+
+		" END IF; RETURN COALESCE(NEW, OLD); END $$ LANGUAGE plpgsql")
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+	s.Require().NoError(err)
+	_, err = db.ExecContext(context.Background(), "CREATE TRIGGER "+name+" BEFORE "+op+" ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
+	s.Require().NoError(err)
+	var once sync.Once
+	drop = func() {
+		once.Do(func() {
+			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS "+name+" ON "+table)
+			s.Require().NoError(err)
+			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS "+name+"()")
+			s.Require().NoError(err)
+		})
+	}
+	s.T().Cleanup(drop)
+	return drop
+}
+
+// channelBridgeOptions are the options channelBridge builds the bridge with, for a test to
+// build another router's bridge.
+func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Options {
 	transports, err := core.NewTransports(core.TransportsConfig{
 		Resolver: s.resolver,
 		NewClient: func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
@@ -752,17 +957,20 @@ func (s *RouterSuite) channelBridge(logger *slog.Logger) *channelbridge.Bridge {
 		},
 	})
 	s.Require().NoError(err)
-	bridge, err := channelbridge.New(channelbridge.Options{
+	options := channelbridge.Options{
 		Store: s.store, Stream: s.stream, Schemes: s.connectors.Schemes, Transports: transports, Resolver: s.resolver,
 		Gate: s.gate, Logger: logger,
-		// A reply sent again waits milliseconds here, not the production seconds.
-		RetryBackoff: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(bridge.Close)
-	// As cmd/router hands it the finished replies of the conversations on thread channels.
-	s.conversations.OnFinishedReply(bridge.Reply)
-	return bridge
+		// A reply sent again waits milliseconds here, not the production seconds; so does a
+		// queued inbound message written again, but for the last wait: a test that breaks the
+		// store and mends it once an attempt failed has half a second before the row is given up.
+		RetryBackoff:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 500 * time.Millisecond},
+		InboundPoll:    10 * time.Millisecond,
+	}
+	if s.forwarder != nil {
+		options.Unanswered = s.forwarder.ForwardUnanswered
+	}
+	return options
 }
 
 // pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
@@ -968,6 +1176,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("analysing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: "Noted.", analyses: true}, nil
 	})
+	// An analyst that thinks for longer than the analysis's own cap before it writes.
+	reasoning.Register("pondering", func(routing.Spec) (llmrouter.Provider, error) {
+		return &llmtest.Thinker{Thinks: 3500, Answer: `{"summary": "Callers asking about refunds were not helped.", "causes": []}`}, nil
+	})
 	// A guardrail judge that finds every turn against its policy.
 	reasoning.Register("judging", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{reply: `{"violates": 1, "reason": "it is against the policy"}`}, nil
@@ -986,6 +1198,17 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
+	})
+	// A model whose every request fails with the prompt injection screen's refusal, for a
+	// run whose input the screen refused: the suite routes no screen of its own.
+	reasoning.Register("screened", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)}, nil
+	})
+
+	// A model that recites what it was handed and refuses a request quoting guardedInjection
+	// as the prompt injection screen does, for a conversation past a refused turn.
+	reasoning.Register("guarded", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{recites: true, refusesQuoting: guardedInjection}, nil
 	})
 
 	// A model that is a while in the writing, for a command that has to still be running
@@ -1170,7 +1393,12 @@ func (s *RouterSuite) sessionManager(
 		sandboxes = metered.NewSandboxes(metered.SandboxesOptions{APIKey: "daytona-key", APIURL: s.daytona.APIURL(),
 			Targets: s.sandboxTargets, Recorder: s.metering, Logger: logger})
 	}
+	var telephony *phone.Service
+	if s.sessionTelephony {
+		telephony = s.telephony(logger)
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		Phone:         telephony,
 		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,
 		STT:           streams.STT,
@@ -1257,6 +1485,9 @@ func (s *RouterSuite) authenticator() auth.Authenticator {
 	if s.proxied {
 		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: true})
 	}
+	if s.byCustomer {
+		return auth.NewProxy(auth.ProxyOptions{})
+	}
 	authenticator, err := auth.New(auth.APIKey, s.configs.Lookup(s.sealer))
 	s.Require().NoError(err)
 	return authenticator
@@ -1289,11 +1520,15 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
-	config, err := phone.DefaultConfig()
-	s.Require().NoError(err)
+	registry := s.phoneVendors
+	if registry == nil {
+		config, err := phone.DefaultConfig()
+		s.Require().NoError(err)
+		registry = vendors.Registry(config)
+	}
 
 	service, err := phone.NewService(phone.ServiceOptions{
-		Registry:  vendors.Registry(config),
+		Registry:  registry,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,
@@ -1478,13 +1713,18 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		ProxyDeclaresKind: s.appMode,
 		Stream:            s.stream,
 		HookSecret:        suiteStreamSecret,
+		ChatInboundKeys:   s.chatInboundKeys,
 		Secrets:           keyring,
+		Channels:          s.inbound,
 		// The node's phone service is the suite's: the call hook a peer hands over answers
 		// the same database.
 		Phone:  s.router.phone,
 		Logger: logger,
 	})
 	s.Require().NoError(err)
+	// The node shares the suite's phone service, and the last node made takes its unanswered
+	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
+	s.router.phone.OnUnanswered(s.router.endUnanswered)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
@@ -1645,6 +1885,8 @@ func (s *RouterSuite) useFixture(name string) {
 // useApp points the clients at an app, each as a new caller of its kind.
 func (s *RouterSuite) useApp(app testApp) {
 	s.app = app
+	// Last, after the test's own cleanups, which may let a turn finish.
+	s.T().Cleanup(s.turnsEnded)
 	s.own(app.app.ID)
 	s.unauthenticatedClient = &testClient{suite: s, header: http.Header{}, kind: noCredential}
 	s.anonymousClient = s.data.createAnonymous()
@@ -1802,6 +2044,35 @@ func (c *testClient) failure(method, path string, body any) (int, string) {
 //
 // It returns the status when the handshake is refused.
 func (c *testClient) watch(path string) (*websocket.Conn, int) {
+	connection, response, err := c.dial(path)
+	if err != nil {
+		c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
+		return nil, response.StatusCode
+	}
+	c.suite.T().Cleanup(func() { _ = connection.Close() })
+	return connection, response.StatusCode
+}
+
+// refusal is what the router said when it refused to open a socket, for a test asserting
+// on the message as well as the status.
+func (c *testClient) refusal(path string) (int, string) {
+	connection, response, err := c.dial(path)
+	if err == nil {
+		_ = connection.Close()
+		c.suite.Require().FailNow("the handshake for " + path + " was accepted")
+	}
+	c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
+	payload, err := readAll(response)
+	c.suite.Require().NoError(err)
+	var answered ErrorResponse
+	if err := json.Unmarshal(payload, &answered); err != nil || answered.Error.Message == "" {
+		return response.StatusCode, string(payload)
+	}
+	return response.StatusCode, answered.Error.Message
+}
+
+// dial opens a socket with the client's credentials, the way watch describes.
+func (c *testClient) dial(path string) (*websocket.Conn, *http.Response, error) {
 	address := "ws" + strings.TrimPrefix(c.base(), "http") + path
 	query := url.Values{}
 	if key := c.header.Get(auth.APIKeyHeader); key != "" {
@@ -1819,13 +2090,7 @@ func (c *testClient) watch(path string) (*websocket.Conn, int) {
 		}
 	}
 
-	connection, response, err := websocket.DefaultDialer.Dial(address, c.header.Clone())
-	if err != nil {
-		c.suite.Require().NotNil(response, "dialling %s: %v", path, err)
-		return nil, response.StatusCode
-	}
-	c.suite.T().Cleanup(func() { _ = connection.Close() })
-	return connection, response.StatusCode
+	return websocket.DefaultDialer.Dial(address, c.header.Clone())
 }
 
 // opens a socket the handshake must accept.
@@ -2155,7 +2420,7 @@ func (s *RouterSuite) setApps(customer string, change func(*suiteApps)) {
 // authMode is the mode the suite's router says it runs in: proxy in app mode, which only a
 // gateway serves, though the suite's callers still sign with the app's key.
 func (s *RouterSuite) authMode() auth.Mode {
-	if s.appMode || s.proxied {
+	if s.appMode || s.proxied || s.byCustomer {
 		return auth.Proxy
 	}
 	return auth.APIKey

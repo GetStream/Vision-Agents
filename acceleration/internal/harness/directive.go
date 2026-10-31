@@ -11,9 +11,9 @@ import (
 const (
 	kindAsk  = "ask"
 	kindDrop = "drop"
-	// kindCall is a tool call written as a tag. Gemma writes `<call tool="create_reservation"
-	// party_size=4 time="7:30"/>` after the tags it has seen, and spoken it books nothing
-	// while the reply says it did.
+	// kindCall is a tool call written as a tag, `<call tool="book_room" nights=3
+	// arrival="18:45"/>`, which a model can write after the tags it has seen. Spoken, it
+	// runs nothing while the reply says it did.
 	kindCall = "call"
 )
 
@@ -229,7 +229,7 @@ func attribute(tag, name string) string {
 
 // callArguments reads a call tag's attributes, other than its tool, as the call's arguments.
 // A quoted value is a string. A bare one is a number or a boolean when it reads as one, as in
-// party_size=4, and a string otherwise.
+// nights=3, and a string otherwise.
 func callArguments(head string) map[string]any {
 	arguments := map[string]any{}
 	rest := strings.TrimSuffix(strings.TrimPrefix(head, "<"+kindCall), "/")

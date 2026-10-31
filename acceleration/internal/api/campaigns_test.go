@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -146,6 +147,44 @@ func (s *CampaignsSuite) TestWhatBecameOfAContactIsShownAgainstIt() {
 	s.Equal("session-1", value(contacts[0].CallId))
 	s.Equal(ContactStateFailed, contacts[1].State)
 	s.Contains(value(contacts[1].Error), "not in service")
+}
+
+func (s *CampaignsSuite) TestAContactShowsHowItsCallEnded() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	ctx := context.Background()
+	rung, _, err := s.store.ClaimContact(ctx, created.Id)
+	s.Require().NoError(err)
+	callID := s.utils.uuid()
+	token, err := s.router.phone.Outcomes().Placed(ctx, outcome.Call{
+		Key: outcome.Key{
+			CustomerID: s.customerID(), CallType: "default", CallID: callID,
+			Local: created.FromNumber, Remote: rung.ToNumber,
+		},
+		Vendor:  "twilio",
+		Reports: true,
+	})
+	s.Require().NoError(err)
+	_, err = s.router.phone.Outcomes().Reported(ctx, token, outcome.NoAnswer, "no-answer")
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.FinishContact(ctx, store.Contact{ID: rung.ID, State: store.Done, CallID: callID}))
+
+	contacts := s.contacts(created.Id)
+
+	s.Require().Len(contacts, 1)
+	s.Equal(CallOutcomeNoAnswer, value(contacts[0].Outcome))
+	s.Equal(ContactStateDone, contacts[0].State, "nobody answering is still a contact that was rung")
+}
+
+func (s *CampaignsSuite) TestAContactNotYetRungHasNoOutcome() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+
+	contacts := s.contacts(created.Id)
+
+	s.Require().Len(contacts, 1)
+	s.Equal(ContactStatePending, contacts[0].State)
+	s.Nil(contacts[0].Outcome)
 }
 
 func (s *CampaignsSuite) TestAnotherAppsCampaignIsNotFound() {

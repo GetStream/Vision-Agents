@@ -55,16 +55,16 @@ func (s *DirectiveSuite) TestARequestForHelpIsTakenOutOfWhatIsSpoken() {
 
 func (s *DirectiveSuite) TestAToolCallWrittenAsATagIsTakenOutOfWhatIsSpoken() {
 	speech, directives := scan(
-		`I'll just get that booked for you now. <call tool="create_reservation" `,
-		`name="Quillon" party_size=4 patio=true time="7:30" allergen="peanut"/>`,
+		`I'll just get that booked for you now. <call tool="book_room" `,
+		`guest="Quillon" nights=3 breakfast=true arrival="18:45" floor="low"/>`,
 	)
 
 	s.Equal("I'll just get that booked for you now. ", speech, "the caller never hears the call")
 	s.Require().Len(directives, 1)
 	s.Equal(kindCall, directives[0].kind)
-	s.Equal("create_reservation", directives[0].skill)
+	s.Equal("book_room", directives[0].skill)
 	s.Equal(map[string]any{
-		"name": "Quillon", "party_size": json.Number("4"), "patio": true, "time": "7:30", "allergen": "peanut",
+		"guest": "Quillon", "nights": json.Number("3"), "breakfast": true, "arrival": "18:45", "floor": "low",
 	}, directives[0].arguments)
 }
 

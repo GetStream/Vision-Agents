@@ -230,3 +230,71 @@ func (s *PlivoSuite) answer(body string) {
 		_, _ = w.Write([]byte(body))
 	}
 }
+
+const formType = "application/x-www-form-urlencoded"
+
+func (s *PlivoSuite) TestACallWithAStatusURLAsksForItsEnd() {
+	s.answer(`{"request_uuid":"req-1","message":"call fired"}`)
+	statusURL := "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+17195551234",
+		To:        "+13035559876",
+		Bridge:    phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+		AnswerURL: "https://router.example.com/v1/phone/answer/tok-1",
+		StatusURL: statusURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal(statusURL, s.seen.body["hangup_url"])
+	s.Equal(http.MethodPost, s.seen.body["hangup_method"])
+}
+
+func (s *PlivoSuite) TestACallWithoutAStatusURLAsksForNothing() {
+	s.answer(`{"request_uuid":"req-1","message":"call fired"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+17195551234",
+		To:        "+13035559876",
+		Bridge:    phone.Bridge{URI: "sip:trunk@sip.stream-io-api.com"},
+		AnswerURL: "https://router.example.com/v1/phone/answer/tok-1",
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.body, "hangup_url")
+	s.NotContains(s.seen.body, "hangup_method")
+}
+
+func (s *PlivoSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"NORMAL_CLEARING":       phone.CallCompleted,
+		"USER_BUSY":             phone.CallBusy,
+		"CALL_REJECTED":         phone.CallBusy,
+		"NO_ANSWER":             phone.CallNoAnswer,
+		"NO_USER_RESPONSE":      phone.CallNoAnswer,
+		"ORIGINATOR_CANCEL":     phone.CallCanceled,
+		"NORMAL_TEMPORARY_FAIL": phone.CallFailed,
+	} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallUUID=u1&HangupCause="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+func (s *PlivoSuite) TestAHangupWithoutACauseDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte("CallUUID=u1&Event=Hangup&CallStatus=completed"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "completed"}, status)
+}
+
+func (s *PlivoSuite) TestAStatusItCannotReadIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"HangupCause":"USER_BUSY"}`))
+	s.Error(err)
+
+	_, err = s.provider.ReadStatus(formType, []byte("CallUUID=u1"))
+	s.ErrorContains(err, "HangupCause")
+
+	_, err = s.provider.ReadStatus(formType, []byte("%zz"))
+	s.Error(err)
+}

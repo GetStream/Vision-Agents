@@ -136,11 +136,11 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 		Participant: "Alex",
 		Text:        "cough",
 		Speaking:    true,
-		Reply:       "party of four at 7:30",
+		Reply:       "party of three at 6:15",
 	}))
 
 	question := s.waitAsked(1)[0].Input[0].Content
-	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
+	s.Contains(question, `is speaking right now and has so far said "party of three at 6:15"`)
 }
 
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
@@ -346,7 +346,7 @@ func (s *FlowSuite) TestNothingIsAskedOnceTheFlowIsClosed() {
 func (s *FlowSuite) TestSlowOverlapYieldsBeforeTheOriginalReplyFinishes() {
 	s.model.holdCreate = make(chan struct{})
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "over-slow", Participant: "Alex", Text: "stop, give me one sentence", Unfinished: true, Speaking: true}))
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, 2*time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor, 5*time.Millisecond)
 	decision := s.decisions()[0]
 	s.Equal("over-slow", decision.CandidateID)
 	s.Equal(Wait, decision.Disposition)
@@ -360,14 +360,14 @@ func (s *FlowSuite) TestSupersededSlowOverlapCannotInterruptLater() {
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "over-old", Participant: "Alex", Text: "stop", Unfinished: true, Speaking: true}))
 	s.Require().NoError(s.flow.Cancel("over-old"))
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "over-new", Participant: "Alex", Text: "wait, make it shorter", Unfinished: true, Speaking: true}))
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, 2*time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor, 5*time.Millisecond)
 	s.Equal("over-new", s.decisions()[0].CandidateID)
 	s.Equal(Stop, s.decisions()[0].Floor)
 }
 
 func (s *FlowSuite) TestSlowOverlapStreamAlsoYieldsTheFloor() {
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "over-stream", Participant: "Alex", Text: "stop, give me one sentence", Unfinished: true, Speaking: true}))
-	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, 2*time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor, 5*time.Millisecond)
 	s.Equal(Stop, s.decisions()[0].Floor)
 	s.Equal(Wait, s.decisions()[0].Disposition)
 	s.Equal(Deadline, s.decisions()[0].Ruler, "no model ruled on it")

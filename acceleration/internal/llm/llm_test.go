@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -52,7 +53,12 @@ type scripted struct {
 }
 
 func (s *scripted) Advance(w *ResponseWriter) bool {
-	if s.closed.Load() || len(s.chunks) == 0 {
+	if s.closed.Load() {
+		// As every provider does: closing cancels the request, which it reports as a cancel.
+		w.Cancelled()
+		return false
+	}
+	if len(s.chunks) == 0 {
 		return false
 	}
 	next := s.chunks[0]
@@ -163,6 +169,71 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 	s.ErrorIs(stream.Err(), refusal)
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.IsType(ResponseFailed{}, events[len(events)-2])
+	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+	s.True(stream.Response().Refused)
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(asksToLookUpAnOrder).Screen(verdict)
+
+	s.drain(stream)
+
+	s.Equal([]ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}, stream.Response().ToolCalls)
+}
+
+// asksToLookUpAnOrder is a provider writing a whole call.
+func asksToLookUpAnOrder(w *ResponseWriter) {
+	w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
+}
+
+func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"},
+		&scripted{chunks: []chunk{asksToLookUpAnOrder}, err: errUnauthorized})
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAResponseThatTimedOutIsEstimatedOnTheCallsItDropped() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{asksToLookUpAnOrder,
+		func(w *ResponseWriter) { w.TimedOut() }}, err: context.DeadlineExceeded})
+
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Empty(response.ToolCalls, "a response that timed out asks for nothing")
+	s.Equal(pricing.Quantities{pricing.InputTokens: 1, pricing.OutputTokens: 7},
+		Estimate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}, response),
+		"the provider billed the call it wrote: lookup_order is 3 tokens, its arguments 4")
+}
+
+func (s *LLMSuite) TestAResponseItsProviderFailedSettlesWithNoCalls() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Fail(errUnauthorized, "stream", false) })
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAnIncompleteResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Incomplete("max_output_tokens") })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
+}
+
+func (s *LLMSuite) TestACancelledResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Cancelled() })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
 }
 
 func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
@@ -182,8 +253,27 @@ func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
 	s.drain(stream)
 
 	s.ErrorIs(stream.Err(), refusal)
-	s.Equal(StatusFailed, stream.Response().Status)
+	s.Equal(StatusFailed, stream.Response().Status, "the provider reported the screen's close as a cancel")
+	s.True(stream.Response().Refused)
 	s.NotContains(stream.Response().OutputText, "system prompt")
+}
+
+func (s *LLMSuite) TestAScreenedResponseItsCallerClosedIsCancelledNotRefused() {
+	verdict := make(chan error, 1)
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("never arrives") },
+	).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+	verdict <- nil
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCancelled, stream.Response().Status)
+	s.False(stream.Response().Refused)
 }
 
 func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {
@@ -375,10 +465,10 @@ func (s *LLMSuite) TestStreamAssemblesToolCallsInTheOrderTheModelAskedForThem() 
 }
 
 func (s *LLMSuite) TestAToolCallCutOffMidArgumentsIsDropped() {
-	// Shortening a reply stopped Gemma inside check_availability{"party_size": 4, and the
+	// Shortening a reply stopped Gemma inside find_room{"guests": 4, and the
 	// call kept in the history had Baseten refuse every later turn of the call.
 	stream := s.stream(
-		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "check_availability", `{"party_size": 4`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "find_room", `{"guests": 4`, "") },
 		func(w *ResponseWriter) { w.Cancelled() },
 	)
 	s.drain(stream)

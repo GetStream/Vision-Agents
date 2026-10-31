@@ -86,7 +86,7 @@ cd acceleration
 FLOW_BENCHMARK=1 go test -tags integration -run TestFlowBenchmarkSuite ./internal/harness -v
 ```
 
-Needs `GEMMA_BASE_URL` with `BASETEN_API_KEY`, and `TYPESAFE_API_KEY`, in the repo-root `.env`.
+Needs `GEMMA_BASE_URL` with `GEMMA_API_KEY` (or `BASETEN_API_KEY` on Baseten), and `TYPESAFE_API_KEY`, in the repo-root `.env`.
 An arm whose model cannot be reached says so and stands down, so an undeployed Gemma or a
 missing key does not take the run with it. Requests go one at a time, because a benchmark
 reporting latency cannot also be saturating what it measures.

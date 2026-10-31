@@ -10,6 +10,8 @@ const (
 	TimeoutHangup TimeoutReason = "hangup"
 	// TimeoutStart ends a phone session nobody joined in time.
 	TimeoutStart TimeoutReason = "start"
+	// TimeoutUnanswered ends a placed call's session once its vendor says nobody will answer.
+	TimeoutUnanswered TimeoutReason = "unanswered"
 )
 
 // SetTimeout ends the session d from now. Calling it again moves the moment and replaces

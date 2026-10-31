@@ -440,8 +440,8 @@ func (s *InworldSocketSuite) TestAnIdleEOFReconnectsAndTheNextUtteranceIsAudible
 	provider, conn := s.connect(fake, Options{})
 	s.collect(provider, func(event tts.Event) bool { _, ok := event.(tts.Connected); return ok })
 
-	// This is the failure seen on calls: the previous reply has closed, and the
-	// server drops TCP without a WebSocket close frame while the caller speaks.
+	// The previous reply has closed, and the server drops TCP without a WebSocket close
+	// frame while nothing is being synthesized.
 	s.Require().NoError(provider.Synthesize(tts.Request{ID: "previous", Text: "hello", Final: true}))
 	s.frames(conn, 3)
 	s.Require().NoError(closed(conn, "previous"))
@@ -567,4 +567,55 @@ func (s *InworldSocketSuite) TestTheKeyCodeAsAStringIsNotAnInvalidKey() {
 
 func (s *InworldSocketSuite) TestTheKeyTextAsAPlainErrorIsNotAnInvalidKey() {
 	s.Zero(s.refusedBy(`{"error":"API key does not exist or was deleted"}`))
+}
+
+func (s *InworldSocketSuite) TestTextSentAfterTheFinalTextBeforeItsFlushIsSpokenInTheSameUtterance() {
+	// The router bills a streaming voice once for each completion, so text spoken in an
+	// utterance still open must not complete it a second time.
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "a", Final: true}))
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "bcdefgh", Final: true}))
+	var creates int
+	for _, frame := range s.frames(conn, 5) {
+		s.Equal("u1", frame.ContextID, "both texts go to the one context")
+		if frame.Create != nil {
+			creates++
+		}
+	}
+	s.Equal(1, creates, "the context is opened once")
+	s.Require().NoError(speak(conn, "u1", make([]int16, 240)))
+	s.Require().NoError(flushed(conn, "u1"))
+	s.Require().NoError(speak(conn, "u1", make([]int16, 480)))
+	s.Require().NoError(flushed(conn, "u1"))
+	s.Require().NoError(closed(conn, "u1"))
+	// Whatever u1 still sends comes before what the next utterance does.
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u2", Text: "i", Final: true}))
+	s.Require().NoError(speak(conn, "u2", make([]int16, 240)))
+	s.Require().NoError(flushed(conn, "u2"))
+
+	events := s.collect(provider, func(event tts.Event) bool {
+		complete, ok := event.(tts.SynthesisComplete)
+		return ok && complete.SynthesisID == "u2"
+	})
+	var completions []tts.SynthesisComplete
+	var chunks int
+	for _, event := range events {
+		switch typed := event.(type) {
+		case tts.SynthesisComplete:
+			if typed.SynthesisID == "u1" {
+				completions = append(completions, typed)
+			}
+		case tts.AudioChunk:
+			if typed.SynthesisID == "u1" {
+				chunks++
+			}
+		}
+	}
+	s.Require().Len(completions, 1, "the utterance completes once for both texts")
+	s.EqualValues(8, completions[0].Characters)
+	s.Equal(2, chunks, "the audio for both texts is heard")
 }

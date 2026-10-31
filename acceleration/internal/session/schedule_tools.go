@@ -398,7 +398,8 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		if task.State == store.ScheduledTaskCompleted {
 			return refusal(conflictCode, "that task has already finished; there is nothing to pause"), nil
 		}
-		task.State = store.ScheduledTaskPaused
+		// Paused by the user's say, so a data move's cut-over leaves it.
+		task.State, task.MovePaused = store.ScheduledTaskPaused, false
 	case "resume":
 		if task.State == store.ScheduledTaskCompleted {
 			return refusal(conflictCode, "that task has finished; schedule a new one instead"), nil
@@ -422,6 +423,7 @@ func (r *scheduleRunner) update(ctx context.Context, call llm.ToolCall) ([]llm.C
 		task.State = store.ScheduledTaskActive
 		task.NextRunAt = &next
 		task.ConsecutiveFailures = 0
+		task.MovePaused = false
 	case "reschedule":
 		parsed, parts := r.rescheduled(&task, args, now)
 		if parts != nil {
@@ -539,6 +541,9 @@ func (r *scheduleRunner) rescheduled(task *store.ScheduledTask, args updateArgs,
 	switch {
 	case args.At != nil:
 		input.At = *args.At
+		if input.Repeat != "" {
+			input.At = scheduling.StoredClock(input.At, task.StartLocal)
+		}
 	case args.In != nil:
 		input.In = *args.In
 	default:
@@ -549,13 +554,20 @@ func (r *scheduleRunner) rescheduled(task *store.ScheduledTask, args updateArgs,
 		parts, _ := refusalOf(err)
 		return nil, parts
 	}
+	// A reschedule that names a new time moves the run: a start that has
+	// passed goes to the next occurrence, its COUNT counted from there, as a
+	// create does. One that does not, or names the stored start again,
+	// re-parses it, a change of title, instructions or repeat, and keeps
+	// counting from it.
+	moved := args.At != nil || args.In != nil
 	next, ok := parsed.Next(now)
+	if parsed.MovesStartFrom(task.StartLocal) {
+		next, ok = parsed.FromNow(now)
+	}
 	if !ok {
 		return nil, refusal(scheduling.CodeScheduleInPast, "that schedule has no occurrence left; its last one has passed")
 	}
-	// A reschedule without at or in re-parses the stored start, a change of
-	// title, instructions or repeat, not a move of the run.
-	if args.At != nil || args.In != nil {
+	if moved {
 		if err := scheduling.CheckMove(next, task.NextRunAt, now); err != nil {
 			parts, _ := refusalOf(err)
 			return nil, parts
@@ -632,10 +644,7 @@ func (r *scheduleRunner) zone(ctx context.Context, argument string) (string, err
 }
 
 func (r *scheduleRunner) maxActive() int {
-	if r.spec.Scheduling.MaxTasksPerUser > 0 {
-		return r.spec.Scheduling.MaxTasksPerUser
-	}
-	return scheduling.MaxActivePerUser
+	return r.spec.Scheduling.MaxActive()
 }
 
 // displayZone is where the current time is told from when no task says: the

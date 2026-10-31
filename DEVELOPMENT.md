@@ -13,6 +13,10 @@ curl http://localhost:8080/health
 Rebuild after backend changes: `docker compose up -d --build router`. Logs:
 `docker compose logs -f router`.
 
+Every port is published on `127.0.0.1` only. To reach the router from another device, such as
+a phone running the Swift demo, set `ROUTER_PUBLISH_ADDRESS=0.0.0.0`: it then answers anyone on
+the network, with the credentials in `.env`.
+
 Without Docker for the router itself (Postgres and Redis still from compose):
 
 ```bash

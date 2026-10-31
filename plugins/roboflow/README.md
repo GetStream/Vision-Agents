@@ -143,7 +143,7 @@ pytest plugins/roboflow/tests/test_roboflow.py -v
 
 - `vision-agents` - Core framework
 - `numpy>=2.0.0` - Array operations
-- `rfdetr>=1.3.0` - RF-DETR models for local object detection
+- `rfdetr>=1.4.3` - RF-DETR models for local object detection
 - `inference-sdk>=0.26.1` - Roboflow SDK for cloud inference
 
 ## Links

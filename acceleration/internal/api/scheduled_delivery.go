@@ -93,7 +93,8 @@ var errScheduledNotHere = errors.New("the session is not running on this node")
 
 // scheduledDelivery is one occurrence's follow-up as the node holding the
 // conversation needs it, which is also what a peer is handed: everything is
-// in it, because the peer is not asked to trust its own copy of the task.
+// in it, because the peer is not asked to trust its own copy of the task,
+// which it reads only to check whose the task is.
 type scheduledDelivery struct {
 	CustomerID     string   `json:"customer_id"`
 	TaskID         string   `json:"task_id"`
@@ -246,8 +247,10 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // deliverChain walks a task's channels in order against the session its
 // conversation is held in, and stops at the first that lands. A failure
 // names every channel tried, for the logs, and is recorded under the first
-// channel's reason. It is final when every channel's failure is, and missed
-// when every channel found the occurrence too late.
+// channel's reason, except a call placed already (rangAlready), which gives
+// already_called. It is final when every channel's failure is, and missed
+// when every channel found the occurrence too late. A call placed for the
+// occurrence whose end the run does not record ends the walk (rangAlready).
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
@@ -274,12 +277,34 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
+		// A call taken with its end never written (a failed give-back or
+		// reason write) counts too: see rangAlready.
+		if rangAlready(err) {
+			// The call decides how the occurrence counts, not a channel before it.
+			reason = scheduling.ReasonRungAlready
+			break
+		}
 	}
 	err := fmt.Errorf("the task could not be delivered (%s)", strings.Join(tried, "; "))
 	if missed {
 		return "", "", &scheduling.Missed{Err: err}
 	}
 	return "", "", &scheduling.Failure{Reason: reason, Final: final, Err: err}
+}
+
+// rangAlready reports whether a channel failed because the occurrence's call was
+// placed already, by an earlier attempt or a worker that stopped, and the run
+// records no reason that call ended under (callEnded). That call may have
+// carried the task out, or been cut off with the user on it, so no later
+// channel says the task again (AI-2021). The same holds when the end could not
+// be written: a call that was not placed whose give-back failed, or any failed
+// reason write after the call was placed (callEnded: not_answered, failed or
+// held), leaves the call taken with no end.
+// A call whose end is recorded, such as not_answered, leaves the next channel
+// to carry the task.
+func rangAlready(err error) bool {
+	var failure *scheduling.Failure
+	return errors.As(err, &failure) && failure.Reason == scheduling.ReasonRungAlready
 }
 
 // deliveryReason is the code a failed attempt is recorded under. Refused for money, it is the
@@ -718,7 +743,10 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 // was handed an occurrence walks the task's channels in the session it
 // holds and answers where the follow-up landed. Anything not handed over
 // by a peer is answered as no such route, because the payload names its
-// customer and user outright, which is only a peer's to say.
+// customer and user outright, which is only a peer's to say. Even a peer's
+// word on the owner is checked against the task as stored: a task that is
+// gone, or that another user owns, is answered as no such task and nothing
+// is delivered.
 func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
@@ -733,6 +761,26 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		writeError(w, notFound("no such session"))
 		return
 	}
+	if s.store == nil || delivery.CustomerID == "" || delivery.TaskID == "" {
+		writeError(w, errUnknownScheduledTask)
+		return
+	}
+	// The asker builds the delivery from the task's row, so a valid hand-off names its
+	// owner. A task deleted since is refused too; the asker's scheduler tries again later.
+	task, err := s.store.ScheduledTask(r.Context(), delivery.CustomerID, delivery.TaskID)
+	switch {
+	case errors.Is(err, store.ErrNoScheduledTask), err == nil && !ownsTask(delivery, task):
+		s.logger.Warn("refused a peer's scheduled task that its stored task does not match",
+			"task", delivery.TaskID, "session", delivery.SessionID)
+		writeError(w, errUnknownScheduledTask)
+		return
+	case err != nil:
+		s.logger.Error("could not read a peer's scheduled task", "task", delivery.TaskID, "error", err)
+		writeError(w, internalError())
+		return
+	}
+	// What the task carries is the row's, whatever the payload says.
+	delivery.ConfigID, delivery.Channels = task.ConfigID, task.Channels
 	ctx := routing.WithScheduledTurn(r.Context())
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {
@@ -755,6 +803,12 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(scheduledPeerAnswer{DeliveredTo: deliveredTo, SessionID: sessionID})
 	}
+}
+
+// ownsTask reports whether a delivery names the owner and session its task is stored with.
+func ownsTask(delivery scheduledDelivery, task store.ScheduledTask) bool {
+	return task.UserID == delivery.UserID && task.CallerKind == delivery.CallerKind &&
+		task.SessionID == delivery.SessionID
 }
 
 // deliverChainReopened walks a delivery's channels in a conversation whose
@@ -926,6 +980,9 @@ func callSpec(config store.AgentConfig, delivery scheduledDelivery, agentID stri
 // final: another attempt would ring them again.
 func (s *Server) carryOutOnCall(ctx context.Context, delivery scheduledDelivery, spec session.Spec) (string, string, error) {
 	created, err := s.sessions.Create(ctx, spec)
+	if _, unanswered := errors.AsType[*session.CallUnansweredError](err); unanswered {
+		return "", "", s.callEnded(ctx, delivery, spec.ID, undeliveredFinally(scheduling.ReasonNotAnswered, err))
+	}
 	if err != nil {
 		return "", "", s.callEnded(ctx, delivery, spec.ID, undeliveredFinally(scheduling.ReasonFailed, err))
 	}

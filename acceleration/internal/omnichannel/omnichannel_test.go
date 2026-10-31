@@ -1,10 +1,15 @@
 package omnichannel
 
 import (
+	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -13,6 +18,37 @@ import (
 // and SlackChannelSuite.
 type PersonSuite struct {
 	suite.Suite
+}
+
+// SummarySuite is the model call of a summary, which needs neither the store nor Stream Chat.
+type SummarySuite struct {
+	suite.Suite
+}
+
+func TestSummarySuite(t *testing.T) {
+	suite.Run(t, new(SummarySuite))
+}
+
+// A summary is written by the agent config's own model, which may think before it writes,
+// out of the same cap as the summary: cut off, it would be saved as the card's summary.
+func (s *SummarySuite) TestAModelThatThinksBeforeItSummarisesStillWritesTheWholeSummary() {
+	const summary = "Alice asked where order 12 is; the agent said it ships Monday, and she was left waiting on the tracking link."
+	registry := llmrouter.NewRegistry()
+	registry.Register("thinking", func(routing.Spec) (llmrouter.Provider, error) {
+		return &llmtest.Thinker{Thinks: 1300, Answer: summary}, nil
+	})
+	router, err := llmrouter.New(llmrouter.Options{Config: routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{{Provider: "thinking", Model: "thinking-model", Languages: []string{"en"}}},
+		Aliases:   map[string]routing.Alias{"llm-fast": {Languages: []string{"en"}}},
+	}, Registry: registry, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	written, err := (&Closer{llm: router}).ask(context.Background(), store.AgentConfig{},
+		store.ClosedEpisode{ID: "episode-thought-over", CustomerID: "customer-1"}, told{Source: "thread"})
+
+	s.Require().NoError(err)
+	s.Equal(summary, written)
 }
 
 func TestPersonSuite(t *testing.T) {

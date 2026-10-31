@@ -9,7 +9,7 @@ root=$PWD
 out=$root/performance_benchmark/out/$name
 mkdir -p "$out"
 (cd acceleration && CGO_ENABLED=1 go build -o "$out/router" ./cmd/router)
-(cd performance_benchmark && CGO_ENABLED=1 go build -tags webrtc -o "$out/perfbench" ./cmd/perfbench)
+(cd performance_benchmark && go build -tags webrtc -o "$out/perfbench" ./cmd/perfbench)
 set -a; source .env; set +a
 export ROUTER_ADDR=:8081 ROUTER_PUBLIC_URL=http://localhost:8081 ROUTER_MOCK_PROVIDERS=true \
   ROUTER_PPROF_ADDR=localhost:6060 ROUTER_LOG_LEVEL=info ROUTER_AUTH_MODE=noauth \

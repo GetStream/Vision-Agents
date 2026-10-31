@@ -248,9 +248,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 	}
 	task.NextRunAt = &next
 
-	maxActive := scheduling.MaxActivePerUser
-	if config != nil && config.Scheduling.MaxTasksPerUser > 0 {
-		maxActive = config.Scheduling.MaxTasksPerUser
+	maxActive := store.DefaultMaxActiveTasks
+	if config != nil {
+		maxActive = config.Scheduling.MaxActive()
 	}
 	if err := s.store.CreateScheduledTask(ctx, &task, maxActive); err != nil {
 		switch {
@@ -447,22 +447,27 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 	if zone == "" {
 		zone = task.Timezone
 	}
+	at := value(written.At)
+	if value(written.Repeat) != "" {
+		at = scheduling.StoredClock(at, task.StartLocal)
+	}
 	parsed, err := scheduling.Parse(scheduling.Input{
-		At: value(written.At), In: value(written.In),
+		At: at, In: value(written.In),
 		Repeat: value(written.Repeat), Until: value(written.Until),
 		Timezone: zone,
 	}, now)
 	if err != nil {
 		return scheduleFailure(err)
 	}
-	task.StartLocal, task.Timezone, task.RRule = parsed.StartLocal, parsed.Timezone, parsed.Repeat
-	task.UntilDate = nil
-	if !parsed.Until.IsZero() {
-		until := parsed.Until
-		task.UntilDate = &until
-	}
 	if task.State == store.ScheduledTaskActive || task.State == store.ScheduledTaskPaused {
+		// A new start that has passed moves to the next occurrence, its COUNT
+		// counted from there, as a create does. The stored start sent back
+		// (an edit of the repeat or until alone) keeps counting from it. A
+		// moved start is parsed.StartLocal, so the task takes it after.
 		next, ok := parsed.Next(now)
+		if parsed.MovesStartFrom(task.StartLocal) {
+			next, ok = parsed.FromNow(now)
+		}
 		if !ok {
 			return scheduleFailure(&scheduling.Error{Code: scheduling.CodeScheduleInPast,
 				Message: "that schedule has no occurrence left; its last one has passed"})
@@ -471,6 +476,12 @@ func (s *Server) rescheduleTask(task *store.ScheduledTask, written ScheduledTask
 			return scheduleFailure(err)
 		}
 		task.NextRunAt = &next
+	}
+	task.StartLocal, task.Timezone, task.RRule = parsed.StartLocal, parsed.Timezone, parsed.Repeat
+	task.UntilDate = nil
+	if !parsed.Until.IsZero() {
+		until := parsed.Until
+		task.UntilDate = &until
 	}
 	return nil
 }
@@ -484,8 +495,9 @@ func (s *Server) pauseScheduledTask(ctx context.Context, request *pauseScheduled
 	if err != nil {
 		return nil, err
 	}
-	if task.State == store.ScheduledTaskActive {
-		task.State = store.ScheduledTaskPaused
+	// A task a data move paused is paused by the user once they say so, so the cut-over leaves it.
+	if task.State == store.ScheduledTaskActive || (task.State == store.ScheduledTaskPaused && task.MovePaused) {
+		task.State, task.MovePaused = store.ScheduledTaskPaused, false
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
 			return nil, err
 		}
@@ -531,14 +543,14 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
 		} else {
-			maxActive := scheduling.MaxActivePerUser
+			maxActive := store.DefaultMaxActiveTasks
 			// A deleted config leaves a task nothing to run on; any other failure to read it is not that.
 			config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID)
 			if errors.Is(err, store.ErrNoAgentConfig) {
 				return nil, errUnknownConfig
 			}
-			if err == nil && config.Scheduling.MaxTasksPerUser > 0 {
-				maxActive = config.Scheduling.MaxTasksPerUser
+			if err == nil {
+				maxActive = config.Scheduling.MaxActive()
 			}
 			active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID, task.ConfigID)
 			if err != nil {
@@ -549,7 +561,7 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskActive, &next
 		}
-		task.ConsecutiveFailures = 0
+		task.ConsecutiveFailures, task.MovePaused = 0, false
 		if err := s.store.SaveScheduledTask(ctx, &task); err != nil {
 			if errors.Is(err, store.ErrNoAgentConfig) {
 				return nil, errUnknownConfig

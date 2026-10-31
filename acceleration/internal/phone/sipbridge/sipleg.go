@@ -16,6 +16,39 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
+// Unanswered is the customer leg's INVITE ending without an answer: a final response other
+// than 2xx (Code, Reason), or none before the ring timeout (Code 0).
+type Unanswered struct {
+	Code   int
+	Reason string
+	err    error
+}
+
+func (u *Unanswered) Error() string {
+	if u.Code == 0 {
+		return "not answered before the ring timeout"
+	}
+	return fmt.Sprintf("not answered: %d %s", u.Code, u.Reason)
+}
+
+func (u *Unanswered) Unwrap() error { return u.err }
+
+// unanswered is err as an Unanswered when the INVITE ringing under ring ended without an
+// answer, and err unchanged otherwise.
+func unanswered(ring context.Context, err error) error {
+	// sipgo returns the response by value in some paths and by pointer in others.
+	if res, ok := errors.AsType[*sipgo.ErrDialogResponse](err); ok && res.Res != nil {
+		return &Unanswered{Code: res.Res.StatusCode, Reason: res.Res.Reason, err: err}
+	}
+	if res, ok := errors.AsType[sipgo.ErrDialogResponse](err); ok && res.Res != nil {
+		return &Unanswered{Code: res.Res.StatusCode, Reason: res.Res.Reason, err: err}
+	}
+	if errors.Is(ring.Err(), context.DeadlineExceeded) {
+		return &Unanswered{err: err}
+	}
+	return err
+}
+
 // sipLeg is a leg on a real SIP dialog. We are the UAC on both legs.
 type sipLeg struct {
 	side      side

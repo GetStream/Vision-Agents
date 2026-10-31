@@ -15,6 +15,8 @@ final readonly class AttachedNumber
         // Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip....
         public string $sipUri,
         public string $trunkId,
+        // The agent config that answers the number's calls. Present, no call is dispatched to a worker.
+        public ?string $agentConfigId = null,
     ) {
     }
 
@@ -27,6 +29,7 @@ final readonly class AttachedNumber
             routeId: Json::string($data, 'route_id'),
             sipUri: Json::string($data, 'sip_uri'),
             trunkId: Json::string($data, 'trunk_id'),
+            agentConfigId: array_key_exists('agent_config_id', $data) && $data['agent_config_id'] !== null ? Json::string($data, 'agent_config_id') : null,
         );
     }
 
@@ -41,6 +44,9 @@ final readonly class AttachedNumber
         $out['route_id'] = $this->routeId;
         $out['sip_uri'] = $this->sipUri;
         $out['trunk_id'] = $this->trunkId;
+        if ($this->agentConfigId !== null) {
+            $out['agent_config_id'] = $this->agentConfigId;
+        }
         return $out;
     }
 }

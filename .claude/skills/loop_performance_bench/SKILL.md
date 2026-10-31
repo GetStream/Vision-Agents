@@ -11,6 +11,9 @@ prove it on the benchmark cluster, and write down what moved. Read the
 report. `performance_benchmark/findings.md` holds what earlier loops found and fixed; read
 it so you do not chase a cost that is already gone.
 
+Follow the [benchmark rules](../../../AGENTS.md#benchmark-rules). Ten rounds are a budget,
+not a quota: keep negative results and revert changes that do not pay for themselves.
+
 What each round reports: **agents held** on the fixed two-node benchmark router, **reply
 p50/p95** at that step, **router mCPU per agent**, and **hosting $ per voice minute**:
 
@@ -137,7 +140,7 @@ loop/profile.sh round-3 512 20      # in a second shell
 
 `run.sh` ends the previous generation's calls and waits a minute first; never ramp onto a
 router still draining the last run, its CPU lands in yours. Rerun `cluster/setup.sh` first
-if `performance_benchmark/`, `benchmark/` or `sdks/go` changed.
+if `performance_benchmark/` or `sdks/go` changed.
 
 ## 5. Record
 
@@ -148,7 +151,7 @@ falls or glitches climb is trading quality for capacity; say so. Compare with th
 previous round:
 
 ```bash
-CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench compare out/round-2 out/round-3
+go run -tags webrtc ./cmd/perfbench compare out/round-2 out/round-3
 ```
 
 One run moves by up to 10%. When a round sits at the edge (p95 just over the 3 s bar),

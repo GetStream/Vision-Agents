@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -644,6 +645,21 @@ func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 }
 
 func (s *stub) SendDigits(context.Context, string, string) error { return s.err }
+
+// ReadStatus reads a form's result and word, as a vendor's status post would carry them.
+func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return CallStatus{}, err
+	}
+	if !form.Has("word") {
+		return CallStatus{}, errors.New("stub: a status needs a word")
+	}
+	return CallStatus{Result: CallResult(form.Get("result")), Word: form.Get("word")}, nil
+}
+
+// silent is a vendor that reports nothing on the calls it places.
+type silent struct{ Provider }
 
 func (s *stub) Supports(filter Filter) bool { return !slices.Contains(s.unsupported, filter) }
 

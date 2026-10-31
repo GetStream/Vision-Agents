@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -104,7 +105,7 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	if message, ok := configComplaint(*request.Body); !ok {
+	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
@@ -206,7 +207,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	if message, ok := configComplaint(*request.Body); !ok {
+	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
 
@@ -335,6 +336,13 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, errUnknownConfig
+	}
+	answering, err := s.store.NumbersAnsweredBy(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(answering) > 0 {
+		return nil, configAnswersNumbers(answering)
 	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
@@ -531,6 +539,17 @@ var errAgentRoleTaken = APIError{
 	Message: "another agent already has this role",
 }
 
+// configAnswersNumbers is a delete of a config that phone numbers still answer with: deleting
+// it would leave their callers reaching no agent.
+func configAnswersNumbers(numbers []string) APIError {
+	if len(numbers) == 1 {
+		return conflict(fmt.Sprintf("The number %s answers with this agent: remove the agent from it with "+
+			"DELETE /v1/phone/numbers/{e164}/agent, or detach the number.", numbers[0]))
+	}
+	return conflict(fmt.Sprintf("The numbers %s answer with this agent: remove the agent from each with "+
+		"DELETE /v1/phone/numbers/{e164}/agent, or detach them.", strings.Join(numbers, ", ")))
+}
+
 // errChannelConnectionTaken is a save that would have a second live agent config bind a
 // channel connection, such as a Slack bot's, as fixed: one agent answers each message that
 // comes in on it, so the connection belongs to the live config that bound it first (AI-1049).
@@ -596,7 +615,7 @@ func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string,
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
 // checked here rather than left to the transcriber, because a list nobody can serve is
 // worth hearing about while the config is being written and not once a call is running.
-func configComplaint(request AgentConfigRequest) (string, bool) {
+func configComplaint(ctx context.Context, request AgentConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "an agent config needs a name", false
 	}
@@ -618,7 +637,7 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := harnessOf(request.Harness); !ok {
 		return fmt.Sprintf("there is no harness called %q", *request.Harness), false
 	}
-	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
+	if complaint, ok := guardrailComplaint(ctx, request.Guardrail); !ok {
 		return complaint, false
 	}
 	if complaint, ok := visibleToolsComplaint(request.VisibleTools); !ok {
@@ -1270,12 +1289,29 @@ func visibleToolsComplaint(patterns *[]string) (string, bool) {
 // It is read here, as it is written, rather than when a call starts: a policy that will
 // not parse is a config that screens nothing, and finding that out at the first turn means
 // finding it out from an agent that answered a question it was meant to refuse.
-func guardrailComplaint(policy *string) (string, bool) {
+//
+// A session posts a webhook only to a public address (egress.NewClient), so one on a private
+// network, loopback or link-local address is refused here rather than saved to fail every
+// check. The path and query are the endpoint's own and are not checked.
+func guardrailComplaint(ctx context.Context, policy *string) (string, bool) {
 	if policy == nil || strings.TrimSpace(*policy) == "" {
 		return "", true
 	}
-	if _, err := guardrail.Parse(*policy); err != nil {
+	parsed, err := guardrail.Parse(*policy)
+	if err != nil {
 		return err.Error(), false
+	}
+	if parsed.Kind != guardrail.KindWebhook {
+		return "", true
+	}
+	endpoint, err := url.Parse(parsed.URL)
+	if err == nil {
+		err = egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, User: endpoint.User, Host: endpoint.Host}).String())
+	}
+	if err != nil {
+		// One answer for every refusal, as for MCP servers and connectors: a name that does not
+		// resolve is not told apart from one that resolves to a private address.
+		return "guardrail: url must be a public https URL; the router cannot reach a webhook on a private network, loopback or link-local address", false
 	}
 	return "", true
 }
@@ -1330,7 +1366,7 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 		return "sandbox_options.allowed_domains is at most 64 domains", false
 	}
 	for _, domain := range value(options.AllowedDomains) {
-		if domain == "" || len(domain) > 253 || strings.ContainsAny(domain, ", \t\n/") {
+		if domain == "" || len(domain) > 253 || strings.ContainsAny(domain, ", \t\n/") || isAddress(domain) {
 			return fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", domain), false
 		}
 	}
@@ -1346,6 +1382,19 @@ func sandboxOptionsComplaint(options *SandboxOptions) (string, bool) {
 		return "sandbox_options takes allowed_domains or network_allow_list, not both", false
 	}
 	return "", true
+}
+
+// isAddress says whether an allowed domain is an IP address, with or without brackets, a port
+// or a trailing dot. The sandbox's egress proxy refuses every address host (sandbox/egress
+// Proxy.ServeHTTP), since a grant names hosts and an address cannot be told apart from another
+// host's.
+func isAddress(domain string) bool {
+	host := domain
+	if split, _, err := net.SplitHostPort(domain); err == nil {
+		host = split
+	}
+	_, err := netip.ParseAddr(strings.Trim(strings.TrimSuffix(host, "."), "[]"))
+	return err == nil
 }
 
 // sandboxConfigOf reads how a caller asked for the sandbox to be built.
@@ -2107,14 +2156,16 @@ func (s *Server) registerConfigs(api huma.API) {
 		Path:        "/v1/agents/configs/{id}",
 		Summary:     "Delete an agent config",
 		Description: "Calls that already ran under it keep naming it, so the config stops being usable rather " +
-			"than stops having existed.\n" +
+			"than stops having existed. A config that a phone number answers with is refused with a 409 " +
+			"naming the numbers.\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
 			"user's device.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The config is gone"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict},
 	}, s.deleteAgentConfig)
 	huma.Register(api, huma.Operation{
 		OperationID: "listSkills",

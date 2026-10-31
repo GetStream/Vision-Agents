@@ -582,6 +582,28 @@ func (s *BrokerSuite) TestADisconnectedConnectionIsRefusedAtTheProxy() {
 	s.Empty(s.rig.host.authorizations())
 }
 
+// TestAWithdrawnCredentialsPlaceholderGetsTheProxysAnswer: a revoked connection is a 401
+// naming its binding until the next run, and once that run withdraws it the proxy refuses the
+// tunnel to its host, so code never reads a withdrawal as the host failing. The allowed domain
+// keeps the record, and so the proxy, after the withdrawal. Both answers are the ones the proxy
+// gave before AI-1876 changed the daytona broker's withdrawal.
+func (s *BrokerSuite) TestAWithdrawnCredentialsPlaceholderGetsTheProxysAnswer() {
+	broker, mount := s.allowing("session-withdrawn", "pypi.test")
+	s.fail(sandbox.ErrNoCredential)
+
+	status, body := s.send(mount, "api.github.com", mount.Env["GITHUB_TOKEN"])
+	s.Require().NoError(broker.BeforeRun(s.ctx))
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, "https://api.github.com/user", nil)
+	s.Require().NoError(err)
+	request.Header.Set("Authorization", "Bearer "+mount.Env["GITHUB_TOKEN"])
+	_, err = s.rig.sandboxClient(s.T(), mount).Do(request)
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal("egress: the connection gives no token: github\n", body)
+	s.ErrorContains(err, "Forbidden")
+	s.Empty(s.rig.host.authorizations())
+}
+
 // lateLinear is a grant whose connection the user has not made yet, and linear the one Bind
 // gives it once they have.
 var (
@@ -743,11 +765,13 @@ const publicURL = "http://203.0.113.7:8091"
 
 // unusableURLs are proxy URLs the sandbox cannot use: an address it may not reach or the
 // provider's range would reach too much of (unspecified, loopback, RFC 1918, link-local with the
-// metadata address, broadcast), a port that is none, or a path, query or fragment.
+// metadata address, broadcast, a range no public host is in), a port that is none, or a path,
+// query (a bare ? too) or fragment.
 var unusableURLs = []string{"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091",
-	"http://192.168.1.1:8091", "http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7",
+	"http://192.168.1.1:8091", "http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://0.1.2.3:8091",
+	"http://100.64.0.1:8091", "http://192.0.0.8:8091", "http://198.18.0.1:8091", "http://240.0.0.1:8091", "http://203.0.113.7",
 	"http://203.0.113.7:0", "http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path",
-	"http://203.0.113.7:8091?a=b", "http://203.0.113.7:8091#frag"}
+	"http://203.0.113.7:8091?a=b", "http://203.0.113.7:8091?", "http://203.0.113.7:8091#frag"}
 
 // TestAProxyURLItCannotUseIsRefused: the sandbox's own credential is the URL's user, and the
 // sandbox reaches an IPv4 address alone.

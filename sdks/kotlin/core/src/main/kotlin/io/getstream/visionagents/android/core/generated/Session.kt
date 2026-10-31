@@ -25,6 +25,7 @@ package io.getstream.visionagents.android.core.generated
 
 import io.getstream.visionagents.android.core.generated.CallUsage
 import io.getstream.visionagents.android.core.generated.ModelOverwrites
+import io.getstream.visionagents.android.core.generated.SessionCallOutcome
 import io.getstream.visionagents.android.core.generated.SessionModality
 import io.getstream.visionagents.android.core.generated.SessionMode
 import io.getstream.visionagents.android.core.generated.SessionState
@@ -49,8 +50,9 @@ import kotlinx.serialization.encoding.Encoder
  * @param id 
  * @param modality 
  * @param state 
- * @param userId 
+ * @param userId The name the agent joined the call as. It is not the owner of the session.
  * @param agent The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
+ * @param callOutcome 
  * @param closedAt When the session ended. Absent while it is still running.
  * @param configId The agent config the session ran under, empty for one that spelled itself out.
  * @param contextTruncated Older history was omitted from the model context.
@@ -104,12 +106,16 @@ internal data class Session (
     @Contextual @SerialName(value = "state")
     val state: SessionState,
 
+    /* The name the agent joined the call as. It is not the owner of the session. */
     @SerialName(value = "user_id")
     val userId: kotlin.String,
 
     /* The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against. */
     @SerialName(value = "agent")
     val agent: kotlin.String? = null,
+
+    @SerialName(value = "call_outcome")
+    val callOutcome: SessionCallOutcome? = null,
 
     /* When the session ended. Absent while it is still running. */
     @SerialName(value = "closed_at")

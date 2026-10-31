@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +40,13 @@ type platform struct {
 	// into it, with how many runs came before.
 	files   map[string][]byte
 	uploads []string
+	// sized are files of the sandbox's that hold only their size, as many bytes of x, and
+	// served is how many bytes each download of a file put on the wire, counted once its
+	// answer ended.
+	sized  map[string]int
+	served map[string]int64
+	// cut are the files whose download breaks off halfway, as a dropped connection does.
+	cut map[string]bool
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
 	// commands are every shell command run in the sandbox, with how many runs came before,
@@ -65,8 +76,6 @@ type platform struct {
 	// whose name holds it; createStatus, when set, answers a sandbox's creation with it.
 	refuse       bool
 	refuseSecret string
-	// refuseDelete answers the deletion of a secret whose name holds it with a 500.
-	refuseDelete string
 	// refuseUpdate answers the update of a secret whose name holds it with a 500.
 	refuseUpdate string
 	createStatus int
@@ -78,6 +87,11 @@ type platform struct {
 	// or until the caller gives up; checking, when set, hears of each shell command.
 	slowCommand, slowRun time.Duration
 	checking             chan struct{}
+	// slowUpload is how long each file written into the sandbox takes to answer, or until the
+	// caller gives up.
+	slowUpload time.Duration
+	// asked, when set, hears of each download before it is served, by the files it names.
+	asked func(name string)
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -88,12 +102,16 @@ type heldSecret struct {
 
 func newPlatform() *platform {
 	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
-		secrets: map[string]*heldSecret{}}
+		sized: map[string]int{}, served: map[string]int64{}, cut: map[string]bool{}, secrets: map[string]*heldSecret{}}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	return stub
 }
 
 func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/files/download") || strings.HasSuffix(r.URL.Path, "/files/bulk-download") {
+		p.download(w, r)
+		return
+	}
 	if strings.HasSuffix(r.URL.Path, "/process/execute") {
 		p.mu.Lock()
 		slow, checking := p.slowCommand, p.checking
@@ -101,6 +119,12 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		if checking != nil {
 			checking <- struct{}{}
 		}
+		answerAfter(r, slow)
+	}
+	if strings.HasSuffix(r.URL.Path, "/files/upload-v2") {
+		p.mu.Lock()
+		slow := p.slowUpload
+		p.mu.Unlock()
 		answerAfter(r, slow)
 	}
 	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
@@ -146,12 +170,22 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		p.created = append(p.created, id)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`))
+		_, _ = w.Write(p.sandbox(id))
+
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sandbox/"):
+		// A sandbox's state, read once it may have stopped for idling: it runs still.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(p.sandbox(strings.TrimPrefix(r.URL.Path, "/api/sandbox/")))
 
 	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
 		file, _, err := r.FormFile("file")
 		if err != nil || p.refuseUpload {
 			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Context().Err() != nil {
+			// The client gave up: Daytona stores nothing it did not take whole, so an abandoned
+			// upload never lands after the next one.
 			return
 		}
 		data, _ := io.ReadAll(file)
@@ -170,17 +204,6 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"result": p.commandOutput, "exitCode": p.commandExit})
-
-	case strings.HasSuffix(r.URL.Path, "/files/download"):
-		data, ok := p.files[r.URL.Query().Get("path")]
-		if !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"message":"no such file"}`))
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(data)
 
 	case r.Method == http.MethodDelete:
 		p.deleted = append(p.deleted, r.URL.Path)
@@ -204,6 +227,104 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(p.runStatus)
 		_, _ = w.Write([]byte(p.runBody))
 	}
+}
+
+// sandbox is the sandbox id as Daytona describes it, running.
+func (p *platform) sandbox(id string) []byte {
+	return []byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`)
+}
+
+// download serves a file of the sandbox's as Daytona's toolbox does: whole from /files/download,
+// and as the part named file of a multipart answer from /files/bulk-download, which is how the
+// SDK streams one. A file it does not hold is a 404, or a part named error. It holds no lock while
+// it writes, so a reader that stops early leaves it waiting on nothing.
+func (p *platform) download(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("path")
+	bulk := strings.HasSuffix(r.URL.Path, "/files/bulk-download")
+	if bulk {
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		name = strings.Join(body.Paths, ",")
+	}
+	p.mu.Lock()
+	asked := p.asked
+	p.mu.Unlock()
+	if asked != nil {
+		asked(name)
+	}
+	p.mu.Lock()
+	var content io.Reader
+	if data, ok := p.files[name]; ok {
+		content = bytes.NewReader(data)
+	} else if size, ok := p.sized[name]; ok {
+		content = io.LimitReader(filler{}, int64(size))
+		if p.cut[name] {
+			content = io.MultiReader(io.LimitReader(filler{}, int64(size/2)), breaker{})
+		}
+	}
+	p.mu.Unlock()
+	wire := &counted{Writer: w}
+	defer func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.served[name] += wire.n
+	}()
+	var copied error
+	switch {
+	case !bulk && content == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no such file"}`))
+	case !bulk:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, copied = io.Copy(wire, content)
+	default:
+		parts := multipart.NewWriter(wire)
+		w.Header().Set("Content-Type", parts.FormDataContentType())
+		disposition := fmt.Sprintf(`form-data; name="file"; filename=%q`, name)
+		if content == nil {
+			disposition = `form-data; name="error"`
+			content = strings.NewReader(`{"message":"no such file","statusCode":404}`)
+		}
+		part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
+		if _, copied = io.Copy(part, content); copied == nil {
+			_ = parts.Close()
+		}
+	}
+	if errors.Is(copied, errBroken) {
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// errBroken is a download breaking off, which breaker reads as.
+var errBroken = errors.New("the connection dropped")
+
+type breaker struct{}
+
+func (breaker) Read([]byte) (int, error) { return 0, errBroken }
+
+// filler reads as an endless run of x.
+type filler struct{}
+
+func (filler) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = 'x'
+	}
+	return len(b), nil
+}
+
+// counted counts the bytes written through it.
+type counted struct {
+	io.Writer
+	n int64
+}
+
+func (c *counted) Write(b []byte) (int, error) {
+	n, err := c.Writer.Write(b)
+	c.n += int64(n)
+	return n, err
 }
 
 // secret serves Daytona's secret API: create, update and delete. The caller holds mu.
@@ -235,9 +356,6 @@ func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodPatch:
 		held.Value = *body.Value
-	case r.Method == http.MethodDelete && p.refuseDelete != "" && strings.Contains(held.Name, p.refuseDelete):
-		w.WriteHeader(http.StatusInternalServerError)
-		return
 	case r.Method == http.MethodDelete:
 		delete(p.secrets, id)
 		w.WriteHeader(http.StatusNoContent)
@@ -266,6 +384,36 @@ func (p *platform) holds(path string, data []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.files[path] = data
+}
+
+// holdsCut puts a file of size bytes of x at path whose download breaks off halfway.
+func (p *platform) holdsCut(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+	p.cut[path] = true
+}
+
+// onDownload has asked hear of each download before it is served.
+func (p *platform) onDownload(asked func(name string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked = asked
+}
+
+// holdsSized puts a file of size bytes of x at path.
+func (p *platform) holdsSized(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+}
+
+// sent is how many bytes the downloads of path put on the wire, and whether one has ended.
+func (p *platform) sent(path string) (int64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n, ok := p.served[path]
+	return n, ok
 }
 
 // answerAfter waits slow before a request is answered, or until its caller gives up. The
@@ -621,4 +769,165 @@ func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
 	s.Require().NoError(err)
 	s.Len(result.Files, sandbox.MaxFiles)
 	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileComesBackOnlyIfItIsNeitherEmptyNorTooLarge() {
+	sizes := map[string]int{"/tmp/empty.bin": 0, "/tmp/one.bin": 1, "/tmp/limit.bin": sandbox.MaxFileBytes,
+		"/tmp/over.bin": sandbox.MaxFileBytes + 1}
+	for name, size := range sizes {
+		s.platform.holdsSized(name, size)
+	}
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/empty.bin", "/tmp/one.bin", "/tmp/limit.bin", "/tmp/over.bin"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 2)
+	s.Equal("one.bin", result.Files[0].Name)
+	s.Equal([]byte("x"), result.Files[0].Data)
+	s.Equal("limit.bin", result.Files[1].Name)
+	s.True(bytes.Equal(bytes.Repeat([]byte("x"), sandbox.MaxFileBytes), result.Files[1].Data), "the largest file allowed comes back whole")
+	s.Equal([]string{"/tmp/empty.bin", "/tmp/over.bin"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileFarTooLargeIsRefusedWithoutBeingReadWhole() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+
+	result, err := s.box.Run(s.ctx, "dump()", []string{"/tmp/dump.bin"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("/tmp/dump.bin")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// What passed the limit is only what the connection's buffers took before the router
+	// stopped reading: a few MiB at most, well short of another MaxFileBytes.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestARefusedDownloadHasEndedBeforeTheNextFileIsAskedFor() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+	s.platform.holds("/tmp/small.txt", []byte("small"))
+	endedFirst := make(chan bool, 1)
+	s.platform.onDownload(func(name string) {
+		if name != "/tmp/small.txt" {
+			return
+		}
+		// The refused download ends once the router closes it; give the server a moment to
+		// notice, but never longer than the test may wait.
+		var ended bool
+		for deadline := time.Now().Add(3 * time.Second); !ended && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			_, ended = s.platform.sent("/tmp/dump.bin")
+		}
+		endedFirst <- ended
+	})
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/dump.bin", "/tmp/small.txt"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	s.Equal("small.txt", result.Files[0].Name)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	s.True(<-endedFirst, "the refused download was still open when the next file was asked for")
+}
+
+func (s *DaytonaSuite) TestAHandBackLeavesNoFileOnTheRoutersDisk() {
+	temp := s.T().TempDir()
+	s.T().Setenv("TMPDIR", temp)
+	s.platform.holds("/tmp/render.png", []byte("\x89PNG\r\n\x1a\nnot really a picture"))
+
+	result, err := s.box.Run(s.ctx, "render()", []string{"/tmp/render.png"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	left, err := os.ReadDir(temp)
+	s.Require().NoError(err)
+	s.Empty(left, "the file was copied to the router's disk and left there")
+}
+
+func (s *DaytonaSuite) TestAFileAskedForTwiceComesBackOnceAndTakesOneSlot() {
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		s.platform.holds("/tmp/"+name+".txt", []byte(name))
+	}
+
+	result, err := s.box.Run(s.ctx, "write()",
+		[]string{"/tmp/a.txt", "/tmp//a.txt", "/tmp/b.txt", "/tmp/./a.txt", "/tmp/c.txt", "/tmp/d.txt", "/tmp/a.txt", "/tmp/e.txt"})
+
+	s.Require().NoError(err)
+	var names []string
+	for _, file := range result.Files {
+		names = append(names, file.Name)
+	}
+	s.Equal([]string{"a.txt", "b.txt", "c.txt", "d.txt"}, names)
+	s.Equal([]string{"/tmp/e.txt"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileWhoseDownloadBreaksOffIsMissingRatherThanCutShort() {
+	s.platform.holdsCut("/tmp/report.csv", 1<<20)
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/report.csv"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
+}
+
+// TestAHungUploadIsCutAtTheSandboxsTimeout: a write holds the sandbox, so an upload Daytona
+// never answers is cut at the sandbox's timeout, as every other call to it is, and the next
+// call gets in.
+func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "cut long before the upload's end")
+	s.platform.mu.Lock()
+	s.platform.slowUpload = 0
+	s.platform.mu.Unlock()
+	s.NoError(box.Write(s.ctx, "f.txt", []byte("y")), "the next write gets in")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.Equal([]byte("y"), s.platform.files["f.txt"])
+}
+
+// TestAHungMkdirIsCutAtTheSandboxsTimeout: the directory a file sits in is made under the same
+// bound, and a write whose directory was not made uploads nothing.
+func (s *DaytonaSuite) TestAHungMkdirIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "dir/f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "cut long before the command's end")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.Empty(s.platform.uploads)
+}
+
+// TestACallerGivingUpDuringAWriteEndsIt is the control: the bound is on the caller's context,
+// so a caller that gives up before the sandbox's timeout is answered then.
+func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	err := s.box.Write(ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "answered long before the sandbox's 60 s timeout")
 }

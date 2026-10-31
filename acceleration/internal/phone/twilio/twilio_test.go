@@ -453,6 +453,74 @@ func (s *TwilioSuite) TestACallWithNoTermsAsksTwilioForNoneOfThem() {
 	s.False(s.seen.form.Has("SendDigits"))
 }
 
+func (s *TwilioSuite) TestACallWithAStatusURLAsksTwilioToPostHowItEnded() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	statusURL := "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+15125551234",
+		To:        "+15550001111",
+		Bridge:    phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		StatusURL: statusURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal(statusURL, s.seen.form.Get("StatusCallback"))
+	s.Equal("completed", s.seen.form.Get("StatusCallbackEvent"))
+	s.Equal(http.MethodPost, s.seen.form.Get("StatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.False(s.seen.form.Has("StatusCallback"))
+	s.False(s.seen.form.Has("StatusCallbackEvent"))
+	s.False(s.seen.form.Has("StatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"completed": phone.CallCompleted,
+		"busy":      phone.CallBusy,
+		"no-answer": phone.CallNoAnswer,
+		"failed":    phone.CallFailed,
+		"canceled":  phone.CallCanceled,
+	} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+func (s *TwilioSuite) TestARingingStatusDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1&CallStatus=ringing"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+}
+
+func (s *TwilioSuite) TestAStatusWithoutACallStatusIsRefused() {
+	_, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1"))
+
+	s.ErrorContains(err, "CallStatus")
+}
+
+func (s *TwilioSuite) TestAStatusThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"CallStatus":"busy"}`))
+
+	s.Error(err)
+}
+
+// formType is how Twilio posts a call's status.
+const formType = "application/x-www-form-urlencoded; charset=utf-8"
+
 func (s *TwilioSuite) TestRingingForLongerThanTwilioAllowsIsRefusedBeforeItIsAsked() {
 	_, err := s.provider.Dial(s.ctx, phone.Outbound{
 		From:        "+15125551234",

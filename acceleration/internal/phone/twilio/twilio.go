@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -391,6 +392,11 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.InitialDigits != "" {
 		form.Set("SendDigits", outbound.InitialDigits)
 	}
+	if outbound.StatusURL != "" {
+		form.Set("StatusCallback", outbound.StatusURL)
+		form.Set("StatusCallbackEvent", "completed")
+		form.Set("StatusCallbackMethod", http.MethodPost)
+	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls.json", p.accountSID)
 
 	var placed call
@@ -398,6 +404,32 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, err
 	}
 	return phone.Dialed{VendorCallID: placed.SID, Status: placed.Status}, nil
+}
+
+// ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
+// not end the call is a report that is not final.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: a call status is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: read a call status: %w", err))
+	}
+	word := form.Get("CallStatus")
+	if word == "" {
+		return phone.CallStatus{}, stack.Wrap(errors.New("twilio: a call status without a CallStatus"))
+	}
+	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+}
+
+// finalStatuses are the CallStatus words that end a call.
+var finalStatuses = map[string]phone.CallResult{
+	"completed": phone.CallCompleted,
+	"busy":      phone.CallBusy,
+	"no-answer": phone.CallNoAnswer,
+	"failed":    phone.CallFailed,
+	"canceled":  phone.CallCanceled,
 }
 
 // SendDigits is not available at Twilio, and says so rather than half-doing it.
