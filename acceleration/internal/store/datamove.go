@@ -592,11 +592,69 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 	return json.Marshal(fields)
 }
 
+// SkipOccurrencesBeforeCutOver moves each of the customer's tasks a move paused whose next
+// run came at or before the cut-over on to its next occurrence after it, as a resume counts a
+// paused task's next run from now. The source went on delivering after the last catch-up
+// until it was stopped, and what it delivered then never reached this copy, so such an
+// occurrence was delivered there or slept through, unless the source held its run past the
+// cut-over. next is the task's next occurrence after
+// the cut-over, or nil with the missed run to record, if any, when it has none left: then the
+// task is completed and loses the mark.
+func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID string, cutOver time.Time,
+	next func(ScheduledTask) (*time.Time, *ScheduledTaskRun, error)) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var tasks []ScheduledTask
+		// Locked, as a pause or an edit here may land meanwhile and writes the whole row.
+		if err := tx.NewSelect().Model(&tasks).
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			Where("state = ?", ScheduledTaskPaused).
+			Where("next_run_at <= ?", cutOver).
+			// An occurrence the source held for quiet hours past the cut-over was never
+			// delivered there: the worker here takes its run over when the hold ends.
+			Where(`NOT EXISTS (SELECT 1 FROM scheduled_task_runs AS str
+				WHERE str.customer_id = st.customer_id AND str.task_id = st.id
+				AND str.scheduled_for = st.next_run_at AND str.state = ? AND str.postponed_until > ?)`,
+				ScheduledTaskRunRunning, cutOver).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return fmt.Errorf("store: moved scheduled tasks due before the cut-over: %w", err)
+		}
+		for _, task := range tasks {
+			at, missed, err := next(task)
+			if err != nil {
+				return err
+			}
+			update := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+				Set("updated_at = now()").
+				Where("customer_id = ?", task.CustomerID).
+				Where("id = ?", task.ID)
+			if at != nil {
+				update = update.Set("next_run_at = ?", *at)
+			} else {
+				update = update.Set("state = ?", ScheduledTaskCompleted).Set("next_run_at = NULL").Set("move_paused = false")
+			}
+			if _, err := update.Exec(ctx); err != nil {
+				return fmt.Errorf("store: skip a moved task's occurrences before the cut-over: %w", err)
+			}
+			if at == nil && missed != nil {
+				missed.ID, missed.CreatedAt = newID(), time.Now().UTC()
+				// The occurrence's run, if the last catch-up brought one, stays as it is.
+				if _, err := tx.NewInsert().Model(missed).On("CONFLICT DO NOTHING").Exec(ctx); err != nil {
+					return fmt.Errorf("store: record a moved task's missed occurrence: %w", err)
+				}
+			}
+		}
+		return nil
+	})
+	return stack.Wrap(err)
+}
+
 // ResumeMovedRows is the cut-over of a move into this deployment: it resumes the customer's
 // scheduled tasks a move imported paused because they were active where they came from, and
 // clears their mark, so a task the user paused stays paused. A task keeps its next run, which
-// the source kept moving while it delivered, so nothing it delivered is delivered again; one
-// that came due meanwhile is the worker's to deliver or miss, as after any outage.
+// SkipOccurrencesBeforeCutOver, run first, has moved past the cut-over, so nothing the source
+// delivered is delivered again.
 //
 // A marked task whose agent config is deleted or missing here has nothing to run on, as the
 // API's resume refuses it (errUnknownConfig): it stays paused and loses the mark. The check is
@@ -604,42 +662,109 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 // whenever the source changes it. The config row is locked FOR SHARE, as refuseDeletedConfig
 // does, so a delete landing meanwhile either is seen or finds the task active and pauses it.
 //
-// It returns how many tasks it resumed, how many it left paused that way, and the campaigns
-// that were running there. Those it leaves paused and marked: a campaign rings only from the
-// router that starts it, so each is started here (POST /v1/agents/campaigns/{id}/start), and
-// any change of its state here clears the mark (setCampaignState). Running it again resumes
-// nothing twice.
-func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped int64, campaigns []string, err error) {
+// A user holds at most the config's limit of active tasks on it (AgentScheduling.MaxActive),
+// as the API's resume holds them to (errTooManyScheduledTasks). A user who made tasks here
+// before the cut-over has less room than the move brought tasks, so each user's marked tasks
+// are resumed oldest first while the room lasts. The rest stay paused and keep the mark: it
+// says the cut-over still owes them a resume, which running it again pays once the user has
+// cancelled or paused tasks here.
+//
+// It returns how many tasks it resumed, how many it left paused for want of a config, how many
+// for want of room, and the campaigns that were running there. Those it leaves paused and
+// marked: a campaign rings only from the router that starts it, so each is started here
+// (POST /v1/agents/campaigns/{id}/start), and any change of its state here clears the mark
+// (setCampaignState). Running it again resumes nothing twice.
+func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
-			Set("state = ?", ScheduledTaskActive).
-			Set("move_paused = false").
-			Set("updated_at = now()").
+		var marked []ScheduledTask
+		if err := tx.NewSelect().Model(&marked).
+			Column("id", "user_id", "config_id").
 			Where("customer_id = ?", customerID).
 			Where("move_paused").
 			// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
 			Where("state = ?", ScheduledTaskPaused).
-			Where("EXISTS (SELECT 1 FROM agent_configs AS ac WHERE ac.customer_id = st.customer_id AND ac.id = st.config_id AND ac.deleted_at IS NULL FOR SHARE)").
-			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			Order("created_at", "id").
+			Scan(ctx); err != nil {
+			return fmt.Errorf("store: moved scheduled tasks: %w", err)
 		}
-		if resumed, err = result.RowsAffected(); err != nil {
-			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		// The limit of each config, nil when it is deleted or missing; the active tasks of
+		// each user on each config, counting those resumed so far.
+		limits := map[string]*int{}
+		type holder struct{ user, config string }
+		held := map[holder]int{}
+		var resume, unmark []string
+		for _, task := range marked {
+			limit, read := limits[task.ConfigID]
+			if !read {
+				var config AgentConfig
+				err := tx.NewSelect().Model(&config).
+					Column("scheduling").
+					Where("customer_id = ?", customerID).
+					Where("id = ?", task.ConfigID).
+					Where("deleted_at IS NULL").
+					For("SHARE").
+					Scan(ctx)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("store: lock the config of a moved scheduled task: %w", err)
+				}
+				if err == nil {
+					room := config.Scheduling.MaxActive()
+					limit = &room
+				}
+				limits[task.ConfigID] = limit
+			}
+			if limit == nil {
+				unmark = append(unmark, task.ID)
+				continue
+			}
+			key := holder{task.UserID, task.ConfigID}
+			count, counted := held[key]
+			if !counted {
+				var err error
+				if count, err = activeScheduledTasks(ctx, tx, customerID, task.UserID, task.ConfigID); err != nil {
+					return err
+				}
+			}
+			if count >= *limit {
+				held[key] = count
+				overLimit++
+				continue
+			}
+			held[key] = count + 1
+			resume = append(resume, task.ID)
 		}
-		result, err = tx.NewUpdate().Model((*ScheduledTask)(nil)).
-			Set("move_paused = false").
-			Set("updated_at = now()").
-			Where("customer_id = ?", customerID).
-			Where("move_paused").
-			// The update above resumed every other one.
-			Where("state = ?", ScheduledTaskPaused).
-			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		if len(resume) > 0 {
+			result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+				Set("state = ?", ScheduledTaskActive).
+				Set("move_paused = false").
+				Set("updated_at = now()").
+				Where("customer_id = ?", customerID).
+				Where("id IN (?)", bun.In(resume)).
+				Where("move_paused").
+				Where("state = ?", ScheduledTaskPaused).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			}
+			if resumed, err = result.RowsAffected(); err != nil {
+				return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+			}
 		}
-		if skipped, err = result.RowsAffected(); err != nil {
-			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		if len(unmark) > 0 {
+			result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+				Set("move_paused = false").
+				Set("updated_at = now()").
+				Where("customer_id = ?", customerID).
+				Where("id IN (?)", bun.In(unmark)).
+				Where("move_paused").
+				Where("state = ?", ScheduledTaskPaused).
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+			}
+			if skipped, err = result.RowsAffected(); err != nil {
+				return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+			}
 		}
 		if err := tx.NewSelect().Model((*Campaign)(nil)).
 			Column("id").
@@ -652,9 +777,9 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return nil
 	})
 	if err != nil {
-		return 0, 0, nil, stack.Wrap(err)
+		return 0, 0, 0, nil, stack.Wrap(err)
 	}
-	return resumed, skipped, campaigns, nil
+	return resumed, skipped, overLimit, campaigns, nil
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text

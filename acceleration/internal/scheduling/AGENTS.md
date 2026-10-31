@@ -290,12 +290,22 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
 - **The cut-over resumes what the move paused, never what the user paused.** An import marks the task
   `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
-  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have.
+  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have,
+  after `SkipOccurrencesBeforeCutOver` moved a `next_run_at` at or before the cut-over to the first
+  occurrence after it, as a resume counts from now: the source delivered it after the last catch-up
+  or slept through it. One with none left is completed, a one-shot with its `missed` run. An occurrence
+  whose run the source held for quiet hours past the cut-over keeps its time, for the worker here to take over
+  (`TestReplicateResumeSuite/TestResumeDoesNotDeliverAgain*`, `TestResumeCloses*`, `TestResumeCompletes*`,
+  `TestResumeSkipsEvery*`, `TestResumeLeavesAnOccurrenceTheSourceHeld*`).
   A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
   a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
   missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
-  task again whatever happened to its config here. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
-  `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  task again whatever happened to its config here. A user holds at most `AgentScheduling.MaxActive()`
+  active tasks on a config, the limit the API resume and the agent's tools use: the cut-over resumes a
+  user's marked tasks oldest first while the room lasts, and leaves the rest paused and still marked,
+  counted in the command's output, so running it again resumes them once the user has made room.
+  `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`, `TestReplicateResumeSuite` (`cmd/router`),
+  `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
   `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or

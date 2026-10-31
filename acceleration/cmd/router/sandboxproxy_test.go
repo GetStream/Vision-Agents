@@ -38,6 +38,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // TestARouterWithoutAProxyAddressServesNoProxy is the control: unset, as on every router
@@ -65,6 +66,7 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -80,6 +82,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -175,6 +178,7 @@ func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -193,6 +197,7 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	shard := forward(t, address)
 	redis, err := live.New(live.Options{Address: address, Shard: live.Shard{Address: shard.Addr().String()}})
 	require.NoError(t, err)
@@ -287,6 +292,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -639,6 +645,7 @@ func (s *SandboxProxyHandOverSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
+	s.Require().NoError(redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	s.Require().NoError(err)
 	s.redis = redis
