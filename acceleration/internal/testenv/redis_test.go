@@ -3,6 +3,7 @@ package testenv
 import (
 	"bufio"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func (s *RedisSuite) TestARedisThatAnswersLateIsWaitedFor() {
 	ready := time.Now().Add(2500 * time.Millisecond)
 	address := s.peer(ready, "+PONG\r\n")
 
-	s.Require().NoError(waitForRedis(address, 10*time.Second))
+	s.Require().NoError(awaitRedis(address, 10*time.Second))
 	s.False(time.Now().Before(ready), "returned before the Redis answered")
 }
 
@@ -57,7 +58,7 @@ func (s *RedisSuite) TestARedisThatNeverAnswersIsAnError() {
 	address := s.peer(time.Now().Add(time.Hour), "+PONG\r\n")
 
 	start := time.Now()
-	err := waitForRedis(address, 1500*time.Millisecond)
+	err := awaitRedis(address, 1500*time.Millisecond)
 
 	s.Error(err)
 	s.Contains(err.Error(), address)
@@ -67,14 +68,25 @@ func (s *RedisSuite) TestARedisThatNeverAnswersIsAnError() {
 func (s *RedisSuite) TestARedisStillLoadingIsNotReady() {
 	address := s.peer(time.Now(), "-LOADING Redis is loading the dataset in memory\r\n")
 
-	s.Error(waitForRedis(address, 500*time.Millisecond))
+	s.Error(awaitRedis(address, 500*time.Millisecond))
 }
 
-func (s *RedisSuite) TestNothingListeningIsAnError() {
+func (s *RedisSuite) TestNothingListeningIsNotWaitedFor() {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	address := listener.Addr().String()
 	s.Require().NoError(listener.Close())
 
-	s.Error(waitForRedis(address, 300*time.Millisecond))
+	start := time.Now()
+	s.NoError(awaitRedis(address, 10*time.Second))
+	s.Less(time.Since(start), 2*time.Second, "a refused connection was waited on as if it were a slow Redis")
+}
+
+func (s *RedisSuite) TestTheConfiguredRedisIsAwaitedWhenTheProcessStarts() {
+	address := os.Getenv(redisAddressVar)
+	if address == "" || ping(address) != nil {
+		s.T().Skip("no Redis answering at " + redisAddressVar)
+	}
+
+	s.Equal(address, redisAwaited, "init did not wait for the Redis the suites dial")
 }

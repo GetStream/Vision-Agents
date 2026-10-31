@@ -13,7 +13,7 @@ import (
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -41,7 +41,6 @@ func (s *QuotaSuite) SetupSuite() {
 		s.T().Skipf("%s not set", AddressEnvVar)
 	}
 
-	s.Require().NoError(testenv.WaitForRedis(address))
 	client, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{address},
 		DisableCache: true,

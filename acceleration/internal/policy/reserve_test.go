@@ -19,7 +19,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -121,7 +120,6 @@ func (p *redisProxy) stop() {
 
 // direct is a client of the suites' Redis, for reading and deleting the test's own keys.
 func (s *PolicySuite) direct() rueidis.Client {
-	s.Require().NoError(testenv.WaitForRedis(os.Getenv("ROUTER_REDIS_ADDR")))
 	client, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, SelectDB: usagetest.RedisDB, DisableCache: true,
 	})

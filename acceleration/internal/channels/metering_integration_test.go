@@ -100,7 +100,6 @@ func (s *TextMeteringSuite) TestAReplyPartlySentCountsOnceAgainstTheSandboxDay()
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	s.Require().NoError(testenv.WaitForRedis(address))
 	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)

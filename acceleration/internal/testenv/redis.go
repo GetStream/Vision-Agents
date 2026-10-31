@@ -1,14 +1,16 @@
 package testenv
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"syscall"
 	"time"
 )
 
-// redisReady is how long WaitForRedis waits for an answer. A Redis container started just
-// before the run has been seen to take 13 s and 28 s to answer, with the machine loaded;
+// redisReady is how long awaitRedis waits for an answer. A Redis container started just
+// before the run answered 12.9 s after `docker run` returned, with the machine loaded;
 // 60 s leaves room above that without hiding a Redis that is not coming.
 const redisReady = 60 * time.Second
 
@@ -16,22 +18,19 @@ const redisReady = 60 * time.Second
 // must not use up the whole wait.
 const redisAttempt = time.Second
 
-// WaitForRedis returns once the Redis at address answers PING, or an error when it does
-// not within 60 s.
+// awaitRedis returns once the Redis at address answers PING, or an error when it has
+// accepted connections and still not answered within the given time.
 //
 // A Redis container that has only just started accepts the connection (Docker's port
 // forwarding does) before Redis replies. A client dialled then sits in its handshake until
-// its own 5 s dial timeout and fails, which is why a suite calls this before its first
-// dial.
-func WaitForRedis(address string) error {
-	return waitForRedis(address, redisReady)
-}
-
-func waitForRedis(address string, within time.Duration) error {
+// its own 5 s dial timeout and fails. A connection that is refused is not that case: nothing
+// is there to wait for, and a suite that needs the Redis says so itself, so this returns nil
+// at once rather than hold every package that imports testenv while no Redis runs.
+func awaitRedis(address string, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
 		err := ping(address)
-		if err == nil {
+		if err == nil || errors.Is(err, syscall.ECONNREFUSED) {
 			return nil
 		}
 		if time.Now().After(deadline) {

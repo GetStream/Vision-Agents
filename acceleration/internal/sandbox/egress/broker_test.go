@@ -40,7 +40,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/brokertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 func TestProxyBrokerContract(t *testing.T) {
@@ -854,9 +853,6 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR is not set")
-	}
-	if err := testenv.WaitForRedis(address); err != nil {
-		t.Fatal(err)
 	}
 	r := &rig{test: t.Name(), run: uuid.NewString()}
 	var err error

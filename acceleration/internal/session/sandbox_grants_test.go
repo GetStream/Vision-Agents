@@ -36,7 +36,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // SandboxGrantsSuite is what a session's sandbox gets of its config's sandbox bindings: a
@@ -376,7 +375,6 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
-	s.Require().NoError(testenv.WaitForRedis(address))
 	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)
@@ -892,7 +890,6 @@ func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionIsToldToReconnectOnEvery
 				if address == "" {
 					s.T().Skip("ROUTER_REDIS_ADDR is not set")
 				}
-				s.Require().NoError(testenv.WaitForRedis(address))
 				redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 				s.Require().NoError(err)
 				s.T().Cleanup(redis.Close)
@@ -1250,7 +1247,6 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerBindsALateGrantOnceTheLoginFinish
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
-	s.Require().NoError(testenv.WaitForRedis(address))
 	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)

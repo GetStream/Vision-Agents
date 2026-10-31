@@ -9,7 +9,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // testTimeout is a timeout short enough to wait out in a test.
@@ -109,7 +108,6 @@ func (s *SessionSuite) holdsClaims() bool {
 	if address == "" {
 		return false
 	}
-	s.Require().NoError(testenv.WaitForRedis(address))
 	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
