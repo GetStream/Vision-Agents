@@ -521,6 +521,9 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 // as the phone service opens one for a placed call.
 func (s *CallStatusSuite) peerHolding(logged *lockedLog) (*httptest.Server, *session.Manager, string) {
 	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+	// The node shares the suite's phone service, and the last node made takes its unanswered
+	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
+	s.router.phone.OnUnanswered(s.router.endUnanswered)
 	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
 		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
