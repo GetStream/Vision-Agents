@@ -183,6 +183,7 @@ const (
 	AgentResponseStatusCancelled AgentResponseStatus = "cancelled"
 	AgentResponseStatusCompleted AgentResponseStatus = "completed"
 	AgentResponseStatusFailed    AgentResponseStatus = "failed"
+	AgentResponseStatusRefused   AgentResponseStatus = "refused"
 	AgentResponseStatusRunning   AgentResponseStatus = "running"
 )
 
@@ -194,6 +195,8 @@ func (e AgentResponseStatus) Valid() bool {
 	case AgentResponseStatusCompleted:
 		return true
 	case AgentResponseStatusFailed:
+		return true
+	case AgentResponseStatusRefused:
 		return true
 	case AgentResponseStatusRunning:
 		return true
@@ -3376,11 +3379,11 @@ type AgentResponse struct {
 	Said      *string `json:"said,omitempty"`
 	SessionId string  `json:"session_id"`
 
-	// Status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+	// Status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 	Status AgentResponseStatus `json:"status"`
 }
 
-// AgentResponseStatus cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+// AgentResponseStatus cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 type AgentResponseStatus string
 
 // AgentResponseItem defines model for AgentResponseItem.
@@ -5106,7 +5109,7 @@ type CreateSessionRequest struct {
 	// Tts Omit it and the config decides, or en-low-latency when there is no config.
 	Tts *string `json:"tts,omitempty"`
 
-	// UserId Who the agent joins the call as.
+	// UserId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
 	UserId   *string       `json:"user_id,omitempty"`
 	UserName *string       `json:"user_name,omitempty"`
 	Video    *SessionVideo `json:"video,omitempty"`
@@ -5456,7 +5459,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -6372,7 +6375,7 @@ type ModelCallTiming struct {
 	// DurationMs Request to completed response or failed create.
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
-	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
+	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
 	ErrorCode   *string `json:"error_code,omitempty"`
 	InputTokens *int64  `json:"input_tokens,omitempty"`
 	Model       string  `json:"model"`
@@ -7921,7 +7924,9 @@ type Session struct {
 	Tts *string `json:"tts,omitempty"`
 
 	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
-	Usage  *CallUsage    `json:"usage,omitempty"`
+	Usage *CallUsage `json:"usage,omitempty"`
+
+	// UserId The name the agent joined the call as. It is not the owner of the session.
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
 
@@ -8470,7 +8475,7 @@ type Speech struct {
 
 // SpeechRequest defines model for SpeechRequest.
 type SpeechRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -9220,7 +9225,7 @@ type TranscriptionMode string
 
 // TranscriptionRequest defines model for TranscriptionRequest.
 type TranscriptionRequest struct {
-	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
 	Callback *string `json:"callback,omitempty"`
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -10781,9 +10786,6 @@ type ResetLimitUsageJSONRequestBody = LimitResetInput
 // UpdateLimitJSONRequestBody defines body for UpdateLimit for application/json ContentType.
 type UpdateLimitJSONRequestBody = LimitChange
 
-// RunRollupJSONRequestBody defines body for RunRollup for application/json ContentType.
-type RunRollupJSONRequestBody = RollupRequest
-
 // TranscribeRecordingJSONRequestBody defines body for TranscribeRecording for application/json ContentType.
 type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
@@ -12325,7 +12327,7 @@ type ClientInterface interface {
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12338,7 +12340,7 @@ type ClientInterface interface {
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13101,6 +13103,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveChatDelivery Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClassifyWithBody Ask a classifier typed questions about a piece of text
 	//
@@ -14028,24 +14037,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollupWithBody Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunRollup Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSpend What the calling customer spent, grouped
 	//
@@ -16670,7 +16661,7 @@ func (c *Client) DeleteProviderKey(ctx context.Context, provider string, params 
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type.
 //
@@ -16693,7 +16684,7 @@ func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18277,6 +18268,23 @@ func (c *Client) QueryAuditWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 func (c *Client) QueryAudit(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewQueryAuditRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveChatDelivery Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *Client) ReceiveChatDelivery(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveChatDeliveryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -20224,44 +20232,6 @@ func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, req
 // Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 func (c *Client) GetAgentStats(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentStatsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollupWithBody Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RunRollup Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *Client) RunRollup(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunRollupRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -28004,6 +27974,33 @@ func NewQueryAuditRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewReceiveChatDeliveryRequest constructs an http.Request for the ReceiveChatDelivery method
+func NewReceiveChatDeliveryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/chat/internal/messages")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewClassifyRequest calls the generic Classify builder with application/json body
 func NewClassifyRequest(server string, body ClassifyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -31443,46 +31440,6 @@ func NewGetAgentStatsRequest(server string, params *GetAgentStatsParams) (*http.
 	return req, nil
 }
 
-// NewRunRollupRequest calls the generic RunRollup builder with application/json body
-func NewRunRollupRequest(server string, body RunRollupJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRunRollupRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRunRollupRequestWithBody constructs an http.Request for the RunRollup method, with any body, and a specified content type
-func NewRunRollupRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/stats/rollup")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetSpendRequest constructs an http.Request for the GetSpend method
 func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, error) {
 	var err error
@@ -33886,7 +33843,7 @@ type ClientWithResponsesInterface interface {
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -33899,7 +33856,7 @@ type ClientWithResponsesInterface interface {
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34734,6 +34691,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/audit/query (the `QueryAudit` operationId).
 	QueryAuditWithResponse(ctx context.Context, body QueryAuditJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryAuditResponse, error)
+
+	// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+	//
+	// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+	ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error)
 
 	// ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
 	//
@@ -35747,24 +35713,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
 	GetAgentStatsWithResponse(ctx context.Context, params *GetAgentStatsParams, reqEditors ...RequestEditorFn) (*GetAgentStatsResponse, error)
-
-	// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
-
-	// RunRollupWithResponse Aggregate request rows into a rollup table
-	//
-	// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-	RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error)
 
 	// GetSpendWithResponse What the calling customer spent, grouped
 	//
@@ -52561,6 +52509,47 @@ func (r QueryAuditResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveChatDeliveryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveChatDeliveryResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveChatDeliveryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveChatDeliveryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveChatDeliveryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveChatDeliveryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ClassifyResponse200Headers the declared response headers of an HTTP 200 response for Classify
 type ClassifyResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -59889,107 +59878,6 @@ func (r GetAgentStatsResponse) ContentType() string {
 	return ""
 }
 
-// RunRollupResponse200Headers the declared response headers of an HTTP 200 response for RunRollup
-type RunRollupResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// RunRollupResponse402Headers the declared response headers of an HTTP 402 response for RunRollup
-type RunRollupResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type RunRollupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *RollupResult
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *RunRollupResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *RunRollupResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RunRollupResponse) GetJSON200() *RollupResult {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r RunRollupResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r RunRollupResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r RunRollupResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r RunRollupResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r RunRollupResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r RunRollupResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r RunRollupResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RunRollupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RunRollupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RunRollupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetSpendResponse200Headers the declared response headers of an HTTP 200 response for GetSpend
 type GetSpendResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -63614,7 +63502,7 @@ func (c *ClientWithResponses) DeleteProviderKeyWithResponse(ctx context.Context,
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -63633,7 +63521,7 @@ func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context,
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
-// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
+// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -64965,6 +64853,21 @@ func (c *ClientWithResponses) QueryAuditWithResponse(ctx context.Context, body Q
 		return nil, err
 	}
 	return ParseQueryAuditResponse(rsp)
+}
+
+// ReceiveChatDeliveryWithResponse Receive a message Stream Chat delivers
+//
+// Where Stream Chat delivers each message written in an agent channel. The router queues the message and answers 200 once the queue holds it; a worker answers it after that, as the message webhook would, and a message the webhook or an earlier delivery already brought is not queued again. The body is the message.new event with the app_id it was written in. Unauthenticated because Stream is not a customer: each delivery is signed as Standard Webhooks signs with a public key (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1a, ed25519 over id.timestamp.body) with a key only Stream holds, so no app's API secret, token or key is enough. A deployment with no delivery key answers 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/chat/internal/messages (the `ReceiveChatDelivery` operationId).
+func (c *ClientWithResponses) ReceiveChatDeliveryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveChatDeliveryResponse, error) {
+	rsp, err := c.ReceiveChatDelivery(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveChatDeliveryResponse(rsp)
 }
 
 // ClassifyWithBodyWithResponse Ask a classifier typed questions about a piece of text
@@ -66590,36 +66493,6 @@ func (c *ClientWithResponses) GetAgentStatsWithResponse(ctx context.Context, par
 		return nil, err
 	}
 	return ParseGetAgentStatsResponse(rsp)
-}
-
-// RunRollupWithBodyWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollupWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
-}
-
-// RunRollupWithResponse Aggregate request rows into a rollup table
-//
-// Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/stats/rollup (the `RunRollup` operationId).
-func (c *ClientWithResponses) RunRollupWithResponse(ctx context.Context, body RunRollupJSONRequestBody, reqEditors ...RequestEditorFn) (*RunRollupResponse, error) {
-	rsp, err := c.RunRollup(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunRollupResponse(rsp)
 }
 
 // GetSpendWithResponse What the calling customer spent, grouped
@@ -86287,6 +86160,50 @@ func ParseQueryAuditResponse(rsp *http.Response) (*QueryAuditResponse, error) {
 	return response, nil
 }
 
+// ParseReceiveChatDeliveryResponse parses an HTTP response from a ReceiveChatDeliveryWithResponse call
+func ParseReceiveChatDeliveryResponse(rsp *http.Response) (*ReceiveChatDeliveryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveChatDeliveryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case rsp.StatusCode == 503:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
 // ParseClassifyResponse parses an HTTP response from a ClassifyWithResponse call
 func ParseClassifyResponse(rsp *http.Response) (*ClassifyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -94807,125 +94724,6 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetAgentStatsResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseRunRollupResponse parses an HTTP response from a RunRollupWithResponse call
-func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RunRollupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RollupResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers RunRollupResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers RunRollupResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

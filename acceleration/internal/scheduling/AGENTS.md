@@ -64,7 +64,7 @@ One word, one meaning, in code, docs and API alike.
 | reason | The short code a failed or missed run records; the full error goes to the logs only | `Reason*` constants (`scheduler.go:105`), `Failure.Reason` | `user_on_call`, `not_answered`, `task_paused` |
 | final | A failure another attempt would only repeat, or that would ring the user again: not retried | `Failure.Final`, `undeliveredFinally` | `not_answered`, `already_called` |
 | quiet hours | The part of the user's local day an occurrence is held through: `{start, end}` as "22:00", read in the task's zone; an end that does not read after the start (earlier or equal) wraps midnight | `QuietEnd` (`quiet.go:46`), `ScheduledTaskQuietHours` | `{"start": "22:00", "end": "07:00"}` |
-| schedule, RRULE subset | `at` or `in`, an optional `repeat` (FREQ DAILY, WEEKLY, MONTHLY, YEARLY; INTERVAL; BYDAY; BYMONTHDAY; COUNT ≤ 1000) and `until`, an inclusive local date. `start_local` is stored as the wall clock with no zone; a `next_run_at` that reads as it is its instant, so a fall-back hour's second pass survives `FromStored` (AI-1563). A repeat created with its start passed starts at its first occurrence after now, COUNT counted from there (`FromNow`, AI-1564) | `Input`, `Schedule`, `Parse`, `FromStored`, `parseRepeat` (`scheduling.go:436`) | `at: "09:00"`, `repeat: "FREQ=MONTHLY;BYDAY=-1FR"`: last Friday of every month |
+| schedule, RRULE subset | `at` or `in`, an optional `repeat` (FREQ DAILY, WEEKLY, MONTHLY, YEARLY; INTERVAL; BYDAY; BYMONTHDAY; COUNT ≤ 1000) and `until`, an inclusive local date. `start_local` is stored as the wall clock with no zone; a `next_run_at` that reads as it is its instant, so a fall-back hour's second pass survives `FromStored` (AI-1563). A repeat created with its start passed starts at its first occurrence after now, COUNT counted from there (`FromNow`, AI-1564); a reschedule that moves the start counts the same way, one that sends the stored start back (a reword, a repeat or until edit) keeps counting from it; a time of day alone (`09:00`) equal to the stored one is the stored start (`StoredClock`), a different one is a move (`MovesStartFrom`, AI-2018: `TestAStartMovesOnlyWhenItsClockReadingDiffers`, `TestARescheduleToAStartPassedRunsItsWholeCountFromNow`, `TestAnEditThatSendsTheStartBackKeepsCountingFromIt`, `TestAnEditResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart`, `TestTheAgentResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart`) | `Input`, `Schedule`, `Parse`, `FromStored`, `parseRepeat` (`scheduling.go:436`) | `at: "09:00"`, `repeat: "FREQ=MONTHLY;BYDAY=-1FR"`: last Friday of every month |
 | zone resolution | Which IANA zone a new task takes, first match wins: the call's argument, the session's, `users.timezone`, the config's `default_timezone`; none is `timezone_unknown`. `Local` is refused | `ResolveZone` (`scheduling.go:153`), `LoadZone` | Session opened with `timezone: "America/New_York"`, no argument: the task is in New York time |
 | due | When an occurrence came due, or when the hold on it ended; the worker's missed check and the call grace count lateness from it. The prompt's `due=` and `late=` count from the run's `scheduled_for` instead, or for a one-shot's scheduled run from its one occurrence, so a run an edit re-dued still states when it was due (`scheduledPrompt`, AI-1597) | `scheduledDelivery.Due`, `Scheduler.missed` | Held until 07:00: a 07:05 delivery is 5 min late to the worker, not 7 h 35 min |
 | command id | The id the follow-up turn is sent under, so a conversation runs it once | `"st_" + run.ID` (`DeliverScheduledTask`); a call's turn adds `_call`; a turn run again adds `_r1` (`replyCommand`) | `st_01JB...`, `st_01JB..._r1` |
@@ -139,7 +139,11 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 - **A call rings once, on an SMS number, never more than 15 min late, and only with ring and
   call limit left in the occurrence (S5).** Too late is `missed` without a call; nobody
   answering is `not_answered`, final, kept on the run for a worker that takes it over and for
-  a retry, whatever would stop that retry's call.
+  a retry, whatever would stop that retry's call. A call placed whose end the run does not
+  record (delivered, or cut off with the worker) is `already_called`, and no channel after
+  `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
+  next channel to carry the task. A call taken whose end a failed store write never recorded
+  (the give-back of a call not placed, or the `not_answered` reason) is the same.
   `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
   `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
@@ -148,6 +152,9 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestScheduledTasksSuite/TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall`,
   `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsNotAnswered`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNotTextedToo`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel`,
+  `TestScheduledTasksSuite/TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed`,
   `TestStoreSuite/TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver`,
   `TestScheduledTasksSuite/TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered`,
   `TestScheduledTasksSuite/TestARetryAQuarterHourLateAfterAnUnansweredCallIsNotAnswered`,
@@ -273,11 +280,22 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   `TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns` (`internal/store`; `internal/api` has a suite of the same name).
 - **A moved task arrives paused and unclaimed.** The deployment it left delivers it until the cut-over,
   so every import of a task, the copy and each change, writes `active` as `paused` and clears the claim
-  (`pauseImportedTask`). `TestDataMoveSuite/TestAnActiveScheduledTaskArrivesPausedAndUnclaimed`,
+  (`pauseImported`). `TestDataMoveSuite/TestAnActiveScheduledTaskArrivesPausedAndUnclaimed`,
   `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
+- **The cut-over resumes what the move paused, never what the user paused.** An import marks the task
+  `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
+  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have.
+  A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
+  a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
+  missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
+  task again whatever happened to its config here. `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`,
+  `TestReplicateResumeSuite` (`cmd/router`), `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
 - **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
   runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
-  paused task stays; its old runs do not. `TestStoreSuite/TestPrune*` in
+  paused task stays; its old runs do not. Each delete reads its table by an index
+  (`scheduled_task_runs_finished_idx`, `scheduled_tasks_pruned_idx`), and the delete's state test must
+  imply the tasks index's predicate (`TestPruneReadsItsIndexes`). `TestStoreSuite/TestPrune*` in
   `internal/store/scheduled_tasks_prune_test.go`.
 
 ## Run the tests

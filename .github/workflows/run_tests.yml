@@ -35,7 +35,6 @@ jobs:
     name: Lint (ruff + mypy + validate pyproject.toml)
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: read
     steps:
       - name: Checkout

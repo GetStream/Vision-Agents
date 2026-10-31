@@ -46,6 +46,10 @@ type Result struct {
 	// the last run, whose token reaches code some seconds after the run began.
 	Unconnected []Grant
 	Connected   []string
+	// Reconnect are the late grants whose user connected a connection saved on a connector
+	// revision that gives the sandbox no access, or another env var or hosts. No run of this
+	// session gets their token, even after the user reconnects it; the next session does.
+	Reconnect []Grant
 }
 
 // File is something the code wrote that is wanted outside the sandbox.
@@ -181,13 +185,23 @@ func Tool(box Sandbox) llm.Tool {
 			} else {
 				description += fmt.Sprintf(" $%s is a placeholder that works only for %s, only in a request header.", grant.Env, hosts)
 			}
-			if grant.Late {
+			// A withdrawn grant stays withdrawn until the session ends, so no retry is offered. The
+			// proxy broker refuses its CONNECT with 403 Forbidden, Daytona's secret holds a value the
+			// host rejects with 401. A late grant's 401 is first "not connected yet", so its revoked
+			// sentence comes after the user connected and the code ran once more.
+			if !grant.Late {
+				description += fmt.Sprintf(" A 401 from %s, or a 403 from the proxy, means the %s connection was revoked or removed: "+
+					"tell the user to connect %s again; running the code again in this session will not help.",
+					hosts, grant.Binding, grant.Binding)
+			} else {
 				// Its token reaches code from the next run after the user connects, at once
 				// through the egress proxy, and within 18 to 24 seconds as a Daytona secret
 				// (probe against Daytona's API, 2026-10-25).
 				description += fmt.Sprintf(" A 401 from %s means the user has not connected %s yet: %s__list_tools shows them "+
 					"a button to connect it and waits; if you cannot call it, tell the user they must connect %s. Once they have, "+
 					"run the code again; if it still gets 401, wait 20 seconds and run it once more.", hosts, grant.Binding, grant.Binding, grant.Binding)
+				description += " If it still gets 401 or 403 after the user connected and you ran it once more, the connection was " +
+					"revoked or removed: tell the user; running it again in this session will not help."
 			}
 			if !slices.Contains(grant.Hosts, gitHost) {
 				continue

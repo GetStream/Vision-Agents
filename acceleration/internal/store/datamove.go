@@ -47,6 +47,10 @@ type dataTable struct {
 	// two deployments. Such a row is imported without its id, and is written once: importing
 	// it again, or a row the destination already holds under it, changes nothing.
 	across string
+	// vouched are the columns this deployment sets on its own word, such as users.minted: the
+	// router handed that guest out. An import leaves them to the local default, since a row
+	// the customer sends is the customer's word, not this deployment's.
+	vouched []string
 }
 
 // rollup is a table of counts per key that every shard keeps its own rows of, so an export of
@@ -74,13 +78,14 @@ func (t dataTable) rollup() bool {
 // under this deployment's key and their callbacks are this deployment's URL. And
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
-// either; and channel_thread_waiting, replies in flight for minutes. And
-// connector_invocations and connector_audit, with connector_audit_credentials and
+// either; and channel_thread_waiting and channel_thread_inbound, messages in flight for
+// minutes. And connector_invocations and connector_audit, with connector_audit_credentials and
 // connector_invocation_arguments: this deployment's record of what it did with credentials
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the
 // connection where it moved to records its client again. And connector_connection_validations:
-// the next validate where it moved to records its result again.
+// the next validate where it moved to records its result again. And chat_inbound, Stream
+// Chat messages in flight for minutes.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
@@ -103,7 +108,7 @@ var dataTables = []dataTable{
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
-	{name: "users", customer: "customer_id"},
+	{name: "users", customer: "customer_id", vouched: []string{"minted"}},
 	{name: "scheduled_tasks", customer: "customer_id"},
 	{name: "scheduled_task_runs", customer: "customer_id"},
 	{name: "calls", customer: "customer_id", shard: true},
@@ -478,10 +483,14 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if err != nil {
 		return err
 	}
-	if table == "scheduled_tasks" {
-		if row, err = pauseImportedTask(row); err != nil {
-			return err
-		}
+	switch table {
+	case "scheduled_tasks":
+		row, err = pauseImported(row, ScheduledTaskActive, ScheduledTaskPaused, true)
+	case "campaigns":
+		row, err = pauseImported(row, Running, Paused, false)
+	}
+	if err != nil {
+		return err
 	}
 	if table == "phone_numbers" {
 		if err := importableNumber(ctx, db, customerID, row); err != nil {
@@ -493,7 +502,7 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		return err
 	}
 
-	columns := shape.insertable()
+	columns := shape.insertable(spec)
 	if spec.across != "" {
 		// The id is the destination's to draw: the source's may be one of its own rows'.
 		columns = slices.DeleteFunc(columns, func(column string) bool { return spec.isKey(shape, column) })
@@ -554,23 +563,98 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	return nil
 }
 
-// pauseImportedTask makes an imported scheduled task one this deployment cannot deliver yet.
-// The deployment it came from goes on delivering until the move is cut over, so an active
-// task would be delivered twice. It arrives paused, with the claim of a worker there cleared,
-// and is resumed once the move is over. Every change the move carries is imported the same
-// way, so a task still active there stays paused here until then; a paused, completed or
-// failed task keeps its state.
-func pauseImportedTask(row json.RawMessage) (json.RawMessage, error) {
+// pauseImported makes an imported scheduled task or campaign one this deployment cannot
+// deliver yet. The deployment it came from goes on delivering until the move is cut over, so
+// an active task would be delivered twice. It arrives paused and marked move_paused, which is
+// what `router replicate --resume` resumes at cut-over (ResumeMovedRows); a task arrives with
+// the claim of a worker there cleared. Every change the move carries is imported the same
+// way, so a task still active there stays paused here until then, and one paused, completed
+// or failed there keeps its state and loses the mark: the user paused it, so the cut-over
+// leaves it paused.
+//
+// A campaign running there does not ring anybody here either way: only starting it here
+// does (campaign.Runner.Start). It arrives paused so that it says so, and marked so that the
+// cut-over can name the campaigns to start.
+func pauseImported(row json.RawMessage, active, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
-		return nil, fmt.Errorf("store: read an imported scheduled task: %w", err)
+		return nil, fmt.Errorf("store: read an imported row: %w", err)
 	}
-	if string(fields["state"]) == `"`+ScheduledTaskActive+`"` {
-		fields["state"] = json.RawMessage(`"` + ScheduledTaskPaused + `"`)
+	moved := string(fields["state"]) == `"`+active+`"`
+	if moved {
+		fields["state"] = json.RawMessage(`"` + paused + `"`)
 	}
-	fields["claim_id"] = json.RawMessage(`""`)
-	fields["lease_until"] = json.RawMessage("null")
+	fields["move_paused"] = json.RawMessage(strconv.FormatBool(moved))
+	if claimed {
+		fields["claim_id"] = json.RawMessage(`""`)
+		fields["lease_until"] = json.RawMessage("null")
+	}
 	return json.Marshal(fields)
+}
+
+// ResumeMovedRows is the cut-over of a move into this deployment: it resumes the customer's
+// scheduled tasks a move imported paused because they were active where they came from, and
+// clears their mark, so a task the user paused stays paused. A task keeps its next run, which
+// the source kept moving while it delivered, so nothing it delivered is delivered again; one
+// that came due meanwhile is the worker's to deliver or miss, as after any outage.
+//
+// A marked task whose agent config is deleted or missing here has nothing to run on, as the
+// API's resume refuses it (errUnknownConfig): it stays paused and loses the mark. The check is
+// made here rather than when the config is deleted, since a later import marks the task again
+// whenever the source changes it. The config row is locked FOR SHARE, as refuseDeletedConfig
+// does, so a delete landing meanwhile either is seen or finds the task active and pauses it.
+//
+// It returns how many tasks it resumed, how many it left paused that way, and the campaigns
+// that were running there. Those it leaves paused and marked: a campaign rings only from the
+// router that starts it, so each is started here (POST /v1/agents/campaigns/{id}/start), and
+// any change of its state here clears the mark (setCampaignState). Running it again resumes
+// nothing twice.
+func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped int64, campaigns []string, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("state = ?", ScheduledTaskActive).
+			Set("move_paused = false").
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			// A task resumed here by hand keeps the mark, and may have been delivered to its end since.
+			Where("state = ?", ScheduledTaskPaused).
+			Where("EXISTS (SELECT 1 FROM agent_configs AS ac WHERE ac.customer_id = st.customer_id AND ac.id = st.config_id AND ac.deleted_at IS NULL FOR SHARE)").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		}
+		if resumed, err = result.RowsAffected(); err != nil {
+			return fmt.Errorf("store: resume moved scheduled tasks: %w", err)
+		}
+		result, err = tx.NewUpdate().Model((*ScheduledTask)(nil)).
+			Set("move_paused = false").
+			Set("updated_at = now()").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			// The update above resumed every other one.
+			Where("state = ?", ScheduledTaskPaused).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		}
+		if skipped, err = result.RowsAffected(); err != nil {
+			return fmt.Errorf("store: unmark moved scheduled tasks without a config: %w", err)
+		}
+		if err := tx.NewSelect().Model((*Campaign)(nil)).
+			Column("id").
+			Where("customer_id = ?", customerID).
+			Where("move_paused").
+			Order("id").
+			Scan(ctx, &campaigns); err != nil {
+			return fmt.Errorf("store: moved campaigns: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, nil, stack.Wrap(err)
+	}
+	return resumed, skipped, campaigns, nil
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text
@@ -973,18 +1057,12 @@ ORDER BY a.attnum`, table)
 
 // insertable is every column an import writes: the whole row but the secrets, which are
 // left to the local default so a connection arrives needing to be authorized again
-// rather than arriving with somebody else's token in it.
-func (s shape) insertable() []string {
+// rather than arriving with somebody else's token in it, and but the table's vouched
+// columns, which only this deployment sets.
+func (s shape) insertable(table dataTable) []string {
 	columns := make([]string, 0, len(s.columns))
 	for _, column := range s.columns {
-		secret := false
-		for _, name := range secretColumns {
-			if column == name {
-				secret = true
-				break
-			}
-		}
-		if !secret {
+		if !slices.Contains(secretColumns, column) && !slices.Contains(table.vouched, column) {
 			columns = append(columns, column)
 		}
 	}

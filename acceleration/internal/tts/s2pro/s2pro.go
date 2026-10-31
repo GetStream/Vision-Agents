@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -236,12 +237,26 @@ func (t *TTS) Synthesize(request tts.Request) error {
 }
 
 // Interrupt cancels every utterance in flight. The deployment stops generating and
-// finals each one as cancelled, so the caller still gets a complete accounting.
+// finals each one as cancelled, so the caller still gets a complete accounting. An utterance
+// not flushed yet is cancelled too, which drops its text there, and the deployment sends no
+// final for it, so it is settled here as interrupted: text for its id after this is a new
+// utterance, as it is on every other streaming voice.
 func (t *TTS) Interrupt() error {
 	t.mu.Lock()
 	ids := append([]string(nil), t.order...)
+	var unflushed []*tts.Synthesis
+	for id, synthesis := range t.speaking {
+		if !slices.Contains(t.order, id) {
+			unflushed = append(unflushed, synthesis)
+			delete(t.speaking, id)
+		}
+	}
 	t.mu.Unlock()
 
+	for _, synthesis := range unflushed {
+		t.emitter.Send(synthesis.Complete(ProviderName, t.options.Model, true))
+		ids = append(ids, synthesis.ID)
+	}
 	for _, id := range ids {
 		if err := t.writeFrame(controlFrame{Type: controlCancel, ID: id}); err != nil {
 			return stack.Wrap(fmt.Errorf("s2pro: cancel: %w", err))

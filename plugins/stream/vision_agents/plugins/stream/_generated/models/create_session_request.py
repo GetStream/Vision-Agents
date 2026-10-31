@@ -131,7 +131,9 @@ class CreateSessionRequest:
         tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
         tools (list[SessionTool] | Unset):
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
-        user_id (str | Unset): Who the agent joins the call as. Default: 'vision-agent'.
+        user_id (str | Unset): The name the agent joins the call as. It is not the owner of the session. The owner is
+            the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
+            Default: 'vision-agent'.
         user_name (str | Unset):  Default: 'Vision Agent'.
         video (SessionVideo | Unset):
         voice (str | Unset): The voice to speak in: a provider's own voice id, or one of your voices by id or by the

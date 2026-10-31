@@ -72,7 +72,7 @@ func (c *caller) next(ctx context.Context, so said) (utterance, error) {
 		ID:              id,
 		Instructions:    callerInstructions + "\n\nWhat you called about:\n\n" + c.brief,
 		Input:           []llm.Message{{Role: llm.User, Content: so.render()}},
-		MaxOutputTokens: callerTokens,
+		MaxOutputTokens: callerTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {

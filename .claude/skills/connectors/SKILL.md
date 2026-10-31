@@ -236,14 +236,20 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
   binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that
   binds it says to wait 20 s on a 401 (`Result.Connected`; a run the login finished during says it
-  too). A required binding still refuses the session, and a voice
+  too). A login on a connection whose revision has no `sandbox` block, or another env var or
+  hosts, binds nothing: every run after it says to ask the user to reconnect, which takes effect from the next session (`Result.Reconnect`).
+  A required binding still refuses the session, and a voice
   session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
   longer marks `sandbox`, or binds to another connector or connection (AI-1686, as the tool
   recheck refuses a call). A withdrawn grant stays withdrawn for the session, even when the binding is put
   back; the next session gets it. The proxy broker also checks the binding on every request, so
-  the placeholder stops at once; it costs one agent config read per request. Daytona refuses a request that carries a placeholder it
+  the placeholder stops at once; it costs one agent config read per request. The Daytona broker
+  withdraws a grant by putting `va_withdrawn` in its secret, which it deletes at Close: deleted,
+  the placeholder left in the env var got 502 «could not reach upstream host», which code cannot
+  tell from the host failing; now the request reaches the host without a token, and GitHub
+  answers 401 (live probe, 2026-10-29, AI-1876). Daytona refuses a request that carries a placeholder it
   does not substitute (another host, the query, another session's): 502 «could not reach upstream
   host».
 - Daytona substitutes `Authorization: Basic <placeholder>` and `Basic user:<placeholder>` to a
@@ -279,11 +285,14 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.
+- Known limit (any header, AI-1976, accepted): Daytona substitutes the placeholder in any request
+  header to a granted host, not only `Authorization` (https://www.daytona.io/docs/en/secrets.md,
+  «Substitution scope»; the live suite sends it in `X-Probe`). The proxy broker substitutes only in
+  `Authorization` (`internal/sandbox/egress/AGENTS.md`, step 5). A granted host that echoes that header would hand the token to the sandbox.
 - Known limit (Daytona lag): after the router withdraws a secret (connection deleted or needs a
-  reconnect), Daytona keeps substituting it for a while. Daytona's docs give no time for a delete;
-  an update takes effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md). On
-  staging (v0.6.103, 2026-10-21) a request got 200 at 16 s and 502 at 36 s after the router
-  withdrew the secret, so the lag is between 16 and 36 s. Wave 14's proxy broker resolves per
+  reconnect), Daytona keeps substituting it for a while. The withdrawal is an update, which takes
+  effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md); a live probe on
+  2026-10-29 saw the token gone within 8 s (a delete, before AI-1876, took 16 to 24 s). Wave 14's proxy broker resolves per
   request and stops substituting at once.
 - Known limit: a router crash, or a Close that Daytona refuses, leaves the secret (a live
   token) and maybe the sandbox at Daytona until the sweep (w15-sweep, AI-1577) removes it. A

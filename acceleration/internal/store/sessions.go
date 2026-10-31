@@ -472,6 +472,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
+	if len(filter.CallerKinds) > 0 {
+		query = query.Where("caller_kind IN (?)", bun.In(filter.CallerKinds))
+	}
 	if filter.ConfigID != "" {
 		query = query.Where("config_id = ?", filter.ConfigID)
 	}
@@ -789,7 +792,8 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 	for _, response := range responses {
 		exchanges = append(exchanges, Exchange{
 			ResponseID: response.ID, Said: response.Said,
-			Answer: strings.Join(answered[response.ID], "\n\n"),
+			Answer:  strings.Join(answered[response.ID], "\n\n"),
+			Refused: response.Status == ResponseRefused,
 		})
 	}
 	return exchanges, nil
@@ -797,11 +801,11 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 
 // ReplyItems are what the replies a conversation's transcript wrote under these turn ids
 // did, by turn id: the answer and tool_result items of the response each one finished, in
-// the order they happened. Only the customer's own sessions on that conversation are read,
-// so a turn id copied into another transcript finds nothing, and a rewound response is
-// left out. A turn whose answer item names no turn id, as one recorded before they did,
-// finds nothing either.
-func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string][]AgentResponseItem, error) {
+// the order they happened, and whether the response was refused. Only the customer's own
+// sessions on that conversation are read, so a turn id copied into another transcript finds
+// nothing, and a rewound response is left out. A turn whose answer item names no turn id,
+// as one recorded before they did, finds nothing either.
+func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string]Reply, error) {
 	if customerID == "" || conversationID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
@@ -812,6 +816,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 		ResponseID string `bun:"response_id"`
 		TurnID     string `bun:"turn_id"`
 		Ordinal    int    `bun:"ordinal"`
+		Status     string `bun:"status"`
 	}
 	type found struct {
 		answers []answered
@@ -821,7 +826,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (found, error) {
 		var f found
 		err := db.NewSelect().TableExpr("agent_response_items AS ari").
-			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal").
+			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal, r.status").
 			Join("JOIN agent_responses AS r ON r.id = ari.response_id").
 			Join("JOIN agent_sessions AS s ON s.id = r.session_id").
 			Where("s.customer_id = ?", customerID).
@@ -862,23 +867,24 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 			byResponse[item.ResponseID] = append(byResponse[item.ResponseID], item)
 		}
 	}
-	replies := make(map[string][]AgentResponseItem, len(last))
+	replies := make(map[string]Reply, len(last))
 	for responseID, a := range last {
-		replies[a.TurnID] = byResponse[responseID]
+		replies[a.TurnID] = Reply{Items: byResponse[responseID], Refused: a.Status == ResponseRefused}
 	}
 	return replies, nil
 }
 
 // Opening is the first thing said in a customer's conversation, across every session that
-// held it, or empty when none recorded anything said.
-func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (string, error) {
+// held it, or empty when none recorded anything said. Refused says the prompt injection
+// screen refused it.
+func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (Exchange, error) {
 	if customerID == "" || conversationID == "" {
-		return "", stack.Wrap(errors.New("store: a customer and a conversation id are required"))
+		return Exchange{}, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentResponse, error) {
 		var first []AgentResponse
 		err := db.NewSelect().Model(&first).
-			Column("ars.said", "ars.created_at").
+			Column("ars.id", "ars.said", "ars.status", "ars.created_at").
 			Join("JOIN agent_sessions AS s ON s.id = ars.session_id").
 			Where("s.customer_id = ?", customerID).
 			Where("s.conversation_id = ?", conversationID).
@@ -891,13 +897,13 @@ func (s *Store) Opening(ctx context.Context, customerID, conversationID string) 
 		return first, err
 	})
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("store: opening: %w", err))
+		return Exchange{}, stack.Wrap(fmt.Errorf("store: opening: %w", err))
 	}
 	first := merged(lists, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) }, 1)
 	if len(first) == 0 {
-		return "", nil
+		return Exchange{}, nil
 	}
-	return first[0].Said, nil
+	return Exchange{ResponseID: first[0].ID, Said: first[0].Said, Refused: first[0].Status == ResponseRefused}, nil
 }
 
 // RewindResponses takes every response after kept out of the session's conversation.
@@ -968,6 +974,29 @@ func (s *Store) RecordUser(ctx context.Context, user *User) error {
 	return nil
 }
 
+// RecordAccount stores a user whose own token said they are not a guest. A guest row the
+// app's own guest token wrote for the id becomes an account's: kept a guest's, the account
+// would stay one a guest token is minted for (createGuestUser). A guest the router minted
+// stays a guest, because the token minted for them names no role and so reads as a full
+// user's too; so does a claimed one, whose claim stands.
+func (s *Store) RecordAccount(ctx context.Context, customerID, userID string) error {
+	user := &User{
+		CustomerID: customerID, ID: userID, Kind: UserKindAuthenticated,
+		Custom: map[string]any{}, CreatedAt: time.Now().UTC(),
+	}
+	_, err := s.db.NewInsert().Model(user).
+		On("CONFLICT (customer_id, id) DO UPDATE").
+		Set("kind = EXCLUDED.kind").
+		Where("u.kind = ?", UserKindGuest).
+		Where("u.claimed_by IS NULL").
+		Where("NOT u.minted").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: record account: %w", err))
+	}
+	return nil
+}
+
 // SetUserEmail records the address a server-side caller said a user signs in with. The row
 // is created when there is none; on an existing row only the email moves, never the kind
 // the claim path reads, and an email it already holds is not written again: a backend may
@@ -1009,6 +1038,7 @@ func (s *Store) UserEmail(ctx context.Context, customerID, userID string) (strin
 // RecordGuest stores a guest this app handed out, so it can later be claimed.
 func (s *Store) RecordGuest(ctx context.Context, guest *User) error {
 	guest.Kind = UserKindGuest
+	guest.Minted = true
 	return s.RecordUser(ctx, guest)
 }
 
@@ -1054,21 +1084,29 @@ func (s *Store) ClaimGuest(ctx context.Context, customerID, guestID, userID stri
 		return 0, stack.Wrap(errors.New("store: a guest cannot be claimed by itself"))
 	}
 
+	// Only rows a verified caller of the guest's id wrote move: an anonymous caller that went
+	// by the same name is somebody else. A guest's row becomes the account's, so the account
+	// reaches it by its own kind; a backend's stays a backend's, which the account reaches too.
+	const claimedKind = "caller_kind = CASE WHEN caller_kind = ? THEN ? ELSE caller_kind END"
 	now := time.Now().UTC()
 	moveSessions := func(ctx context.Context, db bun.IDB) (sql.Result, error) {
 		return db.NewUpdate().Model((*AgentSession)(nil)).
 			Set("user_id = ?", userID).
+			Set(claimedKind, UserKindGuest, UserKindAuthenticated).
 			Set("updated_at = ?", now).
 			Where("customer_id = ?", customerID).
 			Where("user_id = ?", guestID).
+			Where("caller_kind <> 'anonymous'").
 			Exec(ctx)
 	}
 	moveTasks := func(ctx context.Context, db bun.IDB) error {
 		_, err := db.NewUpdate().Model((*ScheduledTask)(nil)).
 			Set("user_id = ?", userID).
+			Set(claimedKind, UserKindGuest, UserKindAuthenticated).
 			Set("updated_at = ?", now).
 			Where("customer_id = ?", customerID).
 			Where("user_id = ?", guestID).
+			Where("caller_kind <> 'anonymous'").
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("claim guest scheduled tasks: %w", err)

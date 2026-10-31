@@ -42,7 +42,7 @@ func (s *StoreSuite) TestAReplyIsFoundByTheTurnItsTranscriptWasWrittenUnder() {
 	s.Require().NoError(err)
 	s.Require().Len(replies, 1)
 	kinds := []string{}
-	for _, item := range replies["turn-2"] {
+	for _, item := range replies["turn-2"].Items {
 		kinds = append(kinds, item.Kind)
 	}
 	s.Equal([]string{ItemAnswer, ItemToolResult, ItemAnswer}, kinds)
@@ -78,10 +78,10 @@ func (s *StoreSuite) TestTheOpeningIsTheFirstThingSaidAcrossTheConversationsSess
 	s.replied("later", "r2", "and then", s.base.Add(time.Hour), answer("turn-2", "ok"))
 	s.replied("first", "r1", "the task", s.base, answer("turn-1", "ok"))
 
-	said, err := s.store.Opening(s.ctx, "app", "agent:chat")
+	opening, err := s.store.Opening(s.ctx, "app", "agent:chat")
 
 	s.Require().NoError(err)
-	s.Equal("the task", said)
+	s.Equal("the task", opening.Said)
 }
 
 func (s *StoreSuite) TestAConfigKeepsItsResumeHistory() {

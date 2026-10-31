@@ -35,6 +35,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -104,6 +105,31 @@ import (
 // at link time by the workflow that publishes it. Empty in a local build, which
 // Sentry reads as "no release" rather than as an error.
 var release string
+
+// idleTimeout is how long the API, peer, pprof and metrics servers hold a keep-alive
+// connection that sends no next request. It must outlast the idle timeout of every
+// client that pools connections to them, or that client reuses a connection the router
+// has just closed and a request that cannot be replayed fails. The clients:
+//   - the stream-accelerate gateway sets no ReverseProxy.Transport (GetStream/chat
+//     projects/stream-accelerate/proxy.go), so it pools with http.DefaultTransport's
+//     IdleConnTimeout, 90 s (net/http/transport.go:55). The router's Service is a
+//     ClusterIP (chat infra/charts/accelerate/values.yaml, service.type): no pooling;
+//   - Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
+//     config/http_config.go:55) and scrapes every 15 s (chat values.yaml,
+//     monitoring.serviceMonitor.interval). The Datadog agent's check leaves
+//     persist_connections at its default, false (DataDog/integrations-core
+//     datadog_checks_base/utils/http.py, STANDARD_FIELDS), so it opens a new connection per
+//     scrape and pools none;
+//   - peers talk gRPC over h2c, which this timeout does not reach: x/net v0.58.0
+//     http2/server_wrap.go:109 gives the h2 server the http2.Server's own idle timeout,
+//     zero in node.Serve, not the http.Server's.
+//
+// 10 min is twice the longest, Prometheus'. A response still being written, such as
+// the SSE log stream, is not idle: net/http arms the deadline once a response is
+// finished (net/http/server.go:2163), and a hijacked websocket is out of it.
+//
+// A variable so a test can shorten it; nothing else assigns it.
+var idleTimeout = 10 * time.Minute
 
 const (
 	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
@@ -1248,6 +1274,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		}
 	}
 
+	// A key that does not read is refused at start: the endpoint would otherwise answer
+	// every delivery 401 and Stream's messages would go unanswered with nothing in the log
+	// but rejections.
+	chatInboundKeys, err := chatinbound.ParsePublicKeys(settings.Chat.InboundKeys)
+	if err != nil {
+		return err
+	}
+
 	var telnyxPublicKey ed25519.PublicKey
 	if settings.Telnyx.PublicKey != "" {
 		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
@@ -1294,6 +1328,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
+		ChatInboundKeys:       chatInboundKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
@@ -1317,8 +1352,25 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Auth:                  authenticator,
 		Logger:                logger,
 	}
+	// A provider app's events go on to the customer's event destinations, whose secrets are
+	// sealed under the connector keyring. Every router runs the worker that sends them; a
+	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
+	// Built before the channel bridge, which hands it the deliveries of the messages it gives
+	// up, and so closed after it.
+	var forwarder *eventforward.Forwarder
+	if connectorSecrets != nil && pgStore != nil {
+		forwarder, err = eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		if err != nil {
+			return err
+		}
+		forwarder.Start()
+		defer forwarder.Close()
+		options.EventForwarder = forwarder
+		warned.Store(forwarder)
+	}
 	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
 	// stays absent, and the events endpoint takes no events without it.
+	var bridge *channelbridge.Bridge
 	if connectorResolver != nil {
 		options.ConnectorResolver = connectorResolver
 		options.ConnectorTransports = connectorTransports
@@ -1330,10 +1382,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// The events endpoint hands it a provider app's messages; the conversation held on a
 		// thread channel, the agent's finished replies to them. Its texts pass the gate
 		// internal/channels' do.
-		bridge, err := channelbridge.New(channelbridge.Options{
+		bridgeOptions := channelbridge.Options{
 			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
 			Resolver: connectorResolver, Gate: dlcGate, Logger: logger,
-		})
+		}
+		if forwarder != nil {
+			bridgeOptions.Unanswered = forwarder.ForwardUnanswered
+		}
+		bridge, err = channelbridge.New(bridgeOptions)
 		if err != nil {
 			return err
 		}
@@ -1353,19 +1409,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
-	}
-	// A provider app's events go on to the customer's event destinations, whose secrets are
-	// sealed under the connector keyring. Every router runs the worker that sends them; a
-	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
-	if connectorSecrets != nil && pgStore != nil {
-		forwarder, err := eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
-		if err != nil {
-			return err
-		}
-		forwarder.Start()
-		defer forwarder.Close()
-		options.EventForwarder = forwarder
-		warned.Store(forwarder)
 	}
 	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
 	// under the connector keyring, and each opens a conversation, so they need connectors on,
@@ -1453,6 +1496,13 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Every router runs the worker that writes the queued inbound messages and hands each to
+	// the agent; a message is taken by one router at a time. The hand-off is the server's
+	// (AnswerQueued), and the server is built with the bridge (options.ChannelBridge), so the
+	// worker is handed it here, once both exist, not in channelbridge.Options.
+	if bridge != nil {
+		bridge.Start(ctx, server.AnswerQueued)
+	}
 	// Every router runs the scheduled-task worker: whichever of them claims
 	// an occurrence delivers it, in the conversation its task belongs to. It
 	// claims until the stop signal ends ctx; the drain then waits for the
@@ -1464,6 +1514,18 @@ func run(settings config.Config, logger *slog.Logger) error {
 		server.SetSchedulerKick(scheduler.Kick)
 		scheduler.Start(ctx)
 		defer scheduler.Close()
+	}
+	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
+	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
+	var deliveries *chatinbound.Worker
+	if pgStore != nil && len(chatInboundKeys) > 0 {
+		deliveries, err = chatinbound.NewWorker(chatinbound.Options{Store: pgStore, Answer: server.AnswerChatInbound, Logger: logger})
+		if err != nil {
+			return err
+		}
+		server.SetChatInboundKick(deliveries.Kick)
+		deliveries.Start(ctx)
+		defer deliveries.Close()
 	}
 	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
 	// pinned to, read once, within the one attempt's time the deployment's own check gets.
@@ -1478,7 +1540,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 	listening := make(chan error, 3)
 	serve := func(httpServer *http.Server, listener net.Listener) {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -1498,7 +1560,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
+		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 		logger.Info("listening for peers", "address", peers.Addr().String(), "setting", "node.listen")
 		go serve(peerServer, peers)
 	}
@@ -1511,7 +1573,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	defer stopSandboxProxy()
 
 	if settings.PprofAddr != "" {
-		go servePprof(settings.PprofAddr, logger)
+		go servePprof(settings.PprofAddr, idleTimeout, logger)
 	}
 	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
 	defer stopMetrics()
@@ -1525,7 +1587,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1557,8 +1619,8 @@ type stopping struct {
 	peers  *http.Server
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
-	// held is how many sessions and scheduled deliveries the process is
-	// still running.
+	// held is how many sessions, scheduled deliveries, inbound writes and
+	// turns, and chat answers the process is still running.
 	held      func() int
 	telephony *phone.Service
 	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
@@ -1639,9 +1701,11 @@ func stopServing(s stopping) error {
 	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
 }
 
-// running is how many sessions and scheduled deliveries a router holds; one
-// without sessions or a scheduled-task worker holds none of them.
-func running(sessions *session.Manager, scheduler *scheduling.Scheduler) int {
+// running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
+// over, and chat answers a router holds; one without one of them holds none of its work. A
+// turn counts until it ends, also before the session it opens is counted.
+func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
+	deliveries *chatinbound.Worker) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
@@ -1649,12 +1713,19 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler) int {
 	if scheduler != nil {
 		held += scheduler.Running()
 	}
+	if bridge != nil {
+		held += bridge.Running()
+	}
+	if deliveries != nil {
+		held += deliveries.Running()
+	}
 	return held
 }
 
 // servePprof serves the runtime profiles on an address of their own, with lock contention
-// and blocking sampled so the mutex and block profiles have something in them.
-func servePprof(addr string, logger *slog.Logger) {
+// and blocking sampled so the mutex and block profiles have something in them. The idle
+// timeout is read by the caller, as the server is built on a goroutine of its own.
+func servePprof(addr string, idleTimeout time.Duration, logger *slog.Logger) {
 	runtime.SetMutexProfileFraction(100)
 	runtime.SetBlockProfileRate(int(time.Millisecond))
 	mux := http.NewServeMux()
@@ -1664,7 +1735,7 @@ func servePprof(addr string, logger *slog.Logger) {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
-	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 	// A router taking over from one still draining its calls finds the address held until
 	// that one ends, so it keeps trying rather than going without.
 	for {

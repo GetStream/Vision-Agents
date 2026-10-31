@@ -687,8 +687,8 @@ const (
 	// InterruptCancel stops waiting for the call when the turn is interrupted, as Pipecat
 	// does by default (cancel_on_interruption=True).
 	InterruptCancel = "cancel"
-	// InterruptWait lets the call finish after an interruption, as LiveKit does for a tool
-	// not flagged CANCELLABLE; its result goes into the history.
+	// InterruptWait lets the call finish after an interruption; its result goes into the
+	// history.
 	InterruptWait = "wait"
 )
 
@@ -1942,6 +1942,10 @@ type SessionFilter struct {
 	AgentID   string
 	Project   string
 	Modality  string
+	// CallerKinds, when set, admits only the sessions opened by one of these kinds of
+	// caller. A user id is only worth what proved it, so an end user is narrowed by both
+	// halves of who they are, the same as a session they reach by id.
+	CallerKinds []string
 	// State is SessionRunning or SessionClosed.
 	State string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
@@ -1967,6 +1971,9 @@ const (
 	// ResponseCancelled is one interrupted partway, which is a different thing from
 	// failing: the caller stopped it, and what it had already said still counts.
 	ResponseCancelled = "cancelled"
+	// ResponseRefused is one the prompt injection screen refused. What it was asked is kept
+	// on the row, but never handed to a model again.
+	ResponseRefused = "refused"
 )
 
 // AgentResponse is one turn the agent took in a session.
@@ -1993,6 +2000,17 @@ type Exchange struct {
 	ResponseID string
 	Said       string
 	Answer     string
+	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
+	Refused bool
+}
+
+// Reply is what one reply a conversation's transcript wrote did: its answer and tool_result
+// items, in the order they happened.
+type Reply struct {
+	Items []AgentResponseItem
+	// Refused is a response the prompt injection screen refused, whose tool results since
+	// its last answer are what the screen judged and are not to be replayed.
+	Refused bool
 }
 
 // The kinds of item a response is made of.
@@ -2087,7 +2105,10 @@ type User struct {
 	// Kind is what the credential proved them to be, UserKindGuest or
 	// UserKindAuthenticated. Only a guest may be claimed.
 	Kind string `bun:"kind,notnull"`
-	Name string `bun:"name,notnull"`
+	// Minted says the router handed this guest out (RecordGuest). A guest the users recorder
+	// wrote from a guest token is not: an app signs those itself, for any id it likes.
+	Minted bool   `bun:"minted,notnull"`
+	Name   string `bun:"name,notnull"`
 	// Timezone is the IANA zone the user was last explicitly known to be in,
 	// which a scheduled task resolves to when nothing nearer names one. Empty
 	// when nobody has ever said.

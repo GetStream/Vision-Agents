@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"slices"
 	"strings"
 	"sync"
@@ -68,6 +70,11 @@ type Server struct {
 	writes map[string][]byte
 	// refuseDeletes answers every delete with a 500.
 	refuseDeletes bool
+	// looseLabels has a list ignore the labels it asks for.
+	looseLabels bool
+	// removed are the errored sandboxes deleted: they stay in the error state, and the list
+	// leaves them out.
+	removed map[string]bool
 	// usage is the analytics API's per-sandbox answer, and periods each sandbox's periods.
 	usage   []byte
 	periods map[string][]byte
@@ -79,7 +86,7 @@ type Server struct {
 func Start(t testing.TB) *Server {
 	t.Helper()
 	server := &Server{boxes: map[string]*Box{}, gone: map[string]bool{}, files: map[string]map[string][]byte{},
-		periods: map[string][]byte{}}
+		periods: map[string][]byte{}, removed: map[string]bool{}}
 	server.Server = httptest.NewServer(http.HandlerFunc(server.serve))
 	t.Cleanup(server.Close)
 	return server
@@ -211,6 +218,14 @@ func (s *Server) RefuseDeletes(refuse bool) {
 	s.refuseDeletes = refuse
 }
 
+// LooseLabels has every list answer all sandboxes not deleted, whatever labels it asks for, as
+// a Daytona whose label filter matches more than the labels would.
+func (s *Server) LooseLabels(loose bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.looseLabels = loose
+}
+
 // Bills is what the analytics API answers for the organization's usage per sandbox: a JSON
 // array of its SandboxUsage objects.
 func (s *Server) Bills(usage []byte) {
@@ -281,7 +296,13 @@ func (s *Server) sandboxAPI(w http.ResponseWriter, r *http.Request, rest string)
 			return
 		}
 		s.deleted = append(s.deleted, id)
-		s.boxes[id].State = Destroyed
+		if s.boxes[id].State == "error" {
+			// A deleted errored sandbox stays in the error state (api-client-go v0.211.2
+			// api_sandbox.go:3800, includeErroredDeleted).
+			s.removed[id] = true
+		} else {
+			s.boxes[id].State = Destroyed
+		}
 		answer(w, http.StatusOK, s.sandbox(s.boxes[id]))
 	default:
 		answer(w, http.StatusNotFound, map[string]any{"message": "no such route"})
@@ -328,9 +349,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	items := []map[string]any{}
 	for _, id := range slices.Sorted(maps.Keys(s.boxes)) {
 		box := s.boxes[id]
-		matches := box.State != Destroyed
+		matches := box.State != Destroyed && !s.removed[id]
 		for name, value := range wanted {
-			matches = matches && box.Labels[name] == value
+			matches = matches && (s.looseLabels || box.Labels[name] == value)
 		}
 		if matches {
 			items = append(items, s.sandbox(box))
@@ -399,6 +420,24 @@ func (s *Server) toolbox(w http.ResponseWriter, r *http.Request, id, rest string
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(data)
+	case "files/bulk-download":
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		parts := multipart.NewWriter(w)
+		w.Header().Set("Content-Type", parts.FormDataContentType())
+		for _, name := range body.Paths {
+			data, ok := s.files[id][name]
+			disposition := fmt.Sprintf(`form-data; name="file"; filename=%q`, name)
+			if !ok {
+				disposition = `form-data; name="error"`
+				data = []byte(`{"message":"no such file","statusCode":404}`)
+			}
+			part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
+			_, _ = part.Write(data)
+		}
+		_ = parts.Close()
 	default:
 		answer(w, http.StatusNotFound, map[string]any{"message": "no such toolbox route " + rest})
 	}

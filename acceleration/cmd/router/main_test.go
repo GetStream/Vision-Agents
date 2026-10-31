@@ -98,8 +98,8 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 // with no sessions holds nothing, with or without an idle scheduled-task
 // worker, as before the worker counted.
 func TestAnIdleRouterHoldsTheDrainForNothing(t *testing.T) {
-	require.Zero(t, running(nil, nil))
-	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil)))
+	require.Zero(t, running(nil, nil, nil, nil))
+	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil), nil, nil))
 }
 
 // TestKnowledgeURLsAreNotServedWithoutRedis: with a database, a knowledge base and a crawler

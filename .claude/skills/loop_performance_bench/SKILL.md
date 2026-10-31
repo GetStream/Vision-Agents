@@ -140,7 +140,7 @@ loop/profile.sh round-3 512 20      # in a second shell
 
 `run.sh` ends the previous generation's calls and waits a minute first; never ramp onto a
 router still draining the last run, its CPU lands in yours. Rerun `cluster/setup.sh` first
-if `performance_benchmark/`, `benchmark/` or `sdks/go` changed.
+if `performance_benchmark/` or `sdks/go` changed.
 
 ## 5. Record
 
@@ -151,7 +151,7 @@ falls or glitches climb is trading quality for capacity; say so. Compare with th
 previous round:
 
 ```bash
-CGO_ENABLED=1 go run -tags webrtc ./cmd/perfbench compare out/round-2 out/round-3
+go run -tags webrtc ./cmd/perfbench compare out/round-2 out/round-3
 ```
 
 One run moves by up to 10%. When a round sits at the edge (p95 just over the 3 s bar),

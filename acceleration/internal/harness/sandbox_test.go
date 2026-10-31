@@ -381,6 +381,25 @@ func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHav
 		"github.", told)
 }
 
+// TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemReconnect: the user connected github,
+// on a connection whose connector revision cannot bind the grant.
+func (s *HarnessSuite) TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemReconnect() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Reconnect: []sandbox.Grant{
+		{Binding: "github", Hosts: []string{"api.github.com", "uploads.github.com"}}}}}
+	s.build(true)
+	s.slow.calls = runCode("call-1", "print(issues())")
+	s.slow.automatic = "Reconnect GitHub first."
+	s.respond("turn-1", "list my issues")
+
+	s.reply("turn-1", `<ask skill="think">list my issues</ask>`)
+
+	s.awaitSettled(1)
+	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
+	s.Equal("status: 401\n\nIf this code got 401 from api.github.com, uploads.github.com, the user's github connection is on an "+
+		"older version of its connector, which gives code no access: ask the user to reconnect github. The reconnect takes effect only from their next session, "+
+		"so running the code again in this session will not help, even after they reconnect.", told)
+}
+
 // TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401: a token on its way to the
 // sandbox may still be missing from this run.
 func (s *HarnessSuite) TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401() {

@@ -19,7 +19,7 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 | `sdks/kotlin/` | Client-side SDK for Android: one module, `core`; its views are Stream Chat's AI components |
 | `sdks/dart/` | Client-side SDK for Flutter: a core, ui and rtc package |
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
-| `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
+| `sdks/go/` | The Go SDK. `go.work` ties the Go modules together |
 | `performance_benchmark/` | Load benchmark: ramps real WebRTC callers against the router's mock models until it breaks |
 
 ## SDK changes
@@ -117,9 +117,8 @@ npm test        # typecheck, then the suite against a real http and ws server
 
 ## Benchmark
 
-To run Voicebench (`benchmark/`) locally or read why a run failed, read the `voicebench` skill
-(`.claude/skills/voicebench/SKILL.md`) first: the keys and services a run needs, which command
-answers which question, and how to read the report.
+Voicebench lives in its own repository, [GetStream/voice-ai-bench](https://github.com/GetStream/voice-ai-bench):
+it builds the router from a commit of this one and runs its scenarios against it.
 
 To find how many cascaded voice agents one router holds at once, or to measure a performance
 change, read the `performance_benchmark` skill (`.claude/skills/performance_benchmark/SKILL.md`):

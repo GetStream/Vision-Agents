@@ -340,10 +340,9 @@ func (p *Pool) Register(customerID string, registration Registration) (*Worker, 
 		registration.Capacity = 1
 	}
 
-	p.mu.Lock()
-	p.next++
+	// Built before the lock is taken: making its queues can panic, and a panic holding the
+	// lock would leave the pool locked for every customer.
 	worker := &Worker{
-		ID:         fmt.Sprintf("worker-%d", p.next),
 		CustomerID: customerID,
 		capacity:   registration.Capacity,
 		handles:    registration.Handles,
@@ -356,9 +355,12 @@ func (p *Pool) Register(customerID string, registration Registration) (*Worker, 
 		results:    map[string]chan ToolResult{},
 		progress:   map[string]listening{},
 	}
-	p.workers[customerID] = append(p.workers[customerID], worker)
-	p.mu.Unlock()
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.next++
+	worker.ID = fmt.Sprintf("worker-%d", p.next)
+	p.workers[customerID] = append(p.workers[customerID], worker)
 	return worker, func() { p.release(worker) }
 }
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { Client, ConfigurationError, Session } from "../src/index.js";
 import { VoiceSession, type VoiceStatus } from "../src/video.js";
+import { inPage } from "./device.js";
 import { TestRouter, type Connection } from "./router.js";
 
 /** An observable with a current value, the shape the Video SDK's call state has. */
@@ -108,6 +109,13 @@ describe("VoiceSession", () => {
     const created = router.received.find((each) => each.path === "/v1/agents/sessions");
     assert.deepEqual(created?.body, { agent: "john", start_voice: true });
     assert.equal(voice.get().status, "connecting");
+    await voice.end();
+  });
+
+  it("starts a session from a page in the device's own zone", async () => {
+    const [voice] = await inPage("Europe/Lisbon", started);
+    const created = router.received.find((each) => each.path === "/v1/agents/sessions");
+    assert.deepEqual(created?.body, { agent: "john", start_voice: true, timezone: "Europe/Lisbon" });
     await voice.end();
   });
 

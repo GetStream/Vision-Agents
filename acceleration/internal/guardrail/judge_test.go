@@ -58,7 +58,7 @@ func (s *JudgeSuite) SetupTest() {
 }
 
 // router routes every judgement to one stub.
-func (s *JudgeSuite) router(stub *stubModel) *llmrouter.Router {
+func (s *JudgeSuite) router(stub llmrouter.Provider) *llmrouter.Router {
 	registry := llmrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		return stub, nil
@@ -83,7 +83,7 @@ func (s *JudgeSuite) router(stub *stubModel) *llmrouter.Router {
 }
 
 // guardrail builds an llm-judge guardrail over the stub, at the given threshold.
-func (s *JudgeSuite) guardrail(stub *stubModel, threshold float64) Guardrail {
+func (s *JudgeSuite) guardrail(stub llmrouter.Provider, threshold float64) Guardrail {
 	screening, err := New(s.ctx, Policy{
 		Kind:      KindLLM,
 		Mode:      ModeParallel,
@@ -127,6 +127,18 @@ func (s *JudgeSuite) TestTheThresholdMeansTheSameThingItMeansToAClassifier() {
 			s.Equal(test.allowed, verdict.Allowed)
 		})
 	}
+}
+
+// Gemini 3.8 Flash, which llm-fast routes to, thinks before it answers, out of the same cap as
+// the verdict. A judge that cut the verdict off could not tell a turn from a refusal.
+func (s *JudgeSuite) TestAJudgeThatThinksBeforeItAnswersStillWritesTheWholeVerdict() {
+	thinker := &llmtest.Thinker{Thinks: 1300, Answer: `{"violates":0.98,"reason":"about cooking"}`}
+
+	verdict, err := s.guardrail(thinker, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza")
+
+	s.Require().NoError(err)
+	s.False(verdict.Allowed)
+	s.Equal("about cooking", verdict.Reason)
 }
 
 func (s *JudgeSuite) TestTheJudgeIsToldToScreenRatherThanToAnswer() {

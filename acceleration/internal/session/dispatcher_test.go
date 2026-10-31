@@ -301,9 +301,8 @@ func (s *DispatcherSuite) slowWith(policy *store.BindingPolicy) (*dispatcher, st
 	return d, app
 }
 
-// TestAWaitBindingFinishesItsCallAfterAnInterruption: on_interrupt wait, as LiveKit lets a
-// tool not flagged CANCELLABLE finish. The turn waits for the answer, and the provider is
-// never sent the cancel.
+// TestAWaitBindingFinishesItsCallAfterAnInterruption: on_interrupt wait lets an interrupted
+// call finish. The turn waits for the answer, and the provider is never sent the cancel.
 func (s *DispatcherSuite) TestAWaitBindingFinishesItsCallAfterAnInterruption() {
 	d, _ := s.slowWith(&store.BindingPolicy{OnInterrupt: store.InterruptWait})
 

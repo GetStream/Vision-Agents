@@ -30,6 +30,16 @@ var (
 	errNoStreamKeys  = notConfigured("joining is not available: no stream credentials configured")
 )
 
+// errUserInSharedApp refuses a token for a user a customer cannot vouch for: in a Stream app
+// shared with other customers a user id is anyone's, so only one the router minted for this
+// customer is.
+var errUserInSharedApp = invalidRequest("user_id can be named only in the customer's own Stream app, or as one " +
+	"of its guests: this one acts in an app shared with other customers, whose users are not this customer's")
+
+// errChannelOfAnother refuses a reader for an agent channel the router stamped for another
+// customer.
+var errChannelOfAnother = invalidRequest("agent_id names a conversation this customer does not hold")
+
 // listenerTokenValidity is how long a browser's token lasts. A call outliving it is a call
 // nobody is still on, which is the same bet the Python examples make.
 const listenerTokenValidity = time.Hour
@@ -251,10 +261,8 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	if request.Body != nil {
 		wanted = *request.Body
 	}
-	userID := value(wanted.UserId)
-	if userID == "" {
-		userID = "listener-" + call.ID
-	}
+	listener := "listener-" + call.ID
+	userID := cmp.Or(value(wanted.UserId), listener)
 	userName := value(wanted.UserName)
 	if userName == "" {
 		userName = userID
@@ -275,14 +283,19 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	if userID != listener {
+		if err := s.refuseUserOutside(ctx, customerID, bound, userID); err != nil {
+			return nil, err
+		}
+	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createCallTokenResponse{Body: CallToken{ApiKey: bound.Identity.APIKey,
+	return &createCallTokenResponse{Body: CallToken{ApiKey: apiKey,
 		Token:     token,
 		UserId:    userID,
 		UserName:  userName,
@@ -313,12 +326,10 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 		return nil, invalidRequest("an agent id is required, since it names the channel")
 	}
 
-	userID := value(request.Body.UserId)
-	if userID == "" {
-		// Somebody reading a conversation is not the agent, and two readers of the same
-		// one are not each other, which is why this is per customer rather than shared.
-		userID = "reader-" + customerID
-	}
+	// Somebody reading a conversation is not the agent, and two readers of the same one are
+	// not each other, which is why this is per customer rather than shared.
+	reader := "reader-" + customerID
+	userID := cmp.Or(value(request.Body.UserId), reader)
 	userName := value(request.Body.UserName)
 	if userName == "" {
 		userName = userID
@@ -333,7 +344,15 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	if userID != reader {
+		if err := s.refuseUserOutside(ctx, customerID, bound, userID); err != nil {
+			return nil, err
+		}
+	}
 	client := bound.Client
+	if err := refuseChannelOutside(ctx, client, customerID, agentID); err != nil {
+		return nil, err
+	}
 	if err := conversation.CreateMissingUsers(ctx, client, map[string]getstream.UserRequest{
 		agentID: {ID: agentID},
 		userID:  {ID: userID, Name: &userName},
@@ -349,6 +368,7 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 			Data: &getstream.ChannelInput{
 				CreatedByID: &agentID,
 				Members:     []getstream.ChannelMemberRequest{{UserID: userID}},
+				Custom:      map[string]any{conversation.CustomerField: customerID},
 			},
 		}); err != nil {
 		return nil, stack.Wrap(err)
@@ -362,18 +382,61 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createChatTokenResponse{Body: ChatToken{ApiKey: bound.Identity.APIKey,
+	return &createChatTokenResponse{Body: ChatToken{ApiKey: apiKey,
 		Token:       token,
 		UserId:      userID,
 		UserName:    userName,
 		ChannelType: chatlog.ChannelType,
 		ChannelId:   agentID,
 		ExpiresAt:   expiresAt}}, nil
+}
+
+// refuseUserOutside refuses a token for userID unless the customer can vouch for it: any id
+// in its own Stream app, and only one of its guests in an app it shares with other customers.
+func (s *Server) refuseUserOutside(ctx context.Context, customerID string, bound streamapp.Bound, userID string) error {
+	if s.ownApp(customerID, bound.Identity.StreamApp) {
+		return nil
+	}
+	if s.store == nil {
+		return errUserInSharedApp
+	}
+	// A guest id the router minted is recorded per customer, so it is nobody else's. One only
+	// seen in a guest token is not: the customer signs those for any id it likes.
+	guest, err := s.store.Guest(ctx, customerID, userID)
+	if err != nil || !guest.Minted {
+		return errUserInSharedApp
+	}
+	return nil
+}
+
+// refuseChannelOutside refuses an agent channel the router stamped for another customer. It
+// only reads, so a refused reader leaves the channel, its members and its users as they were.
+func refuseChannelOutside(ctx context.Context, client *getstream.Stream, customerID, channel string) error {
+	one, none := 1, 0
+	found, err := client.Chat().QueryChannels(ctx, &getstream.QueryChannelsRequest{
+		FilterConditions: map[string]any{"cid": chatlog.ChannelType + ":" + channel},
+		Limit:            &one,
+		MessageLimit:     &none,
+	})
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	for _, existing := range found.Data.Channels {
+		if existing.Channel == nil {
+			continue
+		}
+		// An unstamped channel was written before channels were stamped, as the transcript
+		// reader takes it too (chatlog.Reader).
+		if stamped, ok := existing.Channel.Custom[conversation.CustomerField]; ok && stamped != customerID {
+			return errChannelOfAnother
+		}
+	}
+	return nil
 }
 
 // getCallTranscript returns what was said, read back out of the channel it was written to
@@ -1285,7 +1348,7 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 // ModelCallTiming is the ModelCallTiming schema.
 type ModelCallTiming struct {
 	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
-	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key."`
+	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key."`
 	InputTokens  *int64    `json:"input_tokens,omitempty"`
 	Model        string    `json:"model"`
 	OperationId  *string   `json:"operation_id,omitempty" doc:"Response ID for this operation; retries can share an ID."`

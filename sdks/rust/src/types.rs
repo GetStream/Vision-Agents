@@ -882,7 +882,7 @@ pub struct AgentResponse {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub said: ::std::option::Option<::std::string::String>,
     pub session_id: ::std::string::String,
-    ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+    ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
     pub status: AgentResponseStatus,
 }
 ///`AgentResponseItem`
@@ -992,7 +992,7 @@ pub struct AgentResponsePage {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
 }
-///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1014,6 +1014,8 @@ pub enum AgentResponseStatus {
     Failed,
     #[serde(rename = "cancelled")]
     Cancelled,
+    #[serde(rename = "refused")]
+    Refused,
 }
 impl ::std::fmt::Display for AgentResponseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1022,6 +1024,7 @@ impl ::std::fmt::Display for AgentResponseStatus {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Refused => f.write_str("refused"),
         }
     }
 }
@@ -1033,6 +1036,7 @@ impl ::std::str::FromStr for AgentResponseStatus {
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
+            "refused" => Ok(Self::Refused),
             _ => Err("invalid value".into()),
         }
     }
@@ -4292,7 +4296,7 @@ pub struct CreateSessionRequest {
     ///Omit it and the config decides, or en-low-latency when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
-    ///Who the agent joins the call as.
+    ///The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -5072,7 +5076,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -7242,7 +7246,7 @@ pub struct ModelCallTiming {
     ///Request to completed response or failed create.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub duration_ms: ::std::option::Option<f64>,
-    ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
+    ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error_code: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -9926,6 +9930,7 @@ pub struct Session {
     ///What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub usage: ::std::option::Option<CallUsage>,
+    ///The name the agent joined the call as. It is not the owner of the session.
     pub user_id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
@@ -11376,7 +11381,7 @@ pub struct Speech {
 ///`SpeechRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SpeechRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.
@@ -12694,7 +12699,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TranscriptionMode {
 ///`TranscriptionRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct TranscriptionRequest {
-    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+    ///A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. It must be a public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub callback: ::std::option::Option<::std::string::String>,
     ///A stored router config to take the options from. Anything named here as well overrides that one field of it.

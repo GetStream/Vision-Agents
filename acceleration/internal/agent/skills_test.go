@@ -326,6 +326,21 @@ func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhat
 	s.Contains(s.answeredFrom(), "the user has not connected it")
 }
 
+// TestTheSameCodeIsNotRunAgainWhenItsConnectionNeedsAReconnect: github counts as connected,
+// but on a connection that cannot bind its grant, so the same code would get the same 401.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenItsConnectionNeedsAReconnect() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "status: 401\n", Reconnect: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		then:      []sandbox.Result{{Output: "status: 200\n"}},
+		connected: []string{"github"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "ask the user to reconnect github")
+}
+
 // TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding: every run names each late
 // grant not connected, whatever the code called, so linear connecting is no reason to run
 // again code whose result named github.
