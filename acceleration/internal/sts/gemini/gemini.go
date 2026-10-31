@@ -1012,7 +1012,8 @@ func (s *STS) finishHearing() {
 		s.endedAt = time.Time{}
 	}
 	// A reply already open takes the stop: none that follows answers it.
-	if s.turn != nil {
+	answered := s.turn != nil
+	if answered {
 		s.turn.HeardAt(stoppedAt)
 	} else {
 		s.heardAt = stoppedAt
@@ -1023,7 +1024,7 @@ func (s *STS) finishHearing() {
 	if text != "" {
 		s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: stt.ModeFinal, Text: text})
 	}
-	s.emitter.Send(sts.SpeechStopped{Participant: participant, At: stoppedAt})
+	s.emitter.Send(sts.SpeechStopped{Participant: participant, At: stoppedAt, Answered: answered})
 }
 
 // spoke forwards the audio in a model turn. Text parts are the model's thoughts and are

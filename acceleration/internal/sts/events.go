@@ -68,6 +68,8 @@ func (SpeechStarted) isSTSEvent() {}
 type SpeechStopped struct {
 	Participant Participant
 	At          time.Time
+	// Answered says a reply already open takes the stop, so no reply follows for it.
+	Answered bool
 }
 
 func (SpeechStopped) isSTSEvent() {}
