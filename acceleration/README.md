@@ -2374,7 +2374,11 @@ Cut over once SDKs point here:
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at the next run the source had not delivered, and lists the marked campaigns. A marked task whose
 agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
-and the command prints how many it left that way. A campaign rings
+and the command prints how many it left that way. A user holds at most the config's
+`max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
+made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
+and the rest stay paused and marked. The command prints how many; run it again once the user
+has made room. A campaign rings
 only from the router that started it, so start each one here with
 `POST /v1/agents/campaigns/{id}/start`.
 
