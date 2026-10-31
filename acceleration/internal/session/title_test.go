@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -81,6 +84,39 @@ func (s *TitleSuite) TestAConversationWithARefusedTurnIsNamedWithItWithheld() {
 
 	s.Require().NoError(err)
 	s.Equal("Order 3825 delivery", named.Title)
+}
+
+// A conversation resumed from its Chat channel past a refused reply is named with what that
+// reply was asked withheld, as the resume handed it back.
+func (s *TitleSuite) TestAConversationResumedPastARefusedReplyIsNamedWithItWithheld() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	opened, _, _, err := conversations.Open(ctx, "customer-named", "agent", "")
+	s.Require().NoError(err)
+	s.Require().NoError(opened.Begin(injected))
+	opened.Observe(agent.Responding{TurnID: "turn-1"})
+	opened.Observe(agent.ResponseDelta{TurnID: "turn-1", Text: "I"})
+	opened.Observe(agent.Error{Err: screenRefusal, Context: "llm", TurnID: "turn-1"})
+	channel := strings.TrimPrefix(opened.CID(), "agent:")
+	s.Require().Eventually(func() bool {
+		stored := chat.Stored(channel)
+		return len(stored) == 2 && stored[1]["custom"].(map[string]any)[persistent.RefusedField] == true
+	}, settleFor, 10*time.Millisecond, "the refused reply was never stored")
+	opened.Release()
+	_, previous, _, err := conversations.Open(ctx, "customer-named", "agent", opened.CID())
+	s.Require().NoError(err)
+
+	named, err := titles.ask(ctx, Spec{CustomerID: "customer-named"}, "title-resumed",
+		append(spokenOf(previous), spoken{text: "Where is order 3825?"}))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
+	s.Equal([]spoken{{text: agent.WithheldInput}}, spokenOf(previous))
 }
 
 func (s *TitleSuite) TestNoTitleIsNotOne() {
