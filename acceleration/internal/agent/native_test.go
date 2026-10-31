@@ -106,6 +106,54 @@ func (s *AgentSuite) joinNativeDelegating() *nativePeer { return s.joinNativeWit
 // joinNativeWith joins a native agent over the real OpenAI adapter, with configure changing
 // its options first when given.
 func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		if conn.WriteJSON(map[string]any{"type": "session.created", "session": map[string]any{}}) != nil {
+			return false
+		}
+		var setup map[string]json.RawMessage
+		if conn.ReadJSON(&setup) != nil {
+			return false
+		}
+		frames <- setup
+		return conn.WriteJSON(map[string]any{"type": "session.updated", "session": map[string]any{}}) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return openairealtime.New(openairealtime.Options{
+			Vendor: openairealtime.OpenAI, URL: url, APIKey: "test",
+			Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions, InputTranscript: true,
+		})
+	}
+	return s.joinNativeOver(handshake, adapter, "openai/gpt-realtime-2", configure)
+}
+
+// joinLiveDelegating joins a native agent over the real GPT-Live adapter, whose replies
+// settle after replyGap of quiet.
+func (s *AgentSuite) joinLiveDelegating(replyGap time.Duration) *nativePeer {
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		var start map[string]json.RawMessage
+		if conn.ReadJSON(&start) != nil {
+			return false
+		}
+		frames <- start
+		return conn.WriteJSON(map[string]any{"type": "session.started", "session": map[string]any{"id": "test-live", "model": "gpt-live-1"}}) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return openailive.New(openailive.Options{
+			APIKey: "test-key", URL: url, Model: spec.Model, Tools: spec.Tools,
+			Instructions: spec.STS.Instructions, ReplyGap: replyGap, HandshakeTimeout: 5 * time.Second,
+		})
+	}
+	return s.joinNativeOver(handshake, adapter, "openai/gpt-live-1", nil)
+}
+
+// joinNativeOver joins a native agent, delegating to a stub subagent, over the adapter that
+// connects to a local server greeting each connection with handshake.
+func (s *AgentSuite) joinNativeOver(
+	handshake func(*websocket.Conn, chan map[string]json.RawMessage) bool,
+	adapter func(url string, spec routing.Spec) (sts.STS, error),
+	target string,
+	configure func(*Options),
+) *nativePeer {
 	connections := make(chan *websocket.Conn, 4)
 	frames := make(chan map[string]json.RawMessage, 32)
 	upgrader := websocket.Upgrader{}
@@ -115,15 +163,7 @@ func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 			return
 		}
 		defer conn.Close()
-		if conn.WriteJSON(map[string]any{"type": "session.created", "session": map[string]any{}}) != nil {
-			return
-		}
-		var setup map[string]json.RawMessage
-		if conn.ReadJSON(&setup) != nil {
-			return
-		}
-		frames <- setup
-		if conn.WriteJSON(map[string]any{"type": "session.updated", "session": map[string]any{}}) != nil {
+		if !handshake(conn, frames) {
 			return
 		}
 		connections <- conn
@@ -146,17 +186,14 @@ func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 	s.Require().NoError(err)
 	speech := stsrouter.NewRegistry()
 	speech.Register("openai", func(spec routing.Spec) (sts.STS, error) {
-		return openairealtime.New(openairealtime.Options{
-			Vendor: openairealtime.OpenAI, URL: "ws" + strings.TrimPrefix(server.URL, "http"), APIKey: "test",
-			Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions, InputTranscript: true,
-		})
+		return adapter("ws"+strings.TrimPrefix(server.URL, "http"), spec)
 	})
 	router, err := stsrouter.New(stsrouter.Options{Config: config[routing.STS], Registry: speech})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	s.edge = newLoopbackEdge()
 	options := Options{
-		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: "openai/gpt-realtime-2",
+		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: target,
 		LLM: reasoner, SubagentTarget: "stub/stub-model",
 		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
 	}
@@ -440,6 +477,25 @@ func (s *AgentSuite) TestWorkANativeModelHandsOverInAScheduledTurnOnAReplacedSes
 	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
 
 	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the old session's stop is not the new one's")
+}
+
+func (s *AgentSuite) TestWorkGPTLiveHandsOverInAScheduledTurnIsAskedAsScheduledWhenItsCallComesAfterTheCaller() {
+	// GPT-Live's backend asks for the work on its own time: here after the reply that handed
+	// it over ended and the caller spoke again, in the reply answering them.
+	peer := s.joinLiveDelegating(50 * time.Millisecond)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"session.delegation.created","delegation":{"id":"d1","type":"responses","target":"responses"}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the reply the work was handed over in never ended")
+	s.nativeSend(peer, `{"type":"session.input_transcript.delta","delta":"And for eight people?"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, settleFor, time.Millisecond, "the caller was never answered")
+	s.nativeSend(peer, `{"type":"response.event","delegation_id":"d1","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")
 }
 
 func (s *AgentSuite) TestWorkANativeModelHandsOverInAReplyWithNoIDIsNotAskedAsScheduled() {
