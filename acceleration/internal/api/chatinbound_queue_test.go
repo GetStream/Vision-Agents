@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -192,6 +193,43 @@ func (s *ChatInboundQueueSuite) TestAPeerRefusesADeliveryWhoseRowIsGone() {
 	s.Contains(logged.String(), refusedInLog)
 }
 
+// A peer with no store has no row to check a delivery against: it is no such delivery, and
+// nothing is answered.
+func (s *ChatInboundQueueSuite) TestAPeerWithNoStoreRefusesADelivery() {
+	other, worker, logged := s.otherNodeWithAWorkerServingFrom(nil)
+	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), "no such queued delivery")
+	s.False(s.reachesWorker(worker), "a delivery a peer with no store holds was answered")
+	s.Equal(store.ChatInboundQueued, s.row(row.MessageID).State)
+	s.NotContains(logged.String(), "a request panicked", "the refusal went on to read a store there is none of")
+}
+
+// A peer that could not read the row says so, so the router that handed it over tries again,
+// and nothing is answered.
+func (s *ChatInboundQueueSuite) TestAPeerThatCouldNotReadTheRowAnswersAnError() {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	other, worker, logged := s.otherNodeWithAWorkerServingFrom(closed)
+	row := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(row))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusInternalServerError), answer.GetStatus(), "body: %s", answer.GetBody())
+	var answered struct{ Error struct{ Code string } }
+	s.Require().NoError(json.Unmarshal(answer.GetBody(), &answered), "more than the one error was answered: %s", answer.GetBody())
+	s.Equal("internal_error", answered.Error.Code)
+	s.Contains(logged.String(), "could not read a queued chat inbound message a peer handed over")
+	s.False(s.reachesWorker(worker), "a delivery whose row could not be read was answered")
+	s.Equal(store.ChatInboundQueued, s.row(row.MessageID).State)
+}
+
 // A delivery handed over as its row is stored is answered on the peer, settled there.
 func (s *ChatInboundQueueSuite) TestAPeerAnswersADeliveryHandedOverAsItsRowIsStored() {
 	other, worker, logged := s.otherNodeWithAWorkerLogging()
@@ -276,9 +314,14 @@ func (s *ChatInboundQueueSuite) otherNodeWithAWorker() (*httptest.Server, <-chan
 
 // otherNodeWithAWorkerLogging is otherNodeWithAWorker with what the node logs.
 func (s *ChatInboundQueueSuite) otherNodeWithAWorkerLogging() (*httptest.Server, <-chan dispatch.Message, *loggedText) {
+	return s.otherNodeWithAWorkerServingFrom(s.store)
+}
+
+// otherNodeWithAWorkerServingFrom is otherNodeWithAWorkerLogging whose API reads served.
+func (s *ChatInboundQueueSuite) otherNodeWithAWorkerServingFrom(served *store.Store) (*httptest.Server, <-chan dispatch.Message, *loggedText) {
 	workers := dispatch.NewPool()
 	logged := &loggedText{}
-	other, _ := s.otherRouterSealedBy(workers, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+	other, _, _ := s.otherNodeServingFrom(served, workers, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
 	worker, release := workers.Register(s.customerID(), dispatch.Registration{Capacity: 1})
 	s.T().Cleanup(release)
 	return other, worker.Messages(), logged
