@@ -1669,8 +1669,8 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 }
 
 // otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
-// them the way a router going down does.
-func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+// them the way a router going down does. Each of adjust changes the node's options.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger, adjust ...func(*Options)) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1697,7 +1697,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	if workers != nil {
 		everyWorker = s.deploymentWorkers(workers, directory, s.workBus(logger))
 	}
-	server, err := NewServer(Options{
+	options := Options{
 		Routers:           s.modalities,
 		Streams:           s.streams,
 		Sessions:          sessions,
@@ -1720,7 +1720,11 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		// the same database.
 		Phone:  s.router.phone,
 		Logger: logger,
-	})
+	}
+	for _, change := range adjust {
+		change(&options)
+	}
+	server, err := NewServer(options)
 	s.Require().NoError(err)
 	// The node shares the suite's phone service, and the last node made takes its unanswered
 	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
@@ -1729,6 +1733,12 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	other.Start()
 	s.T().Cleanup(other.Close)
 	return other, server, sessions
+}
+
+// otherNodeServingFrom is otherNodeHolding whose API reads served, rather than the suite's
+// store; nil is a node with no store. Its sessions keep the suite's.
+func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+	return s.otherNodeHolding(workers, keyring, logger, func(o *Options) { o.Store = served })
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.

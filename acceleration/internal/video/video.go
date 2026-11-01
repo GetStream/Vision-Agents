@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -196,28 +197,23 @@ var publicClient = &http.Client{
 		Proxy: nil,
 		DialContext: (&net.Dialer{
 			Timeout: 10 * time.Second,
-			Control: func(_, address string, _ syscall.RawConn) error {
-				host, _, err := net.SplitHostPort(address)
-				if err != nil {
-					return err
-				}
-				ip, err := netip.ParseAddr(host)
-				if err != nil || !public(ip) {
-					return errPrivate
-				}
-				return nil
-			},
+			Control: publicOnly,
 		}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 20 * time.Second,
 	},
 }
 
-// sharedAddressSpace is carrier-grade NAT, which is not private by Go's reckoning but is
-// no more the public internet than 10/8 is.
-var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
-
-func public(ip netip.Addr) bool {
-	ip = ip.Unmap()
-	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !sharedAddressSpace.Contains(ip)
+// publicOnly refuses to connect to an address that is not public, by the same list as
+// connector traffic (egress.IsPublic).
+func publicOnly(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !egress.IsPublic(ip) {
+		return errPrivate
+	}
+	return nil
 }
