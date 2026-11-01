@@ -132,6 +132,7 @@ func (s *LifecycleSuite) busy(lifecycle sandbox.Lifecycle) (*Sandbox, *stalled) 
 	box, err := New(Options{APIKey: "key-1", APIURL: s.daytona.APIURL(), Lifecycle: lifecycle, Meter: s.meter,
 		Broker: broker, Timeout: 500 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
 	s.Require().NoError(err)
+	box.check = time.Minute // the stalled refresh outlasts Close's wait, as a long run of code does
 	ran := make(chan error, 1)
 	go func() {
 		_, err := box.Run(s.ctx, "print(1)", nil)
@@ -321,6 +322,7 @@ func (s *LifecycleSuite) TestAnOrphanIsDeletedOnceIdleWhenTheDeleteAfterItsRunOu
 		Lifecycle: sandbox.Lifecycle{IdleStop: 300 * time.Millisecond, StoppedDelete: time.Hour}, Meter: s.meter, Broker: broker,
 		Timeout: 500 * time.Millisecond, HTTPClient: &http.Client{Transport: deletes}, Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
 	s.Require().NoError(err)
+	box.check = time.Minute // the stalled refresh outlasts Close's wait, as a long run of code does
 	ran := make(chan error, 1)
 	go func() {
 		_, err := box.Run(s.ctx, "print(1)", nil)

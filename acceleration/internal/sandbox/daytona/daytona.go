@@ -130,10 +130,10 @@ type Sandbox struct {
 	gate                chan struct{}
 	closed              atomic.Bool
 	timeout, runTimeout time.Duration
-	// check bounds the checks before each run, and every other call but the sandbox's own
-	// creation and start that holds the gate: the timeout, but at most defaultTimeout, as a
-	// built sandbox's timeout is buildTimeout and a hung call holds the gate, so every other
-	// run of the session waits. Shorter in tests.
+	// check bounds the checks before each run, the broker's calls, a write and a run's
+	// downloads: the timeout, but at most defaultTimeout, as a built sandbox's timeout is
+	// buildTimeout and a hung call holds the gate, so every other run of the session waits.
+	// Shorter in tests.
 	check  time.Duration
 	config sandbox.Config
 	grants []sandbox.Grant
