@@ -110,7 +110,16 @@ func (s *VideoSuite) TestADataURIThatIsNotAVideoIsRefused() {
 	s.ErrorContains(err, "video/")
 }
 
-func (s *VideoSuite) TestOnlyThePublicInternetIsPublic() {
+// PublicOnlySuite needs no ffmpeg, so it runs where VideoSuite is skipped.
+type PublicOnlySuite struct {
+	suite.Suite
+}
+
+func TestPublicOnly(t *testing.T) {
+	suite.Run(t, new(PublicOnlySuite))
+}
+
+func (s *PublicOnlySuite) TestOnlyThePublicInternetIsPublic() {
 	for address, want := range map[string]bool{
 		"8.8.8.8":          true,
 		"2001:4860::8888":  true,
