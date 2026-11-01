@@ -1735,6 +1735,12 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	return other, server, sessions
 }
 
+// otherNodeServingFrom is otherNodeHolding whose API reads served, rather than the suite's
+// store; nil is a node with no store. Its sessions keep the suite's.
+func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+	return s.otherNodeHolding(workers, keyring, logger, func(o *Options) { o.Store = served })
+}
+
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.
 func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.Directory, bus *relay.Bus) *node.Workers {
 	ctx, cancel := context.WithCancel(context.Background())

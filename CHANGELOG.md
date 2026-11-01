@@ -2,6 +2,10 @@
 
 ## Features
 
+### First output latency by model
+
+`router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
+
 ### The Python SDK sets spend limits, puts users in teams and tags their work
 
 `plugins/stream` gains `api.spend_limits` (create, update, delete, list, grant, revoke, usage and reset), `api.teams` (`set_limit` creates or updates a team's limit in one call, `remove_limit`, `usage`, `grant` and `list`), `api.account` (the balance and Stream's `spend_hard_limit`, and the credit history) and `api.usage.spend`. Amounts are dollars as a `Decimal`, an `int` or a `str`, never a float.
@@ -189,6 +193,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A report on an older placed call no longer ends the session a newer call rings into
 
 A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).
+### A bad knowledge url or simulation in a Go agent folder names its line
+
+`agents.Load` now says which line of `knowledge/urls.yaml` a page that is not an http or https url is on, and which line of a `simulations/*.yaml` file a simulation with no name, scenario or assertion, a mode other than text or audio, or a name already taken is on. The same files are refused as before (AI-2417).
 
 ### `router replicate --resume` does not deliver again what the source delivered
 
