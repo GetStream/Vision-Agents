@@ -3,9 +3,9 @@ package video
 import (
 	"bytes"
 	"encoding/base64"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,7 +126,19 @@ func (s *VideoSuite) TestOnlyThePublicInternetIsPublic() {
 		"fe80::1":          false,
 		"::ffff:127.0.0.1": false,
 		"::ffff:10.1.2.3":  false,
+		"0.1.2.3":          false, // "this network", 0.0.0.0/8
+		"192.0.0.8":        false, // IETF protocol assignments, 192.0.0.0/24
+		"198.19.255.254":   false, // benchmarking, 198.18.0.0/15
+		"240.0.0.1":        false, // reserved, 240.0.0.0/4
+		"64:ff9b::a00:1":   false, // NAT64 of 10.0.0.1
+		"2002:a00:1::1":    false, // 6to4 of 10.0.0.1
+		"2001:0:a00:1::1":  false, // Teredo, 2001::/32
 	} {
-		s.Equal(want, public(netip.MustParseAddr(address)), address)
+		err := publicOnly("tcp", net.JoinHostPort(address, "443"), nil)
+		if want {
+			s.NoError(err, address)
+		} else {
+			s.ErrorIs(err, errPrivate, address)
+		}
 	}
 }
