@@ -2334,8 +2334,12 @@ func closePhone(telephony *phone.Service, logger *slog.Logger) {
 }
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
-// its hook missed. A campaign takes days, so this is not what makes one quick.
-const dlcPollEvery = 15 * time.Minute
+// its hook missed. A campaign takes days, so this is not what makes one quick. It and
+// telnyxDLC are variables so a test of the router's start can poll sooner, a vendor of its own.
+var (
+	dlcPollEvery = 15 * time.Minute
+	telnyxDLC    dlctelnyx.Options
+)
 
 // buildDLC wires 10DLC review and the gate every text and call passes. Without a database
 // there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
@@ -2367,7 +2371,7 @@ func buildDLC(
 	}
 
 	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
-	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
+	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
 		options.Registrar = registrar
 	} else {
 		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)

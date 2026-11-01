@@ -23,6 +23,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -252,6 +254,84 @@ func (s *RouterStartSuite) TestAStartingRouterClosesAnIdleEpisode() {
 
 	s.Eventually(closed, 30*time.Second, 50*time.Millisecond, "the idle episode is still open")
 	s.Require().NoError(stop())
+}
+
+// The router starts the sweep that ends the legs nothing said had ended, and the sweep ends
+// when the router is told to stop.
+func (s *RouterStartSuite) TestAStartingRouterEndsALegLeftRingingUntilItStops() {
+	previous := phone.LegSweepEvery
+	// Well inside the wait below; the production ten minutes would outlast it.
+	phone.LegSweepEvery = 50 * time.Millisecond
+	s.T().Cleanup(func() { phone.LegSweepEvery = previous })
+	leg := store.CallLeg{
+		CustomerID: "customer-" + uuid.NewString(), CallType: "default", CallID: uuid.NewString(),
+		Vendor: "telnyx", Direction: store.Outbound, LocalNumber: "+15125550100", RemoteNumber: "+15125550199",
+		// Rang past the longest a call may last, and its phone never joined.
+		DialedAt: time.Now().UTC().Add(-phone.MaxCallLength - time.Hour),
+	}
+	opened, err := s.db.OpenCallLeg(s.ctx, &leg)
+	s.Require().NoError(err)
+	s.Require().True(opened)
+	s.T().Cleanup(func() {
+		_, err := s.db.DB().ExecContext(context.Background(), "DELETE FROM call_legs WHERE id = ?", leg.ID)
+		s.NoError(err)
+	})
+	ended := func() bool {
+		var reason string
+		err := s.db.DB().QueryRowContext(s.ctx, "SELECT end_reason FROM call_legs WHERE id = ? AND ended_at IS NOT NULL", leg.ID).Scan(&reason)
+		return err == nil && reason == store.LegUnanswered
+	}
+
+	stop := s.start(s.settings)
+
+	s.Eventually(ended, 30*time.Second, 50*time.Millisecond, "the leg left ringing is still open")
+	s.Require().NoError(stop())
+	// 10 s, as for the phone sweep above: only scheduling under load.
+	s.Eventually(func() bool { return !strings.Contains(goroutines(), "phone.(*Service).RunLegSweep+") },
+		10*time.Second, 50*time.Millisecond, "the leg sweep went on after the router stopped")
+}
+
+// The router starts asking the 10DLC vendor where the campaigns it holds stand, for the reports
+// its hook missed, and stops asking when the router is told to stop.
+func (s *RouterStartSuite) TestAStartingRouterAsksTheVendorAfterItsCampaignsUntilItStops() {
+	campaign := "campaign-" + uuid.NewString()
+	telnyx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v2/10dlc/campaign/"+campaign {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"campaignId": %q, "campaignStatus": "MNO_REJECTED"}`, campaign)
+	}))
+	s.T().Cleanup(telnyx.Close)
+	previousEvery, previousTelnyx := dlcPollEvery, telnyxDLC
+	// Well inside the wait below; the production fifteen minutes would outlast it.
+	dlcPollEvery = 50 * time.Millisecond
+	telnyxDLC = dlctelnyx.Options{APIKey: "key-1", BaseURL: telnyx.URL}
+	s.T().Cleanup(func() { dlcPollEvery, telnyxDLC = previousEvery, previousTelnyx })
+	useCase := store.UseCase{
+		CustomerID: "customer-" + uuid.NewString(), Name: "Support", Status: dlc.VendorPending,
+		Vendor: "telnyx", VendorCampaignID: campaign,
+	}
+	s.Require().NoError(s.db.CreateUseCase(s.ctx, &useCase))
+	// Its review log goes with it (ON DELETE CASCADE).
+	s.T().Cleanup(func() {
+		_, err := s.db.DB().ExecContext(context.Background(), "DELETE FROM dlc_use_cases WHERE id = ?", useCase.ID)
+		s.NoError(err)
+	})
+	refused := func() bool {
+		var status string
+		err := s.db.DB().QueryRowContext(s.ctx, "SELECT status FROM dlc_use_cases WHERE id = ?", useCase.ID).Scan(&status)
+		return err == nil && status == dlc.VendorRejected
+	}
+
+	stop := s.start(s.settings)
+
+	s.Eventually(refused, 30*time.Second, 50*time.Millisecond, "the campaign the vendor refused is still pending")
+	s.Require().NoError(stop())
+	// 10 s, as for the phone sweep above: only scheduling under load.
+	s.Eventually(func() bool { return !strings.Contains(goroutines(), "dlc.(*Service).Run+") },
+		10*time.Second, 50*time.Millisecond, "the vendor was still asked after the router stopped")
 }
 
 // start runs the router as its serve command does, and waits for its public listener: a stop
