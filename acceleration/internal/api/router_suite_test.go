@@ -1671,6 +1671,12 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 // otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
 // them the way a router going down does.
 func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+	return s.otherNodeServingFrom(s.store, workers, keyring, logger)
+}
+
+// otherNodeServingFrom is otherNodeHolding whose API reads served, rather than the suite's
+// store; nil is a node with no store. Its sessions keep the suite's.
+func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1705,7 +1711,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		Directory:         directory,
 		Dispatch:          workers,
 		Workers:           everyWorker,
-		Store:             s.store,
+		Store:             served,
 		Configs:           s.configs,
 		Live:              s.live,
 		Auth:              s.authenticator(),
