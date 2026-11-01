@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Tool rounds are bounded in text replies
+
+A text conversation now limits the replies to tool results that follow one message, as a voice call does. After eight rounds the model is offered no tools and answers from what the tools returned. A model that kept asking for the same call was asked again on every reply before.
+
 ### A call's transcript read right after the call has its conversation's lines
 
 `GET /v1/agents/calls/{id}/transcript` and `/timeline` find the conversation a call wrote into from its session's row, which is written just after the call's. A read in that moment found no row, read the agent's own channel and answered with no lines. It now waits for the row to be written, as reading a session does (AI-2469).
