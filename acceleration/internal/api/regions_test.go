@@ -302,24 +302,27 @@ func (s *RegionsSuite) TestARegionOfAnotherFormIsRefused() {
 }
 
 func (s *RegionsSuite) TestAConfigNamingAModelWithNoInstanceInItsRegionIsRefusedOnACreateAPutAndAPatch() {
+	// The deployment runs it itself, in the default region only, so it is saved there on a
+	// list that prices nothing of the suite's.
+	const usOnly = "echo/local-model"
 	status, refusal := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
-		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo("counted/counted-model"),
+		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo(usOnly),
 	})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "llm: no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "llm: no instance of "+usOnly+" in region eu")
 
 	var stored AgentConfig
-	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo("counted/counted-model")}
+	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo(usOnly)}
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &stored))
 	s.Equal(pricing.RegionUS, stored.Region)
 	request.Region = pointerTo(pricing.RegionEU)
 	status, refusal = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+stored.Id, request)
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 	status, refusal = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+stored.Id,
 		AgentConfigPatch{Region: pointerTo(pricing.RegionEU)})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 }
 
 func (s *RegionsSuite) TestAPutLeavingTheRegionOutKeepsTheStoredOne() {
