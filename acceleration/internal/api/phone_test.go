@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -314,6 +315,8 @@ func (s *PhoneSuite) TestAnotherCustomersNumberCannotBeDetached() {
 // reaches no vendor.
 type CallStatusSuite struct {
 	RouterSuite
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestCallStatusSuite(t *testing.T) {
@@ -339,6 +342,8 @@ func (s *CallStatusSuite) SetupSuite() {
 	})
 	s.phoneVendors = registry
 	s.sessionTelephony = true
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -517,10 +522,71 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 		"the session waits for its start timeout")
 }
 
+// openedHere is a session on the suite's node opened as the phone service opens one for a
+// placed call. The suite's vendors have no credentials to place a call with.
+func (s *CallStatusSuite) openedHere() string {
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	return opened.ID()
+}
+
+// keptBy checks that the node logging to logged decided to keep the session id, which sessions
+// still runs.
+func (s *CallStatusSuite) keptBy(logged *lockedLog, sessions *session.Manager, id string) {
+	s.Require().Eventually(func() bool {
+		for line := range strings.Lines(logged.String()) {
+			if strings.Contains(line, "kept the session of an unanswered call") && strings.Contains(line, "session="+id) {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "the node did not say it kept the session")
+	s.True(sessions.Running(id), "the session was ended")
+}
+
+// A session can have two calls placed into it. A report that the older went unanswered does
+// not end the session while the newer still rings, on the node holding it as on a peer.
+func (s *CallStatusSuite) TestABusyOlderCallKeepsASessionANewerCallStillRingsInto() {
+	id := s.openedHere()
+	older, _ := s.placedFor(id)
+	s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(older, url.Values{"CallStatus": {"busy"}}))
+
+	s.keptBy(s.logged, s.manager, id)
+}
+
+func (s *CallStatusSuite) TestABusyNewerCallEndsASessionAnOlderCallStillRingsInto() {
+	id := s.openedHere()
+	s.placedFor(id)
+	newer, _ := s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(newer, url.Values{"CallStatus": {"busy"}}))
+
+	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the session waits for its start timeout")
+}
+
+// The nodes a test makes share the suite's phone service; the vendor's status still reaches
+// the suite's node, as in a deployment where each node has its own.
+func (s *CallStatusSuite) TestAnotherNodeDoesNotTakeTheSuitesUnansweredCalls() {
+	logged := &lockedLog{}
+	s.peerHolding(logged)
+	id := s.openedHere()
+	older, _ := s.placedFor(id)
+	s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(older, url.Values{"CallStatus": {"busy"}}))
+
+	s.keptBy(s.logged, s.manager, id)
+	s.NotContains(logged.String(), id)
+}
+
 // peerHolding is a second node of the deployment, logging to logged, holding a session opened
-// as the phone service opens one for a placed call.
-func (s *CallStatusSuite) peerHolding(logged *lockedLog) (*httptest.Server, *session.Manager, string) {
-	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+// as the phone service opens one for a placed call. Each of adjust changes the node's options.
+func (s *CallStatusSuite) peerHolding(logged *lockedLog, adjust ...func(*Options)) (*httptest.Server, *session.Manager, string) {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)), adjust...)
 	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
 		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
 	s.Require().NoError(err)
@@ -623,6 +689,63 @@ func (s *CallStatusSuite) TestAPeersAskForACallThatIsNotKeptIsRefused() {
 	other, sessions, id := s.peerHolding(logged)
 
 	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerWithoutAPhoneServiceRefusesAnAsk() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged, func(options *Options) { options.Phone = nil })
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerWhosePhoneServiceHasNoStoreRefusesAnAsk() {
+	storeless, err := phone.NewService(phone.ServiceOptions{Registry: s.phoneVendors})
+	s.Require().NoError(err)
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged, func(options *Options) { options.Phone = storeless })
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+// phoneOnAClosedStore is a phone service whose database is down.
+func (s *CallStatusSuite) phoneOnAClosedStore() *phone.Service {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	service, err := phone.NewService(phone.ServiceOptions{Registry: s.phoneVendors, Store: closed})
+	s.Require().NoError(err)
+	return service
+}
+
+func (s *CallStatusSuite) TestAPeerThatCannotReadTheStoredCallKeepsTheSession() {
+	closed := s.phoneOnAClosedStore()
+	other, sessions, id := s.peerHolding(&lockedLog{}, func(options *Options) { options.Phone = closed })
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusInternalServerError), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.True(sessions.Running(id), "the session was ended")
+}
+
+// The phone service hands a node an unanswered call once its row is written, so only a
+// database that goes down in between keeps the node from reading it back.
+func (s *CallStatusSuite) TestANodeThatCannotReadTheStoredCallKeepsTheSession() {
+	logged := &lockedLog{}
+	closed := s.phoneOnAClosedStore()
+	_, server, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)),
+		func(options *Options) { options.Phone = closed })
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	s.busy(opened.ID())
+
+	server.endUnansweredNow(context.Background(), s.customerID(), opened.ID())
+
+	s.Contains(logged.String(), "could not read an unanswered call")
+	s.True(sessions.Running(opened.ID()), "the session was ended")
 }
 
 func (s *CallStatusSuite) TestAPeersAskNamingAnotherCustomerIsRefused() {

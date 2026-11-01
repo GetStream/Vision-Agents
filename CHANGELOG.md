@@ -186,6 +186,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A report on an older placed call no longer ends the session a newer call rings into
+
+A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).
+
 ### `router replicate --resume` does not deliver again what the source delivered
 
 The source goes on delivering between the last `router replicate --once` and its stop, and what it delivers then never reaches the copy, so a task's next run there was one the source had already delivered: the cut-over resumed it, and the destination delivered that occurrence a second time. The cut-over now resumes each moved task at its first occurrence after the cut-over, as any resume counts from now; a moved task with no occurrence left is completed, a one-shot with a `missed` run. An occurrence the source held for quiet hours past the cut-over keeps its time and is delivered here when the hold ends. Run `--resume` right after stopping the source: an occurrence due between the two is delivered by neither. Until the last `--once` the source is the truth: a change it makes to a row overwrites what was done to that row on the destination, a delete included, so a config deleted there comes back when the source edits it; once SDKs point at the destination, stop writing at the source (AI-2406, AI-2408).
