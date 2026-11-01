@@ -151,3 +151,17 @@ func (s *PublicOnlySuite) TestOnlyThePublicInternetIsPublic() {
 		}
 	}
 }
+
+func (s *PublicOnlySuite) TestTheFetchRefusesAServerOnThisMachine() {
+	served := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served = true
+		_, _ = w.Write([]byte("clip"))
+	}))
+	defer server.Close()
+
+	_, err := load(s.T().Context(), publicClient, server.URL+"/clip.mp4")
+
+	s.ErrorIs(err, errPrivate)
+	s.False(served, "the request reached the server")
+}
