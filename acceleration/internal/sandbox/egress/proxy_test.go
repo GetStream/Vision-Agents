@@ -1501,7 +1501,7 @@ func (s *ProxySuite) TestATLSHelloSentWithTheConnectIsKept() {
 
 // TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox: Redis down is 503, not 407.
 func (s *ProxySuite) TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox() {
-	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	closed, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	closed.Close()
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(closed)))
@@ -1513,7 +1513,7 @@ func (s *ProxySuite) TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox() {
 // TestGrantsUnreadableInAnOpenTunnelAreAnError: Redis lost after CONNECT is 503 too, and
 // the host is not reached.
 func (s *ProxySuite) TestGrantsUnreadableInAnOpenTunnelAreAnError() {
-	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
 	s.T().Cleanup(s.proxy.Close)
@@ -2134,7 +2134,7 @@ func (s *ProxySuite) TestARequestTheProxyDoesNotServeIsCountedAsDeniedRequest() 
 
 // TestGrantsThatCannotBeReadAreCountedAsAnError: Redis lost before the CONNECT.
 func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
-	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	closed, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	closed.Close()
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(closed)))
@@ -2148,7 +2148,7 @@ func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
 
 // TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError: Redis lost after the CONNECT.
 func (s *ProxySuite) TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError() {
-	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
 	s.T().Cleanup(s.proxy.Close)

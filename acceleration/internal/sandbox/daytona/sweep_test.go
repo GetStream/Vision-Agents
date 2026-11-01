@@ -485,7 +485,7 @@ func (s *SweepSuite) TestRunSweepsAtOnceAndThenHourly() {
 }
 
 func (s *SweepSuite) TestASessionWhoseLivenessCannotBeReadKeepsItsSecret() {
-	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	closed, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	closed.Close()
 	unreadable, err := node.NewDirectory(node.DirectoryOptions{Redis: closed, Address: "10.0.0.1:1", Prefix: "w15sweep:" + s.prefix,

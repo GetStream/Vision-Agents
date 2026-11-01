@@ -866,7 +866,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	// One connection (PipelineMultiplex -1): by default rueidis spreads keyed commands over
 	// four and sends PING on the first only, so recover's PING would not prove the others back
 	// (rueidis v1.0.76 rueidis.go:220, mux.go slotfn).
-	gated, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{r.gate.listener.Addr().String()}, DisableCache: true,
+	gated, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{r.gate.listener.Addr().String()}, DisableCache: true,
 		DisableRetry: true, PipelineMultiplex: -1})
 	if err != nil {
 		t.Fatal(err)
