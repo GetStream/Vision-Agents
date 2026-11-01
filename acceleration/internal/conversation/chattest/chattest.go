@@ -822,7 +822,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		result["channel"] = data
 	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
 		// An update adds the members it names to the channel, which is how a reader comes
-		// to be able to watch it.
+		// to be able to watch it, and removes the user ids it names.
 		id := parts[len(parts)-1]
 		data, exists := db.channels[id]
 		if !exists {
@@ -830,7 +830,12 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		added, _ := body["add_members"].([]any)
+		removed, _ := body["remove_members"].([]any)
 		members, _ := data["members"].([]any)
+		members = slices.DeleteFunc(slices.Clone(members), func(member any) bool {
+			named, _ := member.(map[string]any)
+			return slices.Contains(removed, named["user_id"])
+		})
 		data["members"] = append(members, added...)
 		result["channel"] = data
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
@@ -856,9 +861,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			refuse(w, "either data.created_by or data.created_by_id must be provided when using server side auth")
 			return
 		}
-		// A query carrying data creates the channel; one without it must not overwrite
-		// the ownership already recorded on it.
-		if carries {
+		// A query carrying data creates the channel. Chat ignores the data of a query for a
+		// channel that is already there, so its creator, members and custom fields stay
+		// as they were.
+		if !exists {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]
