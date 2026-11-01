@@ -110,7 +110,7 @@ func (s *SessionSuite) holdsClaims() bool {
 		return false
 	}
 	s.Require().NoError(redisready.Ready(address))
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	directory, err := node.NewDirectory(node.DirectoryOptions{

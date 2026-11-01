@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/redis/rueidis"
 )
 
 // ready is how long Ready waits for an answer. A Redis container started just
@@ -36,6 +38,25 @@ func Ready(address string) error {
 	err := Wait(address, ready)
 	results[address] = err
 	return err
+}
+
+// NewClient is rueidis.NewClient for a test: it tries again until Ready's minute is up.
+//
+// rueidis gives each new connection one 5 s timeout for the TCP connect and its HELLO
+// handshake together. Through Docker's port forwarding on a loaded machine, a connection
+// opened after Ready got its answer can still sit past that timeout, or be closed at once.
+func NewClient(options rueidis.ClientOption) (rueidis.Client, error) {
+	deadline := time.Now().Add(ready)
+	for {
+		client, err := rueidis.NewClient(options)
+		if err == nil {
+			return client, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("redisready: no client for %v within %s: %w", options.InitAddress, ready, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // Wait returns once the Redis at address answers PING, or an error after the given time.

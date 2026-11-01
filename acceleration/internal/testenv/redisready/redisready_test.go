@@ -2,10 +2,14 @@ package redisready
 
 import (
 	"bufio"
+	"context"
+	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -141,4 +145,104 @@ func (s *RedisSuite) TestAFailureIsNotWaitedOutAgainForTheSameAddress() {
 
 	s.Equal(first, second)
 	s.Less(time.Since(start), 100*time.Millisecond, "the second call waited out the deadline again")
+}
+
+// forwarder stands for Docker's port forwarding on a loaded machine: a connection accepted
+// before until is held unanswered, or closed at once when hold is false; a later one is
+// forwarded to upstream.
+func (s *RedisSuite) forwarder(upstream string, until time.Time, hold bool) string {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	done := make(chan struct{})
+	s.T().Cleanup(func() {
+		close(done)
+		listener.Close()
+	})
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if time.Now().Before(until) {
+					if hold {
+						select {
+						case <-time.After(time.Until(until)):
+						case <-done:
+						}
+					}
+					return
+				}
+				redis, err := net.Dial("tcp", upstream)
+				if err != nil {
+					return
+				}
+				defer redis.Close()
+				go io.Copy(redis, conn)
+				io.Copy(conn, redis)
+			}()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+// redis is the Redis the suites dial, or a skip without one.
+func (s *RedisSuite) redis() string {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" || Wait(address, time.Second) != nil {
+		s.T().Skip("no Redis answering at ROUTER_REDIS_ADDR")
+	}
+	return address
+}
+
+// clientThrough dials address with a short dial timeout, so a test sees several attempts.
+func clientThrough(address string) (rueidis.Client, error) {
+	return NewClient(rueidis.ClientOption{
+		InitAddress: []string{address}, DisableCache: true, Dialer: net.Dialer{Timeout: 300 * time.Millisecond},
+	})
+}
+
+func (s *RedisSuite) TestAClientWhoseConnectionIsHeldPastItsDialTimeoutIsDialledAgain() {
+	until := time.Now().Add(time.Second)
+	address := s.forwarder(s.redis(), until, true)
+
+	client, err := clientThrough(address)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	s.False(time.Now().Before(until), "a client was made while its connections were held")
+	reply, err := client.Do(context.Background(), client.B().Ping().Build()).ToString()
+	s.Require().NoError(err)
+	s.Equal("PONG", reply)
+}
+
+func (s *RedisSuite) TestAClientWhoseConnectionIsClosedAtOnceIsDialledAgain() {
+	until := time.Now().Add(time.Second)
+	address := s.forwarder(s.redis(), until, false)
+
+	client, err := clientThrough(address)
+
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	reply, err := client.Do(context.Background(), client.B().Ping().Build()).ToString()
+	s.Require().NoError(err)
+	s.Equal("PONG", reply)
+}
+
+func (s *RedisSuite) TestAClientThatNeverConnectsIsAnErrorAtTheDeadline() {
+	original := ready
+	ready = 1200 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	address := s.forwarder("", time.Now().Add(time.Hour), true)
+
+	start := time.Now()
+	client, err := clientThrough(address)
+
+	s.Nil(client)
+	s.Require().Error(err)
+	s.Contains(err.Error(), address)
+	s.GreaterOrEqual(time.Since(start), ready, "the client was given up on before the deadline")
+	s.Less(time.Since(start), 5*time.Second, "the dial ran past its deadline")
 }
