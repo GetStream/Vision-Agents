@@ -517,6 +517,11 @@ func servesProxy(address string) bool {
 // limit: a sandbox connection that sends no next request is closed, where base held it open for
 // ever, and not at the tunnels' shorter idle timeout. The wait is bounded by 5 s, past the 1 s
 // keep-alive timeout and short of the 10 s header timeout.
+//
+// The wait counts from the moment the server sets the connection idle, which net/http does just
+// before it arms the idle deadline (conn.serve in net/http/server.go). The client's own clock,
+// read once it has the body, can start after the server's: a client scheduled late then measures
+// less than the server waited (AI-2423: "997.976155ms" is not >= "1s").
 func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
 	const keepAlive = time.Second
 	caCert, caKey := newCA(t)
@@ -524,7 +529,17 @@ func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
 		KeepAliveTimeout: keepAlive, Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 	address := freeAddress(t)
+	// idleSince is when the server set each connection idle, by the client's address.
+	var mu sync.Mutex
+	idleSince := map[string]time.Time{}
 	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
+		server.ConnState = func(conn net.Conn, state http.ConnState) {
+			if state == http.StateIdle {
+				mu.Lock()
+				idleSince[conn.RemoteAddr().String()] = time.Now()
+				mu.Unlock()
+			}
+		}
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -542,12 +557,15 @@ func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 	_, err = io.Copy(io.Discard, response.Body)
 	require.NoError(t, err)
-	answered := time.Now()
 
 	_, err = reader.ReadByte()
 
 	require.ErrorIs(t, err, io.EOF, "the idle connection was not closed")
-	require.GreaterOrEqual(t, time.Since(answered), keepAlive)
+	mu.Lock()
+	idle, set := idleSince[conn.LocalAddr().String()]
+	mu.Unlock()
+	require.True(t, set, "the server never set the connection idle")
+	require.GreaterOrEqual(t, time.Since(idle), keepAlive)
 }
 
 // TestTheProxyServerOutlastsEverySandboxClientsIdleLimitByDefault: a router that sets nothing

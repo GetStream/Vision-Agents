@@ -1651,12 +1651,15 @@ func (s *ProxySuite) TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTim
 	// Idle past the idle timeout, and short of the keep-alive timeout.
 	time.Sleep(3 * idle)
 
+	// The wait counts from before the request: the proxy arms its keep-alive deadline once it has
+	// answered, and a clock read after the answer starts late on a client scheduled after that,
+	// so it measures less than the proxy waited (AI-2423).
+	asked := time.Now()
 	get()
-	answered := time.Now()
 	_, end := reader.ReadByte()
 
 	s.ErrorIs(end, io.EOF)
-	s.GreaterOrEqual(time.Since(answered), keepAlive)
+	s.GreaterOrEqual(time.Since(asked), keepAlive)
 }
 
 // TestAnEncodedResponseToATokenIsRefused is A5: a host that encodes its echo in a way the
