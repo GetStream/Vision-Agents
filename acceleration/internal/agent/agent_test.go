@@ -215,8 +215,10 @@ type stubLLM struct {
 	// calls are the tools the first reply asks for. Later replies ask for nothing, so a
 	// model that transferred a caller does not transfer them again.
 	calls []llm.ToolCall
-	// keepCalling asks for them on every reply instead, which is the model that answers
-	// a tool that failed by reaching for it again.
+	// keepCalling asks for them on every reply that offers tools instead, which is the
+	// model that answers a tool that failed by reaching for it again. A reply offered none,
+	// as a voice call past maxToolRounds is, has nothing to reach for: calling anyway would
+	// chain turns until Close, and Close waits for every one of them to be written.
 	keepCalling bool
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
@@ -329,7 +331,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		reply = append([]string(nil), s.then...)
 	}
 	var calls []llm.ToolCall
-	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling {
+	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling && len(params.Tools) > 0 {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
@@ -4147,6 +4149,12 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 		})
 	}, "the repeated call was not answered from the first")
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
+	// Answered from the first, the repeat is still a tool round: a model that keeps asking
+	// is made to answer once the rounds run out, rather than chaining turns until Close.
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.model.requests(), func(r llm.ResponseParams) bool { return len(r.Tools) == 0 })
+	}, "a model repeating the call was never made to answer")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after it was made to answer")
 }
 
 func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {
