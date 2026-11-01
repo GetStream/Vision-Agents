@@ -395,6 +395,19 @@ func (s *SandboxGrantsSuite) TestAConnectorWithNoSandboxBlockIsNotToldToReconnec
 	s.Contains(s.logs.String(), "a connector binding gives the sandbox no access")
 }
 
+// TestARequiredBindingOnTheSandboxRevisionIsGranted: only a revision without the block
+// refuses a required binding.
+func (s *SandboxGrantsSuite) TestARequiredBindingOnTheSandboxRevisionIsGranted() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+
+	d, _, unavailable, err := s.attach(s.spec(s.config(required(sandboxed(s.fixed("crm", id, "whoami")))), "", nil))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm"}, bindings(d.grants))
+}
+
 // TestABindingOpenedWithoutADriftedToolStillGivesTheSandboxAccess: secret's schema changed
 // since the config granted it, so the binding opens with whoami alone, and its sandbox still
 // gets the connection's grant.
