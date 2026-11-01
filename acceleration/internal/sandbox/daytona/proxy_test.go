@@ -335,6 +335,26 @@ func (s *ProxySuite) TestABuiltSandboxsFilesAreCutAtTheDefaultTimeout() {
 	s.Empty(s.platform.executed(), "no code ran")
 }
 
+// TestACallerGivingUpDuringABuiltSandboxsSetupEndsTheRun: the setup runs on the caller's
+// context, so a caller that gives up during a hung setup is answered then, not at the check's
+// bound.
+func (s *ProxySuite) TestACallerGivingUpDuringABuiltSandboxsSetupEndsTheRun() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	box.check = 10 * time.Second // defaultTimeout, longer than the caller waits
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 6*time.Second, "answered when the caller gave up, long before the check's bound")
+	s.Empty(s.platform.executed(), "no code ran")
+}
+
 // TestACallerGivingUpDuringTheCheckEndsTheRun: the check runs on the caller's context, so a
 // caller that gives up during a hung check is answered then, not at the check's 60 s bound.
 func (s *ProxySuite) TestACallerGivingUpDuringTheCheckEndsTheRun() {

@@ -1020,3 +1020,58 @@ func (s *DaytonaSuite) TestAHungReadOfALapsedSandboxsStateIsCutAtTheStateTimeout
 	_, err = box.Run(ctx, "print(2)", nil)
 	s.NoError(err, "the next run gets in")
 }
+
+// TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun: the read before a run wakes
+// a sandbox runs on the caller's context, so a caller that gives up during a hung read is
+// answered then, not at the state's bound.
+func (s *DaytonaSuite) TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	box.state = 10 * time.Second // stateTimeout, longer than the caller waits
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.used = time.Now().Add(-24 * time.Hour) // Daytona may have stopped it by now
+	s.platform.mu.Lock()
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 6*time.Second, "answered when the caller gave up, long before the state's bound")
+}
+
+// TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout: a run Daytona answers with not
+// found is followed by a read of the sandbox's state, which holds the gate, and a built
+// sandbox's timeout is the 20 minutes a build may take, so a read Daytona never answers is cut
+// at stateTimeout.
+func (s *DaytonaSuite) TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.state = 2 * time.Second // stateTimeout, shorter in tests
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.runStatus = http.StatusNotFound
+	s.platform.runBody = `{"message":"sandbox not found"}`
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.Error(err)
+	s.Less(time.Since(started), 20*time.Second, "cut at the state's bound, not the caller's 30 s")
+}
+
+func (s *DaytonaSuite) unslowState() {
+	s.platform.mu.Lock()
+	s.platform.slowState = 0
+	s.platform.mu.Unlock()
+}
