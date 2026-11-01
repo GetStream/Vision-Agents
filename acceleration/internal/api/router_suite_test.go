@@ -701,6 +701,7 @@ func (s *RouterSuite) SetupSuite() {
 	}
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
+		Pricer:    s.serverPricer(logger),
 		Prices:    s.prices,
 		Streams:   streams,
 		Relay:     s.relayBus(s.shard, logger),
@@ -1348,6 +1349,44 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // tenth of a second rather than a router's 30, so a change made in a test prices within it.
 const suitePriceReload = 100 * time.Millisecond
 
+// serverPricer is the list the suite's server prices from when the suite prices from no
+// database: the one a server builds from its routers' config, with the stand-in models it
+// leaves unpriced marked as models the deployment runs itself, as a deployment marks its own,
+// so an agent naming one is saved rather than refused for work with no price. Nil for a suite
+// pricing from the database.
+func (s *RouterSuite) serverPricer(logger *slog.Logger) pricing.Pricer {
+	if s.prices != nil {
+		return nil
+	}
+	capabilities := routing.Config{}
+	for modality, router := range s.modalities {
+		capabilities[modality] = router.Config()
+	}
+	knowledgeBase := capabilities[routing.Knowledge]
+	for _, model := range []string{metered.KnowledgeLookup, metered.KnowledgeWrite, metered.KnowledgeStorage} {
+		knowledgeBase.Providers = append(knowledgeBase.Providers, routing.ProviderConfig{
+			Provider: newKnowledgeBase().Provider(), Model: model, Region: pricing.DefaultRegion})
+	}
+	capabilities[routing.Knowledge] = knowledgeBase
+	routed, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	unpriced := routed.Unpriced(routing.Items(capabilities))
+	for modality, config := range capabilities {
+		config.Providers = slices.Clone(config.Providers)
+		for i, provider := range config.Providers {
+			item := routing.ItemOf(modality, provider, nil)
+			config.Providers[i].Local = provider.Local || slices.ContainsFunc(unpriced, func(other pricing.Item) bool {
+				return other.Modality == item.Modality && other.Provider == item.Provider && other.Model == item.Model &&
+					other.Region == item.Region && other.BYOK == item.BYOK
+			})
+		}
+		capabilities[modality] = config
+	}
+	list, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	return list
+}
+
 // databasePrices seeds the suite's price list from the fixtures' price file laid over the
 // embedded vendor list, as a router's first start does with a file of its own (once: every
 // later start finds it seeded and adds only what it lacks), and reads it every
@@ -1358,10 +1397,13 @@ func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
 	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: pricingtest.Entries(s.T()),
 		Source: pricingtest.FileName + ", " + prices.VendorFile, Release: "suite"})
 	s.Require().NoError(err)
-	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
+	reasoned := reasoningConfig()
+	reasoned.Providers = append(reasoned.Providers, s.llmInstances...)
+	local := routing.LocalItems(routing.Config{routing.LLM: reasoned})
+	fallback, err := prices.Embedded(local, "suite", logger)
 	s.Require().NoError(err)
 	return pricing.NewActive(ctx, pricing.ActiveOptions{
-		Source: s.store.PriceSource(), Fallback: fallback, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
+		Source: s.store.PriceSource(), Fallback: fallback, Local: local, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
 	})
 }
 

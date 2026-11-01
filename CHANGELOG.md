@@ -192,6 +192,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Unpriced work is refused or alarmed, never silently free
+
+Work with no price is recorded at nothing and reserves no spend. The router now lists every item a deployment bills (`billable.Items`): its routed models and their BYOK twins, knowledge and sandboxes in each region they run in with their twins, phone, texts, 10DLC fees and runtime. It names each unpriced one at start against the price list in force, not the price files alone, and the price list's `unpriced`, a change's preview and `router prices show --unpriced` list the same items. Work priced only per class or per country is no longer listed as unpriced. An agent's sync, or a config create or update, is refused with a 400 naming each item when its work in its region has no price. The usage jobs raise the `unpriced` alert for a row they record with no price, and a number's month the vendor quoted is no longer logged as unpriced (AI-2187).
 ### A user's own quota holds from the next request on every router
 
 Saving the first policy of its own for one of an app's users dropped the app's cached decision only on the router that saved it, so another router could answer that user's next request with the app's quota. Every router now reads whether an app has users with a policy of their own through the shared configuration cache, which a write clears everywhere (AI-1918).

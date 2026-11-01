@@ -63,7 +63,8 @@ func (s *RegionsSuite) SetupSuite() {
 			Endpoint: s.us.URL, APIKeyEnv: regionsUSKey},
 		{Provider: anthropic.ProviderName, Model: model, Languages: []string{"la"}, Region: pricing.RegionEU,
 			Endpoint: s.eu.URL, APIKeyEnv: regionsEUKey},
-		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU},
+		// Run in process, so free work rather than unpriced, as a model a deployment runs itself.
+		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU, Local: true},
 		// What the flow controller and the title of an eu agent's session run on (llm-flow, llm-fast).
 		{Provider: "stub", Model: "stub-model", Languages: []string{"en"}, Realtime: true, Region: pricing.RegionEU},
 	}
@@ -256,6 +257,28 @@ func (s *RegionsSuite) TestASyncNamingModelsWithNoInstanceInItsRegionIsRefusedNa
 	s.Contains(refusal, "subagent: no instance of counted/counted-model in region eu")
 	s.Contains(refusal, "search: no instance of search-fast in region eu")
 	s.NotContains(refusal, haiku, "haiku has an eu instance")
+}
+
+func (s *RegionsSuite) TestAnAgentWhoseWorkInItsRegionHasNoPriceIsRefusedNamingEach() {
+	status, _, refusal := s.synced(map[string]any{"name": "unpriced-" + s.utils.uuid(), "region": pricing.RegionEU,
+		"llm": "stub/stub-model", "subagent": haiku})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(refusal, "llm: llm/stub/stub-model (eu) has no price")
+	s.NotContains(refusal, "claude-haiku", "haiku is priced in the eu")
+}
+
+func (s *RegionsSuite) TestAnAgentOnTheCustomersOwnKeyIsSavedWhenItsBYOKWorkIsPriced() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": "turbopuffer", "region": pricing.RegionEU, "api_key": "tpuf_own"}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": anthropic.ProviderName, "region": pricing.RegionEU, "api_key": "sk-own"}, nil))
+
+	status, agent, refusal := s.synced(map[string]any{"region": pricing.RegionEU, "llm": haiku, "mode": "text",
+		"knowledge": []map[string]string{{"source": "refunds.md", "text": "Refunds take thirty days."}}})
+
+	s.Require().Equal(http.StatusOK, status, refusal)
+	s.Equal(pricing.RegionEU, agent.Region)
 }
 
 func (s *RegionsSuite) TestARefusedSyncStoresNothing() {
