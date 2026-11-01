@@ -194,6 +194,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, and the secrets made or deleted with the sandbox, are now bounded at 60 seconds, as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
 
+### A video fetched by URL reaches only the public internet
+
+The router refuses a clip URL whose address is in a range that is not publicly reachable, by the same list as connector traffic: "this network" (0.0.0.0/8), IETF protocol assignments (192.0.0.0/24), benchmarking (198.18.0.0/15), reserved (240.0.0.0/4), the documentation ranges, and IPv6 addresses outside 2000::/3 or that carry an IPv4 address (6to4, Teredo, NAT64) (AI-2389).
 ### A bad knowledge url or simulation in a Go agent folder names its line
 
 `agents.Load` now says which line of `knowledge/urls.yaml` a page that is not an http or https url is on, and which line of a `simulations/*.yaml` file a simulation with no name, scenario or assertion, a mode other than text or audio, or a name already taken is on. The same files are refused as before (AI-2417).
