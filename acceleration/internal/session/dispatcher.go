@@ -69,6 +69,10 @@ type dispatcher struct {
 	// and schemes their connections' schemes by binding name.
 	grants  []sandbox.Grant
 	schemes map[string]core.Scheme
+	// reconnect are the sandbox bindings opened on a connection whose revision gives the
+	// sandbox nothing, where the latest revision gives it its hosts: each run names them
+	// (connecting).
+	reconnect []sandbox.Grant
 	// approvals are the calls held for their person to allow them (connector_approval.go).
 	approvals approvals
 }

@@ -27,7 +27,8 @@ const (
 )
 
 // trafficBuckets span 25 ms to 60 s: fine steps where voice first output lands (100 to 800 ms),
-// wide ones for the long LLM requests. Each is a series per modality and provider.
+// wide ones for the long LLM requests. Each is a series per modality, provider and, for first
+// output, model.
 var trafficBuckets = []float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 2, 4, 8, 15, 30, 60}
 
 var (
@@ -61,7 +62,7 @@ var (
 		Name:      "first_output_seconds",
 		Help:      "How long a request took to its first useful output: LatencyMs / 1000, for rows that have it",
 		Buckets:   trafficBuckets,
-	}, []string{"modality", "provider"})
+	}, itemLabels)
 	trafficDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "request_seconds",
@@ -97,7 +98,7 @@ func countTraffic(request store.Request, byok bool) {
 		trafficCost.WithLabelValues(modality, provider, model).Add(float64(request.CostMicros))
 	}
 	if request.LatencyMs != nil {
-		trafficFirstOutput.WithLabelValues(modality, provider).Observe(*request.LatencyMs / 1000)
+		trafficFirstOutput.WithLabelValues(modality, provider, model).Observe(*request.LatencyMs / 1000)
 	}
 	if request.DurationMs != nil {
 		trafficDuration.WithLabelValues(modality, provider).Observe(*request.DurationMs / 1000)
