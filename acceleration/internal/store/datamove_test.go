@@ -7,9 +7,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1754,4 +1756,153 @@ func (s *DataMoveSuite) TestAMovedRequestLeavesTheSequenceOfItsIDAlone() {
 	own := s.requestsByUsage()[usageID.String()]
 	s.Require().NotNil(own)
 	s.Less(own["id"].(float64), float64(1_000_000_000), "a moved request is given an id of the destination's, so the source's is reserved nowhere")
+}
+
+// seedLog writes a log of the customer's on the source, the way the router does, and answers its id.
+func (s *DataMoveSuite) seedLog(customerID, message string) int64 {
+	entry := &AgentLog{CustomerID: customerID, Source: "agent", Severity: "info", EventType: "turn", Message: message}
+	s.Require().NoError(s.source.RecordAgentLog(s.ctx, entry))
+	return entry.ID
+}
+
+// placeHere writes an agent log onto the destination as given, id included: the way an import
+// from before AI-2445 wrote a copied one, or a log of the destination's own.
+func (s *DataMoveSuite) placeHere(row map[string]any) {
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_logs SELECT * FROM jsonb_populate_record(NULL::agent_logs, ?::jsonb)", string(encoded))
+	s.Require().NoError(err)
+}
+
+// exportedLog is the one agent log of acme's the source exports, as a row the test may edit.
+func (s *DataMoveSuite) exportedLog() map[string]any {
+	logs := s.export("acme").of("agent_logs")
+	s.Require().Len(logs, 1)
+	return logs[0]
+}
+
+// logsHere are a customer's agent logs on the destination: their message by id.
+func (s *DataMoveSuite) logsHere(customerID string) map[int64]string {
+	rows, err := s.destination.DB().QueryContext(s.ctx, "SELECT id, message FROM agent_logs WHERE customer_id = ?", customerID)
+	s.Require().NoError(err)
+	defer rows.Close()
+	logs := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var message string
+		s.Require().NoError(rows.Scan(&id, &message))
+		logs[id] = message
+	}
+	s.Require().NoError(rows.Err())
+	return logs
+}
+
+func (s *DataMoveSuite) TestACopiedLogWhoseIDAnotherAppHoldsHereLandsUnderANewID() {
+	id := s.seedLog("acme", "copied")
+	theirs := s.exportedLog()
+	theirs["customer_id"], theirs["message"] = "resident", "theirs"
+	s.placeHere(theirs)
+
+	s.move("acme", "acme")
+
+	s.Equal(map[int64]string{id: "theirs"}, s.logsHere("resident"), "the other app's log is left as it was")
+	copied := s.logsHere("acme")
+	s.Require().Len(copied, 1, "the log is copied, not skipped")
+	for copiedID, message := range copied {
+		s.NotEqual(id, copiedID)
+		s.Equal("copied", message)
+	}
+}
+
+func (s *DataMoveSuite) TestACopiedLogWhoseIDTheAppHoldsHereForAnotherLogLeavesThatLog() {
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["message"] = "written here"
+	s.placeHere(own)
+
+	s.move("acme", "acme")
+
+	logs := s.logsHere("acme")
+	s.Len(logs, 2, "both the log written here and the copied one are kept")
+	s.Equal("written here", logs[id], "the log written here is not overwritten")
+	s.Contains(slices.Collect(maps.Values(logs)), "copied")
+}
+
+func (s *DataMoveSuite) TestALogHereThatDiffersOnlyInWhenItWasIngestedIsAnotherLog() {
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["ingested_at"] = "2026-10-01T00:00:00Z"
+	s.placeHere(own)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2, "two logs written at different times are two logs")
+	var ingested time.Time
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT ingested_at FROM agent_logs WHERE id = ?", id).Scan(&ingested))
+	s.True(ingested.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)), "the log written here is not overwritten")
+}
+
+func (s *DataMoveSuite) TestCopyingLogsTwiceCopiesThemOnce() {
+	s.seedLog("acme", "first")
+	s.seedLog("acme", "second")
+
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	s.ElementsMatch([]string{"first", "second"}, slices.Collect(maps.Values(s.logsHere("acme"))))
+}
+
+func (s *DataMoveSuite) TestALogCopiedUnderItsSourceIDBeforeIsNotCopiedAgain() {
+	id := s.seedLog("acme", "copied")
+	s.placeHere(s.exportedLog())
+
+	s.move("acme", "acme")
+
+	s.Equal(map[int64]string{id: "copied"}, s.logsHere("acme"))
+}
+
+func (s *DataMoveSuite) TestALogCopiedFromAnotherSourceLogIsNotTakenForThisOne() {
+	id := s.seedLog("acme", "copied")
+	// The same words under this id, copied here from another log of the source's: the source
+	// wrote the same log twice.
+	twin := s.exportedLog()
+	twin["source_id"] = id + 1
+	s.placeHere(twin)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2)
+}
+
+func (s *DataMoveSuite) TestAReplayedLogIsWrittenOnce() {
+	s.capture("acme")
+	cursor := s.move("acme", "acme")
+	s.seedLog("acme", "after the copy")
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.move("acme", "acme")
+
+	s.ElementsMatch([]string{"after the copy"}, slices.Collect(maps.Values(s.logsHere("acme"))))
+}
+
+func (s *DataMoveSuite) TestAReplayedDeleteOfALogRemovesItsCopyAndNotTheLogHoldingItsID() {
+	s.capture("acme")
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["message"] = "written here"
+	s.placeHere(own)
+	cursor := s.move("acme", "acme")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "DELETE FROM agent_logs WHERE id = ?", id)
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	s.Equal(map[int64]string{id: "written here"}, s.logsHere("acme"))
 }

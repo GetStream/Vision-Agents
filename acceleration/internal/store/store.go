@@ -204,6 +204,10 @@ var usageIndexes = []struct{ name, create string }{
 	// The rows naming a grant, which a reconcile counts again (20261112121000_requests_limit_grants.sql).
 	{"requests_limit_grants_started_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS requests_limit_grants_started_idx ON requests (started_at, id) " +
 		"WHERE limit_grants <> '{}'"},
+	// What a copied agent log is known by: an import resolves its conflicts on it
+	// (20261206120000_agent_logs_source_id.sql).
+	{"agent_logs_source_idx", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS agent_logs_source_idx ON agent_logs (customer_id, source_id) " +
+		"WHERE source_id IS NOT NULL"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left

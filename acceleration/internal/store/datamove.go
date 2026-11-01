@@ -47,6 +47,12 @@ type dataTable struct {
 	// two deployments. Such a row is imported without its id, and is written once: importing
 	// it again, or a row the destination already holds under it, changes nothing.
 	across string
+	// copied is the column a row imported here keeps the source's id in, for a table with no
+	// column a row is known by in every deployment and whose ids, drawn from a sequence of each
+	// deployment's, name other rows here. Such a row is imported without its id and is written
+	// once: importing it again, or replaying its change, finds it by the source's id and changes
+	// nothing.
+	copied string
 	// vouched are the columns this deployment sets on its own word, such as users.minted: the
 	// router handed that guest out. An import leaves them to the local default, since a row
 	// the customer sends is the customer's word, not this deployment's.
@@ -118,7 +124,9 @@ var dataTables = []dataTable{
 	{name: "agent_session_tools", parent: "agent_sessions", parentColumn: "session_id", shard: true},
 	{name: "agent_responses", customer: "customer_id", shard: true},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
-	{name: "agent_logs", customer: "customer_id"},
+	// Nothing points at a log's id, so a copied log is given one of this deployment's
+	// (20261206120000_agent_logs_source_id.sql).
+	{name: "agent_logs", customer: "customer_id", copied: "source_id"},
 	// No foreign key points at a request's id. An agent log row names it as text, and
 	// Store.AgentLog only takes a request's error by that number from a row that carries none of
 	// its own and whose time and agent are the request's, so a moved row cannot show the error
@@ -465,7 +473,13 @@ func (t dataTable) selectRows(customerID string) (string, []any) {
 // is what lets a move be resumed after it was interrupted.
 func (s *Store) ImportRow(ctx context.Context, customerID, table string, row json.RawMessage) error {
 	spec, _ := dataTableByName(table)
-	return s.importRow(ctx, s.sideOf(spec), customerID, table, row)
+	if table != "agent_logs" {
+		return s.importRow(ctx, s.sideOf(spec), customerID, table, row)
+	}
+	// The lock importRow takes for a log is held until its transaction ends.
+	return s.sideOf(spec).RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.importRow(ctx, tx, customerID, table, row)
+	})
 }
 
 // sideOf is the database a table's rows are written to here: this shard's or the shared one.
@@ -504,17 +518,28 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		return err
 	}
 
+	if table == "agent_logs" {
+		// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
+		// commit in order and a reader resuming after one misses none.
+		if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 731))", customerID); err != nil {
+			return fmt.Errorf("store: import %s: %w", table, err)
+		}
+	}
+
 	columns := spec.written(shape)
 	quoted := strings.Join(columns, ", ")
-	selected := quoted
+	picked := slices.Clone(columns)
 	if i := slices.Index(columns, "usage_id"); spec.name == "requests" && i >= 0 {
 		// A row from before usage ids has none, and the table refuses a new row without one.
 		// Its usage id is made from the source's id for it, so importing it again names the
 		// same unit of work.
-		picked := slices.Clone(columns)
 		picked[i] = "COALESCE(usage_id, " + importedUsageID("customer_id", "id") + ")"
-		selected = strings.Join(picked, ", ")
 	}
+	if i := slices.Index(columns, spec.copied); spec.copied != "" && i >= 0 {
+		// The source's id, whatever the source kept as the id of where the row came from.
+		picked[i] = shape.keys[0]
+	}
+	selected := strings.Join(picked, ", ")
 
 	assignments := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -536,6 +561,9 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	if spec.parent != "" {
 		where = " WHERE " + spec.owned("r")
 	}
+	if spec.copied != "" {
+		where = " WHERE NOT " + spec.copiedBefore(shape, columns)
+	}
 
 	// A row nobody may update is one whose primary key is all it has, and writing it
 	// again would be the same row. Doing nothing is both the right answer and a legal
@@ -552,8 +580,8 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	}
 
 	query := fmt.Sprintf(
-		"INSERT INTO %s (%s) SELECT %s FROM jsonb_populate_record(NULL::%s, %s) AS r%s ON CONFLICT (%s) %s",
-		spec.name, quoted, selected, spec.name, subject, where, strings.Join(spec.keys(shape), ", "), conflict)
+		"INSERT INTO %s (%s) SELECT %s FROM jsonb_populate_record(NULL::%s, %s) AS r%s ON CONFLICT %s %s",
+		spec.name, quoted, selected, spec.name, subject, where, spec.conflictTarget(shape), conflict)
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: import %s: %w", table, err)
@@ -1005,13 +1033,36 @@ func (t dataTable) owned(relation string) string {
 	return fmt.Sprintf("%s.%s = ?", relation, t.customer)
 }
 
-// keys are the columns a row of this table is known by across deployments: what an import
-// resolves a conflict on.
-func (t dataTable) keys(s shape) []string {
-	if t.across != "" {
-		return []string{t.across}
+// conflictTarget is the index a row of this table is known by across deployments: what an
+// import resolves a conflict on. The one a copied row is known by holds only copied rows.
+func (t dataTable) conflictTarget(s shape) string {
+	switch {
+	case t.across != "":
+		return "(" + t.across + ")"
+	case t.copied != "":
+		return fmt.Sprintf("(%s, %s) WHERE %s IS NOT NULL", t.customer, t.copied, t.copied)
 	}
-	return s.keys
+	return "(" + strings.Join(s.keys, ", ") + ")"
+}
+
+// copiedBefore is the condition that the row r, about to be imported with the given columns,
+// was copied here by an import from before the copied column: under the source's id, and so
+// with the same id, no source id and every column it writes the same, the customer included.
+// A row that differs in any of them, when it was ingested included, is another log here that
+// holds the number, and r is copied beside it.
+func (t dataTable) copiedBefore(s shape, columns []string) string {
+	conditions := []string{"h." + t.copied + " IS NULL"}
+	for _, key := range s.keys {
+		conditions = append(conditions, fmt.Sprintf("h.%s = r.%s", key, key))
+	}
+	var here, imported []string
+	for _, column := range columns {
+		if column != t.copied {
+			here, imported = append(here, "h."+column), append(imported, "r."+column)
+		}
+	}
+	conditions = append(conditions, fmt.Sprintf("(%s) IS NOT DISTINCT FROM (%s)", strings.Join(here, ", "), strings.Join(imported, ", ")))
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AS h WHERE %s)", t.name, strings.Join(conditions, " AND "))
 }
 
 // captured are the columns a change records of a row. A row known by another column than its
@@ -1161,6 +1212,12 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 		conditions = append(conditions, fmt.Sprintf("t.%s = COALESCE((?::jsonb ->> '%s')::uuid, %s)",
 			spec.across, spec.across, importedUsageID("?::text", "(?::jsonb ->> 'id')")))
 		args = append(args, string(change.Key), customerID, string(change.Key))
+	} else if spec.copied != "" {
+		// Never by the id either: by the source's id, which a copied row keeps. A row copied
+		// before the copied column holds none and is left, as the id it holds may as well be
+		// a log of this deployment's.
+		conditions = append(conditions, fmt.Sprintf("t.%s = (?::jsonb ->> '%s')::bigint", spec.copied, shape.keys[0]))
+		args = append(args, string(change.Key))
 	} else {
 		for _, column := range shape.keys {
 			conditions = append(conditions, fmt.Sprintf("t.%s::text = (?::jsonb ->> '%s')", column, column))
@@ -1312,7 +1369,7 @@ func (s shape) insertable(table dataTable) []string {
 // written are the columns an import writes of a row of this table.
 func (t dataTable) written(s shape) []string {
 	columns := s.insertable(t)
-	if t.across != "" {
+	if t.across != "" || t.copied != "" {
 		// The id is the destination's to draw: the source's may be one of its own rows'.
 		columns = slices.DeleteFunc(columns, func(column string) bool { return t.isKey(s, column) })
 	}
