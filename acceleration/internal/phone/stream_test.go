@@ -180,3 +180,38 @@ func (s *PhoneSuite) TestACreatedCallCarriesItsCustom() {
 	custom, _ := data["custom"].(map[string]any)
 	s.Equal("v", custom["k"])
 }
+
+func (s *PhoneSuite) TestCreatingACallAgainKeepsTheCustomItWasCreatedWith() {
+	// A get-or-create for a call that is already there loads it, so the custom the second
+	// request carries is not the call's.
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "first"}))
+
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "second", "other": "x"}))
+
+	data, _ := fake.Call("agent", "abc")["data"].(map[string]any)
+	s.Equal(map[string]any{"k": "first"}, data["custom"])
+}
+
+func (s *PhoneSuite) TestCreatingACallThatIsInSessionStoresNoBody() {
+	// A call in session is already there, so a get-or-create for it creates nothing.
+	fake := chattest.NewServer(s.T())
+	fake.PutCall("agent", "abc", "sip-+15550100100")
+	stream := NewStreamFromClient(fake.Client)
+
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "late"}))
+
+	s.Nil(fake.Call("agent", "abc"))
+}
+
+func (s *PhoneSuite) TestEndingACallRecordsNoCreatedCall() {
+	// Ending a call is not creating one.
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "made", map[string]string{}))
+
+	s.Require().NoError(stream.EndCall(s.ctx, "agent", "abc"))
+
+	s.Equal([]string{"agent:made"}, fake.Created())
+}
