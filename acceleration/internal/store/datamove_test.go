@@ -1800,13 +1800,14 @@ func (s *DataMoveSuite) logsHere(customerID string) map[int64]string {
 
 func (s *DataMoveSuite) TestACopiedLogWhoseIDAnotherAppHoldsHereLandsUnderANewID() {
 	id := s.seedLog("acme", "copied")
+	// The same words, which makes it no copy of acme's: it is another app's.
 	theirs := s.exportedLog()
-	theirs["customer_id"], theirs["message"] = "resident", "theirs"
+	theirs["customer_id"] = "resident"
 	s.placeHere(theirs)
 
 	s.move("acme", "acme")
 
-	s.Equal(map[int64]string{id: "theirs"}, s.logsHere("resident"), "the other app's log is left as it was")
+	s.Equal(map[int64]string{id: "copied"}, s.logsHere("resident"), "the other app's log is left as it was")
 	copied := s.logsHere("acme")
 	s.Require().Len(copied, 1, "the log is copied, not skipped")
 	for copiedID, message := range copied {
@@ -1905,4 +1906,60 @@ func (s *DataMoveSuite) TestAReplayedDeleteOfALogRemovesItsCopyAndNotTheLogHoldi
 	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
 
 	s.Equal(map[int64]string{id: "written here"}, s.logsHere("acme"))
+}
+
+func (s *DataMoveSuite) TestACopiedLogIsNumberedUnderTheLockItsAppsLogsAreNumberedUnder() {
+	s.seedLog("acme", "copied")
+	encoded, err := json.Marshal(s.exportedLog())
+	s.Require().NoError(err)
+	// A log of acme's being written here, holding the lock RecordAgentLog takes.
+	writing, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = writing.Rollback() }()
+	_, err = writing.ExecContext(s.ctx, "SELECT pg_advisory_xact_lock(hashtextextended('acme', 731))")
+	s.Require().NoError(err)
+
+	imported := make(chan error, 1)
+	go func() { imported <- s.destination.ImportRow(s.ctx, "acme", "agent_logs", encoded) }()
+
+	s.Eventually(func() bool {
+		var waiting bool
+		s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT EXISTS (SELECT 1 FROM pg_locks"+
+			" WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))").Scan(&waiting))
+		return waiting
+	}, 10*time.Second, 10*time.Millisecond, "the copy waits for the log being written")
+	s.Empty(s.logsHere("acme"))
+	s.Require().NoError(writing.Commit())
+	select {
+	case err := <-imported:
+		s.Require().NoError(err)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the copy did not land once the log being written was")
+	}
+	s.Len(s.logsHere("acme"), 1)
+}
+
+func (s *DataMoveSuite) TestTheSameLogUnderAnotherIDHereIsNotTakenForACopy() {
+	id := s.seedLog("acme", "copied")
+	// Written here the same, but never copied from this log: a copy kept the source's id.
+	same := s.exportedLog()
+	same["id"] = id + 1000
+	s.placeHere(same)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2)
+}
+
+func (s *DataMoveSuite) TestMigrateBuildsTheIndexCopiedLogsAreKnownByAgain() {
+	// As somebody dropping it by hand, or a CONCURRENTLY build that failed, leaves it.
+	_, err := s.destination.DB().ExecContext(s.ctx, "DROP INDEX CONCURRENTLY agent_logs_source_idx")
+	s.Require().NoError(err)
+	s.seedLog("acme", "copied")
+
+	s.Require().NoError(s.destination.Migrate(s.ctx))
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 1)
 }

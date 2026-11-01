@@ -473,13 +473,7 @@ func (t dataTable) selectRows(customerID string) (string, []any) {
 // is what lets a move be resumed after it was interrupted.
 func (s *Store) ImportRow(ctx context.Context, customerID, table string, row json.RawMessage) error {
 	spec, _ := dataTableByName(table)
-	if table != "agent_logs" {
-		return s.importRow(ctx, s.sideOf(spec), customerID, table, row)
-	}
-	// The lock importRow takes for a log is held until its transaction ends.
-	return s.sideOf(spec).RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return s.importRow(ctx, tx, customerID, table, row)
-	})
+	return s.importRow(ctx, s.sideOf(spec), customerID, table, row)
 }
 
 // sideOf is the database a table's rows are written to here: this shard's or the shared one.
@@ -516,14 +510,6 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	shape, err := s.shapeOf(ctx, table)
 	if err != nil {
 		return err
-	}
-
-	if table == "agent_logs" {
-		// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
-		// commit in order and a reader resuming after one misses none.
-		if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 731))", customerID); err != nil {
-			return fmt.Errorf("store: import %s: %w", table, err)
-		}
 	}
 
 	columns := spec.written(shape)
@@ -579,9 +565,18 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		args = append(args, customerID)
 	}
 
+	// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
+	// commit in order and a reader resuming after one misses none. The row is read through the
+	// lock, so it is taken before the id is drawn and held until the statement's transaction ends.
+	locked, through := "", ""
+	if table == "agent_logs" {
+		locked, through = "WITH locked AS (SELECT pg_advisory_xact_lock(hashtextextended(?, 731))) ", "locked, "
+		args = append([]any{customerID}, args...)
+	}
+
 	query := fmt.Sprintf(
-		"INSERT INTO %s (%s) SELECT %s FROM jsonb_populate_record(NULL::%s, %s) AS r%s ON CONFLICT %s %s",
-		spec.name, quoted, selected, spec.name, subject, where, spec.conflictTarget(shape), conflict)
+		"%sINSERT INTO %s (%s) SELECT %s FROM %sjsonb_populate_record(NULL::%s, %s) AS r%s ON CONFLICT %s %s",
+		locked, spec.name, quoted, selected, through, spec.name, subject, where, spec.conflictTarget(shape), conflict)
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: import %s: %w", table, err)
