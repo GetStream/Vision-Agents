@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Reads waiting on a slow session writer no longer crowd out its rows
+
+A read that waits for the session writer to catch up, such as `GET /v1/agents/sessions/{id}` or a call's transcript, took a slot in the writer's queue while it waited. Enough of them at once while Postgres was slow filled the queue, and later session rows, turns and items were dropped. Concurrent waits now share the writer's pass and take no slot, so the queue holds only rows. A wait that comes after the router has stopped its session writer returns at once rather than failing.
+
 ### Tool rounds are bounded in text replies
 
 A text conversation now limits the replies to tool results that follow one message, as a voice call does. After eight rounds the model is offered no tools and answers from what the tools returned. A model that kept asking for the same call was asked again on every reply before.

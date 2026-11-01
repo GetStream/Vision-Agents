@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,8 +60,6 @@ type recordWrite struct {
 	voiced *voiced
 	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
 	chose *chose
-	// flushed is closed once everything queued before it has been written.
-	flushed chan struct{}
 }
 
 // recorder is what a session needs of the writer behind it, which is less than the writer
@@ -111,7 +110,11 @@ type sessionRecorder struct {
 	logger *slog.Logger
 
 	queue chan recordWrite
-	done  chan struct{}
+	// flushes takes each Flush to the writer beside the queue rather than in it: a reader
+	// waiting on a slow writer must not take the room the rows need, or enough of them at
+	// once would get every later row dropped.
+	flushes chan chan struct{}
+	done    chan struct{}
 
 	closeOnce sync.Once
 	dropped   atomic.Int64
@@ -119,10 +122,11 @@ type sessionRecorder struct {
 
 func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecorder {
 	r := &sessionRecorder{
-		store:  pgStore,
-		logger: logger,
-		queue:  make(chan recordWrite, recordQueueSize),
-		done:   make(chan struct{}),
+		store:   pgStore,
+		logger:  logger,
+		queue:   make(chan recordWrite, recordQueueSize),
+		flushes: make(chan chan struct{}),
+		done:    make(chan struct{}),
 	}
 	go r.run()
 	return r
@@ -191,12 +195,14 @@ func (r *sessionRecorder) Item(item store.AgentResponseItem) {
 }
 
 // Flush waits for the writer to catch up with everything queued before it. Unlike the other
-// writes it waits for room rather than being dropped, because the caller is about to read
-// what it wrote.
+// writes it is never dropped, because the caller is about to read what it wrote.
 func (r *sessionRecorder) Flush(ctx context.Context) error {
 	flushed := make(chan struct{})
 	select {
-	case r.queue <- recordWrite{flushed: flushed}:
+	case r.flushes <- flushed:
+	case <-r.done:
+		// The writer drained the queue before it stopped.
+		return nil
 	case <-ctx.Done():
 		return stack.Wrap(ctx.Err())
 	}
@@ -241,13 +247,33 @@ func (r *sessionRecorder) run() {
 	flush := time.NewTicker(itemFlushEvery)
 	defer flush.Stop()
 
+	// Each waiting Flush is released once the writer has taken everything that was queued
+	// when it arrived. The queue is first in, first out, so that is the writes taken so far
+	// plus those still in it. Waiters arrive in order of that count, so the ones due are
+	// always at the front.
+	var taken int
+	var waiting []flushWaiter
 	for {
+		due := slices.IndexFunc(waiting, func(waiter flushWaiter) bool { return waiter.after > taken })
+		if due < 0 {
+			due = len(waiting)
+		}
+		if due > 0 {
+			// The items pending ahead of them are written before they are told.
+			r.writeItems(pending)
+			pending = pending[:0]
+			for _, waiter := range waiting[:due] {
+				close(waiter.flushed)
+			}
+			waiting = waiting[due:]
+		}
 		select {
 		case write, open := <-r.queue:
 			if !open {
 				r.writeItems(pending)
 				return
 			}
+			taken++
 			if len(write.items) > 0 {
 				pending = append(pending, write.items...)
 				if len(pending) >= itemBatchSize {
@@ -261,6 +287,8 @@ func (r *sessionRecorder) run() {
 				pending = pending[:0]
 			}
 			r.write(write)
+		case flushed := <-r.flushes:
+			waiting = append(waiting, flushWaiter{after: taken + len(r.queue), flushed: flushed})
 		case <-flush.C:
 			if len(pending) > 0 {
 				r.writeItems(pending)
@@ -270,14 +298,17 @@ func (r *sessionRecorder) run() {
 	}
 }
 
+// flushWaiter is a Flush waiting until the writer has taken its first after writes.
+type flushWaiter struct {
+	after   int
+	flushed chan struct{}
+}
+
 func (r *sessionRecorder) write(write recordWrite) {
 	ctx, cancel := context.WithTimeout(context.Background(), recordWriteTimeout)
 	defer cancel()
 
 	switch {
-	case write.flushed != nil:
-		// The items pending ahead of it were written before this was reached.
-		close(write.flushed)
 	case write.session != nil:
 		if err := r.store.SaveSession(ctx, write.session); err != nil {
 			r.logger.Error("could not record the session starting", "error", err)
