@@ -190,6 +190,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A Daytona credential refresh or file download that hangs no longer holds the sandbox
+
+In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, the secrets made when the sandbox is made or made again, the files and setup written into a sandbox that has started, and the read of the state of one that may have stopped are now bounded at 60 seconds (30 for the read), as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
+
 ### A report on an older placed call no longer ends the session a newer call rings into
 
 A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).

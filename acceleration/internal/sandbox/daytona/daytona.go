@@ -130,10 +130,13 @@ type Sandbox struct {
 	gate                chan struct{}
 	closed              atomic.Bool
 	timeout, runTimeout time.Duration
-	// check bounds the checks before each run: the timeout, but at most defaultTimeout, as a
-	// built sandbox's timeout is buildTimeout and a hung check holds the gate, so every other
-	// run of the session waits. Shorter in tests.
-	check  time.Duration
+	// check bounds the checks before each run, the broker's calls, a write and a run's
+	// downloads: the timeout, but at most defaultTimeout, as a built sandbox's timeout is
+	// buildTimeout and a hung call holds the gate, so every other run of the session waits.
+	// Shorter in tests.
+	check time.Duration
+	// state bounds a read of the sandbox's state: stateTimeout. Shorter in tests.
+	state  time.Duration
 	config sandbox.Config
 	grants []sandbox.Grant
 	broker sandbox.CredentialBroker
@@ -206,7 +209,7 @@ func New(o Options) (*Sandbox, error) {
 		return nil, stack.Wrap(err)
 	}
 	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout, config: o.Config,
-		check:  min(o.Timeout, defaultTimeout),
+		check: min(o.Timeout, defaultTimeout), state: stateTimeout,
 		grants: o.Grants, broker: o.Broker, labels: maps.Clone(o.Labels), lifecycle: o.Lifecycle, meter: o.Meter,
 		slots: o.Slots, logger: o.Logger, grace: stopGrace}, nil
 }
@@ -244,7 +247,11 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	var ran *types.ExecuteResponse
 	err := s.use(ctx, func() error {
 		if s.broker != nil {
-			if err := s.broker.BeforeRun(ctx); err != nil {
+			// A hung refresh holds the gate, so it is bounded as a check is.
+			before, end := context.WithTimeout(ctx, s.check)
+			err := s.broker.BeforeRun(before)
+			end()
+			if err != nil {
 				return err
 			}
 		}
@@ -274,7 +281,10 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	if err != nil {
 		return sandbox.Result{}, err
 	}
-	fetch, cancel := context.WithTimeout(ctx, s.timeout)
+	// The downloads hold the gate, so they are bounded as a check is: a built sandbox's timeout
+	// is the 20 minutes a build may take, and a built image serves its files no slower than
+	// Daytona's default one, whose sandbox's timeout is defaultTimeout.
+	fetch, cancel := context.WithTimeout(ctx, s.check)
 	defer cancel()
 	result := sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}
 	outputs = distinct(outputs)
@@ -375,7 +385,7 @@ func (s *Sandbox) vanished(ctx context.Context, err error) bool {
 		return false
 	}
 	id := s.box.ID
-	read, end := context.WithTimeout(ctx, stateTimeout)
+	read, end := context.WithTimeout(ctx, s.state)
 	defer end()
 	readErr := s.box.RefreshData(read)
 	deleted := errors.Is(readErr, sdkerrors.ErrNotFound) ||
@@ -412,15 +422,19 @@ func (s *Sandbox) started(ctx context.Context) error {
 	if err := s.box.WaitForStart(ready, s.timeout); err != nil {
 		return err
 	}
+	// Only the start may take a build's timeout: the files and the setup hold the gate, so they
+	// are bounded as a check is.
+	seed, done := context.WithTimeout(ctx, s.check)
+	defer done()
 	// A file that could not be written is written on the next run, before any code.
 	for name, data := range s.files {
-		if err := s.box.FileSystem.UploadFile(ready, data, name); err != nil {
+		if err := s.box.FileSystem.UploadFile(seed, data, name); err != nil {
 			return stack.Wrap(err)
 		}
 		delete(s.files, name)
 	}
 	for len(s.setup) > 0 {
-		ran, err := s.box.Process.ExecuteCommand(ready, "sh -c "+quoted(s.setup[0]), options.WithCommandEnv(s.mount.RunEnv))
+		ran, err := s.box.Process.ExecuteCommand(seed, "sh -c "+quoted(s.setup[0]), options.WithCommandEnv(s.mount.RunEnv))
 		if err != nil {
 			return stack.Wrap(err)
 		}
@@ -442,13 +456,17 @@ func (s *Sandbox) create(ctx context.Context) error {
 		return err
 	}
 	if s.broker != nil {
+		// Only the sandbox may take a build's timeout: the broker's calls are bounded as a check is,
+		// as they hold the gate.
+		prepare, end := context.WithTimeout(create, s.check)
+		defer end()
 		if s.generation > 0 {
-			if err := s.broker.Close(create); err != nil {
+			if err := s.broker.Close(prepare); err != nil {
 				s.letGo()
 				return err
 			}
 		}
-		mount, err := s.broker.Prepare(create, s.grants)
+		mount, err := s.broker.Prepare(prepare, s.grants)
 		if err != nil {
 			s.letGo()
 			return err
@@ -459,7 +477,10 @@ func (s *Sandbox) create(ctx context.Context) error {
 	if err != nil {
 		s.letGo()
 		if s.broker != nil {
-			return errors.Join(err, s.broker.Close(ctx))
+			// On ctx rather than create, which may be what ran out; bounded, as it holds the gate.
+			release, end := context.WithTimeout(ctx, s.check)
+			defer end()
+			return errors.Join(err, s.broker.Close(release))
 		}
 		return err
 	}
@@ -515,7 +536,11 @@ func (s *Sandbox) lapsed() bool {
 func (s *Sandbox) revive(ctx context.Context) error {
 	read, end := context.WithTimeout(ctx, s.timeout)
 	defer end()
-	err := s.box.RefreshData(read)
+	// Only the hold and the wake may take the timeout: the read of the state is bounded as any
+	// other, as it holds the gate.
+	fetch, stop := context.WithTimeout(read, s.state)
+	err := s.box.RefreshData(fetch)
+	stop()
 	if errors.Is(err, sdkerrors.ErrNotFound) {
 		s.lost()
 		return nil
@@ -699,7 +724,7 @@ func (s *Sandbox) retryDelete() bool {
 // Daytona has not stopped it: the meter bills it as stopped all the same, and the day's
 // reconciliation with Daytona's records finds the difference. The caller holds the gate.
 func (s *Sandbox) confirm() {
-	read, cancel := context.WithTimeout(context.Background(), stateTimeout)
+	read, cancel := context.WithTimeout(context.Background(), s.state)
 	defer cancel()
 	if err := s.box.RefreshData(read); err != nil {
 		if !errors.Is(err, sdkerrors.ErrNotFound) {

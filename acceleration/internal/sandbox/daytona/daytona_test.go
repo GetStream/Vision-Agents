@@ -92,6 +92,13 @@ type platform struct {
 	slowUpload time.Duration
 	// asked, when set, hears of each download before it is served, by the files it names.
 	asked func(name string)
+	// slowDownload is how long each download takes to answer, and slowSecret how long each
+	// request of a method about a secret, or until the caller gives up.
+	slowDownload time.Duration
+	slowSecret   map[string]time.Duration
+	// slowCreate and slowState are how long each sandbox's creation and each read of a
+	// sandbox's state take to answer, or until the caller gives up.
+	slowCreate, slowState time.Duration
 }
 
 // heldSecret is a secret as Daytona keeps it.
@@ -126,6 +133,28 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		slow := p.slowUpload
 		p.mu.Unlock()
 		answerAfter(r, slow)
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/sandbox") {
+		p.mu.Lock()
+		slow := p.slowState
+		if r.Method == http.MethodPost {
+			slow = p.slowCreate
+		}
+		p.mu.Unlock()
+		answerAfter(r, slow)
+		if r.Context().Err() != nil {
+			return
+		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/secret") {
+		p.mu.Lock()
+		slow := p.slowSecret[r.Method]
+		p.mu.Unlock()
+		answerAfter(r, slow)
+		if r.Context().Err() != nil {
+			// The client gave up: nothing it asked for is done.
+			return
+		}
 	}
 	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
 		p.mu.Lock()
@@ -249,11 +278,12 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		name = strings.Join(body.Paths, ",")
 	}
 	p.mu.Lock()
-	asked := p.asked
+	asked, slow := p.asked, p.slowDownload
 	p.mu.Unlock()
 	if asked != nil {
 		asked(name)
 	}
+	answerAfter(r, slow)
 	p.mu.Lock()
 	var content io.Reader
 	if data, ok := p.files[name]; ok {
@@ -930,4 +960,118 @@ func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
 
 	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
 	s.Less(time.Since(started), 30*time.Second, "answered long before the sandbox's 60 s timeout")
+}
+
+// TestAHungDownloadIsCutAtTheChecksTimeout: a run's downloads hold the gate, and a built
+// sandbox's timeout is the 20 minutes a build may take, so a download Daytona never answers is
+// cut at defaultTimeout, the file is missing, and the next run gets in.
+func (s *DaytonaSuite) TestAHungDownloadIsCutAtTheChecksTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.holds("/tmp/report.csv", []byte("a,b"))
+	s.platform.mu.Lock()
+	s.platform.slowDownload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	result, err := box.Run(ctx, "write()", []string{"/tmp/report.csv"})
+
+	s.Require().NoError(err)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
+	s.platform.mu.Lock()
+	s.platform.slowDownload = 0
+	s.platform.mu.Unlock()
+	result, err = box.Run(ctx, "write()", []string{"/tmp/report.csv"})
+	s.Require().NoError(err, "the next run gets in")
+	s.Require().Len(result.Files, 1)
+	s.Equal([]byte("a,b"), result.Files[0].Data)
+}
+
+// TestAHungReadOfALapsedSandboxsStateIsCutAtTheStateTimeout: the read before a run wakes a
+// sandbox holds the gate, and a built sandbox's timeout is the 20 minutes a build may take, so
+// a read Daytona never answers is cut at stateTimeout, and the next run gets in.
+func (s *DaytonaSuite) TestAHungReadOfALapsedSandboxsStateIsCutAtTheStateTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(stateTimeout, box.state)
+	box.state = 2 * time.Second // stateTimeout, shorter in tests
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.used = time.Now().Add(-24 * time.Hour) // Daytona may have stopped it by now
+	s.platform.mu.Lock()
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 20*time.Second, "cut at the state's bound, not the caller's 30 s")
+	s.platform.mu.Lock()
+	s.platform.slowState = 0
+	s.platform.mu.Unlock()
+	_, err = box.Run(ctx, "print(2)", nil)
+	s.NoError(err, "the next run gets in")
+}
+
+// TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun: the read before a run wakes
+// a sandbox runs on the caller's context, so a caller that gives up during a hung read is
+// answered then, not at the state's bound.
+func (s *DaytonaSuite) TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	box.state = 10 * time.Second // stateTimeout, longer than the caller waits
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.used = time.Now().Add(-24 * time.Hour) // Daytona may have stopped it by now
+	s.platform.mu.Lock()
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 6*time.Second, "answered when the caller gave up, long before the state's bound")
+}
+
+// TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout: a run Daytona answers with not
+// found is followed by a read of the sandbox's state, which holds the gate, and a built
+// sandbox's timeout is the 20 minutes a build may take, so a read Daytona never answers is cut
+// at stateTimeout.
+func (s *DaytonaSuite) TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.state = 2 * time.Second // stateTimeout, shorter in tests
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.runStatus = http.StatusNotFound
+	s.platform.runBody = `{"message":"sandbox not found"}`
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.Error(err)
+	s.Less(time.Since(started), 20*time.Second, "cut at the state's bound, not the caller's 30 s")
+}
+
+func (s *DaytonaSuite) unslowState() {
+	s.platform.mu.Lock()
+	s.platform.slowState = 0
+	s.platform.mu.Unlock()
 }
