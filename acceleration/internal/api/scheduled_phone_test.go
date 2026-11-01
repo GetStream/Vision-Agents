@@ -541,7 +541,7 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingAndHoldIsTried(
 	s.shortCalls(2*time.Second, 10*time.Second)
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
 
-	run, err := s.deliverWithin(task, 30*time.Second)
+	run, err := s.deliverWithin(task, scheduledPhoneWindow+scheduledCallLimit+deliveryWait)
 
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonFailed, failure.Reason, "the call was tried, and none can be placed here")
