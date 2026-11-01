@@ -359,6 +359,13 @@ func (s *Server) Call(callType, id string) map[string]any {
 	return s.db.made[callType+":"+id]
 }
 
+// Created are the cids of the calls a get-or-create made, sorted.
+func (s *Server) Created() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.made))
+}
+
 // Rules are the ids of the SIP routing rules the app holds now.
 func (s *Server) Rules() []string {
 	s.db.mu.Lock()
@@ -723,12 +730,14 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}
 		result["call"] = call
-	case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/video/call/"):
+	case r.Method == http.MethodPost && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
 		// A get-or-create loads a call that is already there and creates only a missing one
 		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call
-		// keeps the body it was created with.
+		// keeps the body it was created with. A call put in session is already there. Only
+		// the get-or-create path is matched: a POST below it, mark_ended, creates nothing.
 		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
-		if _, exists := db.made[cid]; !exists {
+		_, inSession := db.calls[cid]
+		if _, exists := db.made[cid]; !exists && !inSession {
 			db.made[cid] = body
 		}
 		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1]}
