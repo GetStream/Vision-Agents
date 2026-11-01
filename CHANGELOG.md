@@ -2,6 +2,10 @@
 
 ## Features
 
+### First output latency by model
+
+`router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
+
 ### The Python SDK sets spend limits, puts users in teams and tags their work
 
 `plugins/stream` gains `api.spend_limits` (create, update, delete, list, grant, revoke, usage and reset), `api.teams` (`set_limit` creates or updates a team's limit in one call, `remove_limit`, `usage`, `grant` and `list`), `api.account` (the balance and Stream's `spend_hard_limit`, and the credit history) and `api.usage.spend`. Amounts are dollars as a `Decimal`, an `int` or a `str`, never a float.
@@ -191,6 +195,25 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A user's own quota holds from the next request on every router
 
 Saving the first policy of its own for one of an app's users dropped the app's cached decision only on the router that saved it, so another router could answer that user's next request with the app's quota. Every router now reads whether an app has users with a policy of their own through the shared configuration cache, which a write clears everywhere (AI-1918).
+### A Daytona credential refresh or file download that hangs no longer holds the sandbox
+
+In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, the secrets made when the sandbox is made or made again, the files and setup written into a sandbox that has started, and the read of the state of one that may have stopped are now bounded at 60 seconds (30 for the read), as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
+
+### A report on an older placed call no longer ends the session a newer call rings into
+
+A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).
+
+### Sandbox code says to reconnect a connection saved before its connector gave code access
+
+A session whose agent config binds a connection with `sandbox: true`, saved on a connector revision that gives the sandbox no access while a later revision does, now gets a `run_code` result that tells the model to ask the user to reconnect it, as a login during the chat does since AI-1980. Before, only the router's log said so, and code calling the provider got a 401 with no hint (AI-2390).
+
+### A video fetched by URL reaches only the public internet
+
+The router refuses a clip URL whose address is in a range that is not publicly reachable, by the same list as connector traffic: "this network" (0.0.0.0/8), IETF protocol assignments (192.0.0.0/24), benchmarking (198.18.0.0/15), reserved (240.0.0.0/4), the documentation ranges, and IPv6 addresses outside 2000::/3 or that carry an IPv4 address (6to4, Teredo, NAT64) (AI-2389).
+
+### A bad knowledge url or simulation in a Go agent folder names its line
+
+`agents.Load` now says which line of `knowledge/urls.yaml` a page that is not an http or https url is on, and which line of a `simulations/*.yaml` file a simulation with no name, scenario or assertion, a mode other than text or audio, or a name already taken is on. The same files are refused as before (AI-2417).
 
 ### `router replicate --resume` does not deliver again what the source delivered
 

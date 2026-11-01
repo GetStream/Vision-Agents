@@ -1073,7 +1073,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// A call whose end was never announced is ended at the longest a call may last, and a
 		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
 		// billed by jobs of their own (router usage numbers, router usage dlc).
-		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
+		go telephony.RunLegSweep(ctx, legSweepEvery)
 		go checkCallHook(ctx, settings, logger)
 		startPhoneSweeper(ctx, telephony, logger)
 	}
@@ -2334,8 +2334,14 @@ func closePhone(telephony *phone.Service, logger *slog.Logger) {
 }
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
-// its hook missed. A campaign takes days, so this is not what makes one quick.
-const dlcPollEvery = 15 * time.Minute
+// its hook missed. A campaign takes days, so this is not what makes one quick. It and
+// telnyxDLC are variables, and so is legSweepEvery, so a test of the router's start can sweep
+// and poll sooner, against a vendor of its own.
+var (
+	legSweepEvery = phone.LegSweepEvery
+	dlcPollEvery  = 15 * time.Minute
+	telnyxDLC     dlctelnyx.Options
+)
 
 // buildDLC wires 10DLC review and the gate every text and call passes. Without a database
 // there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
@@ -2367,7 +2373,7 @@ func buildDLC(
 	}
 
 	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
-	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
+	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
 		options.Registrar = registrar
 	} else {
 		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)

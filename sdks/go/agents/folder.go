@@ -87,8 +87,18 @@ type KnowledgeURL struct {
 //	      refresh_hours: 24
 //
 // Unknown keys are refused, so a misspelt one is reported rather than dropped into a
-// subscription nobody described.
+// subscription nobody described, and so is a url that is not http or https.
 func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
+	if err := k.decode(node); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(k.URL, "http://") && !strings.HasPrefix(k.URL, "https://") {
+		return fmt.Errorf("line %d: %q is not an http or https url", keyLine(node, "url"), k.URL)
+	}
+	return nil
+}
+
+func (k *KnowledgeURL) decode(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		return node.Decode(&k.URL)
 	}
@@ -965,11 +975,6 @@ func loadKnowledgeURLs(path string) ([]KnowledgeURL, error) {
 	if err := yaml.Unmarshal(raw, &pages); err != nil {
 		return nil, fmt.Errorf("agents: %s: %w", path, err)
 	}
-	for _, page := range pages {
-		if !strings.HasPrefix(page.URL, "http://") && !strings.HasPrefix(page.URL, "https://") {
-			return nil, fmt.Errorf("agents: %s: %q is not an http or https url", path, page.URL)
-		}
-	}
 	return pages, nil
 }
 
@@ -998,29 +1003,39 @@ func loadSimulations(path string) ([]Simulation, error) {
 		if err != nil {
 			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
 		}
-		var listed []Simulation
+		// Pointers keep a null entry in its place, so entry i is node i, whose lines the
+		// errors name; a node decodes without KnownFields, so the file is read twice.
+		var listed []*Simulation
 		decoder := yaml.NewDecoder(bytes.NewReader(raw))
 		decoder.KnownFields(true)
 		if err := decoder.Decode(&listed); err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("agents: %s: %w", file, err)
 		}
+		var nodes []yaml.Node
+		if err := yaml.Unmarshal(raw, &nodes); err != nil {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
 
-		for _, simulation := range listed {
+		for index, simulation := range listed {
+			if simulation == nil {
+				continue
+			}
+			node := &nodes[index]
 			switch {
 			case simulation.Name == "":
-				return nil, fmt.Errorf("agents: %s: a simulation needs a name", file)
+				return nil, fmt.Errorf("agents: %s: line %d: a simulation needs a name", file, keyLine(node, "name"))
 			case simulation.Scenario == "":
-				return nil, fmt.Errorf("agents: %s: simulation %q needs a scenario", file, simulation.Name)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs a scenario", file, keyLine(node, "scenario"), simulation.Name)
 			case simulation.Assertion == "":
-				return nil, fmt.Errorf("agents: %s: simulation %q needs an assertion", file, simulation.Name)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs an assertion", file, keyLine(node, "assertion"), simulation.Name)
 			case simulation.Mode != "" && simulation.Mode != "text" && simulation.Mode != "audio":
-				return nil, fmt.Errorf("agents: %s: simulation %q is text or audio, not %q", file, simulation.Name, simulation.Mode)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is text or audio, not %q", file, keyLine(node, "mode"), simulation.Name, simulation.Mode)
 			}
 			if first, taken := named[simulation.Name]; taken {
-				return nil, fmt.Errorf("agents: %s: simulation %q is also declared in %s", file, simulation.Name, first)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is also declared in %s", file, keyLine(node, "name"), simulation.Name, first)
 			}
 			named[simulation.Name] = entry.Name()
-			simulations = append(simulations, simulation)
+			simulations = append(simulations, *simulation)
 		}
 	}
 	return simulations, nil
