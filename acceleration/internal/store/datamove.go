@@ -568,10 +568,17 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
 	// commit in order and a reader resuming after one misses none. The row is read through the
 	// lock, so it is taken before the id is drawn and held until the statement's transaction ends.
+	//
+	// A request's log is a row of agent_logs the export carries, written where the request was
+	// (agent_request_log), so an imported request tells the trigger here it is logged already,
+	// as RecordRequests does, until the statement's transaction ends.
 	locked, through := "", ""
-	if table == "agent_logs" {
+	switch table {
+	case "agent_logs":
 		locked, through = "WITH locked AS (SELECT pg_advisory_xact_lock(hashtextextended(?, 731))) ", "locked, "
 		args = append([]any{customerID}, args...)
+	case "requests":
+		locked, through = "WITH logged AS (SELECT set_config('router.request_logged', 'on', true)) ", "logged, "
 	}
 
 	query := fmt.Sprintf(

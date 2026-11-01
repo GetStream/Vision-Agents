@@ -1969,3 +1969,16 @@ func (s *DataMoveSuite) TestMigrateBuildsTheIndexCopiedLogsAreKnownByAgain() {
 
 	s.Len(s.logsHere("acme"), 1)
 }
+
+func (s *DataMoveSuite) TestACopiedRequestOfAnAgentIsLoggedHereOnlyByItsCopiedLog() {
+	// With one database, the trigger on requests logs a request of an agent where it is written.
+	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{Modality: "stt", CustomerID: "acme", AgentID: "agent",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+	logged := s.export("acme").of("agent_logs")
+	s.Require().Len(logged, 1, "the source logged the request")
+
+	s.move("acme", "acme")
+
+	s.Equal([]string{logged[0]["message"].(string)}, slices.Collect(maps.Values(s.logsHere("acme"))),
+		"the request is logged once here: by the log copied with it")
+}
