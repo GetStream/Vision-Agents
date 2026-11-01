@@ -546,7 +546,7 @@ func (s *CallStatusSuite) keptBy(logged *lockedLog, sessions *session.Manager, i
 }
 
 // A session can have two calls placed into it. A report that the older went unanswered does
-// not end the session while the newer still rings, on the node holding it as on a peer.
+// not end the session while the newer still rings.
 func (s *CallStatusSuite) TestABusyOlderCallKeepsASessionANewerCallStillRingsInto() {
 	id := s.openedHere()
 	older, _ := s.placedFor(id)
