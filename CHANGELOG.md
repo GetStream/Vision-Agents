@@ -12,6 +12,8 @@
 
 A user is in the team its token names: `api.create_user_token("user-42", team="finance", usage_categories=["project:onboarding"])` for a device, `api.for_user("user-42", team="finance")` for a backend running work for that user, and `stream.Client(team=..., usage_categories=...)` for the client's own work. A team or category the router would refuse raises `ValueError` before anything is signed.
 
+Every request from `plugins/stream` sends `X-Stream-Client: sdk`, as the Go SDK does, so the audit log records its changes as `sdk` rather than `api`.
+
 ### `router replicate --resume` cuts a move over
 
 `router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. A pause or resume here, by the user or the agent, clears the mark. The cut-over is three steps: a last `router replicate --once`; stop the source delivering (never by pausing its tasks before that last `--once`, which clears the marks); then `router replicate --resume --as <app id>`, which reads only this deployment and takes no `--from`. It resumes exactly the marked tasks, each from its first occurrence after the cut-over, and leaves the ones the user paused alone. A marked task whose agent config is deleted or missing here stays paused and loses the mark; the command prints how many. A user holds at most the config's `max_tasks_per_user` active tasks (25 when unset), as with a resume over the API: where tasks the user made here before the cut-over leave less room than the move brought, the oldest are resumed, the rest stay paused and marked, and the command prints how many; run it again once the user has made room (AI-2407). It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
@@ -190,6 +192,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A user's own quota holds from the next request on every router
+
+Saving the first policy of its own for one of an app's users dropped the app's cached decision only on the router that saved it, so another router could answer that user's next request with the app's quota. Every router now reads whether an app has users with a policy of their own through the shared configuration cache, which a write clears everywhere (AI-1918).
 ### A Daytona credential refresh or file download that hangs no longer holds the sandbox
 
 In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, the secrets made when the sandbox is made or made again, the files and setup written into a sandbox that has started, and the read of the state of one that may have stopped are now bounded at 60 seconds (30 for the read), as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
