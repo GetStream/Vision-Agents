@@ -21,6 +21,10 @@ AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
 
 CUSTOMER_HEADER = "X-Customer-Id"
 USER_HEADER = "X-Stream-User-Id"
+# Which client a request came from, which the router's audit log records as the change's
+# source. The Go SDK sends the same.
+CLIENT_HEADER = "X-Stream-Client"
+CLIENT_SDK = "sdk"
 # Where a caller the proxy is not in front of names its usage categories, its team among them
 # as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
 # and the proxy deletes this header.
@@ -276,6 +280,7 @@ class Backend:
         holding an expired one.
         """
         headers = self._credentials()
+        headers[CLIENT_HEADER] = CLIENT_SDK
         if self.acting_for:
             headers[USER_HEADER] = self.acting_for
         headers.update(self._category_header())
@@ -362,6 +367,7 @@ class Backend:
         refusals = {"event_hooks": {"response": [raise_refusal]}}
         if not self.api_key:
             headers = self._category_header()
+            headers[CLIENT_HEADER] = CLIENT_SDK
             if self.acting_for:
                 headers[USER_HEADER] = self.acting_for
             return AuthenticatedClient(

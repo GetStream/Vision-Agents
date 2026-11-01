@@ -10,6 +10,7 @@ import pytest
 from vision_agents.plugins import stream
 from vision_agents.plugins.stream._backend import (
     AUTHENTICATE_ENV,
+    CLIENT_HEADER,
     CUSTOMER_ENV,
     DEFAULT_URL,
     REGION_ENV,
@@ -74,6 +75,15 @@ class TestBackend:
         )
 
         assert backend.url == "https://accelerate-europe-west4.gcp.stream-io-api.com"
+
+    def test_every_request_says_it_came_from_the_sdk(self):
+        keyed = Backend(url="http://router", api_key="key", api_secret="secret")
+        trusted = Backend(url="http://router", customer_id="acme")
+
+        assert keyed.headers[CLIENT_HEADER] == "sdk"
+        for backend in (keyed, trusted):
+            sent = backend.client().get_async_httpx_client().headers
+            assert sent[CLIENT_HEADER] == "sdk"
 
     def test_a_url_and_a_region_together_are_refused(self):
         with pytest.raises(ValueError):
