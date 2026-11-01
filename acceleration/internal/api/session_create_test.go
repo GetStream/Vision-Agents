@@ -759,6 +759,60 @@ func (s *SessionCreateSuite) TestAForkOfAConversationPastARefusedTurnCarriesItWi
 		s.answerTo(forked.Id, "And order 4472?"))
 }
 
+// TestATranscriptReadBeforeItsSessionRowIsWrittenIsTheConversations: the session's row is
+// written behind the call's, so a transcript read in between still reads the conversation's
+// channel, not the agent's. On the base, 42653ab8d, it answered with no lines.
+func (s *SessionCreateSuite) TestATranscriptReadBeforeItsSessionRowIsWrittenIsTheConversations() {
+	ctx := s.T().Context()
+	request := historySession(false)
+	request.Id = pointerTo(s.utils.uuid())
+	// An uncommitted row under the session's id holds the writer's insert of it until the
+	// rollback: the session writer slowed with nothing in the router changed.
+	held, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = held.Rollback() }()
+	_, err = held.ExecContext(ctx, "INSERT INTO agent_sessions (id, customer_id, state) VALUES (?, ?, ?)",
+		*request.Id, s.customerID(), store.SessionRunning)
+	s.Require().NoError(err)
+
+	opened := s.serverClient.createSession(request)
+	answered := s.answerTo(opened.Id, "Where is order 3825?")
+	s.Require().Eventually(func() bool {
+		_, err := s.store.Call(ctx, s.customerID(), opened.Id)
+		return err == nil
+	}, settleFor, 20*time.Millisecond, "the call's row was never stored")
+	_, err = s.store.StoredSession(ctx, s.customerID(), opened.Id)
+	s.Require().Error(err, "the session's row is still held back")
+
+	var read []TranscriptMessage
+	status := make(chan int, 1)
+	go func() {
+		status <- s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/transcript", nil, &read)
+	}()
+	// A read that answers while the row is held answered without it. The writer gives up on
+	// a write after 5s (recordWriteTimeout), so the row is let go well before that.
+	var answeredWith int
+	select {
+	case answeredWith = <-status:
+	case <-time.After(300 * time.Millisecond):
+	}
+	s.Require().NoError(held.Rollback())
+	if answeredWith == 0 {
+		select {
+		case answeredWith = <-status:
+		case <-time.After(settleFor):
+			s.Require().Fail("the transcript read never answered")
+		}
+	}
+
+	s.Require().Equal(http.StatusOK, answeredWith)
+	var said []string
+	for _, line := range read {
+		said = append(said, line.Text)
+	}
+	s.Equal([]string{"Where is order 3825?", answered}, said)
+}
+
 // historySession is a conversation in writing on the model that recites what it was handed.
 func historySession(incognito bool) CreateSessionRequest {
 	request := textSession(nil)
