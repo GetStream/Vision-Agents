@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // messagesPerDay is the user's allowance, far more than any test spends.
@@ -57,7 +58,7 @@ func (s *HarnessChargeSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR must be set")
 	}
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.redis = client
 	s.ctx = context.Background()

@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // ProxySuite runs the attacks A1-A14 a proxy can be put through without a sandbox: its hosts
@@ -99,7 +100,7 @@ func (s *ProxySuite) SetupSuite() {
 	}
 	s.ctx = context.Background()
 	var err error
-	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)
 	s.store = egress.NewStore(s.redis)

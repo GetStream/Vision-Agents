@@ -40,6 +40,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/brokertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 func TestProxyBrokerContract(t *testing.T) {
@@ -856,7 +857,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	}
 	r := &rig{test: t.Name(), run: uuid.NewString()}
 	var err error
-	r.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	r.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	if err != nil {
 		t.Fatal(err)
 	}
