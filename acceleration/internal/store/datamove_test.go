@@ -1773,6 +1773,12 @@ func (s *DataMoveSuite) placeHere(row map[string]any) {
 	_, err = s.destination.DB().ExecContext(s.ctx,
 		"INSERT INTO agent_logs SELECT * FROM jsonb_populate_record(NULL::agent_logs, ?::jsonb)", string(encoded))
 	s.Require().NoError(err)
+	// An explicit id leaves the sequence where it was, and SetupTest truncates without
+	// restarting it, so both sides draw in step: the destination's next id would be this one.
+	// A deployment that wrote the log itself has drawn past it.
+	_, err = s.destination.DB().ExecContext(s.ctx, "SELECT setval('agent_logs_id_seq', GREATEST("+
+		"(SELECT max(id) FROM agent_logs), (SELECT last_value FROM agent_logs_id_seq)))")
+	s.Require().NoError(err)
 }
 
 // exportedLog is the one agent log of acme's the source exports, as a row the test may edit.
