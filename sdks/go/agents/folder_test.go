@@ -520,18 +520,19 @@ func TestASimulationErrorNamesItsLineInTheFile(t *testing.T) {
 	}
 }
 
-// TestANullPageOrSimulationIsSkipped: a null entry is passed over, as before lines were named.
+// TestANullPageOrSimulationIsSkipped: a null entry is passed over, as before lines were named,
+// and a page is read whether it is http or https.
 func TestANullPageOrSimulationIsSkipped(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "deli")
 	write(t, root, "agent.yaml", "name: deli\n")
-	write(t, root, "knowledge/urls.yaml", "- ~\n- https://example.com/a\n- ~\n")
+	write(t, root, "knowledge/urls.yaml", "- ~\n- http://example.com/a\n- ~\n- https://example.com/b\n")
 	write(t, root, "simulations/lunch.yaml", "- ~\n- name: a\n  scenario: Order.\n  assertion: Ordered.\n- ~\n")
 
 	folder, err := Load(root)
 	if err != nil {
 		t.Fatalf("loading gave %v", err)
 	}
-	if len(folder.KnowledgeURLs) != 1 || folder.KnowledgeURLs[0].URL != "https://example.com/a" {
+	if len(folder.KnowledgeURLs) != 2 || folder.KnowledgeURLs[0].URL != "http://example.com/a" || folder.KnowledgeURLs[1].URL != "https://example.com/b" {
 		t.Errorf("the pages are %+v", folder.KnowledgeURLs)
 	}
 	if len(folder.Simulations) != 1 || folder.Simulations[0].Name != "a" {
