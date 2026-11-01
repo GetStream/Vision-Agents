@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -605,6 +606,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		prices = activePrices
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
+	}
+	// Checked against the list in force: the database's once read, which holds what staff
+	// priced since the files, else the files'.
+	billed := billable.Items(billableOf(settings, capabilities, vendorConfig))
+	if activePrices != nil {
+		logUnpriced(activePrices.List(), billed, logger)
+	} else {
+		logUnpriced(fallbackPrices, billed, logger)
 	}
 	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
 	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
@@ -1311,6 +1320,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Routers:               routers,
 		Pricer:                prices,
 		Prices:                activePrices,
+		Billable:              billed,
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
@@ -2215,23 +2225,14 @@ func buildVoices(
 // the embedded vendor.json), priced as a first load prices them, with the models the routing
 // config runs itself marked local: every row is priced by it on a router with no database,
 // and until the database is read on one with. A price: block in the
-// routing config is no longer read, which is said at start, and so is billable work the
-// list has no price for, so it can be priced before a row of it is recorded at nothing.
+// routing config is no longer read, which is said at start.
 func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
 	if ignored := pricedProviders(capabilities); len(ignored) > 0 {
 		logger.Warn("price: in the routing config is ignored; prices come from prices/vendor.json and "+
 			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
 			"providers", ignored)
 	}
-	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range list.Unpriced(routing.Items(capabilities)) {
-		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
-			"region", item.Region, "byok", item.BYOK)
-	}
-	return list, nil
+	return pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
 }
 
 // newActivePrices is the price list every row is priced by on a router with a database: the

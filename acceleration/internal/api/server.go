@@ -124,7 +124,11 @@ type Options struct {
 	// reports not ready until it is ready, and a price change made through the management API
 	// is read back at once. Nil serves the price list operations from Store alone.
 	Prices *pricing.Active
-	Store  *store.Store
+	// Billable is every item of work the deployment bills (billable.Items), which the price
+	// list's unpriced and a price change's preview are checked against. Empty is the routed
+	// providers alone.
+	Billable []pricing.Item
+	Store    *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
 	// over Store when it is not given, in which case every read is a query.
@@ -333,6 +337,7 @@ type Server struct {
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
 	prices             *pricing.Active
+	billable           []pricing.Item
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
@@ -520,6 +525,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		routers:            options.Routers,
 		pricer:             pricer,
 		prices:             options.Prices,
+		billable:           options.Billable,
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,

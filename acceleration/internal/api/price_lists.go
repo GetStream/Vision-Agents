@@ -342,6 +342,15 @@ func (s *Server) routedConfig() routing.Config {
 	return config
 }
 
+// billed is every item of work the deployment bills, the routed providers in config where it
+// was not told.
+func (s *Server) billed(config routing.Config) []pricing.Item {
+	if len(s.billable) > 0 {
+		return s.billable
+	}
+	return routing.Items(config)
+}
+
 // getActivePriceList answers the list in force at a moment, read from the database rather
 // than from this router's memory, so it answers for any moment and for every router at once.
 func (s *Server) getActivePriceList(ctx context.Context, request *getActivePriceListRequest) (*priceListResponse, error) {
@@ -377,7 +386,7 @@ func (s *Server) getActivePriceList(ctx context.Context, request *getActivePrice
 		entry.Local = isLocal(entry, local)
 		answer.Entries = append(answer.Entries, renderPriceEntry(entry, row.EffectiveAt))
 	}
-	for _, item := range list.Unpriced(routing.Items(config)) {
+	for _, item := range list.Unpriced(s.billed(config)) {
 		answer.Unpriced = append(answer.Unpriced, priceItemOf(item))
 	}
 	for _, row := range snapshot.Upcoming {
@@ -660,7 +669,7 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 		return PricePreview{}, invalidPrice(strings.TrimPrefix(err.Error(), "pricing: "))
 	}
 
-	// The items to show: every one the change writes, and every routed one that becomes
+	// The items to show: every one the change writes, and every billed one that becomes
 	// unpriced.
 	var items []pricing.Item
 	seen := map[string]bool{}
@@ -674,15 +683,16 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	for _, write := range writes {
 		add(write.Entry)
 	}
+	billed := s.billed(config)
 	routed := map[string]bool{}
-	for _, item := range routing.Items(config) {
+	for _, item := range billed {
 		routed[itemName(item)] = true
 	}
 	wasUnpriced := map[string]bool{}
-	for _, item := range beforeList.Unpriced(routing.Items(config)) {
+	for _, item := range beforeList.Unpriced(billed) {
 		wasUnpriced[itemName(item)] = true
 	}
-	for _, item := range afterList.Unpriced(routing.Items(config)) {
+	for _, item := range afterList.Unpriced(billed) {
 		if !wasUnpriced[itemName(item)] {
 			add(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK})
 		}

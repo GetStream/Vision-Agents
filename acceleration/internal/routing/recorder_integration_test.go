@@ -330,6 +330,22 @@ func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsBillable() {
 	s.True(row.Billable)
 }
 
+func (s *RecorderSuite) TestACostTheVendorQuotedIsNotLoggedAsUnpriced() {
+	logs := &bytes.Buffer{}
+	prices, err := pricing.NewList("test", nil, slog.New(slog.NewTextHandler(logs, nil)))
+	s.Require().NoError(err)
+	unlisted := ProviderConfig{Provider: "vendor", Model: "unlisted-number"}
+
+	row := s.recordedAt(prices, unlisted, Stat{CostMicros: 1_000_000, Success: true})
+
+	s.EqualValues(1_200_000, row.CostMicros, "the vendor's 1,000,000 resold at the factor")
+	s.True(row.Billable)
+	s.NotContains(logs.String(), "billable work has no price")
+
+	s.recordedAt(prices, unlisted, Stat{Usage: Usage{InputTokens: 1_000}, Success: true})
+	s.Contains(logs.String(), "billable work has no price", "work the vendor quoted nothing for still is")
+}
+
 func (s *RecorderSuite) TestAPurchaseThatFailedIsNotBillable() {
 	row := s.recorded(number, Stat{ErrorCode: "vendor_failed"})
 
