@@ -884,18 +884,20 @@ func (s *PolicySuite) TestDeletingAUsersQuotaFallsBackToTheirApps() {
 	s.False(again, "there was none left to delete")
 }
 
-func (s *PolicySuite) TestAnAppWithNoUserPoliciesLooksNoUserUp() {
-	s.limits("someone")
-	decided, ok := s.enforcer.decided(s.app)
-	s.Require().True(ok)
-	s.False(decided.users, "the app's decision answers its users with no lookup of their own")
+func (s *PolicySuite) TestAUserQuotaSavedOnAnotherRouterHoldsTheNextRequest() {
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.Require().EqualValues(20, s.limits("vip").MessagesPerDay)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	other := s.newEnforcer(configs, nil)
 
-	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)})
-	s.limits("someone")
+	s.Require().NoError(other.Save(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"),
+		store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)}))
 
-	decided, ok = s.enforcer.decided(s.app)
-	s.Require().True(ok)
-	s.True(decided.users, "saving a user's policy drops the app's decision, which reads it again")
+	_, ok := s.enforcer.decided(s.app)
+	s.Require().True(ok, "this router still holds the app's decision from before the save")
+	s.EqualValues(2, s.limits("vip").MessagesPerDay)
+	s.EqualValues(20, s.limits("someone").MessagesPerDay, "another user keeps the app's")
 }
 
 func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
