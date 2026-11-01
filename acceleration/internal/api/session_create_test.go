@@ -724,8 +724,14 @@ func (s *SessionCreateSuite) TestAForkOfAConversationPastARefusedTurnCarriesItWi
 	opened := s.serverClient.createSession(request)
 	answered := s.answerTo(opened.Id, "Where is order 3825?")
 	s.Empty(s.answerTo(opened.Id, guardedInjection), "the guarded model refuses the turn")
-	stored, err := s.store.StoredSession(context.Background(), s.customerID(), opened.Id)
-	s.Require().NoError(err)
+	// The session's row is written off the request path, so an answered turn does not mean
+	// it is there yet.
+	var stored store.AgentSession
+	s.Require().Eventually(func() bool {
+		var err error
+		stored, err = s.store.StoredSession(context.Background(), s.customerID(), opened.Id)
+		return err == nil
+	}, settleFor, 20*time.Millisecond, "the session's row was never stored")
 	// The fork reads what Chat holds once the refused reply is written there.
 	s.Require().Eventually(func() bool {
 		var page struct {
@@ -736,9 +742,11 @@ func (s *SessionCreateSuite) TestAForkOfAConversationPastARefusedTurnCarriesItWi
 		return len(page.Messages) == 4 && page.Messages[3].Refused && page.Messages[3].Saved
 	}, settleFor, 20*time.Millisecond, "the refused reply was never written to Chat")
 
+	// The transcript is found by the call's row, which is written off the request path too.
 	var read []TranscriptMessage
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
-		"/v1/agents/calls/"+opened.Id+"/transcript", nil, &read))
+	s.Require().Eventually(func() bool {
+		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/transcript", nil, &read) == http.StatusOK
+	}, settleFor, 20*time.Millisecond, "the call's row was never stored")
 	var said []string
 	for _, line := range read {
 		said = append(said, line.Text)
