@@ -6,6 +6,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,8 +152,10 @@ func (s *RedisSuite) TestAFailureIsNotWaitedOutAgainForTheSameAddress() {
 
 // forwarder stands for Docker's port forwarding on a loaded machine: a connection accepted
 // before until is held unanswered, or closed at once when hold is false; a later one is
-// forwarded to upstream.
-func (s *RedisSuite) forwarder(upstream string, until time.Time, hold bool) string {
+// forwarded to upstream. The first connection is always forwarded: it is Ready's PING, which
+// has to pass for NewClient to dial at all. It returns the connections accepted so far.
+func (s *RedisSuite) forwarder(upstream string, until time.Time, hold bool) (string, *atomic.Int64) {
+	accepted := new(atomic.Int64)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	done := make(chan struct{})
@@ -164,9 +169,10 @@ func (s *RedisSuite) forwarder(upstream string, until time.Time, hold bool) stri
 			if err != nil {
 				return
 			}
+			first := accepted.Add(1) == 1
 			go func() {
 				defer conn.Close()
-				if time.Now().Before(until) {
+				if !first && time.Now().Before(until) {
 					if hold {
 						select {
 						case <-time.After(time.Until(until)):
@@ -185,7 +191,7 @@ func (s *RedisSuite) forwarder(upstream string, until time.Time, hold bool) stri
 			}()
 		}
 	}()
-	return listener.Addr().String()
+	return listener.Addr().String(), accepted
 }
 
 // redis is the Redis the suites dial, or a skip without one.
@@ -206,7 +212,7 @@ func clientThrough(address string) (rueidis.Client, error) {
 
 func (s *RedisSuite) TestAClientWhoseConnectionIsHeldPastItsDialTimeoutIsDialledAgain() {
 	until := time.Now().Add(time.Second)
-	address := s.forwarder(s.redis(), until, true)
+	address, _ := s.forwarder(s.redis(), until, true)
 
 	client, err := clientThrough(address)
 
@@ -220,7 +226,7 @@ func (s *RedisSuite) TestAClientWhoseConnectionIsHeldPastItsDialTimeoutIsDialled
 
 func (s *RedisSuite) TestAClientWhoseConnectionIsClosedAtOnceIsDialledAgain() {
 	until := time.Now().Add(time.Second)
-	address := s.forwarder(s.redis(), until, false)
+	address, _ := s.forwarder(s.redis(), until, false)
 
 	client, err := clientThrough(address)
 
@@ -235,7 +241,7 @@ func (s *RedisSuite) TestAClientThatNeverConnectsIsAnErrorAtTheDeadline() {
 	original := ready
 	ready = 1200 * time.Millisecond
 	s.T().Cleanup(func() { ready = original })
-	address := s.forwarder("", time.Now().Add(time.Hour), true)
+	address, _ := s.forwarder(s.redis(), time.Now().Add(time.Hour), true)
 
 	start := time.Now()
 	client, err := clientThrough(address)
@@ -245,4 +251,56 @@ func (s *RedisSuite) TestAClientThatNeverConnectsIsAnErrorAtTheDeadline() {
 	s.Contains(err.Error(), address)
 	s.GreaterOrEqual(time.Since(start), ready, "the client was given up on before the deadline")
 	s.Less(time.Since(start), 5*time.Second, "the dial ran past its deadline")
+}
+
+func (s *RedisSuite) TestAClientIsRefusedAtOnceWhereNoRedisAnswered() {
+	original := ready
+	ready = 300 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	address := listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	first := Ready(address)
+	s.Require().Error(first)
+
+	start := time.Now()
+	client, err := clientThrough(address)
+
+	s.Nil(client)
+	s.Equal(first, err)
+	s.Less(time.Since(start), 100*time.Millisecond, "NewClient waited out the deadline again")
+}
+
+func (s *RedisSuite) TestAClientUsesTheOneConnectionItProved() {
+	if runtime.GOMAXPROCS(0) < 2 {
+		s.T().Skip("rueidis dials one connection on one CPU anyway")
+	}
+	address, accepted := s.forwarder(s.redis(), time.Now(), false)
+
+	client, err := NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	s.pingKeys(client)
+
+	s.EqualValues(2, accepted.Load(), "Ready's PING and the client's one connection")
+}
+
+func (s *RedisSuite) TestAPipelineMultiplexTheCallerSetIsKept() {
+	address, accepted := s.forwarder(s.redis(), time.Now(), false)
+
+	client, err := NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true, PipelineMultiplex: 2})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	s.pingKeys(client)
+
+	s.Greater(accepted.Load(), int64(2), "the caller asked for four connections")
+}
+
+// pingKeys sends commands on many keys, which rueidis spreads over every connection it has.
+func (s *RedisSuite) pingKeys(client rueidis.Client) {
+	for i := range 64 {
+		key := "redisready-test:" + strconv.Itoa(i)
+		s.Require().NoError(client.Do(context.Background(), client.B().Exists().Key(key).Build()).Error())
+	}
 }
