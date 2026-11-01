@@ -209,8 +209,9 @@ func (s *PhoneSuite) TestEndingACallRecordsNoCreatedCall() {
 	// Ending a call is not creating one.
 	fake := chattest.NewServer(s.T())
 	stream := NewStreamFromClient(fake.Client)
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "made", map[string]string{}))
 
 	s.Require().NoError(stream.EndCall(s.ctx, "agent", "abc"))
 
-	s.Empty(fake.Created())
+	s.Equal([]string{"agent:made"}, fake.Created())
 }
