@@ -2,6 +2,10 @@
 
 ## Features
 
+### First output latency by model
+
+`router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
+
 ### The Python SDK sets spend limits, puts users in teams and tags their work
 
 `plugins/stream` gains `api.spend_limits` (create, update, delete, list, grant, revoke, usage and reset), `api.teams` (`set_limit` creates or updates a team's limit in one call, `remove_limit`, `usage`, `grant` and `list`), `api.account` (the balance and Stream's `spend_hard_limit`, and the credit history) and `api.usage.spend`. Amounts are dollars as a `Decimal`, an `int` or a `str`, never a float.
