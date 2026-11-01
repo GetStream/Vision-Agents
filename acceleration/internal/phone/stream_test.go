@@ -180,3 +180,16 @@ func (s *PhoneSuite) TestACreatedCallCarriesItsCustom() {
 	custom, _ := data["custom"].(map[string]any)
 	s.Equal("v", custom["k"])
 }
+
+func (s *PhoneSuite) TestCreatingACallAgainKeepsTheCustomItWasCreatedWith() {
+	// A get-or-create for a call that is already there loads it, so the custom the second
+	// request carries is not the call's.
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "first"}))
+
+	s.Require().NoError(stream.CreateCall(s.ctx, "agent", "abc", map[string]string{"k": "second", "other": "x"}))
+
+	data, _ := fake.Call("agent", "abc")["data"].(map[string]any)
+	s.Equal(map[string]any{"k": "first"}, data["custom"])
+}

@@ -724,7 +724,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		result["call"] = call
 	case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/video/call/"):
-		db.made[parts[len(parts)-2]+":"+parts[len(parts)-1]] = body
+		// A get-or-create loads a call that is already there and creates only a missing one
+		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call
+		// keeps the body it was created with.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		if _, exists := db.made[cid]; !exists {
+			db.made[cid] = body
+		}
 		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1]}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {
