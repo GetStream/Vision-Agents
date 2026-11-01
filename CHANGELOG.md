@@ -192,7 +192,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### A Daytona credential refresh or file download that hangs no longer holds the sandbox
 
-In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, and the secrets made or deleted with the sandbox, are now bounded at 60 seconds, as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
+In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, the secrets made when the sandbox is made or made again, the files and setup written into a sandbox that has started, and the read of the state of one that may have stopped are now bounded at 60 seconds (30 for the read), as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
 
 ### A video fetched by URL reaches only the public internet
 

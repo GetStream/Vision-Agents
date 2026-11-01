@@ -758,6 +758,7 @@ func (s *SecretsSuite) TestAWithdrawnCredentialLogsWhy() {
 func (s *SecretsSuite) built() *Sandbox {
 	box := s.granted("stg", sandbox.Config{CPU: 1}, github)
 	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
 	box.check = 2 * time.Second
 	return box
 }
@@ -843,4 +844,21 @@ func (s *SecretsSuite) TestAHungSecretDeleteAfterARefusedSandboxIsCutAtTheChecks
 	s.platform.mu.Unlock()
 	s.slowSecrets(http.MethodDelete, 0)
 	s.Require().NoError(s.cutRun(box), "the next run gets in")
+}
+
+// TestASandboxCreationThatRanOutStillDeletesItsSecrets: the creation outlasting the sandbox's
+// timeout ends the context it ran on, so the secrets made for it are deleted on the caller's.
+func (s *SecretsSuite) TestASandboxCreationThatRanOutStillDeletesItsSecrets() {
+	box := s.built()
+	box.timeout = 2 * time.Second // buildTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowCreate = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Empty(s.platform.values([]string{"github"}), "no secret is left at Daytona")
 }

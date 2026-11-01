@@ -293,6 +293,48 @@ func (s *ProxySuite) TestABuiltSandboxsWriteIsCutAtTheDefaultTimeout() {
 	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
 }
 
+// TestABuiltSandboxsSetupIsCutAtTheDefaultTimeout: the setup holds the gate as a check does, and
+// a built sandbox's timeout is the 20 minutes a build may take, so a setup Daytona never answers
+// is cut at defaultTimeout once the sandbox has started.
+func (s *ProxySuite) TestABuiltSandboxsSetupIsCutAtTheDefaultTimeout() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Empty(s.platform.executed(), "no code ran")
+}
+
+// TestABuiltSandboxsFilesAreCutAtTheDefaultTimeout: the same for the files the setup needs, which
+// are written before it.
+func (s *ProxySuite) TestABuiltSandboxsFilesAreCutAtTheDefaultTimeout() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/files/upload-v2`)
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Empty(s.platform.executed(), "no code ran")
+}
+
 // TestACallerGivingUpDuringTheCheckEndsTheRun: the check runs on the caller's context, so a
 // caller that gives up during a hung check is answered then, not at the check's 60 s bound.
 func (s *ProxySuite) TestACallerGivingUpDuringTheCheckEndsTheRun() {
