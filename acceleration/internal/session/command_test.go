@@ -704,6 +704,9 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	detachBob()
 	_, err = s.manager.Create(s.ctx, spec)
 	s.Require().Error(err, "a removed member cannot reopen the shared channel")
+	spec.Caller.UserID = "alice"
+	_, err = s.manager.Create(s.ctx, spec)
+	s.NoError(err, "the member left in the channel still opens it")
 }
 
 func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
