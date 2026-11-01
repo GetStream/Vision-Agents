@@ -191,6 +191,11 @@ func TestAPageErrorNamesItsLineInTheFile(t *testing.T) {
 		{"refresh_hours below 1", "- https://example.com/a\n- url: https://example.com/plans\n  refresh_hours: 0\n", "line 3: refresh_hours is how many hours"},
 		{"refresh_hours below 1, the value on its own line", "- url: https://example.com/plans\n  refresh_hours:\n\n    -2\n", "line 4: refresh_hours is how many hours"},
 		{"a page that is a list", "- https://example.com/a\n\n- [https://example.com/plans]\n", "line 3: a page is a url"},
+		{"a url without a scheme", "- https://example.com/a\n\n- example.com/pricing\n", `line 3: "example.com/pricing" is not an http or https url`},
+		{"a url without a scheme after a null page", "- ~\n- example.com/pricing\n", `line 2: "example.com/pricing" is not an http or https url`},
+		{"an ftp url below the title", "- https://example.com/a\n- title: Plans\n\n  url: ftp://example.com/plans\n", `line 4: "ftp://example.com/plans" is not an http or https url`},
+		{"an ftp url, flow style", "- https://example.com/a\n- {title: Plans,\n   url: ftp://example.com/plans}\n", `line 3: "ftp://example.com/plans" is not an http or https url`},
+		{"a page without a url", "- https://example.com/a\n\n- title: Plans\n  description: What each plan includes.\n", `line 3: "" is not an http or https url`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -482,6 +487,55 @@ func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
 	_, err := Load(root)
 	if err == nil || !strings.Contains(err.Error(), "also declared in a.yaml") {
 		t.Fatalf("loading gave %v", err)
+	}
+}
+
+// TestASimulationErrorNamesItsLineInTheFile: the line of the key at fault, or of the entry
+// when the key is missing, counted from the top of the simulation's file.
+func TestASimulationErrorNamesItsLineInTheFile(t *testing.T) {
+	valid := "- name: a\n  scenario: Order.\n  assertion: Ordered.\n"
+	cases := []struct{ name, yaml, want string }{
+		{"no name", valid + "\n- scenario: Order.\n  assertion: Ordered.\n", "line 5: a simulation needs a name"},
+		{"an empty name below the other keys", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: \"\"\n", "line 6: a simulation needs a name"},
+		{"no name after a null entry", "- ~\n- scenario: Order.\n  assertion: Ordered.\n", "line 2: a simulation needs a name"},
+		{"no scenario", valid + "- name: b\n  assertion: Ordered.\n", `line 4: simulation "b" needs a scenario`},
+		{"an empty scenario below the other keys", valid + "- name: b\n  assertion: Ordered.\n\n  scenario: \"\"\n", `line 7: simulation "b" needs a scenario`},
+		{"no assertion", valid + "- name: b\n  scenario: Order.\n", `line 4: simulation "b" needs an assertion`},
+		{"an empty assertion below the other keys", valid + "- name: b\n  scenario: Order.\n  # why\n  assertion: \"\"\n", `line 7: simulation "b" needs an assertion`},
+		{"a mode nobody knows", valid + "- name: b\n  scenario: Order.\n  assertion: Ordered.\n  mode: video\n", `line 7: simulation "b" is text or audio, not "video"`},
+		{"a mode nobody knows, flow style", valid + "- {name: b, scenario: Order.,\n   assertion: Ordered., mode: video}\n", `line 5: simulation "b" is text or audio, not "video"`},
+		{"a name the file already has", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: a\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+		{"an alias of an entry the file already has", "- &order\n  name: a\n  scenario: Order.\n  assertion: Ordered.\n\n- *order\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "deli")
+			write(t, root, "agent.yaml", "name: deli\n")
+			write(t, root, "simulations/lunch.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "lunch.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestANullPageOrSimulationIsSkipped: a null entry is passed over, as before lines were named.
+func TestANullPageOrSimulationIsSkipped(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "knowledge/urls.yaml", "- ~\n- https://example.com/a\n- ~\n")
+	write(t, root, "simulations/lunch.yaml", "- ~\n- name: a\n  scenario: Order.\n  assertion: Ordered.\n- ~\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatalf("loading gave %v", err)
+	}
+	if len(folder.KnowledgeURLs) != 1 || folder.KnowledgeURLs[0].URL != "https://example.com/a" {
+		t.Errorf("the pages are %+v", folder.KnowledgeURLs)
+	}
+	if len(folder.Simulations) != 1 || folder.Simulations[0].Name != "a" {
+		t.Errorf("the simulations are %+v", folder.Simulations)
 	}
 }
 
