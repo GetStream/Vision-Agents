@@ -1982,3 +1982,37 @@ func (s *DataMoveSuite) TestACopiedRequestOfAnAgentIsLoggedHereOnlyByItsCopiedLo
 	s.Equal([]string{logged[0]["message"].(string)}, slices.Collect(maps.Values(s.logsHere("acme"))),
 		"the request is logged once here: by the log copied with it")
 }
+
+func (s *DataMoveSuite) TestALogHereThatDiffersInAnyColumnIsAnotherLog() {
+	// Every column a copy writes but the source's id, each set apart from the copied log's.
+	differing := map[string]any{
+		"customer_id": "resident",
+		"config_id":   "another-config",
+		"agent_id":    "another-agent",
+		"session_id":  "another-session",
+		"user_id":     "another-user",
+		"source":      "system",
+		"severity":    "error",
+		"event_type":  "provider_request",
+		"message":     "written here",
+		"occurred_at": "2026-10-01T00:00:00Z",
+		"ingested_at": "2026-10-01T00:00:00Z",
+		"details":     map[string]any{"written": "here"},
+	}
+	for column, value := range differing {
+		s.Run(column, func() {
+			s.SetupTest()
+			s.seedLog("acme", "copied")
+			here := s.exportedLog()
+			s.Require().NotEqual(value, here[column], "the log here differs from the copied one")
+			here[column] = value
+			s.placeHere(here)
+
+			s.move("acme", "acme")
+
+			var logs int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM agent_logs").Scan(&logs))
+			s.Equal(2, logs, "a log here differing in %s is not the copied one", column)
+		})
+	}
+}
