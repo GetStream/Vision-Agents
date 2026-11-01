@@ -20,9 +20,8 @@ import (
 const MaxCallLength = 4 * time.Hour
 
 // LegSweepEvery is how often the legs left open past MaxCallLength are ended, and the legs
-// that ended lately checked for their row. It is a variable so a test of the router's start
-// can sweep sooner.
-var LegSweepEvery = 10 * time.Minute
+// that ended lately checked for their row.
+const LegSweepEvery = 10 * time.Minute
 
 // legSweepBatch bounds how many legs one sweep ends or checks, so a backlog is worked through
 // over a few sweeps rather than in one long statement.

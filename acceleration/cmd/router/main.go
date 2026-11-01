@@ -1073,7 +1073,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// A call whose end was never announced is ended at the longest a call may last, and a
 		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
 		// billed by jobs of their own (router usage numbers, router usage dlc).
-		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
+		go telephony.RunLegSweep(ctx, legSweepEvery)
 		go checkCallHook(ctx, settings, logger)
 		startPhoneSweeper(ctx, telephony, logger)
 	}
@@ -2335,10 +2335,12 @@ func closePhone(telephony *phone.Service, logger *slog.Logger) {
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
 // its hook missed. A campaign takes days, so this is not what makes one quick. It and
-// telnyxDLC are variables so a test of the router's start can poll sooner, a vendor of its own.
+// telnyxDLC are variables, and so is legSweepEvery, so a test of the router's start can sweep
+// and poll sooner, against a vendor of its own.
 var (
-	dlcPollEvery = 15 * time.Minute
-	telnyxDLC    dlctelnyx.Options
+	legSweepEvery = phone.LegSweepEvery
+	dlcPollEvery  = 15 * time.Minute
+	telnyxDLC     dlctelnyx.Options
 )
 
 // buildDLC wires 10DLC review and the gate every text and call passes. Without a database
