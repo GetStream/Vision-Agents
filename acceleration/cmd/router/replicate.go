@@ -41,6 +41,10 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
 Until the last --once the deployment copied from is the truth: a change it makes to a
 row overwrites what was done to that row here, a delete included. Once SDKs point here,
 stop writing there.
+
+Copy an app here from one deployment only. A copied agent log is known here by the id it
+had there, so a copy from a second deployment into the same app overwrites the logs whose
+ids the two share.
 `
 
 // tokenLifetime is how long the token this command signs for itself is good for. It is
