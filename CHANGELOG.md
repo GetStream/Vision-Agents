@@ -190,6 +190,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A report on an older placed call no longer ends the session a newer call rings into
+
+A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).
+
 ### Sandbox code says to reconnect a connection saved before its connector gave code access
 
 A session whose agent config binds a connection with `sandbox: true`, saved on a connector revision that gives the sandbox no access while a later revision does, now gets a `run_code` result that tells the model to ask the user to reconnect it, as a login during the chat does since AI-1980. Before, only the router's log said so, and code calling the provider got a 401 with no hint (AI-2390).
