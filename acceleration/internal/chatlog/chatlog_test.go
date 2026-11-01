@@ -830,7 +830,10 @@ func (s *ChatLogSuite) TestReadingATranscriptCreatesNoChannel() {
 }
 
 func (s *ChatLogSuite) TestATranscriptIsReadOnlyFromAChannelTheCustomerHolds() {
-	chat := s.useChat()
+	// Not useChat: a channel keeps the data it was created with, so the stamp goes on
+	// when it is first made.
+	chat := chattest.NewServer(s.T())
+	s.log.client = chat.Client
 	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
 		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
 			CreatedByID: &s.log.agent.ID, Custom: map[string]any{conversation.CustomerField: "customer-2"},
