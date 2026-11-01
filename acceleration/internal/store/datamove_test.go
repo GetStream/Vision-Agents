@@ -2016,3 +2016,22 @@ func (s *DataMoveSuite) TestALogHereThatDiffersInAnyColumnIsAnotherLog() {
 		})
 	}
 }
+
+func (s *DataMoveSuite) TestALogCopiedBackWhereItCameFromIsNotCopiedAgain() {
+	// Each deployment draws its own ids: the copy holds another id than the log it came from.
+	_, err := s.destination.DB().ExecContext(s.ctx, "SELECT setval('agent_logs_id_seq', (SELECT last_value FROM agent_logs_id_seq) + 1000)")
+	s.Require().NoError(err)
+	id := s.seedLog("acme", "original")
+	s.move("acme", "acme")
+
+	for _, row := range s.exportFrom(s.destination, "acme").of("agent_logs") {
+		s.Require().NotEqual(float64(id), row["id"], "the copy was given an id of the destination's")
+		encoded, err := json.Marshal(row)
+		s.Require().NoError(err)
+		s.Require().NoError(s.source.ImportRow(s.ctx, "acme", "agent_logs", encoded))
+	}
+
+	var logs []int64
+	s.Require().NoError(s.source.DB().NewSelect().Table("agent_logs").Column("id").Where("customer_id = 'acme'").Scan(s.ctx, &logs))
+	s.Equal([]int64{id}, logs, "the log that went away and came back is the one log it was")
+}

@@ -1048,23 +1048,26 @@ func (t dataTable) conflictTarget(s shape) string {
 }
 
 // copiedBefore is the condition that the row r, about to be imported with the given columns,
-// was copied here by an import from before the copied column: under the source's id, and so
-// with the same id, no source id and every column it writes the same, the customer included.
-// A row that differs in any of them, when it was ingested included, is another log here that
-// holds the number, and r is copied beside it.
+// is here already, with every column it writes the same, the customer included: copied here by
+// an import from before the copied column, under the source's id, and so with the same id and
+// no source id; or the very row r was copied from, which r names by its source id, when a copy
+// is taken back to where it came from. A row that differs in any of them, when it was ingested
+// included, is another log here that holds the number, and r is copied beside it.
 func (t dataTable) copiedBefore(s shape, columns []string) string {
-	conditions := []string{"h." + t.copied + " IS NULL"}
+	same := make([]string, 0, len(s.keys))
 	for _, key := range s.keys {
-		conditions = append(conditions, fmt.Sprintf("h.%s = r.%s", key, key))
+		same = append(same, fmt.Sprintf("h.%s = r.%s", key, key))
 	}
+	before := fmt.Sprintf("h.%s IS NULL AND %s", t.copied, strings.Join(same, " AND "))
+	back := fmt.Sprintf("h.%s = r.%s", s.keys[0], t.copied)
 	var here, imported []string
 	for _, column := range columns {
 		if column != t.copied {
 			here, imported = append(here, "h."+column), append(imported, "r."+column)
 		}
 	}
-	conditions = append(conditions, fmt.Sprintf("(%s) IS NOT DISTINCT FROM (%s)", strings.Join(here, ", "), strings.Join(imported, ", ")))
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AS h WHERE %s)", t.name, strings.Join(conditions, " AND "))
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AS h WHERE ((%s) OR %s) AND (%s) IS NOT DISTINCT FROM (%s))",
+		t.name, before, back, strings.Join(here, ", "), strings.Join(imported, ", "))
 }
 
 // captured are the columns a change records of a row. A row known by another column than its
