@@ -421,13 +421,31 @@ func (l *List) Entries() []Entry {
 
 // Unpriced is the items that are billable and have no price: what a deployment should
 // price, or mark free or local.
+//
+// An item with no attributes stands for all of its work, whatever conditions it runs under: it
+// is priced by the entry with none when there is one, else by any of its entries, so an item
+// priced only per class or per country is not listed as unpriced.
 func (l *List) Unpriced(items []Item) []Item {
 	var unpriced []Item
 	for _, item := range items {
-		entry, ok := l.match(item)
-		if !ok || (!entry.priced() && entry.Billable()) {
+		if !l.covers(item) {
 			unpriced = append(unpriced, item)
 		}
 	}
 	return unpriced
+}
+
+// covers reports whether the list prices the item's work, or marks it free or local.
+func (l *List) covers(item Item) bool {
+	entries := l.entries[keyOf(item)]
+	if len(item.Attributes) == 0 && !slices.ContainsFunc(entries, func(entry Entry) bool { return len(entry.When) == 0 }) {
+		return slices.ContainsFunc(entries, Entry.settled)
+	}
+	entry, ok := l.match(item)
+	return ok && entry.settled()
+}
+
+// settled reports whether work at the entry is priced, or is neither billed nor unpriced.
+func (e Entry) settled() bool {
+	return e.priced() || !e.Billable()
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -315,6 +316,22 @@ func (s *PriceFileSuite) TestWithNoFileOfItsOwnTheRouterPricesFromTheVendorFile(
 		pricing.Quantities{pricing.InputTokens: 1_000_000})
 	s.Equal("embedded:dev", quote.Version)
 	s.Empty(list.Unpriced(routing.Items(routingConfig)))
+}
+
+func (s *PriceFileSuite) TestARouterNamesTheBYOKTwinItsListHasNoPriceFor() {
+	openai := pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Region: pricing.RegionUS,
+		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: 1, Per: 1_000_000}}}
+	openai.Prices = openai.Rates
+	list, err := pricing.NewList("test", []pricing.Entry{openai}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	routingConfig := routing.Config{routing.LLM: {Providers: []routing.ProviderConfig{{Provider: "openai", Model: "gpt"}}}}
+	var logs bytes.Buffer
+
+	logUnpriced(list, billable.Items(billableOf(config.Defaults(), routingConfig, phone.Config{})), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	s.Contains(logs.String(), `msg="billable work has no price" modality=llm provider=openai model=gpt region=us byok=true`)
+	s.NotContains(logs.String(), "provider=openai model=gpt region=us byok=false", "openai's own work is priced")
+	s.Contains(logs.String(), "modality=runtime provider=stream model=voice", "and so is all the rest the list leaves out")
 }
 
 func (s *PriceFileSuite) TestAMissingPricesFileStopsStartup() {

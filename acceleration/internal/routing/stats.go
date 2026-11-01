@@ -424,7 +424,11 @@ func (r *Recorder) lose(config ProviderConfig, entry Stat, cause error) {
 func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pricing.Quote) {
 	request := row(r.modality, config, entry)
 	request.UserID = userOnRow(entry.CustomerID, entry.UserID)
-	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
+	pricedBy := quote
+	if entry.CostMicros != 0 {
+		pricedBy = quoteBesideQuoted
+	}
+	priced := pricedBy(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	request.BaseCostMicros, request.PriceVersion, request.SKU = priced.BaseCostMicros, priced.Version, priced.SKU
 	if entry.CostMicros != 0 {
