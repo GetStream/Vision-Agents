@@ -3,9 +3,9 @@ package video
 import (
 	"bytes"
 	"encoding/base64"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +110,16 @@ func (s *VideoSuite) TestADataURIThatIsNotAVideoIsRefused() {
 	s.ErrorContains(err, "video/")
 }
 
-func (s *VideoSuite) TestOnlyThePublicInternetIsPublic() {
+// PublicOnlySuite needs no ffmpeg, so it runs where VideoSuite is skipped.
+type PublicOnlySuite struct {
+	suite.Suite
+}
+
+func TestPublicOnly(t *testing.T) {
+	suite.Run(t, new(PublicOnlySuite))
+}
+
+func (s *PublicOnlySuite) TestOnlyThePublicInternetIsPublic() {
 	for address, want := range map[string]bool{
 		"8.8.8.8":          true,
 		"2001:4860::8888":  true,
@@ -126,7 +135,33 @@ func (s *VideoSuite) TestOnlyThePublicInternetIsPublic() {
 		"fe80::1":          false,
 		"::ffff:127.0.0.1": false,
 		"::ffff:10.1.2.3":  false,
+		"0.1.2.3":          false, // "this network", 0.0.0.0/8
+		"192.0.0.8":        false, // IETF protocol assignments, 192.0.0.0/24
+		"198.19.255.254":   false, // benchmarking, 198.18.0.0/15
+		"240.0.0.1":        false, // reserved, 240.0.0.0/4
+		"64:ff9b::a00:1":   false, // NAT64 of 10.0.0.1
+		"2002:a00:1::1":    false, // 6to4 of 10.0.0.1
+		"2001:0:a00:1::1":  false, // Teredo, 2001::/32
 	} {
-		s.Equal(want, public(netip.MustParseAddr(address)), address)
+		err := publicOnly("tcp", net.JoinHostPort(address, "443"), nil)
+		if want {
+			s.NoError(err, address)
+		} else {
+			s.ErrorIs(err, errPrivate, address)
+		}
 	}
+}
+
+func (s *PublicOnlySuite) TestTheFetchRefusesAServerOnThisMachine() {
+	served := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served = true
+		_, _ = w.Write([]byte("clip"))
+	}))
+	defer server.Close()
+
+	_, err := load(s.T().Context(), publicClient, server.URL+"/clip.mp4")
+
+	s.ErrorIs(err, errPrivate)
+	s.False(served, "the request reached the server")
 }
