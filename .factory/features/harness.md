@@ -118,8 +118,9 @@ goes after the conversation instead:
   or what was seen on the caller's camera can repeat whatever its source said.
 - **A note** in the harness's own fixed words says what to do with it. It opens with
   `[Note from the system running this call]` and goes as a system turn where the provider
-  takes one there (OpenAI's developer message; Claude after a user turn), and on the user's
-  side where it does not. A caller's words that look like either are defanged.
+  follows one there (OpenAI's developer message; Claude Opus after a user turn), and on
+  the user's side elsewhere: Sonnet 5.5 and Haiku 5.5 took a system turn there but often
+  ignored it. A caller's words that look like either are defanged.
 - **The hour and a second person joining** are told once, as notes, when they change.
 
 These are kept in the conversation once the reply that read them is written (`Remember`), so
