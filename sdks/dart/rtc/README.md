@@ -10,6 +10,11 @@ VoiceCallView(voice: voice)
 It joins with the agents' key, user and token, on one `StreamVideo` every voice session shares,
 or on the app's own handed over with `agents.useVideo(client)`.
 
+With the camera on (`voice.join(camera: true)` or `voice.setCameraEnabled(true)`, on the back
+lens) the agent can look through it: when the agent's vision skill asks what the camera shows,
+the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken
+until the agent asks.
+
 The host app declares the microphone, and the camera if it shows one: `RECORD_AUDIO`,
 `MODIFY_AUDIO_SETTINGS`, `CAMERA`, `BLUETOOTH_CONNECT`, `INTERNET` and `ACCESS_NETWORK_STATE` on
 Android; `NSMicrophoneUsageDescription` and `NSCameraUsageDescription` on iOS.

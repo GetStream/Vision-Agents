@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:meta/meta.dart';
 
 import 'agent_event.dart';
 import 'backend.dart';
@@ -17,6 +21,12 @@ import 'tools.dart';
 /// dropped without a word. Nothing is lost by it: the transcript and tool calls are handled
 /// by the session, not by whoever is reading events.
 const _bufferedEvents = 256;
+
+/// A picture for the agent: a JPEG, and when the camera took it.
+typedef CameraPicture = ({Uint8List jpeg, DateTime capturedAt});
+
+/// Takes `limit` pictures, 1 to 8, for a question the agent took at `at`.
+typedef CameraHandler = Future<List<CameraPicture>> Function(DateTime at, int limit);
 
 /// Whether the socket is carrying the conversation.
 sealed class Connection {
@@ -84,6 +94,16 @@ final class AgentSession {
   /// Also report what somebody is part way through saying, as `hearing` events.
   final bool interim;
 
+  /// Takes pictures with this device's camera when the agent asks to see, or null to leave
+  /// the asking to somebody else.
+  ///
+  /// Set by `vision_agents_rtc` while the call's camera is on, and not for apps. It is called
+  /// with the moment the question was taken and how many pictures are wanted, 1 to 8, and
+  /// returns JPEGs with when each was taken. None at all tells the agent the camera has shown
+  /// nothing recent.
+  @internal
+  CameraHandler? camera;
+
   final Backend _backend;
   final Sessions _sessions;
   final Map<String, AgentTool> _tools;
@@ -93,6 +113,7 @@ final class AgentSession {
   final Set<_Subscriber> _subscribers = {};
   final Set<String> _running = {};
   final Set<String> _cancelled = {};
+  int _pictures = 0;
   SessionSocket? _socket;
   StreamSubscription<AgentEvent>? _pump;
 
@@ -304,7 +325,7 @@ final class AgentSession {
     _conversation.value = _conversation.value.apply(event);
     switch (event.kind) {
       case AgentEventKind.toolCall:
-        _answer(event.toolCall!);
+        _answer(event.toolCall!, run: event['run'] != false);
       case AgentEventKind.toolCancel:
         final id = event['id'];
         if (id is String && _running.contains(id)) {
@@ -330,7 +351,17 @@ final class AgentSession {
 
   /// Runs a tool the model asked for, or holds the call for the person when the tool asks
   /// first.
-  void _answer(ToolCall call) {
+  ///
+  /// [run] is false when the router says another watcher runs this call.
+  void _answer(ToolCall call, {required bool run}) {
+    // The request for frames is this device's only while its camera is on; otherwise a video
+    // worker in the backend may own it.
+    if (camera case final camera? when call.name == _cameraTool) {
+      if (run) {
+        _show(camera, call);
+      }
+      return;
+    }
     // Session events go to observers as well as to whoever owns the tool. A worker elsewhere
     // may own this one, and an observer must not answer it first.
     final tool = _tools[call.name];
@@ -344,33 +375,91 @@ final class AgentSession {
     }
   }
 
+  /// Answers the router's request for frames with pictures [camera] takes: what they are,
+  /// then the pictures, oldest first. A camera with nothing to show is said as the answer
+  /// rather than as a failure, as the router's own video workers say it, so the agent can ask
+  /// the person to show it again. A request the router cancels is not answered.
+  void _show(CameraHandler camera, ToolCall call) {
+    final arguments = call.argumentValues;
+    final at = switch (arguments['at_ms']) {
+      // Past what a DateTime holds is not a moment the router could have meant.
+      final num ms when ms.abs() <= 8.64e15 => DateTime.fromMillisecondsSinceEpoch(ms.toInt()),
+      _ => DateTime.now(),
+    };
+    final limit = switch (arguments['limit']) {
+      // Clamped before it is made an int, which an infinite number cannot be.
+      final num limit => limit.clamp(1, _mostPictures).toInt(),
+      _ => 1,
+    };
+    _reply(call, () async {
+      List<CameraPicture> pictures;
+      try {
+        pictures = [...await camera(at, limit)]
+          ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+      } catch (_) {
+        // A camera that could not take a picture has shown nothing.
+        pictures = const [];
+      }
+      final frames = <Map<String, Object>>[];
+      for (final picture in pictures) {
+        _pictures += 1;
+        frames.add({
+          'captured_at_ms': picture.capturedAt.millisecondsSinceEpoch,
+          'frame_id': 'camera-$_pictures',
+        });
+      }
+      final output = pictures.isEmpty
+          ? const ToolOutput(text: _nothingRecent)
+          : ToolOutput(
+              text: jsonEncode({'clock': 'device_unix_ms', 'frames': frames, 'source': 'camera'}),
+              images: [
+                for (final picture in pictures)
+                  AgentImage('data:image/jpeg;base64,${base64Encode(picture.jpeg)}'),
+              ],
+            );
+      return ToolResultCommand(
+        call.id,
+        output: output.text,
+        images: output.images,
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    });
+  }
+
   /// Runs a tool and sends back what it returned.
   ///
-  /// On its own, not awaited, so a slow tool holds up neither the transcript nor the
-  /// `tool_cancel` that might be on its way for it. A tool that throws is answered with the
-  /// error: the model is waiting, and can only say something useful about a tool that did
-  /// not work if it is told so.
-  void _run(ToolCall call, AgentTool tool) {
+  /// A tool that throws is answered with the error: the model is waiting, and can only say
+  /// something useful about a tool that did not work if it is told so.
+  void _run(ToolCall call, AgentTool tool) => _reply(call, () async {
+    try {
+      final output = await tool.run(call.argumentValues);
+      return ToolResultCommand(
+        call.id,
+        output: output.text,
+        images: output.images,
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    } catch (error) {
+      return ToolResultCommand(
+        call.id,
+        error: '$error',
+        requestId: call.requestId,
+        turnId: call.turnId,
+      );
+    }
+  });
+
+  /// Sends back the result [answer] comes to for [call], unless the router cancelled the call
+  /// or the conversation ended meanwhile.
+  ///
+  /// On its own, not awaited, so a slow answer holds up neither the transcript nor the
+  /// `tool_cancel` that might be on its way for it. [answer] does not throw.
+  void _reply(ToolCall call, Future<ToolResultCommand> Function() answer) {
     _running.add(call.id);
     unawaited(() async {
-      ToolResultCommand result;
-      try {
-        final output = await tool.run(call.argumentValues);
-        result = ToolResultCommand(
-          call.id,
-          output: output.text,
-          images: output.images,
-          requestId: call.requestId,
-          turnId: call.turnId,
-        );
-      } catch (error) {
-        result = ToolResultCommand(
-          call.id,
-          error: '$error',
-          requestId: call.requestId,
-          turnId: call.turnId,
-        );
-      }
+      final result = await answer();
       _running.remove(call.id);
       if (_cancelled.remove(call.id) || !isConnected) {
         return;
@@ -378,7 +467,7 @@ final class AgentSession {
       try {
         _socket?.send(result);
       } on SocketClosedException {
-        // The conversation ended while the tool ran; there is nobody left to tell.
+        // The conversation ended while answering; there is nobody left to tell.
       }
     }());
   }
@@ -399,6 +488,18 @@ final class AgentSession {
     _approvals.close();
   }
 }
+
+/// The tool the router asks for frames with. Answered by the session, never offered to the
+/// model as one of the app's tools.
+const _cameraTool = 'get_video_frames';
+
+/// The most pictures one request for frames is answered with.
+const _mostPictures = 8;
+
+/// What the agent is told when the camera has shown nothing recent enough.
+const _nothingRecent =
+    'The camera has shown nothing in the last few seconds; ask them to point it at what they '
+    'mean again.';
 
 /// A call of one of your tools, waiting for the person to allow it.
 final class ToolApprovalRequest {
