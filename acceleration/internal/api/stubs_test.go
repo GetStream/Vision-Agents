@@ -512,8 +512,22 @@ func (l *saidLog) spoken() []string {
 }
 
 // recordedTranscriber transcribes whatever it is handed into the same transcript, so a job
-// can be followed from the row it creates to the result a caller reads back.
+// can be followed from the row it creates to the result a caller reads back. A WAV (wavOf) is
+// heard as the words a test wrote into it instead, so a voice note says what the test needs:
+// nothing, or anything. Its words refuseForMoney and failToTranscribe are not heard: the first
+// is refused for money, the second fails.
 type recordedTranscriber struct{ model string }
+
+const (
+	refuseForMoney   = "refuse for money"
+	failToTranscribe = "fail to transcribe"
+)
+
+// wavHeader starts every WAV: what a router sniffing the bytes takes for audio/wave.
+const wavHeader = "RIFF\x00\x00\x00\x00WAVE"
+
+// wavOf is a WAV recordedTranscriber hears said in.
+func wavOf(said string) []byte { return []byte(wavHeader + said) }
 
 func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()
@@ -528,6 +542,15 @@ func (t *recordedTranscriber) Transcribe(_ context.Context, recording stt.Record
 		Text:            "a call costs a penny",
 		Language:        "en",
 		AudioDurationMs: 4000,
+	}
+	if said, ok := bytes.CutPrefix(recording.Audio, []byte(wavHeader)); ok {
+		switch string(said) {
+		case refuseForMoney:
+			return stt.Transcription{}, fmt.Errorf("stub: %w", policy.ErrBudgetSpent)
+		case failToTranscribe:
+			return stt.Transcription{}, errors.New("stub: the provider answered 500")
+		}
+		transcription.Text = string(said)
 	}
 	if recording.Words {
 		transcription.Words = []stt.Word{
