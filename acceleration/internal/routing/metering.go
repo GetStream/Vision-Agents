@@ -115,6 +115,9 @@ func (r *Recorder) watch(config ProviderConfig, entry Stat, request store.Reques
 				reason = estimatedFailed
 			}
 		}
+		if entry.Interrupted {
+			reason = estimatedCancelled
+		}
 		usageEstimated.WithLabelValues(item[0], item[1], item[2], reason).Inc()
 		if reason == estimatedMissing && r.estimatedLogged.due(item, usageLogEvery) {
 			r.logger.Error("billable work recorded an estimate", fields...)
