@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -776,22 +777,6 @@ func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID str
 			if _, err := update.Exec(ctx); err != nil {
 				return fmt.Errorf("store: skip a moved task's occurrences before the cut-over: %w", err)
 			}
-			// A run of the occurrence the source had started when the last catch-up read it is
-			// settled as the run of an occurrence the task slept through here: nothing here
-			// finishes it, and a run left running reads as one a worker is on, keeps a completed
-			// task from the prune and is never pruned itself. What became of it there never
-			// reached this copy, so it is not written delivered or failed.
-			if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
-				Set("state = ?", ScheduledTaskRunMissed).
-				Set("error = ?", scheduledTaskRunPaused).
-				Set("finished_at = now()").
-				Where("customer_id = ?", task.CustomerID).
-				Where("task_id = ?", task.ID).
-				Where("scheduled_for = ?", *task.NextRunAt).
-				Where("state = ?", ScheduledTaskRunRunning).
-				Exec(ctx); err != nil {
-				return fmt.Errorf("store: settle the source's run of a moved task's skipped occurrence: %w", err)
-			}
 			if at == nil && missed != nil {
 				missed.ID, missed.CreatedAt = newID(), time.Now().UTC()
 				// The occurrence's run, if the last catch-up brought one, is the one on record.
@@ -800,9 +785,37 @@ func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID str
 				}
 			}
 		}
-		return nil
+		return settleSkippedRuns(ctx, tx, customerID, tasks)
 	})
 	return stack.Wrap(err)
+}
+
+// settleSkippedRuns settles a run of an occurrence the cut-over skipped that the source had
+// started when the last catch-up read it, as the run of an occurrence the task slept through
+// here: nothing here finishes it, and a run left running reads as one a worker is on, keeps a
+// completed task from the prune and is never pruned itself. What became of it there never
+// reached this copy, so it is written neither delivered nor failed. tasks are as they were
+// read, before the cut-over moved their next run.
+func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks []ScheduledTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	ids, due := make([]string, 0, len(tasks)), make([]time.Time, 0, len(tasks))
+	for _, task := range tasks {
+		ids, due = append(ids, task.ID), append(due, *task.NextRunAt)
+	}
+	if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+		Set("state = ?", ScheduledTaskRunMissed).
+		Set("error = ?", scheduledTaskRunPaused).
+		Set("finished_at = now()").
+		Where("customer_id = ?", customerID).
+		Where("(task_id, scheduled_for) IN (SELECT * FROM unnest(?::text[], ?::timestamptz[]))",
+			pgdialect.Array(ids), pgdialect.Array(due)).
+		Where("state = ?", ScheduledTaskRunRunning).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("store: settle the source's runs of moved tasks' skipped occurrences: %w", err)
+	}
+	return nil
 }
 
 // ResumeMovedRows is the cut-over of a move into this deployment: it resumes the customer's
@@ -922,11 +935,16 @@ func moveRoom(ctx context.Context, tx bun.Tx, customerID string, marked []Schedu
 	if len(marked) == 0 {
 		return limits, held, nil
 	}
-	configIDs := make([]string, 0, len(marked))
-	pairs := make([][]string, 0, len(marked))
+	// Each holder once, as two arrays read side by side: a list of pairs would be planned as
+	// one condition per pair.
+	var users, configIDs []string
+	seen := map[scheduledTaskHolder]bool{}
 	for _, task := range marked {
-		configIDs = append(configIDs, task.ConfigID)
-		pairs = append(pairs, []string{task.UserID, task.ConfigID})
+		key := scheduledTaskHolder{task.UserID, task.ConfigID}
+		if !seen[key] {
+			seen[key] = true
+			users, configIDs = append(users, task.UserID), append(configIDs, task.ConfigID)
+		}
 	}
 
 	var configs []AgentConfig
@@ -952,7 +970,7 @@ func moveRoom(ctx context.Context, tx bun.Tx, customerID string, marked []Schedu
 		Column("user_id", "config_id").
 		ColumnExpr("count(*) AS count").
 		Where("customer_id = ?", customerID).
-		Where("(user_id, config_id) IN (?)", bun.In(pairs)).
+		Where("(user_id, config_id) IN (SELECT * FROM unnest(?::text[], ?::text[]))", pgdialect.Array(users), pgdialect.Array(configIDs)).
 		Where("state = ?", ScheduledTaskActive).
 		Group("user_id", "config_id").
 		Scan(ctx, &counts); err != nil {
