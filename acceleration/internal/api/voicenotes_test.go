@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -222,30 +220,6 @@ func (s *VoiceNotesSuite) refused(opened Session, note string) (int, ErrorDetail
 	var answered ErrorResponse
 	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	return status, answered.Error
-}
-
-// lastAsked is the person's last message in the one turn a noted model was asked that ends
-// with said.
-func (s *VoiceNotesSuite) lastAsked(said string) string {
-	var asked string
-	s.Require().Eventually(func() bool {
-		s.notedMu.Lock()
-		defer s.notedMu.Unlock()
-		for _, model := range s.noted {
-			for _, request := range model.replies() {
-				turn := harness.WithoutNotes(request.Input)
-				if len(turn) == 0 {
-					continue
-				}
-				if last := turn[len(turn)-1]; last.Role == llm.User && strings.HasSuffix(last.Content, said) {
-					asked = last.Content
-					return true
-				}
-			}
-		}
-		return false
-	}, settleFor, 10*time.Millisecond, "no turn asked %q", said)
-	return asked
 }
 
 // nothingWasAsked asks a question after a refused one and checks it is the first turn the

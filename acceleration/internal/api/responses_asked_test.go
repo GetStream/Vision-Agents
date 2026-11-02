@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // ResponsesAskedSuite covers what a question sent with text, and with photos, puts in front of
@@ -38,9 +39,7 @@ func (s *ResponsesAskedSuite) TestATextQuestionIsAskedAndShownAsTyped() {
 		CreateResponseRequest{RequestId: &command, Text: text}, &answering))
 
 	s.Equal(text, value(answering.Said))
-	asked, _ := s.askedWith(text)
-	turn := harness.WithoutNotes(asked.Input)
-	s.Equal(text, turn[len(turn)-1].Content, "the model is asked the text as typed")
+	s.Equal(text, s.lastAsked(text), "the model is asked the text as typed")
 	message := s.personsMessage(opened, command)
 	s.Equal(text, message["text"])
 	s.Empty(message["attachments"], "a text question carries no files")
@@ -88,4 +87,28 @@ func (s *ResponsesAskedSuite) personsMessage(opened Session, command string) map
 		return false
 	}, settleFor, 10*time.Millisecond, "the person's message was never written")
 	return message
+}
+
+// lastAsked is the person's last message in a turn a noted model was asked that ends
+// with said.
+func (s *RouterSuite) lastAsked(said string) string {
+	var asked string
+	s.Require().Eventually(func() bool {
+		s.notedMu.Lock()
+		defer s.notedMu.Unlock()
+		for _, model := range s.noted {
+			for _, request := range model.replies() {
+				turn := harness.WithoutNotes(request.Input)
+				if len(turn) == 0 {
+					continue
+				}
+				if last := turn[len(turn)-1]; last.Role == llm.User && strings.HasSuffix(last.Content, said) {
+					asked = last.Content
+					return true
+				}
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "no turn asked %q", said)
+	return asked
 }
