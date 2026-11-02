@@ -507,38 +507,3 @@ func (r *pluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	}
 	return nil, errUnknownTool(call.Name)
 }
-
-// videoRunner marks the session as a video one when the caller hands back frames of the
-// user's video, and the frames as video.
-type videoRunner struct {
-	next    agent.ToolRunner
-	session *Session
-}
-
-func (r *videoRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	parts, err := r.next.Run(ctx, call)
-	if err != nil || call.Name != agent.VideoFramesTool {
-		return parts, err
-	}
-	saw := false
-	for _, part := range parts {
-		if part.Image != nil {
-			part.Image.Video = true
-			saw = true
-		}
-	}
-	if saw {
-		r.session.SawVideo()
-	}
-	return parts, err
-}
-
-func errUnknownTool(name string) error {
-	return &toolError{name: name}
-}
-
-type toolError struct{ name string }
-
-func (e *toolError) Error() string {
-	return "session: " + e.name + " is not a tool this session can run"
-}

@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -206,8 +207,8 @@ func (p Plugin) Configured(options Options) (Plugin, error) {
 		}
 		p.Scopes = options.Scopes
 	}
-	if err := CheckToolPatterns(options.Tools); err != nil {
-		return Plugin{}, err
+	if err := core.CheckToolPatterns(options.Tools); err != nil {
+		return Plugin{}, fmt.Errorf("plugins: %w", err)
 	}
 	p.Tools = options.Tools
 	if len(options.Toolsets) > 0 {
