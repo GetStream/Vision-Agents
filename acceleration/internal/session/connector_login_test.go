@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -655,12 +657,20 @@ func (s *ConnectorLoginSuite) TestAnIncognitoSessionIsOfferedNoLogin() {
 
 // invocations is connection's call log, once it holds count rows and a moment more.
 func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.ConnectorInvocation {
+	fetch := func() ([]store.ConnectorInvocation, error) {
+		return s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+	}
 	read := func() []store.ConnectorInvocation {
-		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		rows, err := fetch()
 		s.Require().NoError(err)
 		return rows
 	}
-	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		rows, err := fetch()
+		require.NoError(c, err)
+		require.GreaterOrEqual(c, len(rows), count)
+	}, 5*time.Second, 20*time.Millisecond)
 	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
@@ -1009,10 +1019,19 @@ type answered struct {
 // callInBackground runs the call id on turn, and hands back what it said once it answers.
 func (s *ConnectorLoginSuite) callInBackground(turn context.Context, d *dispatcher, id, name, arguments string) chan answered {
 	answer := make(chan answered, 1)
+	turn, cancel := context.WithCancel(turn)
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: arguments})
 		answer <- answered{said: llm.TextOf(parts), err: err}
 	}()
+	// A test that fails before it reads the answer must not leave the call running: its late
+	// invocation record would send on the queue the fixture's cleanup has closed.
+	s.T().Cleanup(func() {
+		cancel()
+		<-finished
+	})
 	return answer
 }
 

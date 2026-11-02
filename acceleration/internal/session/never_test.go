@@ -76,3 +76,20 @@ func (s *NeverSuite) TestAConditionThatHoldsAtALaterCheckFails() {
 	s.Contains(t.messages[0], "Condition satisfied")
 	s.Contains(t.messages[0], "it changed")
 }
+
+// A condition that comes true half way through waitFor fails the test, and it is checked once
+// per tick: a shortened window passes it, and a loop that ignores the tick checks it far more
+// often than waitFor/tick+1 times.
+func (s *NeverSuite) TestTheWindowIsWaitForAndTheCheckIsMadeOncePerTick() {
+	const waitFor, tick = 400 * time.Millisecond, 20 * time.Millisecond
+	start := time.Now()
+	var checks atomic.Int32
+	t := &failures{}
+	held := never(t, func() bool {
+		checks.Add(1)
+		return time.Since(start) >= waitFor/2
+	}, waitFor, tick)
+
+	s.False(held, "a condition true half way through the window went unseen")
+	s.LessOrEqual(checks.Load(), int32(waitFor/tick+1))
+}
