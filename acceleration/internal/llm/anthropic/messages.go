@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +47,9 @@ type LLM struct {
 	model        string
 	client       anthropic.Client
 	capabilities llm.Capabilities
+	// systemTurns is whether this model takes a system message in the middle of the
+	// conversation (systemTurnModels).
+	systemTurns bool
 
 	mu sync.Mutex
 	// inFlight cancels the responses that have not settled, so closing the provider
@@ -81,8 +86,26 @@ func newMessages(options Options) (*LLM, error) {
 		// Every current Claude model reads images. No effort is declared yet, so a request
 		// naming one is refused rather than answered at the model's default.
 		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}},
+		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
+}
+
+// systemTurnModels take a system message after a user turn mid-conversation, and apply it as
+// a system instruction without disturbing the cached prefix before it. Claude Sonnet 5 does
+// not, and neither does a model this list has not heard of: a later system message is told
+// to those on the user's side, as it always was.
+var systemTurnModels = []string{
+	"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8",
+	"claude-sonnet-5-5", "claude-haiku-5-5",
+	"claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+}
+
+// datedModel is a model name pinned to a snapshot date, which is the same model.
+var datedModel = regexp.MustCompile(`-\d{8}$`)
+
+func takesSystemTurns(model string) bool {
+	return slices.Contains(systemTurnModels, datedModel.ReplaceAllString(model, ""))
 }
 
 // Client exposes the underlying SDK client.
@@ -309,16 +332,18 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	}
 
 	input := openaicompat.StrictToolOrder(request.Input)
-	// System turns that open the input join the system prompt; one later in the
-	// conversation is told to the model as a note on the user's side, since the API takes
-	// a system turn mid-conversation only in places this history does not guarantee.
+	// System turns that open the input join the system prompt.
 	for len(input) > 0 && input[0].Role == llm.System {
 		if text := messageText(input[0]); text != "" {
 			params.System = append(params.System, anthropic.TextBlockParam{Text: text})
 		}
 		input = input[1:]
 	}
-	for _, message := range input {
+	for i, message := range input {
+		if message.Role == llm.System && l.systemTurns && systemTurnFits(params.Messages, input[i+1:]) {
+			params.Messages = appendSystem(params.Messages, message)
+			continue
+		}
 		params.Messages = appendMessage(params.Messages, message)
 	}
 
@@ -375,8 +400,8 @@ func breakpoints(params *anthropic.MessageNewParams, mode llm.CacheMode) {
 	if mode == llm.CacheExplicit {
 		return
 	}
-	last := len(params.Messages) - 1
-	if previous := previousTurn(params.Messages); previous >= 0 {
+	last := lastMarkable(params.Messages)
+	if previous := previousTurn(params.Messages); previous >= 0 && previous != last {
 		mark(lastBlock(params.Messages[previous]))
 	}
 	if last >= 0 {
@@ -385,14 +410,28 @@ func breakpoints(params *anthropic.MessageNewParams, mode llm.CacheMode) {
 }
 
 // previousTurn is the index of the last user turn before the latest assistant turn, which is
-// where the request that turn answered ended, or -1 when there was none.
+// where the request that turn answered ended, or -1 when there was none. A system message
+// between them is passed over: it is never marked (lastMarkable).
 func previousTurn(messages []anthropic.MessageParam) int {
 	assistant := false
 	for i := len(messages) - 1; i >= 0; i-- {
 		switch {
 		case messages[i].Role == anthropic.MessageParamRoleAssistant:
 			assistant = true
+		case messages[i].Role == anthropic.MessageParamRoleSystem:
 		case assistant:
+			return i
+		}
+	}
+	return -1
+}
+
+// lastMarkable is the index of the last message a breakpoint may go on, or -1. A system
+// message in the conversation is not one: what it says is for this turn of the reply, and
+// the cached prefix is what comes before it.
+func lastMarkable(messages []anthropic.MessageParam) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != anthropic.MessageParamRoleSystem {
 			return i
 		}
 	}
@@ -404,6 +443,40 @@ func lastBlock(message anthropic.MessageParam) *anthropic.CacheControlEphemeralP
 		return nil
 	}
 	return message.Content[len(message.Content)-1].GetCacheControl()
+}
+
+// systemTurnFits reports whether a system message can go here as one: the API takes it only
+// straight after a user turn, and only last or before the assistant's turn. Anywhere else it
+// is told on the user's side.
+func systemTurnFits(before []anthropic.MessageParam, after []llm.Message) bool {
+	n := len(before)
+	if n == 0 || before[n-1].Role != anthropic.MessageParamRoleUser && before[n-1].Role != anthropic.MessageParamRoleSystem {
+		return false
+	}
+	if before[n-1].Role == anthropic.MessageParamRoleSystem && (n < 2 || before[n-2].Role != anthropic.MessageParamRoleUser) {
+		return false
+	}
+	for _, next := range after {
+		if next.Role == llm.System {
+			continue
+		}
+		return next.Role == llm.Assistant
+	}
+	return true
+}
+
+// appendSystem adds a system message, joined to one just before it.
+func appendSystem(messages []anthropic.MessageParam, message llm.Message) []anthropic.MessageParam {
+	text := messageText(message)
+	if text == "" {
+		return messages
+	}
+	block := anthropic.NewTextBlock(text)
+	if n := len(messages); n > 0 && messages[n-1].Role == anthropic.MessageParamRoleSystem {
+		messages[n-1].Content = append(messages[n-1].Content, block)
+		return messages
+	}
+	return append(messages, anthropic.MessageParam{Role: anthropic.MessageParamRoleSystem, Content: []anthropic.ContentBlockParamUnion{block}})
 }
 
 // appendMessage adds one turn, merging it into the turn before when both are the same
