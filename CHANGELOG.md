@@ -2,6 +2,9 @@
 
 ## Features
 
+### A number or a 10DLC registration is paid for before it is bought
+
+`POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
 ### A session sets how many tool rounds a reply may chain
 
 `max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.

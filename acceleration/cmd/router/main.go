@@ -2373,7 +2373,7 @@ func buildDLC(
 			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
 	}
 
-	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Booker: gate, Logger: logger}
 	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
 		options.Registrar = registrar
 	} else {
