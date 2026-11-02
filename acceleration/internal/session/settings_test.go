@@ -1,9 +1,13 @@
 package session
 
 import (
+	"context"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -72,6 +76,240 @@ func (s *SessionSuite) TestALabelSetWhileTheModelsMoveIsKept() {
 	}
 	s.Equal(target, created.Spec().LLMTarget)
 	s.Equal(custom, created.Spec().Custom, "the label set while the models moved is kept")
+}
+
+// A settings change made while voice stops reaches the agent that holds the session once
+// it has stopped. Made on the agent being left, the change would answer as made while the
+// agent built from the spec read before it went on without it.
+func (s *SessionSuite) TestASettingsChangeDuringAVoiceStopReachesTheAgentLeftHoldingTheSession() {
+	s.manages()
+	created := s.joins(Spec{})
+	build := created.build
+	building, release := make(chan struct{}), make(chan struct{})
+	created.build = func(ctx context.Context, next Spec) (*agent.Agent, error) {
+		close(building)
+		<-release
+		return build(ctx, next)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(s.ctx) }()
+	select {
+	case <-building:
+	case <-time.After(settleFor):
+		s.FailNow("voice never began to stop")
+	}
+
+	temperature := 0.3
+	moved := make(chan error, 1)
+	go func() { moved <- created.SetSettings(s.ctx, Settings{Temperature: &temperature}) }()
+	// The change either finished against the agent being left or waits for the swap; the
+	// swap is let go only once it is one or the other.
+	s.eventually(func() bool { return len(moved) > 0 || waitsForLock("(*Session).SetSettings") },
+		"the settings change neither finished nor waited")
+	close(release)
+	for _, done := range []chan error{stopped, moved} {
+		select {
+		case err := <-done:
+			s.Require().NoError(err)
+		case <-time.After(settleFor):
+			s.FailNow("voice never stopped or the settings never moved")
+		}
+	}
+
+	s.Equal("text", created.Mode())
+	s.Equal(0.3, *created.Spec().ModelOverwrites.Temperature)
+	s.says(created, "how warm is it")
+	s.eventually(func() bool { return len(s.askedAbout("how warm is it")) > 0 }, "the model was never asked")
+	for _, asked := range s.askedAbout("how warm is it") {
+		s.Require().NotNil(asked.Temperature, "the agent holding the session answers at the temperature set")
+		s.Equal(0.3, *asked.Temperature)
+	}
+}
+
+// An interrupt is not held back by a settings change waiting for the reply in flight, nor by
+// a voice stop waiting behind that change: both wait on that reply, and the interrupt is what
+// ends it.
+func (s *SessionSuite) TestAnInterruptEndsTheReplyASettingsChangeWaitsOn() {
+	s.gated = newGatedLLM()
+	s.manages()
+	created := s.joins(Spec{})
+	s.says(created, "hello")
+	select {
+	case <-s.gated.entered:
+	case <-time.After(settleFor):
+		s.FailNow("the model was never asked")
+	}
+	opened := s.openedModels()
+	target := "llm-flow"
+	moved := make(chan error, 1)
+	go func() { moved <- created.SetSettings(s.ctx, Settings{LLM: &target}) }()
+	// The new model is opened before SetSettings waits for the reply.
+	s.eventually(func() bool { return s.openedModels() > opened }, "the new model was never opened")
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(s.ctx) }()
+	s.eventually(func() bool { return waitsForLock("(*Session).swap") }, "voice did not wait to stop")
+
+	interrupted := make(chan struct{})
+	go func() {
+		created.Interrupt()
+		close(interrupted)
+	}()
+	select {
+	case <-interrupted:
+	case <-time.After(settleFor):
+		s.gated.answers(1)
+		s.FailNow("the interrupt waited for the settings change")
+	}
+	select {
+	case err := <-moved:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.gated.answers(1)
+		s.FailNow("the settings never moved once the reply was interrupted")
+	}
+	select {
+	case err := <-stopped:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("voice never stopped once the settings moved")
+	}
+	s.Equal("text", created.Mode())
+	s.Equal(target, created.Spec().LLMTarget)
+}
+
+// A settings change waiting for a voice stop gives up when its caller does: it returns the
+// caller's error and changes nothing, rather than landing after the caller was told it failed.
+func (s *SessionSuite) TestASettingsChangeWaitingForAVoiceStopEndsWithItsCaller() {
+	s.manages()
+	created := s.joins(Spec{})
+	build := created.build
+	building, release := make(chan struct{}), make(chan struct{})
+	created.build = func(ctx context.Context, next Spec) (*agent.Agent, error) {
+		close(building)
+		<-release
+		return build(ctx, next)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(s.ctx) }()
+	select {
+	case <-building:
+	case <-time.After(settleFor):
+		s.FailNow("voice never began to stop")
+	}
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	temperature := 0.3
+	moved := make(chan error, 1)
+	go func() { moved <- created.SetSettings(ctx, Settings{Temperature: &temperature}) }()
+	s.eventually(func() bool { return waitsForLock("(*Session).SetSettings") }, "the settings change did not wait")
+	cancel()
+	select {
+	case err := <-moved:
+		s.Require().ErrorIs(err, context.Canceled)
+	case <-time.After(settleFor):
+		close(release)
+		s.FailNow("the settings change kept waiting after its caller gave up")
+	}
+	close(release)
+	select {
+	case err := <-stopped:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("voice never stopped")
+	}
+	s.Equal("text", created.Mode())
+	s.Nil(created.Spec().ModelOverwrites.Temperature, "the change its caller gave up on was not made")
+}
+
+// A settings change whose caller has already given up is refused every time, on an idle
+// session too, rather than applied or refused at random.
+func (s *SessionSuite) TestASettingsChangeWithAnEndedCallerIsRefused() {
+	s.manages()
+	created := s.joins(Spec{})
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+	temperature := 0.3
+	for i := 0; i < 200; i++ {
+		err := created.SetSettings(ctx, Settings{Temperature: &temperature})
+		s.Require().ErrorIs(err, context.Canceled, "call %d", i)
+	}
+	s.Nil(created.Spec().ModelOverwrites.Temperature, "a change its caller gave up on was made")
+}
+
+// A voice stop waiting for a settings change gives up when its caller does: it returns the
+// caller's error and voice stays on.
+func (s *SessionSuite) TestAVoiceStopWaitingForASettingsChangeEndsWithItsCaller() {
+	s.gated = newGatedLLM()
+	s.manages()
+	created := s.joins(Spec{})
+	s.says(created, "hello")
+	select {
+	case <-s.gated.entered:
+	case <-time.After(settleFor):
+		s.FailNow("the model was never asked")
+	}
+	target := "llm-flow"
+	moved := make(chan error, 1)
+	opened := s.openedModels()
+	go func() { moved <- created.SetSettings(s.ctx, Settings{LLM: &target}) }()
+	// The new model is opened before SetSettings waits for the reply.
+	s.eventually(func() bool { return s.openedModels() > opened }, "the new model was never opened")
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(ctx) }()
+	s.eventually(func() bool { return waitsForLock("(*Session).swap") }, "voice did not wait to stop")
+	cancel()
+	select {
+	case err := <-stopped:
+		s.Require().ErrorIs(err, context.Canceled)
+	case <-time.After(settleFor):
+		s.gated.answers(1)
+		s.FailNow("the voice stop kept waiting after its caller gave up")
+	}
+	s.gated.answers(1)
+	select {
+	case err := <-moved:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("the settings never moved once the reply was answered")
+	}
+	s.Equal("cascade", created.Mode(), "the stop its caller gave up on did not take voice off")
+	s.Equal(target, created.Spec().LLMTarget)
+}
+
+// askedAbout is every request a model opened after the first was asked to answer text in.
+func (s *SessionSuite) askedAbout(text string) []llm.ResponseParams {
+	s.othersMu.Lock()
+	defer s.othersMu.Unlock()
+	var found []llm.ResponseParams
+	for _, model := range s.others {
+		model.mu.Lock()
+		for _, params := range model.asked {
+			for _, message := range params.Input {
+				if message.Role == llm.User && message.Content == text {
+					found = append(found, params)
+				}
+			}
+		}
+		model.mu.Unlock()
+	}
+	return found
+}
+
+// waitsForLock reports whether a goroutine inside function is waiting for the session's
+// other SetSettings or swap to finish (move), or on a mutex.
+func waitsForLock(function string) bool {
+	buffer := make([]byte, 1<<20)
+	for _, goroutine := range strings.Split(string(buffer[:runtime.Stack(buffer, true)]), "\n\n") {
+		waiting := strings.Contains(goroutine, "(*Session).move(") || strings.Contains(goroutine, "[sync.Mutex.Lock")
+		if waiting && strings.Contains(goroutine, function) {
+			return true
+		}
+	}
+	return false
 }
 
 // The spec is read off the session's goroutine -- by its log rows, its fan-out and the API --
