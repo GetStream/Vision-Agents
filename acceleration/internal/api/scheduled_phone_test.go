@@ -837,7 +837,7 @@ func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsIt
 	user := s.data.createUser()
 	task := s.phoneTask(user.on(other), []string{"whatsapp"}, time.Now())
 
-	_, handed, err := s.router.handDeliveryToPeer(context.Background(), s.deliveryOf(task, store.NewID()))
+	_, handed, err := s.router.handDeliveryToPeer(context.Background(), s.deliveryOf(task, s.runOf(task, time.Now(), "").ID))
 
 	s.True(handed, "the peer took the occurrence")
 	failure := s.failure(err)
