@@ -34,6 +34,9 @@ type CampaignTotal struct {
 	Converted int
 }
 
+// A dial is an attempt that placed a call: answered, unanswered, or still happening (empty
+// result). Deferred, paused, refused, invalid_number and abandoned attempts placed none.
+
 // CampaignAnalytics counts a campaign's contacts and dials. Days run oldest first and hold
 // only the days with a dial.
 func (s *Store) CampaignAnalytics(ctx context.Context, campaignID string) (CampaignAnalytics, error) {
@@ -45,6 +48,7 @@ func (s *Store) CampaignAnalytics(ctx context.Context, campaignID string) (Campa
 		Dialed:    totals[campaignID].Dialed,
 		Converted: totals[campaignID].Converted,
 		Outcomes:  map[string]int{},
+		Days:      []DialDay{},
 	}
 
 	err = s.db.NewRaw(`SELECT count(*) FROM campaign_contacts cc
@@ -69,7 +73,7 @@ WHERE campaign_id = ? AND stage = ? GROUP BY outcome`, campaignID, ContactComple
 
 	err = s.db.NewRaw(`SELECT date_trunc('day', started_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS day,
 	count(*) AS dials, count(*) FILTER (WHERE result = 'answered') AS answered
-FROM campaign_attempts WHERE campaign_id = ? GROUP BY 1 ORDER BY 1`, campaignID).Scan(ctx, &analytics.Days)
+FROM campaign_attempts WHERE campaign_id = ? AND result IN ('answered', 'unanswered', '') GROUP BY 1 ORDER BY 1`, campaignID).Scan(ctx, &analytics.Days)
 	if err != nil {
 		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count dials per day: %w", err))
 	}
@@ -118,7 +122,7 @@ func (s *Store) CampaignTotals(ctx context.Context, campaignIDs []string) (map[s
 		Converted  int
 	}
 	err := s.db.NewRaw(`SELECT cc.campaign_id,
-	count(*) FILTER (WHERE EXISTS (SELECT 1 FROM campaign_attempts ca WHERE ca.contact_id = cc.id)) AS dialed,
+	count(*) FILTER (WHERE EXISTS (SELECT 1 FROM campaign_attempts ca WHERE ca.contact_id = cc.id AND ca.result IN ('answered', 'unanswered', ''))) AS dialed,
 	count(*) FILTER (WHERE cc.converted) AS converted
 FROM campaign_contacts cc WHERE cc.campaign_id IN (?) GROUP BY cc.campaign_id`, bun.In(campaignIDs)).Scan(ctx, &rows)
 	if err != nil {

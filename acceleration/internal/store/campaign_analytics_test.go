@@ -66,3 +66,42 @@ func (s *StoreSuite) TestStagesFoldAwaitingOutcomeIntoInProgress() {
 	s.Equal(map[string]int{InProgress: 2, Enrolled: 1}, got[campaign.ID])
 	s.Equal(map[string]int{Enrolled: 1}, got[other.ID])
 }
+
+func (s *StoreSuite) TestOnlyAttemptsThatPlacedACallAreDials() {
+	campaign := s.draftCampaign(newID(), "+15550001", "+15550002", "+15550003")
+	mixed := s.contactByNumber(campaign, "+15550001")
+	for _, result := range []string{"deferred", "paused", "refused", "invalid_number", "abandoned"} {
+		s.dialed(mixed, s.base.Add(-48*time.Hour), result)
+	}
+	s.dialed(mixed, s.base, "")
+	s.dialed(s.contactByNumber(campaign, "+15550002"), s.base, "refused")
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(1, got.Dialed)
+	s.Equal(0, got.Connected)
+	s.Equal([]DialDay{{Day: s.base.Truncate(24 * time.Hour), Dials: 1}}, got.Days)
+}
+
+func (s *StoreSuite) TestAnEmptyCampaignHasZeroAnalytics() {
+	campaign := s.draftCampaign(newID())
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(CampaignAnalytics{Outcomes: map[string]int{}, Days: []DialDay{}}, got)
+}
+
+func (s *StoreSuite) TestDialsFallOnUTCDaysAtMidnight() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	contact := s.contactByNumber(campaign, "+15550001")
+	day := s.base.Truncate(24 * time.Hour)
+	s.dialed(contact, day.Add(-time.Minute), "unanswered")
+	s.dialed(contact, day.Add(time.Minute), "answered")
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal([]DialDay{{Day: day.Add(-24 * time.Hour), Dials: 1}, {Day: day, Dials: 1, Answered: 1}}, got.Days)
+}
