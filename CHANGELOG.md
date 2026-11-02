@@ -2,6 +2,10 @@
 
 ## Features
 
+### A photo sent in an agent's chat channel reaches the model
+
+A photo a person sends in a plain `agent` channel, with or without text, is now answered on every path a message there takes. A running session the router answers shows it to its model, or tells the model to say it cannot see it. A dispatch worker gets its URLs in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and `agents.Dispatch.Answer` passes them on. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+
 ### A number or a 10DLC registration is paid for before it is bought
 
 `POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
