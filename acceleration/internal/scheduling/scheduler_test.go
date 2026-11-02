@@ -1088,6 +1088,67 @@ func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedNotDeliver
 	s.Contains(logged.String(), "run="+runs[0].ID)
 }
 
+func (s *SchedulerSuite) TestACappedOccurrenceWhoseCallMayHaveLandedIsNotCountedAsAFailure() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = maxConsecutiveFailures - 1
+	})
+	// Three workers took it up and died, one after placing the call, whose end
+	// no worker recorded.
+	started := time.Now().Add(-time.Hour)
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
+		Attempts: 3, StartedAt: &started, SessionID: "call-" + uuid.NewString()}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond, "the task moves on")
+	read := s.read(task)
+	s.Equal(maxConsecutiveFailures-1, read.ConsecutiveFailures, "the call may have carried the task out")
+	s.Equal(store.ScheduledTaskActive, read.State, "a run that may have delivered does not fail the task")
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Require().NotNil(runs[0].Error)
+	s.Equal(ReasonRungAlready, *runs[0].Error)
+	s.Equal(stale.SessionID, runs[0].SessionID)
+}
+
+func (s *SchedulerSuite) TestACappedOccurrenceKeepsTheReasonItsCallEndedUnder() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = 2
+	})
+	// The call was placed and nobody answered; the worker died before it
+	// finished the run, and so did the next.
+	started := time.Now().Add(-time.Hour)
+	reason := ReasonNotAnswered
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
+		Attempts: 3, StartedAt: &started, SessionID: "call-" + uuid.NewString(), Error: &reason}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond, "the task moves on")
+	s.Equal(3, s.read(task).ConsecutiveFailures, "an unanswered call is a failure")
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Require().NotNil(runs[0].Error)
+	s.Equal(ReasonNotAnswered, *runs[0].Error, "the call's reason, not overwritten")
+}
+
 // logBuffer is a log a worker writes while a test reads it.
 type logBuffer struct {
 	mu      sync.Mutex
