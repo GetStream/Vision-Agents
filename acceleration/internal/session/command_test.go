@@ -241,6 +241,7 @@ func (s *SessionSuite) TestAToolCalledOnASpokenTurnIsAskedOfThePhone() {
 	events, detach := running.Watch()
 	defer detach()
 
+	s.hears(running)
 	s.says(running, "what is on record")
 
 	asked := awaitToolCall(events)
