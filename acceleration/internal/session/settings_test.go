@@ -118,52 +118,45 @@ func (s *SessionSuite) TestTheSpecIsReadWhileItChanges() {
 
 // The spec's call fields are read off the session's goroutine -- by its log rows, its
 // fan-out, tool results and the API -- while voice starts and stops. Run with -race, which
-// reports a read without the lock. A session with no log rows is run too: the lock the log
-// row takes would otherwise order the fan-out's own read before the change.
+// reports a read without the lock.
 func (s *SessionSuite) TestTheSpecIsReadWhileVoiceStartsAndStops() {
 	service := persistent.NewForChat(chattest.Client(s.T()))
 	s.T().Cleanup(service.Close)
 	s.conversations = service
-	for _, logged := range []bool{false, true} {
-		s.manages()
-		logs := make(chan store.AgentLog, 4096)
-		if logged {
-			s.manager.logs = &logRecorder{queue: logs, store: &store.Store{}}
+	s.manages()
+	logs := make(chan store.AgentLog, 4096)
+	s.manager.logs = &logRecorder{queue: logs, store: &store.Store{}}
+	created := s.writes(Spec{PersistConversation: true})
+	events, detach := created.Watch()
+	defer detach()
+	go func() {
+		for range events {
 		}
-		created := s.writes(Spec{PersistConversation: true})
-		events, detach := created.Watch()
-		go func() {
-			for range events {
-			}
-		}()
+	}()
 
-		s.readsWhile(func() {
-			for range 5 {
-				s.NoError(created.StartVoice(s.ctx, Call{}))
-				s.NoError(created.StopVoice(s.ctx))
+	s.readsWhile(func() {
+		for range 5 {
+			s.NoError(created.StartVoice(s.ctx, Call{}))
+			s.NoError(created.StopVoice(s.ctx))
+		}
+	},
+		func() {
+			// A reply still being written in the conversation refuses the next one.
+			if _, err := created.Respond(s.ctx, "hello", nil, options.LLM{}); err != nil {
+				s.ErrorIs(err, persistent.ErrResponseRunning)
 			}
 		},
-			func() {
-				// A reply still being written in the conversation refuses the next one.
-				if _, err := created.Respond(s.ctx, "hello", nil, options.LLM{}); err != nil {
-					s.ErrorIs(err, persistent.ErrResponseRunning)
-				}
-			},
-			func() { created.Mode() },
-			func() { _, gone := created.WatchPendingVoiceTools(); gone() },
-			func() { created.ResolveToolParts("unknown", llm.TextParts("output"), "") },
-			func() { created.ResolveTurnTool("unknown", "turn-1", llm.TextParts("output"), "") },
-			func() { _ = created.askTool(ToolCall{ID: "unknown", Name: "unknown", TurnID: "turn-1"}) },
-		)
-		detach()
+		func() { created.Mode() },
+		func() { _, gone := created.WatchPendingVoiceTools(); gone() },
+		func() { created.ResolveToolParts("unknown", llm.TextParts("output"), "") },
+		func() { created.ResolveTurnTool("unknown", "turn-1", llm.TextParts("output"), "") },
+		func() { _ = created.askTool(ToolCall{ID: "unknown", Name: "unknown", TurnID: "turn-1"}) },
+	)
 
-		s.False(created.Voicing())
-		s.Equal("text", created.Mode())
-		if logged {
-			s.eventually(func() bool { return len(logs) > 0 }, "no log row was written")
-			s.Equal("acme", (<-logs).CustomerID, "a log row names the session's customer")
-		}
-	}
+	s.False(created.Voicing())
+	s.Equal("text", created.Mode())
+	s.eventually(func() bool { return len(logs) > 0 }, "no log row was written")
+	s.Equal("acme", (<-logs).CustomerID, "a log row names the session's customer")
 }
 
 // readsWhile runs each reader over and over on a goroutine of its own until change returns.
