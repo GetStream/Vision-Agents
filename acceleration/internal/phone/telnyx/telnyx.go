@@ -337,11 +337,15 @@ var finalStatuses = map[string]phone.CallResult{
 	"canceled":  phone.CallCanceled,
 }
 
-// SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
-// menu on a call it placed.
+// SendDigits presses digits on a call placed from here, which is how an agent gets past a
+// menu on it.
 //
 // Telnyx's call control sends the tones without disturbing what the leg is already doing,
-// so the agent stays bridged to the call while the menu is answered.
+// so the agent stays bridged to the call while the menu is answered. It sends them from the
+// leg named to the other end of the call
+// (https://developers.telnyx.com/api-reference/call-commands/send-dtmf). The id placing
+// returned names the person's leg, whose other end is the agent, so the tones go from the
+// leg its TeXML dialled to Stream.
 func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) error {
 	if vendorCallID == "" {
 		return stack.Wrap(errors.New("telnyx: pressing digits needs the call to press them on"))
@@ -350,8 +354,41 @@ func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) 
 		return stack.Wrap(errors.New("telnyx: pressing needs digits to press"))
 	}
 
-	path := "/v2/calls/" + url.PathEscape(vendorCallID) + "/actions/send_dtmf"
+	leg, err := p.bridgedLeg(ctx, vendorCallID)
+	if err != nil {
+		return err
+	}
+	path := "/v2/calls/" + url.PathEscape(leg) + "/actions/send_dtmf"
 	return p.do(ctx, http.MethodPost, path, nil, sendDigits{Digits: digits}, nil)
+}
+
+// bridgedLeg is the leg the TeXML of the person's leg dialled to Stream: the other live leg
+// of its call session, among the calls on the TeXML application.
+func (p *Provider) bridgedLeg(ctx context.Context, personLeg string) (string, error) {
+	if p.connectionID == "" {
+		return "", stack.Wrap(errors.New("telnyx: a connection id is required to find the leg to press digits on"))
+	}
+	var person envelope[activeCall]
+	if err := p.do(ctx, http.MethodGet, "/v2/calls/"+url.PathEscape(personLeg), nil, nil, &person); err != nil {
+		return "", err
+	}
+	path := "/v2/connections/" + url.PathEscape(p.connectionID) + "/active_calls"
+	query := url.Values{"page[size]": {"250"}}
+	for {
+		var page activeCalls
+		if err := p.do(ctx, http.MethodGet, path, query, nil, &page); err != nil {
+			return "", err
+		}
+		for _, leg := range page.Data {
+			if leg.CallSessionID == person.Data.CallSessionID && leg.CallControlID != personLeg {
+				return leg.CallControlID, nil
+			}
+		}
+		if page.Meta.Cursors.After == "" {
+			return "", stack.Wrap(errors.New("telnyx: the call is not bridged to the agent yet, so digits would not reach the person"))
+		}
+		query.Set("page[after]", page.Meta.Cursors.After)
+	}
 }
 
 // Vendor is the name this provider is recorded under.
@@ -596,9 +633,27 @@ type texmlCall struct {
 
 // texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope.
 type texmlCallPlaced struct {
-	// CallSID is the call control id, which is what pressing digits acts on.
+	// CallSID is the call control id of the person's leg, which pressing digits starts from.
 	CallSID string `json:"call_sid"`
 	Status  string `json:"status"`
+}
+
+// activeCall is one leg Telnyx is holding.
+type activeCall struct {
+	CallControlID string `json:"call_control_id"`
+	// CallSessionID is shared by the legs of one call, such as a TeXML leg and the leg its
+	// <Dial> placed.
+	CallSessionID string `json:"call_session_id"`
+}
+
+// activeCalls is a page of the calls on a connection.
+type activeCalls struct {
+	Data []activeCall `json:"data"`
+	Meta struct {
+		Cursors struct {
+			After string `json:"after"`
+		} `json:"cursors"`
+	} `json:"meta"`
 }
 
 type sendDigits struct {
