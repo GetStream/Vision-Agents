@@ -382,6 +382,18 @@ type Purchase struct {
 	Owner   routing.Owner
 }
 
+// pointCallHook makes the app deliver its call events to this router, when the router knows
+// where it is reachable from.
+func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) error {
+	if s.publicURL == "" {
+		return nil
+	}
+	if _, err := stream.EnsureCallHook(ctx, s.publicURL, app); err != nil {
+		return stack.Wrap(err)
+	}
+	return nil
+}
+
 // Buy buys a number and records that the customer now holds it.
 //
 // The vendor is the side that costs money, so it goes first: a row without a number is a
@@ -399,9 +411,14 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
-	if s.apps != nil {
-		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
-			return store.PhoneNumber{}, stack.Wrap(err)
+	stream, app, err := s.streamFor(ctx, purchase.Owner.CustomerID)
+	if errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+		return store.PhoneNumber{}, stack.Wrap(err)
+	}
+	// An app whose calls could not reach the router would hold a number nobody can call.
+	if err == nil {
+		if err := s.pointCallHook(ctx, stream, app); err != nil {
+			return store.PhoneNumber{}, err
 		}
 	}
 	// Refused before the vendor is paid, since a number in another form would not be recorded.

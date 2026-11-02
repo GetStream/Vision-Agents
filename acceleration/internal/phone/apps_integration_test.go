@@ -46,6 +46,7 @@ type AppsSuite struct {
 	apps       *testApps
 	service    *Service
 	vendor     *stub
+	registry   *Registry
 	customer   string
 	e164       string
 }
@@ -75,16 +76,22 @@ func (s *AppsSuite) SetupTest() {
 	s.vendor = vendor
 	registry := NewRegistry(s.config())
 	registry.Register(vendor.vendor, func() (Provider, error) { return vendor, nil })
+	s.registry = registry
 	for _, name := range s.credentials(vendor.vendor) {
 		s.T().Setenv(name, "set")
 	}
-	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
-	s.Require().NoError(err)
-	s.service = service
+	s.service = s.serviceAt("https://router.example")
 
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: s.e164, Vendor: vendor.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
+}
+
+// serviceAt is the suite's service reachable from the internet at a url.
+func (s *AppsSuite) serviceAt(publicURL string) *Service {
+	service, err := NewService(ServiceOptions{Registry: s.registry, Store: s.store, Apps: s.apps, PublicURL: publicURL})
+	s.Require().NoError(err)
+	return service
 }
 
 // aNumber is a number nobody in the suite's database holds yet.
@@ -746,6 +753,41 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) purchase() Purchase {
+	return Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Country: "US", Owner: routing.Owner{CustomerID: s.customer}}
+}
+
+func (s *AppsSuite) TestBuyingANumberPointsTheCallHookOfTheAppItIsBoughtIn() {
+	s.ownApp()
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Require().NoError(err)
+	hooks := s.own.EventHooks("test")
+	s.Require().Len(hooks, 1)
+	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
+	s.Empty(s.deployment.EventHooks("test"))
+}
+
+func (s *AppsSuite) TestABuyWhoseHookCannotBePointedIsNotPaidFor() {
+	s.ownApp()
+	s.service = s.serviceAt("ftp://router.example")
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Error(err)
+	s.Zero(s.vendor.ordered, "the vendor is not paid for a number whose calls would never arrive")
+}
+
+func (s *AppsSuite) TestWithoutAPublicURLABuyPointsNoHook() {
+	s.service = s.serviceAt("")
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Require().NoError(err)
+	s.Empty(s.deployment.EventHooks("test"))
 }
 
 func (s *AppsSuite) TestANumberInAnotherFormIsNotBought() {
