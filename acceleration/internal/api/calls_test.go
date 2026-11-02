@@ -203,7 +203,7 @@ func (s *CallsSuite) TestAGuestImportedAsMintedIsNoGuestTheRouterMinted() {
 		s.Equal(http.StatusBadRequest, status, path)
 		s.Equal(errUserInSharedApp.Message, failure, path)
 	}
-	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		map[string]any{"id": imported})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "not a guest of this app")
