@@ -663,7 +663,7 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	case "campaign_contacts":
 		row, err = requeueImportedContact(row, time.Now())
 	case "campaign_attempts":
-		row, err = abandonImportedAttempt(row)
+		row, err = abandonImportedAttempt(row, time.Now())
 	}
 	if err != nil {
 		return err
@@ -944,18 +944,26 @@ func requeueImportedContact(row json.RawMessage, now time.Time) (json.RawMessage
 	return json.Marshal(fields)
 }
 
-// abandonImportedAttempt gives up reading the outcome of a call from its transcript here: its
-// contact arrives waiting to be rung again, as a contact that settled before the outcome was
-// read does (classify_state abandoned).
-func abandonImportedAttempt(row json.RawMessage) (json.RawMessage, error) {
+// abandonImportedAttempt closes a call that was still happening there, which nobody here
+// will end (its contact arrives waiting to be rung again), as unanswered, and gives up reading
+// the outcome of an answered one from its transcript (classify_state abandoned), as a contact
+// that settled before the outcome was read does.
+func abandonImportedAttempt(row json.RawMessage, now time.Time) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
 		return nil, fmt.Errorf("store: read an imported row: %w", err)
 	}
-	if string(fields["classify_state"]) != `"pending"` {
-		return row, nil
+	if string(fields["classify_state"]) == `"pending"` {
+		fields["classify_state"] = json.RawMessage(`"` + classifyAbandoned + `"`)
 	}
-	fields["classify_state"] = json.RawMessage(`"` + classifyAbandoned + `"`)
+	if string(fields["result"]) == `""` {
+		ended, err := json.Marshal(now)
+		if err != nil {
+			return nil, fmt.Errorf("store: write an imported row: %w", err)
+		}
+		fields["result"] = json.RawMessage(`"unanswered"`)
+		fields["ended_at"] = ended
+	}
 	return json.Marshal(fields)
 }
 

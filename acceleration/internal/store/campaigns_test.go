@@ -379,6 +379,29 @@ func (s *StoreSuite) TestPausingAndResumingFollowTheState() {
 	s.ErrorIs(s.store.ResumeCampaign(s.ctx, campaign.CustomerID, campaign.ID), ErrCampaignLocked, "only a paused campaign resumes")
 }
 
+func (s *StoreSuite) TestResumingBeforeTheStartTimeReturnsToScheduledAndAfterItRuns() {
+	for name, tc := range map[string]struct {
+		startAt time.Duration
+		want    string
+	}{"before": {time.Hour, Scheduled}, "after": {-time.Hour, Running}} {
+		campaign := s.draftCampaign(newID(), "+15550001")
+		_, err := s.store.DB().ExecContext(s.ctx,
+			"UPDATE campaigns SET state = 'paused', start_at = ?, started_at = NULL WHERE id = ?", time.Now().Add(tc.startAt), campaign.ID)
+		s.Require().NoError(err, name)
+
+		s.Require().NoError(s.store.ResumeCampaign(s.ctx, campaign.CustomerID, campaign.ID), name)
+
+		got, err := s.store.Campaign(s.ctx, campaign.CustomerID, campaign.ID)
+		s.Require().NoError(err, name)
+		s.Equal(tc.want, got.State, name)
+		if tc.want == Running {
+			s.NotNil(got.StartedAt, name)
+		} else {
+			s.Nil(got.StartedAt, name)
+		}
+	}
+}
+
 func (s *StoreSuite) TestStoppingAContactEndsItsWaitOrMarksItsCall() {
 	campaign := s.draftCampaign(newID(), "+15550001", "+15550002")
 	contacts := s.contactsOf(campaign)

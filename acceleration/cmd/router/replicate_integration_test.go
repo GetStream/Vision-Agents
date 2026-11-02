@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,52 @@ func (s *ReplicateResumeSuite) TestResumeStartsTheCampaignsHere() {
 	moved, err := s.store.Campaign(s.ctx, "acme", campaign.ID)
 	s.Require().NoError(err)
 	s.Equal(store.Running, moved.State)
+}
+
+func (s *ReplicateResumeSuite) TestResumeReturnsACampaignScheduledThereToScheduled() {
+	campaign := &store.Campaign{CustomerID: "acme", Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
+	s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
+	var raw []byte
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT to_jsonb(c) || jsonb_build_object('state', 'scheduled', 'start_at', now() + interval '2 days') FROM campaigns c WHERE id = ?",
+		campaign.ID).Scan(&raw))
+	s.Require().NoError(s.store.ImportRow(s.ctx, "acme", "campaigns", raw))
+
+	var out bytes.Buffer
+	s.Require().NoError(resumeMove(s.ctx, s.store, "acme", &out))
+
+	moved, err := s.store.Campaign(s.ctx, "acme", campaign.ID)
+	s.Require().NoError(err)
+	s.Equal(store.Scheduled, moved.State, "it was not due to start yet")
+	s.Nil(moved.StartedAt)
+}
+
+func (s *ReplicateResumeSuite) TestResumeGoesOnPastACampaignItCannotResume() {
+	var ids []string
+	for _, name := range []string{"first", "second"} {
+		campaign := &store.Campaign{CustomerID: "acme", Name: name, ConfigID: "config-1", FromNumber: "+15550100"}
+		s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
+		var raw []byte
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT to_jsonb(c) || '{\"state\": \"running\"}' FROM campaigns c WHERE id = ?", campaign.ID).Scan(&raw))
+		s.Require().NoError(s.store.ImportRow(s.ctx, "acme", "campaigns", raw))
+		ids = append(ids, campaign.ID)
+	}
+	slices.Sort(ids)
+	// Marked but no longer paused: the first cannot be resumed.
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE campaigns SET state = 'stopped' WHERE id = ?", ids[0])
+	s.Require().NoError(err)
+
+	var out bytes.Buffer
+	err = resumeMove(s.ctx, s.store, "acme", &out)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), ids[0])
+	s.Contains(out.String(), "could not resume campaign "+ids[0])
+	s.Contains(out.String(), "resumed campaign "+ids[1])
+	second, err := s.store.Campaign(s.ctx, "acme", ids[1])
+	s.Require().NoError(err)
+	s.Equal(store.Running, second.State)
 }
 
 func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForADeletedConfig() {

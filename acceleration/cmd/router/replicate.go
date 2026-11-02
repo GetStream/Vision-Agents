@@ -396,13 +396,16 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 		fmt.Fprintf(out, "left %d scheduled tasks paused: their user already holds the most active tasks the agent config allows. "+
 			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
 	}
+	var failed []error
 	for _, id := range campaigns {
 		if err := pgStore.ResumeCampaign(ctx, customerID, id); err != nil {
-			return fmt.Errorf("resume campaign %s: %w", id, err)
+			fmt.Fprintf(out, "could not resume campaign %s: %v\n", id, err)
+			failed = append(failed, fmt.Errorf("resume campaign %s: %w", id, err))
+			continue
 		}
 		fmt.Fprintf(out, "resumed campaign %s\n", id)
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // nextAfter is a moved task's next occurrence after the cut-over, as a resume counts it

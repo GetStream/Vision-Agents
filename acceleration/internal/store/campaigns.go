@@ -391,10 +391,24 @@ func (s *Store) PauseCampaign(ctx context.Context, customerID, id, reason string
 	})
 }
 
-// ResumeCampaign starts a paused campaign again.
+// ResumeCampaign starts a paused campaign again, or returns it to scheduled when its start
+// time has not come.
 func (s *Store) ResumeCampaign(ctx context.Context, customerID, id string) error {
-	return s.transition(ctx, customerID, id, []string{Paused}, Running, func(query *bun.UpdateQuery) *bun.UpdateQuery {
-		return query.Set("paused_reason = NULL")
+	campaign, err := s.Campaign(ctx, customerID, id)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	to := Running
+	if campaign.StartAt != nil && campaign.StartAt.After(now) {
+		to = Scheduled
+	}
+	return s.transition(ctx, customerID, id, []string{Paused}, to, func(query *bun.UpdateQuery) *bun.UpdateQuery {
+		query = query.Set("paused_reason = NULL")
+		if to == Running {
+			query = query.Set("started_at = COALESCE(started_at, ?)", now)
+		}
+		return query
 	})
 }
 
