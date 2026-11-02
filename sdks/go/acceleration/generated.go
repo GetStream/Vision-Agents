@@ -6576,7 +6576,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call keeps the custom it was created with: a call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session.
+	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
 	Custom *map[string]string `json:"custom,omitempty"`
 
 	// From One of the customer's own numbers, which is what the person sees.

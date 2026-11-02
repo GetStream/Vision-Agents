@@ -7491,7 +7491,7 @@ export type components = {
             readonly vendor: string;
         };
         readonly PlaceCallRequest: {
-            /** @description Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call keeps the custom it was created with: a call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. */
+            /** @description Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. */
             readonly custom?: {
                 readonly [key: string]: string;
             };
