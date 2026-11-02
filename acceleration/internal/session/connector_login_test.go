@@ -661,7 +661,7 @@ func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.
 		return rows
 	}
 	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
 
@@ -780,7 +780,7 @@ func (s *ConnectorLoginSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	s.Require().NoError(got.err)
 	s.Contains(got.said, `"status":"declined"`)
 	s.Equal(persistent.AuthorizationDeclined, s.endedOf("call-1"))
-	s.Never(func() bool {
+	never(s.T(), func() bool {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
 		return err != nil || len(rows) > 0
 	}, 300*time.Millisecond, 50*time.Millisecond, "nothing reached the provider")
@@ -960,7 +960,7 @@ func (s *ConnectorLoginSuite) TestAStoppedReplysCallNeverRunsOnALaterLogin() {
 	s.Zero(handed)
 	s.Require().NoError(got.err)
 	s.Contains(got.said, `"status":"stopped"`)
-	s.Never(func() bool {
+	never(s.T(), func() bool {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
 		return err != nil || len(rows) > 0
 	}, 300*time.Millisecond, 50*time.Millisecond, "the stopped request never reached the provider")

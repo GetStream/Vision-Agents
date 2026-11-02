@@ -62,7 +62,7 @@ func (s *RecordFlushSuite) TestFlushesWaitingOnASlowWriterLeaveRoomForRows() {
 		})
 	}
 	started.Wait()
-	s.Never(func() bool { return len(s.records.queue) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.records.queue) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"the waiting flushes took room in the queue")
 
 	later := s.row()

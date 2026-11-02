@@ -38,7 +38,7 @@ func (s *InvocationLogSuite) logged(connection string, count int) []store.Connec
 		return rows
 	}
 	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
 

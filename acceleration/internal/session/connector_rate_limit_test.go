@@ -314,7 +314,7 @@ func (s *RateLimitSuite) logged(connection string, count int) []string {
 		return rows
 	}
 	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
 	var types []string
 	for _, row := range read() {
 		types = append(types, row.ErrorType)
