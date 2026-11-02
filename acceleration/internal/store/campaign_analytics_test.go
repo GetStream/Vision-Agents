@@ -1,0 +1,68 @@
+//go:build integration
+
+package store
+
+import "time"
+
+func (s *StoreSuite) dialed(contact Contact, at time.Time, result string) {
+	attempt := CampaignAttempt{CampaignID: contact.CampaignID, ContactID: contact.ID, StartedAt: at, Result: result}
+	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
+}
+
+func (s *StoreSuite) settled(contact Contact, stage, outcome string, converted bool) {
+	_, err := s.store.DB().NewUpdate().Model((*Contact)(nil)).
+		Set("stage = ?", stage).Set("outcome = ?", outcome).Set("converted = ?", converted).
+		Where("id = ?", contact.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+func (s *StoreSuite) TestAnalyticsCountContactsNotDials() {
+	campaign := s.draftCampaign(newID(), "+15550001", "+15550002")
+	contact := s.contactByNumber(campaign, "+15550001")
+	s.dialed(contact, s.base, "unanswered")
+	s.dialed(contact, s.base.Add(time.Minute), "answered")
+	s.dialed(contact, s.base.Add(26*time.Hour), "unanswered")
+	s.settled(contact, ContactCompleted, "interested", true)
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(1, got.Dialed)
+	s.Equal(1, got.Connected)
+	s.Equal(1, got.Converted)
+	s.Equal([]DialDay{
+		{Day: s.base.Truncate(24 * time.Hour), Dials: 2, Answered: 1},
+		{Day: s.base.Truncate(24 * time.Hour).Add(24 * time.Hour), Dials: 1},
+	}, got.Days)
+
+	totals, err := s.store.CampaignTotals(s.ctx, []string{campaign.ID})
+	s.Require().NoError(err)
+	s.Equal(CampaignTotal{Dialed: 1, Converted: 1}, totals[campaign.ID])
+}
+
+func (s *StoreSuite) TestOutcomesCountOnlyFinishedContacts() {
+	campaign := s.draftCampaign(newID(), "+15550001", "+15550002", "+15550003", "+15550004")
+	s.settled(s.contactByNumber(campaign, "+15550001"), ContactCompleted, "interested", false)
+	s.settled(s.contactByNumber(campaign, "+15550002"), ContactCompleted, "interested", false)
+	s.settled(s.contactByNumber(campaign, "+15550003"), ContactCompleted, "no_response", false)
+	s.settled(s.contactByNumber(campaign, "+15550004"), Enrolled, "interested", false)
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(map[string]int{"interested": 2, "no_response": 1}, got.Outcomes)
+	s.Empty(got.Days)
+}
+
+func (s *StoreSuite) TestStagesFoldAwaitingOutcomeIntoInProgress() {
+	campaign := s.draftCampaign(newID(), "+15550001", "+15550002", "+15550003")
+	other := s.draftCampaign(newID(), "+15550009")
+	s.settled(s.contactByNumber(campaign, "+15550001"), InProgress, "", false)
+	s.settled(s.contactByNumber(campaign, "+15550002"), AwaitingOutcome, "", false)
+
+	got, err := s.store.ContactStages(s.ctx, []string{campaign.ID, other.ID})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]int{InProgress: 2, Enrolled: 1}, got[campaign.ID])
+	s.Equal(map[string]int{Enrolled: 1}, got[other.ID])
+}
