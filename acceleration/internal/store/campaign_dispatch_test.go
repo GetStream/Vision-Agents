@@ -485,3 +485,45 @@ func (s *StoreSuite) TestADialWhoseContactAnotherRunnerHoldsIsNotClassified() {
 	s.Require().NoError(err)
 	s.Len(taken, 1, "a's lease ran out")
 }
+
+func (s *StoreSuite) TestAContactStoppedMidCallThatFailsKeepsWhyItFailed() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+	s.answered("a", campaign, contact, s.base, s.base.Add(time.Minute))
+	s.Require().NoError(s.store.StopContact(s.ctx, campaign.ID, contact.ID))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "a", s.base.Add(time.Minute), time.Minute, 10)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: Failed, Attempt: 1, Reason: "opted_out", Outcome: "do_not_call"}))
+
+	settled := s.contactByNumber(campaign, "+15550001")
+	s.Equal(Failed, settled.Stage)
+	s.Equal("opted_out", settled.Reason)
+}
+
+func (s *StoreSuite) TestALateClassificationChangesNothing() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+	older := s.answered("a", campaign, contact, s.base, s.base.Add(time.Minute))
+	latest := s.answered("a", campaign, contact, s.base.Add(time.Minute), s.base.Add(time.Minute))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "a", s.base.Add(time.Minute), time.Minute, 10)
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.Classified(s.ctx, latest.ID, "success", true))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: ContactCompleted, Attempt: 1}))
+
+	s.NoError(s.store.Classified(s.ctx, latest.ID, "other", false), "a done dial")
+	s.NoError(s.store.Classified(s.ctx, older.ID, "other", false), "an abandoned dial")
+
+	_, attempts, err := s.store.CampaignContact(s.ctx, campaign.ID, contact.ID)
+	s.Require().NoError(err)
+	byID := map[string]CampaignAttempt{}
+	for _, attempt := range attempts {
+		byID[attempt.ID] = attempt
+	}
+	s.Equal("success", byID[latest.ID].Outcome)
+	s.True(byID[latest.ID].Converted)
+	s.Equal("abandoned", byID[older.ID].ClassifyState)
+	s.Empty(byID[older.ID].Outcome)
+}

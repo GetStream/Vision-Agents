@@ -94,8 +94,8 @@ CREATE TABLE campaign_attempts (
     result TEXT NOT NULL DEFAULT '',
     outcome TEXT NOT NULL DEFAULT '',
     converted BOOLEAN NOT NULL DEFAULT false,
-    -- classify_state is empty, pending or done: whether the outcome of an answered call
-    -- still has to be read from its transcript.
+    -- classify_state is empty, pending, done or abandoned: whether the outcome of an answered
+    -- call still has to be read from its transcript. abandoned is one whose contact settled first.
     classify_state TEXT NOT NULL DEFAULT '',
     classify_after TIMESTAMPTZ,
     classify_tries INTEGER NOT NULL DEFAULT 0,

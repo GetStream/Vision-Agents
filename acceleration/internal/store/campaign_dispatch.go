@@ -196,15 +196,16 @@ func (s *Store) SettleContact(ctx context.Context, owner, contactID string, sett
 	}
 
 	// Only a stage that would ring the contact again gives way to a stop. An answered call
-	// still gets its outcome read, and settles stopped from there, so the stop mark is kept
-	// whatever the stage.
+	// still gets its outcome read, and settles stopped from there, so it keeps the stop mark.
+	// A contact the sequence ended says why in its own reason.
 	stoppable := settle.Stage == Enrolled
+	keepsMark := stoppable || settle.Stage == AwaitingOutcome
 	var affected int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET
 	stage = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN ? ELSE ? END,
 	next_attempt_at = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN NULL ELSE ?::timestamptz END,
-	reason = CASE WHEN cc.reason = 'stopped' OR (? AND cp.state = ?) THEN cc.reason ELSE ? END,
+	reason = CASE WHEN (? AND cc.reason = 'stopped') OR (? AND cp.state = ?) THEN cc.reason ELSE ? END,
 	step_id = COALESCE(?, cc.step_id),
 	attempt = ?,
 	outcome = ?,
@@ -217,7 +218,7 @@ FROM campaigns cp
 WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN (?, ?)`,
 			stoppable, Stopped, ContactStopped, settle.Stage,
 			stoppable, Stopped, settle.NextAttemptAt,
-			stoppable, Stopped, nullable(settle.Reason),
+			keepsMark, stoppable, Stopped, nullable(settle.Reason),
 			nullable(settle.StepID), settle.Attempt, settle.Outcome, settle.Converted,
 			nullable(settle.CallID), nullable(settle.VendorCallID),
 			contactID, owner, InProgress, AwaitingOutcome)
@@ -339,16 +340,14 @@ func (s *Store) ClaimClassifications(ctx context.Context, owner string, now time
 	var claimed []Classifying
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var attempts []CampaignAttempt
-		err := tx.NewRaw(`WITH latest AS (
-	SELECT DISTINCT ON (contact_id) id FROM campaign_attempts
-	WHERE classify_state = ?
-	ORDER BY contact_id, started_at DESC, dial DESC
-), due AS (
+		err := tx.NewRaw(`WITH due AS (
 	SELECT ca.id FROM campaign_attempts ca
-	JOIN latest ON latest.id = ca.id
 	JOIN campaign_contacts cc ON cc.id = ca.contact_id
-	WHERE ca.classify_after <= ? AND cc.stage = ?
+	WHERE ca.classify_state = ? AND ca.classify_after <= ? AND cc.stage = ?
 		AND (cc.leased_by = '' OR cc.leased_until IS NULL OR cc.leased_until < ?)
+		AND NOT EXISTS (SELECT 1 FROM campaign_attempts newer
+			WHERE newer.contact_id = ca.contact_id AND newer.classify_state = ca.classify_state
+			AND (newer.started_at, newer.dial) > (ca.started_at, ca.dial))
 	ORDER BY ca.classify_after
 	LIMIT ?
 	FOR UPDATE OF ca, cc SKIP LOCKED
@@ -397,8 +396,8 @@ RETURNING ca.*`, classifyPending, now, AwaitingOutcome, now, limit, now.Add(leas
 	return claimed, nil
 }
 
-// Classified records an answered dial's outcome. A dial deleted with its campaign is nothing to
-// record.
+// Classified records an answered dial's outcome. A dial deleted with its campaign, or no longer
+// pending because another runner read it or its contact settled, is nothing to record.
 func (s *Store) Classified(ctx context.Context, attemptID, outcome string, converted bool) error {
 	_, err := s.db.NewUpdate().Model((*CampaignAttempt)(nil)).
 		Set("classify_state = ?", classifyDone).
@@ -406,6 +405,7 @@ func (s *Store) Classified(ctx context.Context, attemptID, outcome string, conve
 		Set("outcome = ?", outcome).
 		Set("converted = ?", converted).
 		Where("id = ?", attemptID).
+		Where("classify_state = ?", classifyPending).
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: classified: %w", err))
