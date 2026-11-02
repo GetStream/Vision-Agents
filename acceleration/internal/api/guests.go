@@ -176,6 +176,9 @@ func (s *Server) returningGuest(ctx context.Context, customerID string, bound st
 		if err := s.updateGuestProfile(ctx, bound, requested, name, custom); err != nil {
 			return nil, err
 		}
+		if err := s.store.SetGuestProfile(ctx, customerID, requested, name, custom); err != nil {
+			return nil, err
+		}
 	}
 
 	token, expiresAt, err := s.mintGuestToken(ctx, bound, requested)

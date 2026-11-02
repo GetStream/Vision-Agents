@@ -271,6 +271,20 @@ func (s *GuestsSuite) TestTheBackendMintingAGuestAgainWithoutANameKeepsTheirName
 	s.assertStreamProfile(first.Id, "Alice", nil)
 }
 
+func (s *GuestsSuite) TestABackendRenameIsKeptForTheGuestsNextToken() {
+	// Stream and the stored row must agree, or the next re-mint sends the old name back.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id), Name: pointerTo("Bob")})
+
+	again := s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id)})
+	self := s.mint(s.data.signedInAs(first.Id), GuestUserRequest{Id: pointerTo(first.Id)})
+
+	s.Equal("Bob", value(again.Name), "the backend minting them again without a name")
+	s.Equal("Bob", value(self.Name), "the guest refreshing with their own token")
+	s.Equal("Bob", s.storedGuest(first.Id).Name)
+	s.assertStreamProfile(first.Id, "Bob", nil)
+}
+
 func (s *GuestsSuite) TestTheBackendMayRenameAGuestItMintsAgain() {
 	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
 

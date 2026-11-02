@@ -208,6 +208,29 @@ func (s *DataMoveSuite) TestAGuestsRefreshSecretDoesNotLeaveWithThem() {
 	s.NotContains(users[0], "refresh_secret_hash", "a credential is not part of a customer's data")
 }
 
+func (s *DataMoveSuite) TestAChangeToAGuestLeavesTheirRefreshSecretBehind() {
+	// The change feed strips columns in its own trigger, apart from secretColumns.
+	s.capture("acme")
+	_, hash, err := NewGuestSecret()
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Alice", RefreshSecretHash: hash}))
+	_, next, err := NewGuestSecret()
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.SetGuestSecret(s.ctx, "acme", "guest-1", next))
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "users" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "refresh_secret_hash")
+	}
+	s.Equal(2, recorded, "the insert and the new secret")
+}
+
 func (s *DataMoveSuite) TestAGuestsRefreshSecretInAFileIsNotImported() {
 	// A file the importer wrote could otherwise plant a secret it knows for a guest.
 	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Alice"}))

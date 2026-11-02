@@ -86,3 +86,30 @@ func (s *Store) SetGuestSecret(ctx context.Context, customerID, id string, hash 
 	}
 	return nil
 }
+
+// SetGuestProfile records what the app's backend says a guest is called, so the name a
+// transcript shows and the one a returning guest is handed agree with what Stream holds.
+func (s *Store) SetGuestProfile(ctx context.Context, customerID, id, name string, custom map[string]any) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a guest id are required"))
+	}
+	if custom == nil {
+		custom = map[string]any{}
+	}
+
+	result, err := s.db.NewUpdate().Model((*User)(nil)).
+		Set("name = ?", name).
+		Set("custom = ?", custom).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Where("kind = ?", UserKindGuest).
+		Where("claimed_by IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set guest profile: %w", err))
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return notAGuest(id, customerID)
+	}
+	return nil
+}
