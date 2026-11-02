@@ -100,6 +100,42 @@ func (s *Service) campaignMonth(useCase store.UseCase, month time.Time) routing.
 	}
 }
 
+// brandFee is what registering the app's brand will be billed.
+func (s *Service) brandFee(ctx context.Context, useCase store.UseCase) int64 {
+	if s.registrar == nil {
+		return 0
+	}
+	return s.feeMeter(ctx, ModelBrand, useCase.CustomerID, nil).Price(pricing.Quantities{pricing.Requests: 1})
+}
+
+// campaignFees is what registering the use case's campaign will be billed at once: its review
+// and the months billUpfront bills.
+func (s *Service) campaignFees(ctx context.Context, useCase store.UseCase) int64 {
+	if s.registrar == nil {
+		return 0
+	}
+	fees := s.feeMeter(ctx, ModelCampaign, useCase.CustomerID,
+		map[string]string{AttributeUseCaseType: useCaseType(useCase)}).Price(pricing.Quantities{pricing.Requests: 1})
+	if useCase.Vendor == "" {
+		useCase.Vendor = s.registrar.Name()
+	}
+	now := s.now().UTC()
+	for k := range UpfrontMonths {
+		month := time.Date(now.Year(), now.Month()+time.Month(k), 1, 0, 0, 0, 0, time.UTC)
+		fees += s.campaignMonth(useCase, month).Price(pricing.Quantities{pricing.Requests: 1})
+	}
+	return fees
+}
+
+// book sets the fees aside out of the app's credit before the registrar is paid them. Fees that
+// cost nothing, and a service with no booker, book nothing.
+func (s *Service) book(ctx context.Context, customerID string, fees int64) (routing.Booked, error) {
+	if s.booker == nil || fees <= 0 {
+		return routing.NoBooking, nil
+	}
+	return s.booker.Book(ctx, feesOwner(ctx, customerID), fees)
+}
+
 // billUpfront bills the months a registrar charges for when it registers a campaign: this
 // one and the next UpfrontMonths-1, each named as the monthly job names it, so the job does
 // not bill them again.

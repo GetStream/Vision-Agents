@@ -65,6 +65,21 @@ func billMonth(recorder *routing.Recorder, logger *slog.Logger, number store.Pho
 	}
 }
 
+// bookFirstMonth books what the purchase's first month will be billed, at the price the vendor
+// quoted, before the number is bought: refused when the credit does not cover it, or with no
+// quote does not cover a micro. A number on the customer's own trunk is never billed, so it
+// books nothing.
+func (s *Service) bookFirstMonth(ctx context.Context, purchase Purchase, quoted int64) (routing.Booked, error) {
+	if purchase.Vendor == SIPTrunkVendor {
+		return routing.NoBooking, nil
+	}
+	meter := numberMonth(store.PhoneNumber{
+		E164: purchase.E164, Vendor: purchase.Vendor, Country: purchase.Country, MonthlyCostMicros: quoted,
+	}, s.now())
+	meter.Recorder, meter.Owner = s.recorder, purchase.Owner
+	return s.gate.Book(ctx, purchase.Owner, meter.Price(pricing.Quantities{}))
+}
+
 // billMonth bills a month of a number the service bought.
 func (s *Service) billMonth(number store.PhoneNumber, owner routing.Owner, month time.Time) {
 	billMonth(s.recorder, s.logger, number, owner, month)
