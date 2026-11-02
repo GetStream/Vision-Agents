@@ -53,6 +53,10 @@ const (
 	reasonOptedOut = "opted_out"
 )
 
+// reasonInvalidPlan fails a contact whose campaign's sequence or hours cannot be read, which
+// no retry would change.
+const reasonInvalidPlan = "invalid_plan"
+
 // defaultTick is how often a router looks for work when Options leaves it out.
 const defaultTick = 2 * time.Second
 
@@ -292,9 +296,8 @@ func (r *Runner) claim(ctx context.Context) {
 // runs out settles it from its dials, and never rings it twice.
 func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 	campaign, contact := claimed.Campaign, claimed.Contact
-	sequence, hours, err := planOf(campaign)
-	if err != nil {
-		r.logger.Error("could not read how a campaign rings people", "campaign", campaign.ID, "error", err)
+	sequence, hours, ok := r.plan(ctx, campaign, contact)
+	if !ok {
 		return
 	}
 	step := sequence.First()
@@ -342,6 +345,18 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 			r.pause(ctx, current, dialed.Reason)
 		}
 		settle, again := afterDial(sequence, hours, zone, contact, number, dialed, started, r.now())
+		if again {
+			// The first dial took a while to ring out, and the campaign may have been paused
+			// or stopped meanwhile: nobody is rung again then, but the first dial rang them.
+			current, err = r.store.Campaign(ctx, current.CustomerID, current.ID)
+			if err != nil {
+				r.logger.Error("could not read a campaign before dialing again", "campaign", campaign.ID, "error", err)
+				return
+			}
+			if current.State != store.Running {
+				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Paused}, started, r.now())
+			}
+		}
 		if !again {
 			r.settle(ctx, contact, settle)
 			return
@@ -399,9 +414,9 @@ func (r *Runner) takeOver(ctx context.Context) {
 
 func (r *Runner) recover(ctx context.Context, claimed store.Claimed) error {
 	campaign, contact := claimed.Campaign, claimed.Contact
-	sequence, hours, err := planOf(campaign)
-	if err != nil {
-		return err
+	sequence, hours, ok := r.plan(ctx, campaign, contact)
+	if !ok {
+		return nil
 	}
 	zone := hours.Zone(contact.TimeZone, contact.ToNumber)
 	now := r.now()
@@ -409,7 +424,10 @@ func (r *Runner) recover(ctx context.Context, claimed store.Claimed) error {
 	if err != nil {
 		return err
 	}
-	if !found {
+	// A dial of an earlier attempt is not this claim's: the router died before dialing. The
+	// attempt number tells them apart without comparing two routers' clocks; a dial of the
+	// same attempt that never rang (paused, deferred) settles unused from its own result.
+	if !found || latest.Attempt != max(contact.Attempt, 1) {
 		r.settle(ctx, contact, store.Settle{Stage: store.Enrolled, StepID: sequence.First().ID, Attempt: contact.Attempt, NextAttemptAt: &now})
 		return nil
 	}
@@ -461,9 +479,9 @@ func (r *Runner) classifyDue(ctx context.Context) {
 // leaves the dial to be read again once its lease runs out.
 func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error {
 	campaign, contact, attempt := claimed.Campaign, claimed.Contact, claimed.Attempt
-	sequence, hours, err := planOf(campaign)
-	if err != nil {
-		return err
+	sequence, hours, ok := r.plan(ctx, campaign, contact)
+	if !ok {
+		return nil
 	}
 	step := sequence.First()
 	zone := hours.Zone(contact.TimeZone, contact.ToNumber)
@@ -485,12 +503,8 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 		// Answered, and never readable: what was said is unknown, which is other.
 		settle = afterOutcome(step, contact, "")
 	case !callerSpoke(said):
-		ended := cmp.Or(attempt.EndedAt, &attempt.StartedAt)
-		if err := r.store.EndDial(ctx, attempt.ID, string(Unanswered), "", "", *ended, nil); err != nil {
-			return err
-		}
-		r.settle(ctx, contact, afterSilence(sequence, hours, zone, contact, attempt.StartedAt, r.now()))
-		return nil
+		return r.store.ClassifyAndSettle(ctx, r.owner, store.Classification{AttemptID: attempt.ID, Unanswered: true},
+			contact.ID, afterSilence(sequence, hours, zone, contact, attempt.StartedAt, r.now()))
 	default:
 		chosen, err := r.classifier.Classify(ctx, campaign, attempt.CallID, step, said)
 		if err != nil {
@@ -508,12 +522,8 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 			return err
 		}
 	}
-	// Before the contact settles, which abandons whatever dial of it is still pending.
-	if err := r.store.Classified(ctx, attempt.ID, settle.Outcome, settle.Converted); err != nil {
-		return err
-	}
-	r.settle(ctx, contact, settle)
-	return nil
+	return r.store.ClassifyAndSettle(ctx, r.owner,
+		store.Classification{AttemptID: attempt.ID, Outcome: settle.Outcome, Converted: settle.Converted}, contact.ID, settle)
 }
 
 // settle writes where a call left a contact, even once the call's context is gone.
@@ -543,6 +553,18 @@ func (r *Runner) pause(ctx context.Context, campaign store.Campaign, reason stri
 	default:
 		r.logger.Error("could not pause a campaign that may not place calls", "campaign", campaign.ID, "error", err)
 	}
+}
+
+// plan reads how a campaign rings contact. One that cannot be read fails the contact, since
+// every router would read it the same way.
+func (r *Runner) plan(ctx context.Context, campaign store.Campaign, contact store.Contact) (Sequence, CallingHours, bool) {
+	sequence, hours, err := planOf(campaign)
+	if err == nil {
+		return sequence, hours, true
+	}
+	r.logger.Error("could not read how a campaign rings people", "campaign", campaign.ID, "error", err)
+	r.settle(ctx, contact, store.Settle{Stage: store.Failed, Attempt: contact.Attempt, Reason: reasonInvalidPlan})
+	return Sequence{}, CallingHours{}, false
 }
 
 // planOf reads a campaign's sequence and calling hours, which launch validated.

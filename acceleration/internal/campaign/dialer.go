@@ -13,6 +13,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
+// reasonConfigMissing fails a contact whose agent config was deleted: no call could be placed
+// with it.
+const reasonConfigMissing = "config_missing"
+
 // phoneDialer rings a contact through the phone service and puts the campaign's agent in the
 // call it rang.
 type phoneDialer struct {
@@ -31,6 +35,9 @@ func NewPhoneDialer(phone *phone.Service, sessions *session.Manager, store *stor
 // is read at each dial, so a change to it reaches the next person rung.
 func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	config, err := d.store.AgentConfig(ctx, dial.Campaign.CustomerID, cmp.Or(dial.Step.ConfigID, dial.Campaign.ConfigID))
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		return Dialed{Result: Refused, Reason: reasonConfigMissing}, nil
+	}
 	if err != nil {
 		return Dialed{}, err
 	}
@@ -38,6 +45,9 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	request := placing(dial.Campaign, dial.Contact)
 	request.SessionID = dial.SessionID
 	placed, err := d.phone.Call(ctx, request)
+	if err != nil && ctx.Err() != nil {
+		return Dialed{Result: Canceled}, nil
+	}
 	if err != nil {
 		dialed := resultOf(err)
 		if dialed.Result == Unanswered {
@@ -107,6 +117,8 @@ func (d *phoneDialer) close(created *session.Session) {
 // having joined is known while the call runs, and its outcome is decided a moment after it
 // ends, so either says so.
 func answeredCall(ctx context.Context, st *store.Store, customerID, callID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
 	calls, err := st.PhoneCalls(ctx, customerID, []string{callID})
 	if err != nil {
 		return false, err

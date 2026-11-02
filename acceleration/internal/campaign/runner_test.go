@@ -307,6 +307,59 @@ func (s *RunnerSuite) TestAContactClaimedBeforeItWasEverDialedGoesBackUnused() {
 	s.Empty(attempts)
 }
 
+func (s *RunnerSuite) TestATakeOverOfAnAttemptNeverDialedLeavesItUnused() {
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	s.tick(s.runner)
+	// Attempt 2 comes due, and a router claims it and dies before dialing it.
+	s.clock.advance(3 * 24 * time.Hour)
+	_, err := s.store.ClaimDueContacts(s.ctx, "router-dead", s.clock.now(), lease, 10)
+	s.Require().NoError(err)
+	s.clock.advance(lease + time.Minute)
+
+	s.runner.takeOver(s.ctx)
+
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Len(attempts, 1, "only attempt 1 was ever dialed")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt, "attempt 2 was never dialed, so it is not used up")
+}
+
+func (s *RunnerSuite) TestAPauseDuringTheFirstOfADoubleDialStopsTheSecond() {
+	s.dialer.hold = make(chan struct{})
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+
+	s.runner.tick(s.ctx)
+	s.Require().Eventually(func() bool { return s.dialer.inFlight() == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Require().NoError(s.store.PauseCampaign(s.ctx, s.customerID, campaign.ID, ""))
+	close(s.dialer.hold)
+	s.runner.dialing.Wait()
+
+	s.Len(s.dialer.dialed(), 1, "nobody is rung once the campaign is paused")
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt, "the first dial rang them, so the attempt is used")
+	paused := s.campaignNow(campaign)
+	s.Equal(store.Paused, paused.State)
+	s.Empty(paused.PausedReason, "somebody paused it; the runner adds no reason of its own")
+}
+
+func (s *RunnerSuite) TestAContactOfACampaignThatCannotBeReadFails() {
+	campaign := store.Campaign{CustomerID: s.customerID, Name: "broken", ConfigID: "config-1", FromNumber: "+15550100000",
+		Sequence: json.RawMessage(`{"bogus": true}`), CallingHours: json.RawMessage(`{"windows": {}}`)}
+	s.Require().NoError(s.store.CreateCampaign(s.ctx, &campaign))
+	_, _, err := s.store.AddContacts(s.ctx, campaign.ID, []store.Contact{{ToNumber: "+15550000001"}})
+	s.Require().NoError(err)
+	_, err = s.store.LaunchCampaign(s.ctx, s.customerID, campaign.ID, store.Launch{StartAt: s.clock.now(), Now: s.clock.now()})
+	s.Require().NoError(err)
+
+	s.tick(s.runner)
+
+	s.Empty(s.dialer.dialed())
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.Failed, contact.Stage, "not held until its lease runs out, only to fail the same way")
+	s.Equal("invalid_plan", contact.Reason)
+}
+
 func (s *RunnerSuite) TestAContactClaimedJustBeforeAPauseIsNotDialed() {
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
 	claimed, err := s.store.ClaimDueContacts(s.ctx, "router-a", s.clock.now(), lease, 10)

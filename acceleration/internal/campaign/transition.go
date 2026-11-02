@@ -18,6 +18,8 @@ const (
 	Refused       Result = "refused"
 	Deferred      Result = "deferred"
 	Paused        Result = "paused"
+	// Canceled is a dial cut off by a shutdown before the vendor took it: nobody was rung.
+	Canceled Result = "canceled"
 )
 
 const (
@@ -43,7 +45,7 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 	step := sequence.First()
 	attempt := max(contact.Attempt, 1)
 	settle = store.Settle{StepID: step.ID, Attempt: contact.Attempt, CallID: dialed.CallID, VendorCallID: dialed.VendorCallID}
-	if dial == 2 && (dialed.Result == Deferred || dialed.Result == Paused || dialed.Result == Refused) {
+	if dial == 2 && (dialed.Result == Deferred || dialed.Result == Paused || dialed.Result == Refused || dialed.Result == Canceled) {
 		// Dial 1 already rang the person, so the attempt is used whatever stopped dial 2.
 		return unanswered(step, hours, zone, contact, started, settle), false
 	}
@@ -63,7 +65,7 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 			at = time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, zone)
 		}
 		return enrolledAt(hours, zone, at, settle), false
-	case Paused:
+	case Paused, Canceled:
 		settle.Stage = store.Enrolled
 		settle.NextAttemptAt = &now
 	case Refused:

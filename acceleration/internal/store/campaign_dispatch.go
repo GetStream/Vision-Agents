@@ -188,6 +188,15 @@ type Settle struct {
 // one the sequence finished, or whose answered call still awaits its outcome, settles as given. A
 // contact that no longer exists, because its campaign was deleted mid-call, is nothing to settle.
 func (s *Store) SettleContact(ctx context.Context, owner, contactID string, settle Settle) error {
+	return s.settleContact(ctx, owner, contactID, settle, nil)
+}
+
+// errUnsettled rolls back a settle that touched no contact, with whatever was written before it.
+var errUnsettled = errors.New("store: no contact settled")
+
+// settleContact is SettleContact, with first written in the same transaction, before the
+// contact, and rolled back with it when the contact does not settle.
+func (s *Store) settleContact(ctx context.Context, owner, contactID string, settle Settle, first func(context.Context, bun.Tx) error) error {
 	if owner == "" || contactID == "" {
 		return stack.Wrap(errors.New("store: an owner and a contact id are required"))
 	}
@@ -200,8 +209,12 @@ func (s *Store) SettleContact(ctx context.Context, owner, contactID string, sett
 	// A contact the sequence ended says why in its own reason.
 	stoppable := settle.Stage == Enrolled
 	keepsMark := stoppable || settle.Stage == AwaitingOutcome
-	var affected int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if first != nil {
+			if err := first(ctx, tx); err != nil {
+				return err
+			}
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET
 	stage = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN ? ELSE ? END,
 	next_attempt_at = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN NULL ELSE ?::timestamptz END,
@@ -225,10 +238,14 @@ WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN 
 		if err != nil {
 			return fmt.Errorf("store: settle contact: %w", err)
 		}
-		if affected, err = result.RowsAffected(); err != nil {
+		affected, err := result.RowsAffected()
+		if err != nil {
 			return fmt.Errorf("store: settle contact: %w", err)
 		}
-		if affected == 0 || settle.Stage == AwaitingOutcome {
+		if affected == 0 {
+			return errUnsettled
+		}
+		if settle.Stage == AwaitingOutcome {
 			return nil
 		}
 		// The contact no longer waits for an outcome, so no dial of it is left to wake a
@@ -243,11 +260,8 @@ WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN 
 		}
 		return nil
 	})
-	if err != nil {
+	if !errors.Is(err, errUnsettled) {
 		return stack.Wrap(err)
-	}
-	if affected > 0 {
-		return nil
 	}
 	exists, err := s.db.NewSelect().Model((*Contact)(nil)).Where("id = ?", contactID).Exists(ctx)
 	if err != nil {
@@ -257,6 +271,41 @@ WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN 
 		return stack.Wrap(ErrNotLeaseHolder)
 	}
 	return nil
+}
+
+// Classification is what reading an answered dial's transcript found: an outcome, or that
+// nobody but the agent spoke, which makes the dial unanswered.
+type Classification struct {
+	AttemptID  string
+	Outcome    string
+	Converted  bool
+	Unanswered bool
+}
+
+// ClassifyAndSettle records what an answered dial's transcript said and settles its contact, both
+// or neither: a dial recorded while its contact stayed awaiting its outcome would never be read
+// again, and the contact never move on. A dial no longer pending is not changed.
+func (s *Store) ClassifyAndSettle(ctx context.Context, owner string, classification Classification, contactID string, settle Settle) error {
+	if classification.AttemptID == "" {
+		return stack.Wrap(errors.New("store: a dial id is required"))
+	}
+	return s.settleContact(ctx, owner, contactID, settle, func(ctx context.Context, tx bun.Tx) error {
+		query := tx.NewUpdate().Model((*CampaignAttempt)(nil)).
+			Set("classify_after = NULL").
+			Where("id = ?", classification.AttemptID).
+			Where("classify_state = ?", classifyPending)
+		if classification.Unanswered {
+			query = query.Set("result = 'unanswered'").Set("classify_state = ''")
+		} else {
+			query = query.Set("classify_state = ?", classifyDone).
+				Set("outcome = ?", classification.Outcome).
+				Set("converted = ?", classification.Converted)
+		}
+		if _, err := query.Exec(ctx); err != nil {
+			return fmt.Errorf("store: classify a dial: %w", err)
+		}
+		return nil
+	})
 }
 
 // StartDial records a dial about to be placed, filling in its id.

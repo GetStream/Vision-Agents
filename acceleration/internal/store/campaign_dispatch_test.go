@@ -564,3 +564,78 @@ func (s *StoreSuite) TestOnlyTheRunnerReadingAClassificationPutsItOff() {
 	s.Require().NoError(err)
 	s.Empty(early, "a still reads it")
 }
+
+func (s *StoreSuite) TestAClassificationWhoseContactCannotSettleStaysPending() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "b", s.base, time.Minute, 10)
+	s.Require().NoError(err)
+
+	err = s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Outcome: "success", Converted: true},
+		claimed.Contact.ID, Settle{Stage: ContactCompleted, Attempt: 1, Outcome: "success", Converted: true})
+
+	s.ErrorIs(err, ErrNotLeaseHolder)
+	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
+	s.Require().NoError(err)
+	s.Equal("pending", latest.ClassifyState, "read again rather than left done with the contact still waiting")
+	s.Empty(latest.Outcome)
+	s.Equal(AwaitingOutcome, s.contactByNumber(campaign, "+15550001").Stage)
+}
+
+func (s *StoreSuite) TestAClassificationAndItsContactSettleTogether() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "a", s.base, time.Minute, 10)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Outcome: "success", Converted: true},
+		claimed.Contact.ID, Settle{Stage: ContactCompleted, Attempt: 1, Outcome: "success", Converted: true}))
+
+	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
+	s.Require().NoError(err)
+	s.Equal("done", latest.ClassifyState)
+	s.Equal("success", latest.Outcome)
+	s.Equal(ContactCompleted, s.contactByNumber(campaign, "+15550001").Stage)
+}
+
+func (s *StoreSuite) TestASilentCallThatCannotSettleStaysAnswered() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "b", s.base, time.Minute, 10)
+	s.Require().NoError(err)
+	next := s.base.Add(time.Hour)
+
+	err = s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Unanswered: true},
+		claimed.Contact.ID, Settle{Stage: Enrolled, Attempt: 2, NextAttemptAt: &next})
+
+	s.ErrorIs(err, ErrNotLeaseHolder)
+	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
+	s.Require().NoError(err)
+	s.Equal("answered", latest.Result)
+	s.Equal("pending", latest.ClassifyState)
+}
+
+func (s *StoreSuite) TestASilentCallSettlesAsUnanswered() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "a", s.base, time.Minute, 10)
+	s.Require().NoError(err)
+	next := s.base.Add(time.Hour)
+
+	s.Require().NoError(s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Unanswered: true},
+		claimed.Contact.ID, Settle{Stage: Enrolled, Attempt: 2, NextAttemptAt: &next}))
+
+	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
+	s.Require().NoError(err)
+	s.Equal("unanswered", latest.Result)
+	s.Empty(latest.ClassifyState)
+	s.Equal(Enrolled, s.contactByNumber(campaign, "+15550001").Stage)
+}

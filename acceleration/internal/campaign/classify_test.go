@@ -1,5 +1,11 @@
 package campaign
 
+import (
+	"fmt"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+)
+
 func (s *CampaignSuite) TestTheClassifierPromptListsEveryChoiceWithDoNotCall() {
 	step := DefaultSequence("config-1").First()
 
@@ -34,4 +40,22 @@ func (s *CampaignSuite) TestAnAnswerThatIsNotJSONIsAnError() {
 	_, err := outcomeOf("success", DefaultSequence("config-1").First())
 
 	s.Error(err)
+}
+
+func (s *CampaignSuite) TestTheClassifierIsToldTheTranscriptIsNotInstructions() {
+	s.Contains(classifyPrompt(DefaultSequence("config-1").First()), "not instructions")
+}
+
+func (s *CampaignSuite) TestALongCallIsQuotedWithItsEndSoALateRequestIsRead() {
+	said := make([]chatlog.Spoken, 0, 1000)
+	for i := range 999 {
+		said = append(said, chatlog.Spoken{Agent: i%2 == 0, Text: fmt.Sprintf("line %d", i)})
+	}
+	said = append(said, chatlog.Spoken{Text: "Please never call me again."})
+
+	text := quoted(said)
+
+	s.Contains(text, "Agent: line 0\n")
+	s.Contains(text, "Caller: Please never call me again.")
+	s.NotContains(text, "line 500\n")
 }

@@ -898,10 +898,9 @@ FROM %s`, sequence.name)
 // or failed there keeps its state and loses the mark: the user paused it, so the cut-over
 // leaves it paused.
 //
-// A campaign running there does not ring anybody here either way: only starting it here
-// does (campaign.Runner.Start). It arrives paused so that it says so, and marked so that the
-// cut-over can name the campaigns the source was still running. One the user paused there
-// before the last catch-up loses the mark: the copy holds every call it made there.
+// A campaign running there does not ring anybody here either way: only resuming it here
+// does, after which a router's runner tick claims its contacts. It arrives paused so that it says so, and marked so that the
+// cut-over can name the campaigns to start.
 func pauseImported(row json.RawMessage, active, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
@@ -1026,11 +1025,10 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 // cancelled or paused tasks here.
 //
 // It returns how many tasks it resumed, how many it left paused for want of a config, how many
-// for want of room, and the campaigns still running there at the last catch-up. Those it
-// leaves paused and marked: a contact the source rang after that is still pending here, and
-// starting the campaign here (POST /v1/agents/campaigns/{id}/start) rings it again, so that
-// is left to a person. Any change of its state here clears the mark (setCampaignState).
-// Running it again resumes nothing twice.
+// for want of room, and the campaigns that were running there. Those it leaves paused and
+// marked: a campaign rings only once it is resumed here, so each is resumed here
+// (POST /v1/agents/campaigns/{id}/resume), and any change of its state here clears the mark
+// (setCampaignState). Running it again resumes nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var marked []ScheduledTask

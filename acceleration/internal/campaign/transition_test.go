@@ -261,3 +261,19 @@ func (s *TransitionSuite) TestAnUnknownResultFails() {
 		s.Equal("unknown_result", settle.Reason)
 	}
 }
+
+func (s *TransitionSuite) TestADialCancelledBeforeItRangGoesBackUnused() {
+	now := s.at(2, 10, 1)
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Canceled}, s.at(2, 10, 0), now)
+	s.False(again)
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(1, settle.Attempt)
+	s.Require().NotNil(settle.NextAttemptAt)
+	s.True(now.Equal(*settle.NextAttemptAt))
+}
+
+func (s *TransitionSuite) TestASecondDialCancelledStillUsesTheAttempt() {
+	settle, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: Canceled}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt)
+}
