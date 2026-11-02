@@ -92,8 +92,8 @@ jobs:
           # AI-2037
           - package: internal/connectors/resolver
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
-    # acceleration/internal/config/testing.yaml wins over the environment and names these two
-    # host ports, so the services listen there and no ROUTER_* variable is set.
+    # Each service listens on a host port the runner picks: a fixed one is sometimes already
+    # held on the runner, and the job then fails before its first test.
     # Postgres keeps its data in memory: the suites truncate their tables before every test,
     # and on disk each TRUNCATE waits on fsync.
     services:
@@ -102,7 +102,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
         ports:
-          - 55432:5432
+          - 5432
         options: >-
           --tmpfs /var/lib/postgresql/data
           --health-cmd "pg_isready -U postgres"
@@ -112,7 +112,7 @@ jobs:
       redis:
         image: redis:7-alpine
         ports:
-          - 56379:6379
+          - 6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -128,6 +128,20 @@ jobs:
             acceleration/go.sum
             sdks/go/go.sum
             tui/go.sum
+
+      # acceleration/internal/config/testing.yaml wins over the environment and is embedded at
+      # build time, so the suites reach the services only through the ports written into it.
+      - name: Point testing.yaml at this job's services
+        run: |
+          [[ "$POSTGRES_PORT" =~ ^[0-9]+$ && "$REDIS_PORT" =~ ^[0-9]+$ ]]
+          sed -i -e "s/localhost:55432\//localhost:$POSTGRES_PORT\//" -e "s/localhost:56379\$/localhost:$REDIS_PORT/" internal/config/testing.yaml
+          grep -q "localhost:$POSTGRES_PORT/" internal/config/testing.yaml
+          grep -q "localhost:$REDIS_PORT\$" internal/config/testing.yaml
+          echo "postgres on $POSTGRES_PORT, redis on $REDIS_PORT"
+        env:
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+        working-directory: acceleration
 
       - name: Test ${{ matrix.package }}
         run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}
