@@ -89,6 +89,10 @@ jobs:
           (cd sdks/go && go generate ./...)
           git diff --exit-code -- acceleration/api/openapi.yaml sdks/go/acceleration/generated.go
 
+      # internal/video samples clips with ffmpeg and ffprobe, and its tests skip without them.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Vet the backend
         run: go vet ./...
         working-directory: acceleration
