@@ -87,6 +87,30 @@ func (s *Store) SetGuestSecret(ctx context.Context, customerID, id string, hash 
 	return nil
 }
 
+// GiveGuestASecret records a refresh secret for a guest that holds none, and reports whether it
+// did. For a guest refreshing with their own token: one that already holds a secret keeps it,
+// since replacing it would strand the device or tab holding it, and would let whoever holds a
+// leaked token take the guest's only way back once that token expires.
+func (s *Store) GiveGuestASecret(ctx context.Context, customerID, id string, hash []byte) (bool, error) {
+	if customerID == "" || id == "" || len(hash) == 0 {
+		return false, stack.Wrap(errors.New("store: a customer, a guest id and a secret hash are required"))
+	}
+
+	result, err := s.db.NewUpdate().Model((*User)(nil)).
+		Set("refresh_secret_hash = ?", hash).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Where("kind = ?", UserKindGuest).
+		Where("claimed_by IS NULL").
+		Where("refresh_secret_hash IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: give guest a secret: %w", err))
+	}
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
 // SetGuestProfile records what the app's backend says a guest is called, so the name a
 // transcript shows and the one a returning guest is handed agree with what Stream holds.
 func (s *Store) SetGuestProfile(ctx context.Context, customerID, id, name string, custom map[string]any) error {

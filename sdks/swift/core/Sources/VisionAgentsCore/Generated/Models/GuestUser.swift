@@ -7,7 +7,7 @@ final class GuestUser: Sendable, Codable, JSONEncodable {
     let expiresAt: Date?
     let id: String
     let name: String?
-    /// What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer carries the next one, so store it each time. Absent where the deployment records no guests.
+    /// What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
     let refreshSecret: String?
     /// A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     let token: String

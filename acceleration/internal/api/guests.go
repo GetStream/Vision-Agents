@@ -189,8 +189,21 @@ func (s *Server) returningGuest(ctx context.Context, customerID string, bound st
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SetGuestSecret(ctx, customerID, requested, hash); err != nil {
+
+	// The backend hands out a new secret, replacing the old: it is what an app does for a
+	// device it has decided is this guest. The guest's own token only gives one to a guest
+	// holding none, such as one minted before secrets existed; one holding a secret keeps it.
+	issued := true
+	if server {
+		err = s.store.SetGuestSecret(ctx, customerID, requested, hash)
+	} else {
+		issued, err = s.store.GiveGuestASecret(ctx, customerID, requested, hash)
+	}
+	if err != nil {
 		return nil, err
+	}
+	if !issued {
+		secret = ""
 	}
 	return returned(requested, token, name, custom, expiresAt, secret), nil
 }
@@ -199,9 +212,11 @@ func (s *Server) returningGuest(ctx context.Context, customerID string, bound st
 // next secret in its place. A secret that is wrong, spent or missing answers nil, so the caller
 // is minted a new guest instead.
 //
-// The secret is spent before the token is minted, so two requests replaying it cannot both be
-// answered. A token that then fails to mint leaves the guest with a secret nobody holds; the
-// device comes back as a new guest, which is what it would have been without one.
+// The token is minted before the secret is spent, so a failure to mint, which can be a call to
+// Stream's gateway, leaves the device holding a secret that still works. Spending it is one
+// conditional update, so of two requests replaying it only one is answered; the other's token is
+// never handed out. Every request carrying a secret costs a mint, right or wrong, which says
+// nothing about whether the id is a guest's.
 func (s *Server) redeemGuestSecret(ctx context.Context, customerID string, bound streamapp.Bound, requested, secret string) (*createGuestUserResponse, error) {
 	if secret == "" {
 		return nil, nil
@@ -210,15 +225,14 @@ func (s *Server) redeemGuestSecret(ctx context.Context, customerID string, bound
 	if err != nil {
 		return nil, err
 	}
+	token, expiresAt, err := s.mintGuestToken(ctx, bound, requested)
+	if err != nil {
+		return nil, err
+	}
 	held, err := s.store.RotateGuestSecret(ctx, customerID, requested, store.GuestSecretHash(secret), hash)
 	if errors.Is(err, store.ErrGuestSecretRefused) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	token, expiresAt, err := s.mintGuestToken(ctx, bound, requested)
 	if err != nil {
 		return nil, err
 	}
@@ -247,9 +261,12 @@ func (s *Server) mintGuestToken(ctx context.Context, bound streamapp.Bound, user
 	return token, expiresAt, nil
 }
 
-// returned renders a guest coming back.
+// returned renders a guest coming back, with no refresh_secret when none was issued.
 func returned(userID, token, name string, custom map[string]any, expiresAt time.Time, secret string) *createGuestUserResponse {
-	rendered := GuestUser{Id: userID, Token: token, Name: &name, ExpiresAt: &expiresAt, RefreshSecret: &secret}
+	rendered := GuestUser{Id: userID, Token: token, Name: &name, ExpiresAt: &expiresAt}
+	if secret != "" {
+		rendered.RefreshSecret = &secret
+	}
 	if len(custom) > 0 {
 		rendered.Custom = &custom
 	}
@@ -473,7 +490,7 @@ type GuestUser struct {
 	Id        string                  `json:"id"`
 	Name      *string                 `json:"name,omitempty"`
 	// Sent only to whoever proved they are this guest; never readable afterwards.
-	RefreshSecret *string `json:"refresh_secret,omitempty" doc:"What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer carries the next one, so store it each time. Absent where the deployment records no guests."`
+	RefreshSecret *string `json:"refresh_secret,omitempty" doc:"What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working."`
 	Token         string  `json:"token" doc:"A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it."`
 }
 

@@ -29,8 +29,9 @@ class GuestUser:
             another.
         name (str | Unset):
         refresh_secret (str | Unset): What this guest sends back, with their id, to be given a fresh token once this one
-            has expired. Keep it where the token is kept. It works once: every answer carries the next one, so store it each
-            time. Absent where the deployment records no guests.
+            has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store
+            it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token
+            while they already hold one, which keeps working.
     """
 
     id: str

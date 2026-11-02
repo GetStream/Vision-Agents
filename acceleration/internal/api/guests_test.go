@@ -187,11 +187,79 @@ func (s *GuestsSuite) TestAGuestsOwnTokenRefreshesThemWithoutASecretAndWithoutTo
 	s.Equal("Alice", value(again.Name), "a guest's own token is no profile editor")
 	s.Require().NotNil(again.Custom)
 	s.Equal(map[string]any{"plan": "pro"}, *again.Custom)
-	s.Require().NotNil(again.RefreshSecret)
-	s.NotEqual(*first.RefreshSecret, *again.RefreshSecret)
-	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+	s.Nil(again.RefreshSecret, "the guest already holds a secret, which keeps working")
+	s.Equal(store.GuestSecretHash(*first.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
 	s.Equal(writes, s.profileWrites(), "Stream is not asked to change who they are")
 	s.assertStreamProfile(first.Id, "Alice", map[string]any{"plan": "pro"})
+}
+
+func (s *GuestsSuite) TestAGuestWithNoSecretIsGivenOneByTheirOwnToken() {
+	// A guest minted before secrets existed holds none, and gets one the next time they refresh.
+	guest := s.recordGuest()
+
+	again := s.mint(s.data.signedInAs(guest), GuestUserRequest{Id: pointerTo(guest)})
+
+	s.Equal(guest, again.Id)
+	s.Require().NotNil(again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(guest).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestAnAccountNamingItsOwnIdIsNotMadeAGuest() {
+	account := s.data.createUser()
+	writes := s.profileWrites()
+
+	status, failure := account.failure(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(account.userID)})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a guest of this app")
+	s.Equal(writes, s.profileWrites(), "Stream is not told the account is a guest")
+}
+
+func (s *GuestsSuite) TestOneGuestsSecretDoesNotBringBackAnother() {
+	alice := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	bob := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Bob")})
+
+	answered := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(bob.Id), RefreshSecret: alice.RefreshSecret})
+
+	s.NotEqual(bob.Id, answered.Id)
+	s.NotEqual(alice.Id, answered.Id)
+	s.Equal(store.GuestSecretHash(*bob.RefreshSecret), s.storedGuest(bob.Id).RefreshSecretHash)
+	s.Equal(store.GuestSecretHash(*alice.RefreshSecret), s.storedGuest(alice.Id).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestTwoRequestsRedeemingOneSecretBringTheGuestBackOnce() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{})
+	request := GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret}
+
+	answers := make(chan GuestUser, 2)
+	for range 2 {
+		go func() {
+			var minted GuestUser
+			s.data.createAnonymous().do(http.MethodPost, "/v1/agents/guests", request, &minted)
+			answers <- minted
+		}()
+	}
+	same := 0
+	for range 2 {
+		if (<-answers).Id == first.Id {
+			same++
+		}
+	}
+
+	s.Equal(1, same, "a secret is spent once")
+}
+
+func (s *GuestsSuite) TestTheBackendMintingAGuestAgainReplacesTheirSecret() {
+	// The app hands the new one to the device it decided is this guest.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{})
+
+	again := s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id)})
+	stale := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret})
+
+	s.Require().NotNil(again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+	s.NotEqual(first.Id, stale.Id, "the secret the backend replaced no longer works")
 }
 
 func (s *GuestsSuite) TestAGuestTokenWithTheGuestRoleRefreshesTheSameGuest() {
@@ -200,7 +268,8 @@ func (s *GuestsSuite) TestAGuestTokenWithTheGuestRoleRefreshesTheSameGuest() {
 	again := s.mint(s.asGuest(first.Id), GuestUserRequest{Id: pointerTo(first.Id)})
 
 	s.Equal(first.Id, again.Id)
-	s.Require().NotNil(again.RefreshSecret)
+	s.Nil(again.RefreshSecret, "the guest keeps the secret they hold")
+	s.Equal(store.GuestSecretHash(*first.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
 }
 
 func (s *GuestsSuite) TestARefreshSecretBringsTheSameGuestBackWithANewSecret() {
