@@ -1519,6 +1519,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		defer transcript.Close()
 	}
 
+	transferred := false
 	for event := range held.Events() {
 		typed := transcript == nil || s.typedEvent(event)
 		if s.persisted != nil && typed {
@@ -1529,12 +1530,19 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		}
 		if _, ok := event.(agent.Transferred); ok {
 			s.noteEnd(EndTransferred)
+			transferred = true
 		}
 		s.observe(run, event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
 		s.name(event)
+	}
+	// The agent leaves by itself once it has handed the caller over, after a warm transfer's
+	// summary, and nobody is left to report the caller leaving, so nothing else would end
+	// the session. A timeout of zero ends it off this goroutine, which closing waits for.
+	if transferred && s.current() == held {
+		s.SetTimeout(0, EndTransferred)
 	}
 }
 
