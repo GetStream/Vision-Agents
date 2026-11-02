@@ -218,6 +218,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A user whose own quota cannot be read is still counted
+
+When a user's own quota could not be read, what they spent was not counted at all if no app or organization limit was set, so the customer's own limit for that user lost the usage. A response is now counted in the user's bucket all the same, and one warning is logged for it. The request itself is still admitted, as before (AI-2483).
+
 ### Changing a live session's models waits for voice to start or stop
 
 A change to a running session's models, voice or overwrites (`PATCH /v1/agents/sessions/{id}`) and starting or stopping its voice now run one after the other. A change made while voice started or stopped could be applied to the agent being left and answer as done, while the agent that took over kept the earlier settings. The change now reaches the agent that holds the session once the move is done. An interrupt is not held back by either (AI-2500).
