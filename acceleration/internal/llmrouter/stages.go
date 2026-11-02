@@ -11,7 +11,9 @@ import (
 )
 
 // stageTrace is when an attempt's HTTP request asked for a connection, got one, was written and
-// was first answered. Its hooks run on the transport's goroutines.
+// was first answered. Its hooks run on the transport's goroutines. The stages do not add up to
+// the time to first token: writing the request, the SDK's own steps and the choice of a key
+// before it asks for a connection, and the backoff before a retry fall in none of them.
 type stageTrace struct {
 	mu     sync.Mutex
 	stamps stamps

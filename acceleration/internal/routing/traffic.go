@@ -87,7 +87,7 @@ var (
 	llmStages = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "llm_stage_seconds",
-		Help:      "Where an LLM request's time to first token went, by stage: router from Session.Create to the provider call, connect from asking the transport for a connection to getting a new one (dial and TLS; a reused one is only counted in router_llm_connections_total), wait from the request written to the response's first byte, stream from that byte to the first token. A stage a request never reached is not observed",
+		Help:      "Where an LLM request's time to first token went, by stage: router from Session.Create to the provider call, connect from asking the transport for a connection to getting a new one (dial and TLS; a reused one is only counted in router_llm_connections_total), wait from the request written to the response's first byte, stream from that byte to the first token. A stage a request never reached is not observed. The stages do not add up to the time to first token: writing the request, the SDK's own steps and the choice of a key before the connection is asked for, and the backoff before a retry fall in none of them",
 		Buckets:   stageBuckets,
 	}, []string{"provider", "model", "stage"})
 	llmConnections = promauto.NewCounterVec(prometheus.CounterOpts{
