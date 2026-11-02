@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -25,7 +26,7 @@ const (
 	stepOne          = "step_1"
 	maxAttempts      = 10
 	doNotCallName    = "Do not call"
-	doNotCallMeaning = "The person asked not to be called or contacted again"
+	doNotCallMeaning = "The person asked not to be called or contacted again."
 )
 
 var outcomeID = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -105,13 +106,16 @@ func ParseSequence(raw []byte) (Sequence, error) {
 	if err := dec.Decode(&s); err != nil {
 		return Sequence{}, fmt.Errorf("campaign: sequence: %w", err)
 	}
+	if _, err := dec.Token(); err != io.EOF {
+		return Sequence{}, errors.New("campaign: sequence: unexpected data after the JSON value")
+	}
 	return s, nil
 }
 
 // Validate checks the shape, which is what a PATCH may store.
 func (s Sequence) Validate() error {
 	if len(s.Steps) != 1 {
-		return errors.New("A sequence has exactly one step for now.")
+		return errors.New("a sequence has exactly one step for now")
 	}
 	return s.Steps[0].validate()
 }
@@ -123,14 +127,14 @@ func (s Sequence) Ready() error {
 	}
 	step := s.First()
 	if step.ConfigID == "" {
-		return errors.New("The step needs an agent config before the campaign can launch.")
+		return errors.New("the step needs an agent config before the campaign can launch")
 	}
 	for _, o := range step.Outcomes {
 		if o.Name == "" {
-			return fmt.Errorf("The outcome %q needs a name before the campaign can launch.", o.ID)
+			return fmt.Errorf("the outcome %q needs a name before the campaign can launch", o.ID)
 		}
 		if o.Description == "" {
-			return fmt.Errorf("The outcome %q needs a description before the campaign can launch.", o.ID)
+			return fmt.Errorf("the outcome %q needs a description before the campaign can launch", o.ID)
 		}
 	}
 	return nil
@@ -144,11 +148,11 @@ func (s Sequence) First() Step {
 }
 
 // Find looks an outcome up by id, the built-in do_not_call included.
-func (s Step) Find(id string) (Outcome, bool) {
+func (st Step) Find(id string) (Outcome, bool) {
 	if id == OutcomeDoNotCall {
 		return doNotCall(), true
 	}
-	for _, o := range s.Outcomes {
+	for _, o := range st.Outcomes {
 		if o.ID == id {
 			return o, true
 		}
@@ -157,9 +161,9 @@ func (s Step) Find(id string) (Outcome, bool) {
 }
 
 // Choices are the outcomes the classifier picks from.
-func (s Step) Choices() []Outcome {
-	out := make([]Outcome, 0, len(s.Outcomes)+1)
-	out = append(out, s.Outcomes...)
+func (st Step) Choices() []Outcome {
+	out := make([]Outcome, 0, len(st.Outcomes)+1)
+	out = append(out, st.Outcomes...)
 	return append(out, doNotCall())
 }
 
@@ -169,30 +173,30 @@ func doNotCall() Outcome {
 
 func (st Step) validate() error {
 	if st.ID != stepOne {
-		return fmt.Errorf("The step must be called %s.", stepOne)
+		return fmt.Errorf("the step must be called %s", stepOne)
 	}
 	if n := len(st.Attempts); n < 1 || n > maxAttempts {
-		return fmt.Errorf("A step needs between 1 and %d attempts.", maxAttempts)
+		return fmt.Errorf("a step needs between 1 and %d attempts", maxAttempts)
 	}
 	for i, a := range st.Attempts {
 		if i == 0 && a.DelayMinutes != 0 {
-			return errors.New("The first attempt must have a delay of 0 minutes.")
+			return errors.New("the first attempt must have a delay of 0 minutes")
 		}
 		if i > 0 && a.DelayMinutes < 1 {
-			return fmt.Errorf("Attempt %d needs a delay of at least 1 minute.", i+1)
+			return fmt.Errorf("attempt %d needs a delay of at least 1 minute", i+1)
 		}
 	}
 	seen := map[string]bool{}
 	for _, o := range st.Outcomes {
 		switch o.ID {
 		case OutcomeDoNotCall, OutcomeOther, OutcomeNoResponse:
-			return fmt.Errorf("The outcome id %q is built in and cannot be used.", o.ID)
+			return fmt.Errorf("the outcome id %q is built in and cannot be used", o.ID)
 		}
 		if !outcomeID.MatchString(o.ID) {
-			return fmt.Errorf("The outcome id %q must start with a lowercase letter and use only lowercase letters, digits and underscores, up to 64 characters.", o.ID)
+			return fmt.Errorf("the outcome id %q must start with a lowercase letter and use only lowercase letters, digits and underscores, up to 64 characters", o.ID)
 		}
 		if seen[o.ID] {
-			return fmt.Errorf("The outcome id %q is used twice.", o.ID)
+			return fmt.Errorf("the outcome id %q is used twice", o.ID)
 		}
 		seen[o.ID] = true
 		if err := o.Next.validate(fmt.Sprintf("The outcome %q", o.ID)); err != nil {
@@ -206,17 +210,17 @@ func (st Step) validate() error {
 		return err
 	}
 	if st.NoResponse.Next.End != EndUnsuccessful {
-		return errors.New("The no response route must end unsuccessfully.")
+		return errors.New("the no response route must end unsuccessfully")
 	}
 	return nil
 }
 
 func (n Next) validate(what string) error {
 	if n.Step != "" {
-		return fmt.Errorf("%s cannot go to another step: branching is not supported yet.", what)
+		return fmt.Errorf("%s cannot go to another step: branching is not supported yet", what)
 	}
 	if n.End != EndSuccessful && n.End != EndUnsuccessful {
-		return fmt.Errorf("%s must end as %q or %q.", what, EndSuccessful, EndUnsuccessful)
+		return fmt.Errorf("%s must end as %q or %q", what, EndSuccessful, EndUnsuccessful)
 	}
 	return nil
 }

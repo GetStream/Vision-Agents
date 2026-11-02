@@ -92,7 +92,7 @@ func (s *SequenceSuite) TestDoNotCallIsAlwaysAChoiceAndCannotBeRedefined() {
 		}
 	}
 	s.Require().NotNil(found)
-	s.Equal("The person asked not to be called or contacted again", found.Description)
+	s.Equal("The person asked not to be called or contacted again.", found.Description)
 	s.Equal(EndUnsuccessful, found.Next.End)
 
 	again, ok := seq.First().Find(OutcomeDoNotCall)
@@ -177,6 +177,8 @@ func (s *SequenceSuite) TestParsingRefusesWhatIsNotASequence() {
 	_, err := ParseSequence([]byte(`{"steps": "no"}`))
 	s.Error(err)
 	_, err = ParseSequence([]byte(`{"steps":[],"surprise":1}`))
+	s.Error(err)
+	_, err = ParseSequence([]byte(`{"steps":[]} {"steps":[]}`))
 	s.Error(err)
 }
 
