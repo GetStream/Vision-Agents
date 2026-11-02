@@ -177,6 +177,94 @@ func (s *SessionSuite) TestAnInterruptEndsTheReplyASettingsChangeWaitsOn() {
 	s.Equal(target, created.Spec().LLMTarget)
 }
 
+// A settings change waiting for a voice stop gives up when its caller does: it returns the
+// caller's error and changes nothing, rather than landing after the caller was told it failed.
+func (s *SessionSuite) TestASettingsChangeWaitingForAVoiceStopEndsWithItsCaller() {
+	s.manages()
+	created := s.joins(Spec{})
+	build := created.build
+	building, release := make(chan struct{}), make(chan struct{})
+	created.build = func(ctx context.Context, next Spec) (*agent.Agent, error) {
+		close(building)
+		<-release
+		return build(ctx, next)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(s.ctx) }()
+	select {
+	case <-building:
+	case <-time.After(settleFor):
+		s.FailNow("voice never began to stop")
+	}
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	temperature := 0.3
+	moved := make(chan error, 1)
+	go func() { moved <- created.SetSettings(ctx, Settings{Temperature: &temperature}) }()
+	s.eventually(func() bool { return waitsForLock("(*Session).SetSettings") }, "the settings change did not wait")
+	cancel()
+	select {
+	case err := <-moved:
+		s.Require().ErrorIs(err, context.Canceled)
+	case <-time.After(settleFor):
+		close(release)
+		s.FailNow("the settings change kept waiting after its caller gave up")
+	}
+	close(release)
+	select {
+	case err := <-stopped:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("voice never stopped")
+	}
+	s.Equal("text", created.Mode())
+	s.Nil(created.Spec().ModelOverwrites.Temperature, "the change its caller gave up on was not made")
+}
+
+// A voice stop waiting for a settings change gives up when its caller does: it returns the
+// caller's error and voice stays on.
+func (s *SessionSuite) TestAVoiceStopWaitingForASettingsChangeEndsWithItsCaller() {
+	s.gated = newGatedLLM()
+	s.manages()
+	created := s.joins(Spec{})
+	s.says(created, "hello")
+	select {
+	case <-s.gated.entered:
+	case <-time.After(settleFor):
+		s.FailNow("the model was never asked")
+	}
+	target := "llm-flow"
+	moved := make(chan error, 1)
+	opened := s.openedModels()
+	go func() { moved <- created.SetSettings(s.ctx, Settings{LLM: &target}) }()
+	// The new model is opened before SetSettings waits for the reply.
+	s.eventually(func() bool { return s.openedModels() > opened }, "the new model was never opened")
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- created.StopVoice(ctx) }()
+	s.eventually(func() bool { return waitsForLock("(*Session).swap") }, "voice did not wait to stop")
+	cancel()
+	select {
+	case err := <-stopped:
+		s.Require().ErrorIs(err, context.Canceled)
+	case <-time.After(settleFor):
+		s.gated.answers(1)
+		s.FailNow("the voice stop kept waiting after its caller gave up")
+	}
+	s.gated.answers(1)
+	select {
+	case err := <-moved:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("the settings never moved once the reply was answered")
+	}
+	s.Equal("cascade", created.Mode(), "the stop its caller gave up on did not take voice off")
+	s.Equal(target, created.Spec().LLMTarget)
+}
+
 // askedAbout is every request a model opened after the first was asked to answer text in.
 func (s *SessionSuite) askedAbout(text string) []llm.ResponseParams {
 	s.othersMu.Lock()
@@ -196,11 +284,13 @@ func (s *SessionSuite) askedAbout(text string) []llm.ResponseParams {
 	return found
 }
 
-// waitsForLock reports whether a goroutine is waiting on a mutex inside function.
+// waitsForLock reports whether a goroutine inside function is waiting for the session's
+// other SetSettings or swap to finish (move), or on a mutex.
 func waitsForLock(function string) bool {
 	buffer := make([]byte, 1<<20)
 	for _, goroutine := range strings.Split(string(buffer[:runtime.Stack(buffer, true)]), "\n\n") {
-		if strings.Contains(goroutine, "[sync.Mutex.Lock") && strings.Contains(goroutine, function) {
+		waiting := strings.Contains(goroutine, "(*Session).move(") || strings.Contains(goroutine, "[sync.Mutex.Lock")
+		if waiting && strings.Contains(goroutine, function) {
 			return true
 		}
 	}
