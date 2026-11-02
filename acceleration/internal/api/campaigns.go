@@ -242,6 +242,34 @@ func (s *Server) pauseCampaign(ctx context.Context, request *pauseCampaignReques
 	return &pauseCampaignResponse{Body: campaignOf(campaign)}, nil
 }
 
+// legacyCampaignState and legacyContactState keep the wire as it was until the API is
+// rewritten for the dialer's states.
+func legacyCampaignState(state string) CampaignState {
+	switch state {
+	case store.Completed:
+		return CampaignStateFinished
+	case store.Scheduled:
+		return CampaignStateDraft
+	case store.Stopped:
+		return CampaignStatePaused
+	}
+	return CampaignState(state)
+}
+
+func legacyContactState(stage string) ContactState {
+	switch stage {
+	case store.Enrolled, store.ContactStopped:
+		return ContactStatePending
+	case store.InProgress, store.AwaitingOutcome:
+		return ContactStateCalling
+	case store.ContactCompleted:
+		return ContactStateDone
+	case store.Rejected:
+		return ContactStateFailed
+	}
+	return ContactState(stage)
+}
+
 // campaignOf renders a campaign for the wire.
 func campaignOf(campaign store.Campaign) Campaign {
 	rendered := Campaign{
@@ -250,7 +278,7 @@ func campaignOf(campaign store.Campaign) Campaign {
 		ConfigId:    campaign.ConfigID,
 		FromNumber:  campaign.FromNumber,
 		Concurrency: campaign.Concurrency,
-		State:       CampaignState(campaign.State),
+		State:       legacyCampaignState(campaign.State),
 		CreatedAt:   campaign.CreatedAt,
 		StartedAt:   campaign.StartedAt,
 		FinishedAt:  campaign.FinishedAt,
@@ -280,11 +308,11 @@ func contactsOf(contacts []store.Contact, calls map[string]outcome.Call) []Conta
 			Id:           contact.ID,
 			ToNumber:     contact.ToNumber,
 			Instructions: optional(contact.Instructions),
-			State:        ContactState(contact.State),
-			Attempts:     contact.Attempts,
+			State:        legacyContactState(contact.Stage),
+			Attempts:     contact.Attempt,
 			CallId:       optional(contact.CallID),
 			VendorCallId: optional(contact.VendorCallID),
-			Error:        optional(contact.Error),
+			Error:        optional(contact.Reason),
 			Outcome:      decided,
 		})
 	}

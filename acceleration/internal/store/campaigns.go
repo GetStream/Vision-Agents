@@ -36,6 +36,7 @@ func (s *Store) CreateCampaign(ctx context.Context, campaign *Campaign) error {
 
 	campaign.ID = newID()
 	campaign.State = Draft
+	campaign.Type = Standard
 	campaign.CreatedAt = time.Now().UTC()
 	if campaign.Tags == nil {
 		campaign.Tags = map[string]string{}
@@ -115,10 +116,8 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 	case Running:
 		query = query.Set("started_at = COALESCE(started_at, ?)", now).
 			Set("finished_at = NULL")
-	case Finished:
-		// Only a running campaign finishes: a pause that landed meanwhile, on any router, stays.
-		query = query.Set("finished_at = ?", now).
-			Where("state = ?", Running)
+	case Completed:
+		query = query.Set("finished_at = ?", now)
 	}
 
 	result, err := query.Exec(ctx)
@@ -129,7 +128,7 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set campaign state: %w", err))
 	}
-	if affected == 0 && state != Finished {
+	if affected == 0 {
 		return unknownCampaign(id)
 	}
 	return nil
@@ -151,7 +150,7 @@ func (s *Store) AddContacts(ctx context.Context, contacts []Contact) error {
 			return stack.Wrap(errors.New("store: a contact needs a number to ring"))
 		}
 		contacts[index].ID = newID()
-		contacts[index].State = Pending
+		contacts[index].Stage = Enrolled
 		contacts[index].CreatedAt = now
 	}
 
@@ -177,106 +176,6 @@ func (s *Store) CampaignContacts(ctx context.Context, campaignID string) ([]Cont
 		return nil, stack.Wrap(fmt.Errorf("store: campaign contacts: %w", err))
 	}
 	return contacts, nil
-}
-
-// ClaimContact takes the next person to ring, marking them as being called so nobody
-// else takes them.
-//
-// The claim is the update rather than the select: two runners over one campaign is not
-// something this process arranges, but a restart mid-call is, and a contact left as
-// calling forever is worse than one rung twice.
-//
-// Only a running campaign's contacts are claimed, since a pause on another router reaches
-// the runner here only through the campaign's row. The row is locked FOR SHARE, so a pause
-// either lands before the claim, which then finds nobody, or waits for it.
-func (s *Store) ClaimContact(ctx context.Context, campaignID string) (Contact, bool, error) {
-	if campaignID == "" {
-		return Contact{}, false, errors.New("store: a campaign id is required")
-	}
-
-	var claimed Contact
-	err := s.db.NewUpdate().Model(&claimed).
-		Set("state = ?", Calling).
-		Set("attempts = attempts + 1").
-		Where("id = (?)",
-			s.db.NewSelect().Model((*Contact)(nil)).
-				Column("id").
-				Where("campaign_id = ?", campaignID).
-				Where("state = ?", Pending).
-				Where("EXISTS (?)", s.db.NewSelect().Model((*Campaign)(nil)).
-					ColumnExpr("1").
-					Where("cp.id = ?", campaignID).
-					Where("cp.state = ?", Running).
-					For("SHARE")).
-				Order("seq ASC").
-				Limit(1).
-				For("UPDATE SKIP LOCKED")).
-		Returning("*").
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Contact{}, false, nil
-	}
-	if err != nil {
-		return Contact{}, false, fmt.Errorf("store: claim contact: %w", err)
-	}
-	return claimed, true, nil
-}
-
-// FinishContact records what became of ringing somebody. A contact that could not be
-// rung keeps the reason, since that is the only place it is ever explained.
-func (s *Store) FinishContact(ctx context.Context, contact Contact) error {
-	if contact.ID == "" {
-		return errors.New("store: a contact id is required")
-	}
-
-	_, err := s.db.NewUpdate().Model((*Contact)(nil)).
-		Set("state = ?", contact.State).
-		Set("call_id = ?", nullable(contact.CallID)).
-		Set("vendor_call_id = ?", nullable(contact.VendorCallID)).
-		Set("error = ?", nullable(contact.Error)).
-		Where("id = ?", contact.ID).
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("store: finish contact: %w", err)
-	}
-	return nil
-}
-
-// ReleaseContacts puts calls that never finished back in the queue, which is what a
-// paused campaign and a restarted process both leave behind.
-func (s *Store) ReleaseContacts(ctx context.Context, campaignID string) error {
-	if campaignID == "" {
-		return stack.Wrap(errors.New("store: a campaign id is required"))
-	}
-
-	_, err := s.db.NewUpdate().Model((*Contact)(nil)).
-		Set("state = ?", Pending).
-		Where("campaign_id = ?", campaignID).
-		Where("state = ?", Calling).
-		Exec(ctx)
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: release contacts: %w", err))
-	}
-	return nil
-}
-
-// UnclaimContact gives back a contact claimed and never rung, as pending and with the attempt
-// the claim counted taken off, so the campaign rings them when it is started again.
-func (s *Store) UnclaimContact(ctx context.Context, contactID string) error {
-	if contactID == "" {
-		return stack.Wrap(errors.New("store: a contact id is required"))
-	}
-
-	_, err := s.db.NewUpdate().Model((*Contact)(nil)).
-		Set("state = ?", Pending).
-		Set("attempts = greatest(attempts - 1, 0)").
-		Where("id = ?", contactID).
-		Where("state = ?", Calling).
-		Exec(ctx)
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: unclaim contact: %w", err))
-	}
-	return nil
 }
 
 // nullable keeps an empty string out of a column that means "nothing happened" by being

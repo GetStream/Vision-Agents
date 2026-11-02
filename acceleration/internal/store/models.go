@@ -1278,22 +1278,41 @@ type Call struct {
 const (
 	// Draft is a campaign that has never been started.
 	Draft = "draft"
+	// Scheduled is a launched campaign waiting for its start time.
+	Scheduled = "scheduled"
 	// Running means the runner is working through its contacts.
 	Running = "running"
 	// Paused means it was stopped partway and can be started again.
 	Paused = "paused"
-	// Finished means there is nobody left to ring.
-	Finished = "finished"
+	// Stopped means somebody ended it for good before every contact was done.
+	Stopped = "stopped"
+	// Completed means there is nobody left to ring.
+	Completed = "completed"
 )
 
-// What became of one contact.
+// What kind of campaign it is.
 const (
-	// Pending is somebody who has not been rung yet.
-	Pending = "pending"
-	// Calling is a call happening now.
-	Calling = "calling"
-	// Done is somebody who was rung, whatever they said.
-	Done = "done"
+	// Standard is a campaign that rings the contacts it was given.
+	Standard = "standard"
+	// AutoEnroll is reserved: nothing creates one yet.
+	AutoEnroll = "auto_enroll"
+)
+
+// Where one contact is in the campaign's sequence.
+const (
+	// Enrolled is somebody waiting for their next attempt.
+	Enrolled = "enrolled"
+	// InProgress is a call happening now.
+	InProgress = "in_progress"
+	// AwaitingOutcome is a call that was answered whose outcome is not yet classified. It
+	// does not count toward concurrency, and the API shows it as in_progress.
+	AwaitingOutcome = "awaiting_outcome"
+	// ContactCompleted is somebody the sequence is finished with.
+	ContactCompleted = "completed"
+	// Rejected is a number that was refused before any call.
+	Rejected = "rejected"
+	// ContactStopped is somebody left unrung because the campaign was stopped.
+	ContactStopped = "stopped"
 	// Failed is a call that could not be made.
 	Failed = "failed"
 )
@@ -1310,12 +1329,24 @@ type Campaign struct {
 	// FromNumber is one of the customer's own, which is what the person sees.
 	FromNumber string `bun:"from_number,notnull"`
 	// Concurrency is how many of these calls may be happening at once.
-	Concurrency int               `bun:"concurrency,notnull"`
-	State       string            `bun:"state,notnull"`
-	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
-	CreatedAt   time.Time         `bun:"created_at,notnull"`
-	StartedAt   *time.Time        `bun:"started_at"`
-	FinishedAt  *time.Time        `bun:"finished_at"`
+	Concurrency int `bun:"concurrency,notnull"`
+	// Sequence is the steps each contact goes through, and CallingHours when they may be
+	// rung. Both are null on a draft until the API fills them.
+	Sequence     json.RawMessage `bun:"sequence,type:jsonb"`
+	CallingHours json.RawMessage `bun:"calling_hours,type:jsonb"`
+	// DefaultCountry is the region a contact's number without a country code is read in.
+	DefaultCountry string            `bun:"default_country,notnull"`
+	State          string            `bun:"state,notnull"`
+	Type           string            `bun:"type,notnull"`
+	Tags           map[string]string `bun:"tags,type:jsonb,nullzero"`
+	CreatedAt      time.Time         `bun:"created_at,notnull"`
+	StartAt        *time.Time        `bun:"start_at"`
+	LaunchedAt     *time.Time        `bun:"launched_at"`
+	StartedAt      *time.Time        `bun:"started_at"`
+	StoppedAt      *time.Time        `bun:"stopped_at"`
+	ConsentAt      *time.Time        `bun:"consent_at"`
+	// FinishedAt is when the campaign completed.
+	FinishedAt *time.Time `bun:"finished_at"`
 	// PausedReason is the code of what refused a call when the router paused the campaign
 	// itself, as telephony_suspended or insufficient_credits; empty otherwise.
 	PausedReason string `bun:"paused_reason,nullzero"`
@@ -1337,14 +1368,51 @@ type Contact struct {
 	CampaignID string `bun:"campaign_id,notnull"`
 	ToNumber   string `bun:"to_number,notnull"`
 	// Instructions are what to say to this person, added to whatever the config says.
-	Instructions string `bun:"instructions,notnull"`
-	State        string `bun:"state,notnull"`
-	Attempts     int    `bun:"attempts,notnull"`
-	// CallID is the calls row this contact became.
+	Instructions string            `bun:"instructions,notnull"`
+	Variables    map[string]string `bun:"variables,type:jsonb"`
+	TimeZone     string            `bun:"time_zone,notnull"`
+	Stage        string            `bun:"stage,notnull"`
+	StepID       string            `bun:"step_id,notnull"`
+	// Attempt is how many attempts of the current step have been used.
+	Attempt       int        `bun:"attempt,notnull"`
+	NextAttemptAt *time.Time `bun:"next_attempt_at"`
+	// LeasedBy and LeasedUntil say which runner holds the contact while it is rung.
+	LeasedBy    string     `bun:"leased_by,notnull"`
+	LeasedUntil *time.Time `bun:"leased_until"`
+	Outcome     string     `bun:"outcome,notnull"`
+	Converted   bool       `bun:"converted,notnull"`
+	// CallID is the calls row of the last dial.
 	CallID       string    `bun:"call_id,nullzero"`
 	VendorCallID string    `bun:"vendor_call_id,nullzero"`
-	Error        string    `bun:"error,nullzero"`
+	Reason       string    `bun:"reason,nullzero"`
 	CreatedAt    time.Time `bun:"created_at,notnull"`
+}
+
+// CampaignAttempt is one dial of one contact.
+type CampaignAttempt struct {
+	bun.BaseModel `bun:"table:campaign_attempts,alias:ca"`
+
+	ID         string `bun:"id,pk"`
+	CampaignID string `bun:"campaign_id,notnull"`
+	ContactID  string `bun:"contact_id,notnull"`
+	StepID     string `bun:"step_id,notnull"`
+	Attempt    int    `bun:"attempt,notnull"`
+	// Dial is 1, or 2 for the second call of a double dial.
+	Dial         int    `bun:"dial,notnull"`
+	CallID       string `bun:"call_id,notnull"`
+	VendorCallID string `bun:"vendor_call_id,notnull"`
+	// Result is answered, unanswered, invalid_number, refused, deferred, paused or
+	// abandoned, and empty while the call is happening.
+	Result    string `bun:"result,notnull"`
+	Outcome   string `bun:"outcome,notnull"`
+	Converted bool   `bun:"converted,notnull"`
+	// ClassifyState is empty, pending or done: whether an answered call's outcome is still
+	// to be read from its transcript.
+	ClassifyState string     `bun:"classify_state,notnull"`
+	ClassifyAfter *time.Time `bun:"classify_after"`
+	ClassifyTries int        `bun:"classify_tries,notnull"`
+	StartedAt     time.Time  `bun:"started_at,notnull"`
+	EndedAt       *time.Time `bun:"ended_at"`
 }
 
 // Which pipeline a simulation puts the agent through.
@@ -1359,6 +1427,8 @@ const (
 
 // How a run or one of its conversations ended.
 const (
+	// SimulationPending is a case not yet started.
+	SimulationPending = "pending"
 	// SimulationRunning means the conversations are still being had.
 	SimulationRunning = "running"
 	// SimulationPassed means the judge was satisfied. A run passed only if every one of
