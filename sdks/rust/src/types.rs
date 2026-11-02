@@ -9389,7 +9389,7 @@ pub struct ScheduledTask {
     pub schedule: ScheduledTaskSchedule,
     ///The conversation the task follows up in. Empty until its first occurrence opens one.
     pub session_id: ::std::string::String,
-    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
     pub state: ScheduledTaskState,
     pub title: ::std::string::String,
     ///Up to the next five occurrences, RFC 3339 with the task zone's offset.
@@ -9639,7 +9639,7 @@ pub struct ScheduledTaskSchedule {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub until: ::std::option::Option<::std::string::String>,
 }
-///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,

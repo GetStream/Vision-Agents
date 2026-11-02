@@ -8480,7 +8480,7 @@ export type components = {
             /** @description The conversation the task follows up in. Empty until its first occurrence opens one. */
             readonly session_id: string;
             /**
-             * @description active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+             * @description active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
              * @enum {string}
              */
             readonly state: "active" | "paused" | "completed" | "failed";

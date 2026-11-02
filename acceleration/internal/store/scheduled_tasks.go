@@ -59,7 +59,7 @@ const scheduledTaskStaleRun = 10 * time.Minute
 const maxScheduledTaskRunAttempts = 3
 
 // scheduledTaskRunWorkersLost is the reason a run failed at
-// maxScheduledTaskRunAttempts is recorded under: scheduling.ReasonFailed, one
+// maxScheduledTaskRunAttempts with no call placed is recorded under: scheduling.ReasonFailed, one
 // of the codes a device is shown, which this package cannot import.
 const scheduledTaskRunWorkersLost = "delivery_failed"
 

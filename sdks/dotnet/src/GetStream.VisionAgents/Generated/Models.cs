@@ -11023,7 +11023,7 @@ namespace GetStream.VisionAgents.Models
         public string SessionId { get; set; } = default!;
 
         /// <summary>
-        /// active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+        /// active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
         /// <br/>
         /// <br/>One of `active`, `paused`, `completed`, `failed`.
         /// </summary>

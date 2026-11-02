@@ -7702,7 +7702,7 @@ type ScheduledTask struct {
 	// SessionId The conversation the task follows up in. Empty until its first occurrence opens one.
 	SessionId string `json:"session_id"`
 
-	// State active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+	// State active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 	State ScheduledTaskState `json:"state"`
 	Title string             `json:"title"`
 
@@ -7715,7 +7715,7 @@ type ScheduledTask struct {
 // ScheduledTaskCreatedBy agent when the model made it in a conversation, api when a backend did.
 type ScheduledTaskCreatedBy string
 
-// ScheduledTaskState active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
+// ScheduledTaskState active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 type ScheduledTaskState string
 
 // ScheduledTaskNext defines model for ScheduledTaskNext.

@@ -954,7 +954,7 @@ type ScheduledTask struct {
 	Schedule            ScheduledTaskSchedule    `json:"schedule"`
 	DeliverTo           []string                 `json:"deliver_to" nullable:"false" doc:"Where an occurrence is delivered, in order, the first that lands."`
 	QuietHours          *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"The part of the user's day an occurrence that comes due in is held through. Absent is no hold."`
-	State               string                   `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it)." enum:"active,paused,completed,failed"`
+	State               string                   `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it)." enum:"active,paused,completed,failed"`
 	NextRunAt           *string                  `json:"next_run_at" doc:"The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none."`
 	Upcoming            []string                 `json:"upcoming" nullable:"false" doc:"Up to the next five occurrences, RFC 3339 with the task zone's offset."`
 	LastRunAt           *string                  `json:"last_run_at" doc:"When a run last finished, in UTC. Null when none has."`
