@@ -301,6 +301,8 @@ func (s *RecordFlushSuite) TestATitleWrittenAfterTheSessionWasDeletedLogsNoError
 	_, err := s.store.StoredSession(s.ctx, s.customer, row.ID)
 	s.ErrorIs(err, store.ErrNoSession, "the title brought the deleted session back")
 	s.NotContains(logged.String(), "level=ERROR", "a title for a deleted session is an expected drop")
+	s.Contains(logged.String(), "level=DEBUG", "the drop is logged, at debug")
+	s.Contains(logged.String(), "dropped the session's title", "the drop is logged, at debug")
 	s.True(s.stored(held.ID), "the write behind the title was lost with it")
 }
 
