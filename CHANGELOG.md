@@ -218,6 +218,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A scheduled task handed to another router is billed to its own key
+
+A router that runs a scheduled task for another router, because it holds the task's conversation, now takes the task's conversation, timezone, API key and usage categories from the stored task, not from what the other router sent. A text it sends for the task is now recorded under the task's key, user and usage categories, as on the router that claimed the task. Before, it was recorded as `job:channel_notice` with no user (AI-2421).
+
 ### Changing a live session's models keeps its labels
 
 Moving a running session onto other models or another voice (`PATCH /v1/agents/sessions/{id}`) wrote back the whole session as it was read before the move, so a title, custom data or a connector chosen while the models moved was lost. It now writes back only the models, voice and overwrites it changed, under the lock the session's other changes take, and the session's log rows, fan-out and API reads take the same lock (AI-2481).
