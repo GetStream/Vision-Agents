@@ -91,6 +91,13 @@ func (s *PolicySuite) front(service *usagetest.Service) *front {
 	return f
 }
 
+// client is a usage client for service through the front, which counts the calls it makes.
+func (f *front) client(s *PolicySuite, service *usagetest.Service) *usage.Client {
+	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token, HTTP: &http.Client{Transport: f}})
+	s.Require().NoError(err)
+	return client
+}
+
 func (f *front) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch r.URL.Path {
 	case usage.PathStandings:
@@ -137,8 +144,7 @@ func (s *PolicySuite) billed(change ...func(*Settings)) *reading {
 func (s *PolicySuite) billedOn(configs *appconfig.Store, change ...func(*Settings)) *reading {
 	service := s.usage()
 	f := s.front(service)
-	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token, HTTP: &http.Client{Transport: f}})
-	s.Require().NoError(err)
+	client := f.client(s, service)
 	written := &logs{}
 	logger := slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	enforcer := s.newEnforcer(configs, logger, append([]func(*Settings){func(settings *Settings) { settings.Usage = client }}, change...)...)
@@ -821,8 +827,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	s.Require().NoError(err)
 	front := s.front(service)
 	windows := &front.windows
-	client, err := usage.NewClient(usage.ClientOptions{URL: front.server.URL, Token: service.Token, HTTP: &http.Client{Transport: front}})
-	s.Require().NoError(err)
+	client := front.client(s, service)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh, settings.MaxStale = client, counters, time.Hour, 2*time.Hour
 		settings.FirstRead = readTimeout
@@ -837,7 +842,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	service.Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID = s.app })
 
 	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
-	s.Greater(windows.Load(), before, "the service answered for the counters")
+	s.Greater(windows.Load(), before, "the service was asked for the counters")
 	enforcer.money.mu.Lock()
 	failed := enforcer.money.accounts[s.org].countersFailed
 	enforcer.money.mu.Unlock()
