@@ -28,7 +28,7 @@ final readonly class ScheduledTask
         public ScheduledTaskSchedule $schedule,
         // The conversation the task follows up in. Empty until its first occurrence opens one.
         public string $sessionId,
-        // active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after...
+        // active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose...
         public string $state,
         public string $title,
         // Up to the next five occurrences, RFC 3339 with the task zone's offset.

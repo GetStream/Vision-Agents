@@ -38,7 +38,8 @@ class ScheduledTask:
         schedule (ScheduledTaskSchedule):
         session_id (str): The conversation the task follows up in. Empty until its first occurrence opens one.
         state (ScheduledTaskState): active, paused, completed (a one-shot that ran, or a recurrence past its end), or
-            failed (auto-paused after five failed occurrences in a row; resume clears it).
+            failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row,
+            a run that failed with already_called not counting; resume clears it).
         title (str):
         upcoming (list[str]): Up to the next five occurrences, RFC 3339 with the task zone's offset.
         updated_at (datetime.datetime):

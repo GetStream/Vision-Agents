@@ -187,7 +187,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 
 | Code | Meaning | Retried |
 | --- | --- | --- |
-| `delivery_failed` | Any other failure, or the occurrence was claimed three times (`maxScheduledTaskRunAttempts`: the first claim, the take-up after a hold, one after a lost worker) | yes, unless it was claimed three times or a call was already placed (`scheduled_delivery.go:783`, `:857`) |
+| `delivery_failed` | Any other failure, or the occurrence was claimed three times (`maxScheduledTaskRunAttempts`: the first claim, the take-up after a hold, one after a lost worker) with no call placed; with a call placed, the cap keeps the reason that call ended under, or gives `already_called` (`capFailure`) | yes, unless it was claimed three times or a call was already placed (`scheduled_delivery.go:783`, `:857`) |
 | `timed_out` | The occurrence used its 20 min (`occurrenceBudget`) | no |
 | `schedule_unreadable` | The stored schedule no longer parses; the task is paused | no |
 | `user_on_call` | The user stayed on a call through the 10 min window | yes |
