@@ -59,8 +59,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
-	liveClient, err := live.New(live.Options{Address: address})
+	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
 	manager, err := buildSessions(settings, &api.Streams{LLM: model}, nil, nil, liveClient, nil, nil, nil, nil, nil, nil, nil, nil,
@@ -75,9 +74,8 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
 	logger := slog.New(slog.DiscardHandler)
-	liveClient, err := live.New(live.Options{Address: address})
+	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
 	policies, err := policy.New(&appconfig.Store{}, policy.Settings{}, logger)

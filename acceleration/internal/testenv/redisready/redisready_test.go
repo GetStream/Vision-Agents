@@ -3,12 +3,15 @@ package redisready
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"runtime"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -75,6 +78,21 @@ func (s *RedisSuite) TestARedisStillLoadingIsNotReady() {
 	address := s.peer(time.Now(), "-LOADING Redis is loading the dataset in memory\r\n")
 
 	s.Error(Wait(address, 500*time.Millisecond))
+}
+
+func (s *RedisSuite) TestARedisThatWantsAPasswordIsUp() {
+	address := s.peer(time.Now(), "-NOAUTH Authentication required.\r\n")
+
+	s.NoError(Wait(address, 500*time.Millisecond))
+}
+
+func (s *RedisSuite) TestARedisThatWantsAPasswordIsAnswerEnoughForRetry() {
+	address := s.peer(time.Now(), "-NOAUTH Authentication required.\r\n")
+
+	built, err := Retry(address, func() (string, error) { return "node", nil })
+
+	s.Require().NoError(err)
+	s.Equal("node", built)
 }
 
 func (s *RedisSuite) TestARedisThatRefusesWhileItStartsIsWaitedFor() {
@@ -302,5 +320,100 @@ func (s *RedisSuite) pingKeys(client rueidis.Client) {
 	for i := range 64 {
 		key := "redisready-test:" + strconv.Itoa(i)
 		s.Require().NoError(client.Do(context.Background(), client.B().Exists().Key(key).Build()).Error())
+	}
+}
+
+func (s *RedisSuite) TestABuildThatFailsIsBuiltAgainUntilItSucceeds() {
+	address := s.peer(time.Now(), "+PONG\r\n")
+	builds := 0
+
+	built, err := Retry(address, func() (string, error) {
+		builds++
+		if builds < 3 {
+			return "", fmt.Errorf("subscribe: %w", context.DeadlineExceeded)
+		}
+		return "node", nil
+	})
+
+	s.Require().NoError(err)
+	s.Equal("node", built)
+	s.Equal(3, builds)
+}
+
+func (s *RedisSuite) TestABuildThatNeverSucceedsIsAnErrorAtTheDeadline() {
+	original := ready
+	ready = 1200 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	address := s.peer(time.Now(), "+PONG\r\n")
+	failed := fmt.Errorf("subscribe: %w", context.DeadlineExceeded)
+
+	start := time.Now()
+	built, err := Retry(address, func() (*int, error) { return new(int), failed })
+
+	s.Nil(built, "what a failed build returned was handed on")
+	s.Require().ErrorIs(err, failed)
+	s.Contains(err.Error(), address)
+	s.GreaterOrEqual(time.Since(start), ready, "the build was given up on before the deadline")
+	s.Less(time.Since(start), 5*time.Second, "the builds ran past their deadline")
+}
+
+func (s *RedisSuite) TestNothingIsBuiltWhereNoRedisAnswered() {
+	original := ready
+	ready = 300 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	address := listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	first := Ready(address)
+	s.Require().Error(first)
+	builds := 0
+
+	start := time.Now()
+	_, err = Retry(address, func() (int, error) {
+		builds++
+		return 1, nil
+	})
+
+	s.Equal(first, err)
+	s.Zero(builds, "a build was tried against a Redis that never answered")
+	s.Less(time.Since(start), 100*time.Millisecond, "Retry waited out the deadline again")
+}
+
+func (s *RedisSuite) TestADeterministicBuildErrorFailsAtOnce() {
+	address := s.peer(time.Now(), "+PONG\r\n")
+	failed := errors.New("api: at least one router is required")
+	builds := 0
+
+	start := time.Now()
+	_, err := Retry(address, func() (int, error) {
+		builds++
+		return 0, failed
+	})
+
+	s.Require().ErrorIs(err, failed)
+	s.Equal(1, builds, "a build that cannot succeed was tried again")
+	s.Less(time.Since(start), 500*time.Millisecond, "the error waited out the deadline")
+}
+
+func (s *RedisSuite) TestADialThatWasRefusedCutOrStalledIsBuiltAgain() {
+	address := s.peer(time.Now(), "+PONG\r\n")
+	for name, failure := range map[string]error{
+		"stalled": &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded},
+		"cut":     fmt.Errorf("read: %w", io.EOF),
+		"reset":   fmt.Errorf("read: %w", syscall.ECONNRESET),
+	} {
+		builds := 0
+		built, err := Retry(address, func() (string, error) {
+			builds++
+			if builds < 2 {
+				return "", failure
+			}
+			return "node", nil
+		})
+
+		s.Require().NoError(err, name)
+		s.Equal("node", built, name)
+		s.Equal(2, builds, name)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // dsnEnvVar and redisEnvVar are where this looks for a Postgres to count turns into and a
@@ -52,8 +53,10 @@ func (s *TurnRecordingSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Ping(context.Background()))
 	s.Require().NoError(pgStore.Migrate(context.Background()))
 
-	liveClient, err := live.New(live.Options{
-		Address: redisAddr, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD"),
+	liveClient, err := redisready.Retry(redisAddr, func() (*live.Client, error) {
+		return live.New(live.Options{
+			Address: redisAddr, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD"),
+		})
 	})
 	s.Require().NoError(err)
 	s.liveClient = liveClient
