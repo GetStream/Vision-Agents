@@ -97,7 +97,7 @@ func (s *Session) recordLog(event Event) {
 		row.UserID = e.Participant.UserID
 		row.Message = e.Text
 	case agent.Responding:
-		if !s.spec.Text {
+		if s.Voicing() {
 			return
 		}
 		row.EventType = "user_message"
