@@ -197,11 +197,11 @@ func (s *CampaignsSuite) TestLaunchingWithoutContactsSaysSo() {
 }
 
 func (s *CampaignsSuite) TestLaunchingFromANumberTheAppDoesNotHaveIsRefused() {
+	created := s.ready()
+	// The number was the app's when it was set, and is not now.
 	notOurs := s.utils.number()
-	created := s.create(map[string]any{
-		"name": "may", "config_id": s.data.createAgentConfig().Id, "from_number": notOurs,
-	})
-	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	_, err := s.store.UpdateCampaign(context.Background(), s.customerID(), created.Id, store.CampaignChanges{FromNumber: &notOurs})
+	s.Require().NoError(err)
 
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
 		map[string]any{"consent": true})
@@ -209,6 +209,45 @@ func (s *CampaignsSuite) TestLaunchingFromANumberTheAppDoesNotHaveIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(payload), codeCampaignNotReady)
 	s.Contains(string(payload), notOurs)
+}
+
+func (s *CampaignsSuite) TestANumberTheAppDoesNotHoldIsRefused() {
+	notOurs := s.utils.number()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/campaigns",
+		map[string]any{"name": "may", "from_number": notOurs})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, notOurs)
+}
+
+func (s *CampaignsSuite) TestALaunchedCampaignCannotMoveToANumberTheAppDoesNotHold() {
+	// Every call it placed from there would be refused, and each contact would run out of
+	// attempts without anybody being rung.
+	created := s.launch(s.ready())
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"from_number": s.utils.number()})
+	s.Equal(http.StatusBadRequest, status)
+	status, _ = s.serverClient.failure(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"from_number": ""})
+	s.Equal(http.StatusBadRequest, status, "nor to no number at all")
+
+	s.Equal(created.FromNumber, s.get(created.Id).FromNumber)
+	moved := s.heldNumber()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"from_number": moved}, nil))
+	s.Equal(moved, s.get(created.Id).FromNumber)
+}
+
+func (s *CampaignsSuite) TestADraftMayLeaveItsNumberEmpty() {
+	created := s.ready()
+
+	var changed Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"from_number": ""}, &changed))
+
+	s.Empty(changed.FromNumber)
 }
 
 func (s *CampaignsSuite) TestLaunchingWithoutAConfigIsRefused() {
@@ -366,14 +405,11 @@ func (s *CampaignsSuite) TestAnalyticsOfANewCampaignAreZero() {
 }
 
 func (s *CampaignsSuite) TestASuspendedAppCannotLaunch() {
+	s.useApp(s.data.createApp())
 	created := s.ready()
 	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
 		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
 	}))
-	// The fixture's app is shared with other suites, which must not find it suspended.
-	s.T().Cleanup(func() {
-		s.Require().NoError(s.store.LiftTelephonySuspension(context.Background(), s.customerID()))
-	})
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
 		map[string]any{"consent": true})
@@ -395,11 +431,83 @@ func (s *CampaignsSuite) TestAContactNotYetRungHasNoOutcome() {
 }
 
 func (s *CampaignsSuite) TestAnotherAppsCampaignIsNotFound() {
-	created := s.create(map[string]any{"name": "may"})
+	created := s.launch(s.ready())
+	path := "/v1/agents/campaigns/" + created.Id
 
-	s.assertHiddenFromOtherApps(func(as *testClient) int {
-		return as.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, nil)
-	})
+	for _, call := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodGet, path, nil},
+		{http.MethodPatch, path, map[string]any{"name": "theirs"}},
+		{http.MethodDelete, path, nil},
+		{http.MethodPost, path + "/launch", map[string]any{"consent": true}},
+		{http.MethodPost, path + "/pause", nil},
+		{http.MethodPost, path + "/resume", nil},
+		{http.MethodPost, path + "/stop", nil},
+		{http.MethodPost, path + "/duplicate", map[string]any{"contacts": "all"}},
+		{http.MethodGet, path + "/analytics", nil},
+	} {
+		s.assertHiddenFromOtherApps(func(as *testClient) int {
+			return as.do(call.method, call.path, call.body, nil)
+		})
+	}
+	s.Equal(CampaignStateRunning, s.get(created.Id).State, "and none of it reached the campaign")
+	s.Equal(created.Name, s.get(created.Id).Name)
+}
+
+func (s *CampaignsSuite) TestTheListLeavesOutAnotherAppsCampaigns() {
+	s.useApp(s.data.createApp())
+	ours := s.create(map[string]any{"name": "ours"})
+
+	var page CampaignPage
+	s.Require().Equal(http.StatusOK, s.data.backendOfAnotherApp().do(http.MethodGet, "/v1/agents/campaigns", nil, &page))
+
+	for _, item := range page.Items {
+		s.NotEqual(ours.Id, item.Id)
+	}
+}
+
+func (s *CampaignsSuite) TestABadCursorIsRefused() {
+	status, _ := s.serverClient.failure(http.MethodGet, "/v1/agents/campaigns?cursor=not-a-cursor", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *CampaignsSuite) TestCopyingTheContactsNeverRungOfARunningCampaignIsRefused() {
+	// Who was never rung is not known while the campaign is still ringing people.
+	created := s.launch(s.ready())
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/duplicate",
+		map[string]any{"contacts": "not_contacted"})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeCampaignLocked)
+}
+
+func (s *CampaignsSuite) TestResumingACampaignWhoseConfigWasDeletedIsRefused() {
+	created := s.launch(s.ready())
+	s.move(created.Id, "pause")
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+created.ConfigId, nil, nil))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/resume", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), codeCampaignNotReady)
+	s.Equal(CampaignStatePaused, s.get(created.Id).State)
+}
+
+func (s *CampaignsSuite) TestResumingARunningCampaignOfAnAppThatMayNotCallIsAConflict() {
+	s.useApp(s.data.createApp())
+	created := s.launch(s.ready())
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/resume", nil)
+
+	s.Equal(http.StatusConflict, status, "what is wrong with the request comes before what is wrong with the account")
+	s.Contains(string(payload), codeCampaignLocked)
 }
 
 // create makes a draft from body.
