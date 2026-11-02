@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -169,11 +171,29 @@ func (s *ForgetUserSuite) stopped(replacement string) {
 	s.Require().NoError(err)
 }
 
+// runForget runs the usage command, again while its one dial of Redis fails, which it makes
+// before it writes anything. Any other error is the command's own.
+func (s *ForgetUserSuite) runForget(command []string, out *bytes.Buffer) error {
+	var failed error
+	_, err := redisready.Retry(s.settings.Redis.Addr, func() (struct{}, error) {
+		out.Reset()
+		failed = runUsage(command, s.settings, out)
+		if failed != nil && strings.Contains(failed.Error(), "usage forget-user: redis:") {
+			return struct{}{}, failed
+		}
+		return struct{}{}, nil
+	})
+	if err != nil {
+		return err
+	}
+	return failed
+}
+
 // forget runs the command with --settle 0 and the args, and answers what it printed.
 func (s *ForgetUserSuite) forget(app, user string, args ...string) string {
 	var out bytes.Buffer
 	command := append([]string{"forget-user", "--app", app, "--user", user, "--actor", "staff@example.com", "--settle", "0s"}, args...)
-	s.Require().NoError(runUsage(command, s.settings, &out))
+	s.Require().NoError(s.runForget(command, &out))
 	return out.String()
 }
 
@@ -426,6 +446,59 @@ func (s *ForgetUserSuite) TestADryRunChangesNothing() {
 	s.Empty(entries)
 }
 
+// holdSecondDial puts a TCP forwarder in front of the routers' Redis that holds the second
+// connection accepted past rueidis' 5 s dial timeout. The first is redisready's PING, so the
+// second is the command's one dial.
+func (s *ForgetUserSuite) holdSecondDial() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	done := make(chan struct{})
+	s.T().Cleanup(func() {
+		close(done)
+		listener.Close()
+	})
+	target := s.settings.Redis.Addr
+	go func() {
+		for accepted := 1; ; accepted++ {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(held bool) {
+				defer conn.Close()
+				if held {
+					select {
+					case <-time.After(6 * time.Second):
+					case <-done:
+					}
+					return
+				}
+				upstream, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				go io.Copy(upstream, conn)
+				io.Copy(conn, upstream)
+			}(accepted == 2)
+		}
+	}()
+	s.settings.Redis.Addr = listener.Addr().String()
+}
+
+func (s *ForgetUserSuite) TestARunWhoseRedisDialStallsIsRunAgain() {
+	s.recorded(0, s.app, person, 100)
+	s.recorded(1, s.app, person, 100)
+	routers, _ := s.userKeys(s.app, person)
+	s.Require().NotEmpty(routers)
+	s.holdSecondDial()
+
+	out := s.forget(s.app, person, "--dry-run")
+
+	s.Contains(out, "requests: 2 rows\n")
+	s.Contains(out, "redis: 8 keys\n", "the Redis was reached on the second run")
+}
+
 func (s *ForgetUserSuite) TestARunThatStoppedIsFinishedWithItsReplacement() {
 	ids := []uuid.UUID{s.recorded(0, s.app, person, 300), s.recorded(1, s.app, person, 200)}
 	late := s.written(1, s.app, person, 50)
@@ -475,8 +548,8 @@ func (s *ForgetUserSuite) TestAReplacementNoRunPrintedIsRefused() {
 	id := s.recorded(0, s.app, person, 100)
 
 	for _, replacement := range []string{"grace", "forgotten:ada", usageservice.ForgottenPrefix + strings.Repeat("A", 32)} {
-		err := runUsage([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com",
-			"--replacement", replacement}, s.settings, &bytes.Buffer{})
+		err := s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com",
+			"--replacement", replacement}, &bytes.Buffer{})
 		s.ErrorContains(err, "--replacement", replacement)
 	}
 
@@ -487,7 +560,7 @@ func (s *ForgetUserSuite) TestAReplacementNoRunPrintedIsRefused() {
 func (s *ForgetUserSuite) TestForgettingAUserNeedsTheManageKey() {
 	s.settings.Usage.ManageKey = ""
 
-	err := runUsage([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com"}, s.settings, &bytes.Buffer{})
+	err := s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com"}, &bytes.Buffer{})
 
 	s.ErrorContains(err, "ROUTER_USAGE_MANAGE_KEY")
 }
