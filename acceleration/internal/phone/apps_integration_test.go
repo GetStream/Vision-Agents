@@ -46,6 +46,7 @@ type AppsSuite struct {
 	apps       *testApps
 	service    *Service
 	vendor     *stub
+	registry   *Registry
 	customer   string
 	e164       string
 }
@@ -75,16 +76,22 @@ func (s *AppsSuite) SetupTest() {
 	s.vendor = vendor
 	registry := NewRegistry(s.config())
 	registry.Register(vendor.vendor, func() (Provider, error) { return vendor, nil })
+	s.registry = registry
 	for _, name := range s.credentials(vendor.vendor) {
 		s.T().Setenv(name, "set")
 	}
-	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
-	s.Require().NoError(err)
-	s.service = service
+	s.service = s.serviceAt("https://router.example")
 
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
 		E164: s.e164, Vendor: vendor.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
 	}))
+}
+
+// serviceAt is the suite's service reachable from the internet at a url.
+func (s *AppsSuite) serviceAt(publicURL string) *Service {
+	service, err := NewService(ServiceOptions{Registry: s.registry, Store: s.store, Apps: s.apps, PublicURL: publicURL})
+	s.Require().NoError(err)
+	return service
 }
 
 // aNumber is a number nobody in the suite's database holds yet.
@@ -746,6 +753,90 @@ func (a *testApps) ForAppRemoving(_ context.Context, customer string, app int64)
 		return NewStreamFromClient(server.Client), nil
 	}
 	return NewStreamFromClient(a.deployment.Client), nil
+}
+
+func (s *AppsSuite) purchase() Purchase {
+	return Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Country: "US", Owner: routing.Owner{CustomerID: s.customer}}
+}
+
+func (s *AppsSuite) TestBuyingANumberPointsTheCallHookOfTheAppItIsBoughtIn() {
+	s.ownApp()
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Require().NoError(err)
+	hooks := s.own.EventHooks("test")
+	s.Require().Len(hooks, 1)
+	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
+	s.Empty(s.deployment.EventHooks("test"))
+}
+
+func (s *AppsSuite) TestABuyWhoseHookCannotBePointedIsNotPaidFor() {
+	s.ownApp()
+	s.service = s.serviceAt("ftp://router.example")
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Error(err)
+	s.Zero(s.vendor.ordered, "the vendor is not paid for a number whose calls would never arrive")
+}
+
+func (s *AppsSuite) TestWithoutAPublicURLABuyPointsNoHook() {
+	s.service = s.serviceAt("")
+
+	_, err := s.service.Buy(s.ctx, s.purchase())
+
+	s.Require().NoError(err)
+	s.Empty(s.deployment.EventHooks("test"))
+}
+
+func (s *AppsSuite) TestAttachingANumberPointsTheCallHookOfTheAppItIsAttachedIn() {
+	s.ownApp()
+
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	hooks := s.own.EventHooks("test")
+	s.Require().Len(hooks, 1)
+	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
+}
+
+func (s *AppsSuite) TestAttachingAnAttachedNumberAgainRepairsARemovedHook() {
+	s.ownApp()
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.own.SetEventHooks("test")
+
+	_, err = s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	hooks := s.own.EventHooks("test")
+	s.Require().Len(hooks, 1)
+	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
+}
+
+func (s *AppsSuite) TestAnAttachWhoseHookCannotBePointedLeavesTheNumberDetached() {
+	s.ownApp()
+	s.service = s.serviceAt("ftp://router.example")
+
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Error(err)
+	held := s.number()
+	s.Nil(held.AttachedAt)
+	s.Empty(held.StreamTrunkID)
+}
+
+func (s *AppsSuite) TestAnAttachedNumberAttachedAgainStillAnswersWhenItsHookCannotBePointed() {
+	s.ownApp()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.service = s.serviceAt("ftp://router.example")
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
 }
 
 func (s *AppsSuite) TestANumberInAnotherFormIsNotBought() {
@@ -1906,7 +1997,7 @@ func (s *AppsSuite) TestAttachingANumberOnASharedTrunkAgainChangesNothing() {
 	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
 	s.vendor.inbound = Inbound{}
-	made := len(s.deployment.Requests("test"))
+	made := s.deploymentWrites()
 	s.Require().NotZero(made)
 
 	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
@@ -1914,9 +2005,19 @@ func (s *AppsSuite) TestAttachingANumberOnASharedTrunkAgainChangesNothing() {
 	s.Require().NoError(err)
 	s.Equal(first.TrunkID, again.TrunkID)
 	s.Equal(first.RouteID, again.RouteID)
-	s.Len(s.deployment.Requests("test"), made, "nothing is asked of Stream")
+	s.Equal(made, s.deploymentWrites(), "nothing is changed in Stream")
 	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(first.TrunkID))
 	s.Empty(s.vendor.inbound.E164, "the vendor is not told anything new")
+}
+
+func (s *AppsSuite) deploymentWrites() int {
+	var writes int
+	for _, request := range s.deployment.Requests("test") {
+		if request.Writes() {
+			writes++
+		}
+	}
+	return writes
 }
 
 // backdate moves a call's rows back in time, as a call that has been up for hours has.
