@@ -117,7 +117,7 @@ public struct ScheduledTask: Sendable, Hashable, Identifiable {
     public let upcoming: [Date]
     /// When a run last finished, or nil when none has.
     public let lastRunAt: Date?
-    /// Failed occurrences in a row. Five fail the task, a run that failed with already_called not counting.
+    /// Failed occurrences in a row. Five fail a repeat and one fails a one-shot, a run that failed with already_called not counting.
     public let consecutiveFailures: Int
     public let createdBy: CreatedBy
     /// The conversation the task follows up in. Empty until its first occurrence opens one.

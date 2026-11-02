@@ -153,7 +153,7 @@ public data class ScheduledTask(
     val upcoming: List<Instant>,
     /** When a run last finished, or null when none has. */
     val lastRunAt: Instant?,
-    /** Failed occurrences in a row. Five fail the task, a run that failed with already_called not counting. */
+    /** Failed occurrences in a row. Five fail a repeat and one fails a one-shot, a run that failed with already_called not counting. */
     val consecutiveFailures: Int,
     val createdBy: CreatedBy,
     /** The conversation the task follows up in. Empty until its first occurrence opens one. */
