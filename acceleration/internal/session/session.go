@@ -1137,6 +1137,10 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 // move waits for the session's other SetSettings or swap to finish, or for ctx to end, which
 // it returns with nothing changed. The returned func lets the next one go.
 func (s *Session) move(ctx context.Context) (func(), error) {
+	// A call whose caller has given up never takes a free slot: select would pick at random.
+	if err := ctx.Err(); err != nil {
+		return nil, stack.Wrap(err)
+	}
 	select {
 	case s.moving <- struct{}{}:
 		return func() { <-s.moving }, nil

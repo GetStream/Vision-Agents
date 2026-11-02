@@ -222,6 +222,21 @@ func (s *SessionSuite) TestASettingsChangeWaitingForAVoiceStopEndsWithItsCaller(
 	s.Nil(created.Spec().ModelOverwrites.Temperature, "the change its caller gave up on was not made")
 }
 
+// A settings change whose caller has already given up is refused every time, on an idle
+// session too, rather than applied or refused at random.
+func (s *SessionSuite) TestASettingsChangeWithAnEndedCallerIsRefused() {
+	s.manages()
+	created := s.joins(Spec{})
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+	temperature := 0.3
+	for i := 0; i < 200; i++ {
+		err := created.SetSettings(ctx, Settings{Temperature: &temperature})
+		s.Require().ErrorIs(err, context.Canceled, "call %d", i)
+	}
+	s.Nil(created.Spec().ModelOverwrites.Temperature, "a change its caller gave up on was made")
+}
+
 // A voice stop waiting for a settings change gives up when its caller does: it returns the
 // caller's error and voice stays on.
 func (s *SessionSuite) TestAVoiceStopWaitingForASettingsChangeEndsWithItsCaller() {
