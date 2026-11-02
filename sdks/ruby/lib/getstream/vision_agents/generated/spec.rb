@@ -2262,11 +2262,11 @@ module GetStream
           required: %w[text].freeze, open: false
         }.freeze,
         "GuestUser" => {
-          properties: %w[custom expires_at id name token].freeze,
+          properties: %w[custom expires_at id name refresh_secret token].freeze,
           required: %w[id token].freeze, open: false
         }.freeze,
         "GuestUserRequest" => {
-          properties: %w[custom id name].freeze,
+          properties: %w[custom id name refresh_secret].freeze,
           required: [].freeze, open: false
         }.freeze,
         "HealthStatus" => {

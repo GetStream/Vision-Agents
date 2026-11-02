@@ -5447,6 +5447,9 @@ pub struct GuestUser {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
     ///A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     pub token: ::std::string::String,
 }
@@ -5455,12 +5458,15 @@ pub struct GuestUser {
 pub struct GuestUserRequest {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+    ///A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub id: ::std::option::Option<::std::string::String>,
-    ///What to call them, for a transcript a person reads later.
+    ///What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
