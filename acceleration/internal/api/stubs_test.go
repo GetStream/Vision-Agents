@@ -974,6 +974,9 @@ func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dro
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.down {
+		return knowledge.Dropped{}, fmt.Errorf("turbopuffer: delete %s: 503 Service Unavailable", namespace)
+	}
 	_, existed := b.passages[namespace]
 	delete(b.passages, namespace)
 	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil
