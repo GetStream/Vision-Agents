@@ -3,6 +3,7 @@ package redisready
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -303,4 +304,61 @@ func (s *RedisSuite) pingKeys(client rueidis.Client) {
 		key := "redisready-test:" + strconv.Itoa(i)
 		s.Require().NoError(client.Do(context.Background(), client.B().Exists().Key(key).Build()).Error())
 	}
+}
+
+func (s *RedisSuite) TestABuildThatFailsIsBuiltAgainUntilItSucceeds() {
+	address := s.peer(time.Now(), "+PONG\r\n")
+	builds := 0
+
+	built, err := Retry(address, func() (string, error) {
+		builds++
+		if builds < 3 {
+			return "", errors.New("context deadline exceeded")
+		}
+		return "node", nil
+	})
+
+	s.Require().NoError(err)
+	s.Equal("node", built)
+	s.Equal(3, builds)
+}
+
+func (s *RedisSuite) TestABuildThatNeverSucceedsIsAnErrorAtTheDeadline() {
+	original := ready
+	ready = 1200 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	address := s.peer(time.Now(), "+PONG\r\n")
+	failed := errors.New("context deadline exceeded")
+
+	start := time.Now()
+	built, err := Retry(address, func() (*int, error) { return new(int), failed })
+
+	s.Nil(built, "what a failed build returned was handed on")
+	s.Require().ErrorIs(err, failed)
+	s.Contains(err.Error(), address)
+	s.GreaterOrEqual(time.Since(start), ready, "the build was given up on before the deadline")
+	s.Less(time.Since(start), 5*time.Second, "the builds ran past their deadline")
+}
+
+func (s *RedisSuite) TestNothingIsBuiltWhereNoRedisAnswered() {
+	original := ready
+	ready = 300 * time.Millisecond
+	s.T().Cleanup(func() { ready = original })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	address := listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	first := Ready(address)
+	s.Require().Error(first)
+	builds := 0
+
+	start := time.Now()
+	_, err = Retry(address, func() (int, error) {
+		builds++
+		return 1, nil
+	})
+
+	s.Equal(first, err)
+	s.Zero(builds, "a build was tried against a Redis that never answered")
+	s.Less(time.Since(start), 100*time.Millisecond, "Retry waited out the deadline again")
 }
