@@ -33,7 +33,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
@@ -1149,22 +1148,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
-	// A campaign is a phone call, a conversation and a row, so it runs only where all
-	// three are configured. Elsewhere the campaign paths say so.
-	var campaigns *campaign.Runner
-	if pgStore != nil && telephony != nil && sessions != nil {
-		campaigns, err = campaign.New(campaign.Options{
-			Store:    pgStore,
-			Phone:    telephony,
-			Sessions: sessions,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		defer campaigns.Close()
-	}
-
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
 	// path that runs it says why it cannot.
@@ -1370,7 +1353,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TelnyxPublicKey:       telnyxPublicKey,
 		ChatInboundKeys:       chatInboundKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
-		Campaigns:             campaigns,
 		Simulations:           simulations,
 		DLC:                   registrations,
 		Gate:                  dlcGate,

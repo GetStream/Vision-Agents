@@ -512,3 +512,13 @@ func (s *StoreSuite) TestARunningCampaignAcceptsAnUnchangedLockedFieldButNotACha
 }
 
 func ref[T any](value T) *T { return &value }
+
+func (s *StoreSuite) TestALaunchByARequestWithNoUsageCategoriesIsStored() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+
+	launched, err := s.store.LaunchCampaign(s.ctx, campaign.CustomerID, campaign.ID, Launch{StartAt: s.base, Now: s.base, APIKey: "key"})
+
+	s.Require().NoError(err)
+	s.Equal(Running, launched.State)
+	s.Empty(launched.UsageCategories)
+}

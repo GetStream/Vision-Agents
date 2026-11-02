@@ -187,21 +187,31 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 	return &addCampaignContactsResponse{Body: contactsOf(added, nil)}, nil
 }
 
-// startCampaign starts ringing. It returns once the campaign is running rather than once
-// it is over.
+// startCampaign launches a draft, or resumes a paused campaign. It returns once the
+// campaign is running rather than once it is over: the routers' dialer rings its contacts.
 func (s *Server) startCampaign(ctx context.Context, request *startCampaignRequest) (*startCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer
 	}
-	if s.store == nil || s.campaigns == nil {
+	if s.store == nil || s.phone == nil {
 		return nil, errNoCampaigns
 	}
 
-	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
+	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
+	if err != nil {
 		return nil, errUnknownCampaign
 	}
-	err := s.campaigns.Start(ctx, customerID, request.Id)
+	if campaign.ConfigID == "" {
+		return nil, invalidRequest("a campaign needs an agent config to make its calls with")
+	}
+	if campaign.FromNumber == "" {
+		return nil, invalidRequest("a campaign needs one of your numbers to call from")
+	}
+	err = s.phone.Suspended(ctx, customerID)
+	if err == nil {
+		err = s.phone.Admit(ctx, customerID)
+	}
 	if errors.Is(err, phone.ErrSuspended) {
 		return nil, errTelephonySuspended
 	}
@@ -209,34 +219,57 @@ func (s *Server) startCampaign(ctx context.Context, request *startCampaignReques
 		return nil, answer
 	}
 	if err != nil {
+		return nil, err
+	}
+	if _, err := s.store.AgentConfig(ctx, customerID, campaign.ConfigID); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 
-	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
+	switch campaign.State {
+	case store.Draft:
+		now := time.Now().UTC()
+		_, err = s.store.LaunchCampaign(ctx, customerID, campaign.ID, store.Launch{
+			StartAt: now, Now: now, APIKey: campaign.APIKey, UserID: campaign.UserID, UsageCategories: campaign.UsageCategories,
+		})
+	case store.Paused:
+		err = s.store.ResumeCampaign(ctx, customerID, campaign.ID)
+	case store.Running, store.Scheduled:
+		// Starting one already started is what a caller who lost track of it meant.
+	default:
+		err = store.ErrCampaignLocked
+	}
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+
+	campaign, err = s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, err
 	}
 	return &startCampaignResponse{Body: campaignOf(campaign)}, nil
 }
 
-// pauseCampaign stops ringing anybody new.
+// pauseCampaign stops ringing anybody new. The calls already happening are left to finish.
 func (s *Server) pauseCampaign(ctx context.Context, request *pauseCampaignRequest) (*pauseCampaignResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer
 	}
-	if s.store == nil || s.campaigns == nil {
+	if s.store == nil || s.phone == nil {
 		return nil, errNoCampaigns
 	}
 
-	if _, err := s.store.Campaign(ctx, customerID, request.Id); err != nil {
+	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
+	if err != nil {
 		return nil, errUnknownCampaign
 	}
-	if err := s.campaigns.Pause(ctx, customerID, request.Id); err != nil {
-		return nil, invalidRequest(err.Error())
+	if campaign.State != store.Paused {
+		if err := s.store.PauseCampaign(ctx, customerID, request.Id, ""); err != nil {
+			return nil, invalidRequest(err.Error())
+		}
 	}
 
-	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
+	campaign, err = s.store.Campaign(ctx, customerID, request.Id)
 	if err != nil {
 		return nil, err
 	}

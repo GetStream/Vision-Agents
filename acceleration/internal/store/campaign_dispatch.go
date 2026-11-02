@@ -396,6 +396,42 @@ RETURNING ca.*`, classifyPending, now, AwaitingOutcome, now, limit, now.Add(leas
 	return claimed, nil
 }
 
+// PutOffClassification gives back an answered dial whose transcript is not written yet, to be
+// read again at at, and releases owner's lease on its contact so whichever runner is free then
+// reads it.
+func (s *Store) PutOffClassification(ctx context.Context, owner, attemptID string, at time.Time) error {
+	if owner == "" || attemptID == "" {
+		return stack.Wrap(errors.New("store: an owner and a dial id are required"))
+	}
+	var released int64
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET leased_by = '', leased_until = NULL
+FROM campaign_attempts ca
+WHERE ca.id = ? AND ca.classify_state = ? AND cc.id = ca.contact_id AND cc.stage = ? AND cc.leased_by = ?`,
+			attemptID, classifyPending, AwaitingOutcome, owner)
+		if err != nil {
+			return fmt.Errorf("store: release a contact to classify later: %w", err)
+		}
+		if released, err = result.RowsAffected(); err != nil || released == 0 {
+			return err
+		}
+		if _, err := tx.NewUpdate().Model((*CampaignAttempt)(nil)).
+			Set("classify_after = ?", at).
+			Where("id = ?", attemptID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("store: put off a classification: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if released == 0 {
+		return stack.Wrap(ErrNotLeaseHolder)
+	}
+	return nil
+}
+
 // Classified records an answered dial's outcome. A dial deleted with its campaign, or no longer
 // pending because another runner read it or its contact settled, is nothing to record.
 func (s *Store) Classified(ctx context.Context, attemptID, outcome string, converted bool) error {

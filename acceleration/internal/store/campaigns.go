@@ -319,6 +319,11 @@ func (s *Store) LaunchCampaign(ctx context.Context, customerID, id string, launc
 	if launch.StartAt.After(launch.Now) {
 		state = Scheduled
 	}
+	// The column holds an empty list, never NULL, for a request that named no categories.
+	categories := launch.UsageCategories
+	if categories == nil {
+		categories = []string{}
+	}
 
 	var launched Campaign
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -329,7 +334,7 @@ func (s *Store) LaunchCampaign(ctx context.Context, customerID, id string, launc
 			Set("consent_at = ?", launch.Now).
 			Set("api_key = ?", launch.APIKey).
 			Set("user_id = ?", launch.UserID).
-			Set("usage_categories = ?", pgdialect.Array(launch.UsageCategories)).
+			Set("usage_categories = ?", pgdialect.Array(categories)).
 			Where("id = ?", id).
 			Where("customer_id = ?", customerID).
 			Where("state = ?", Draft)

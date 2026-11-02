@@ -527,3 +527,40 @@ func (s *StoreSuite) TestALateClassificationChangesNothing() {
 	s.Equal("abandoned", byID[older.ID].ClassifyState)
 	s.Empty(byID[older.ID].Outcome)
 }
+
+func (s *StoreSuite) TestAClassificationPutOffIsReadAgainAtItsTimeByAnyRunner() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	read, err := s.store.ClaimClassifications(s.ctx, "a", s.base, 20*time.Minute, 10)
+	s.Require().NoError(err)
+	s.Require().Len(read, 1)
+
+	s.Require().NoError(s.store.PutOffClassification(s.ctx, "a", attempt.ID, s.base.Add(30*time.Second)))
+
+	early, err := s.store.ClaimClassifications(s.ctx, "b", s.base.Add(29*time.Second), 20*time.Minute, 10)
+	s.Require().NoError(err)
+	s.Empty(early)
+	again, err := s.store.ClaimClassifications(s.ctx, "b", s.base.Add(30*time.Second), 20*time.Minute, 10)
+	s.Require().NoError(err)
+	s.Require().Len(again, 1, "not held off for the rest of the first read's lease")
+	s.Equal(2, again[0].Attempt.ClassifyTries)
+	s.Equal("b", again[0].Contact.LeasedBy)
+	s.Equal(AwaitingOutcome, again[0].Contact.Stage)
+}
+
+func (s *StoreSuite) TestOnlyTheRunnerReadingAClassificationPutsItOff() {
+	campaign := s.runningCampaign(1, "+15550001")
+	claimed := s.claimDue("a", s.base, 10)[0]
+	attempt := s.answered("a", campaign, claimed.Contact, s.base, s.base)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	_, err := s.store.ClaimClassifications(s.ctx, "a", s.base, 20*time.Minute, 10)
+	s.Require().NoError(err)
+
+	s.ErrorIs(s.store.PutOffClassification(s.ctx, "b", attempt.ID, s.base.Add(30*time.Second)), ErrNotLeaseHolder)
+
+	early, err := s.store.ClaimClassifications(s.ctx, "b", s.base.Add(time.Minute), 20*time.Minute, 10)
+	s.Require().NoError(err)
+	s.Empty(early, "a still reads it")
+}
