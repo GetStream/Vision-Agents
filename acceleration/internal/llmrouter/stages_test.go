@@ -36,6 +36,11 @@ const answer = "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"conte
 // done ends an OpenAI-compatible stream.
 const done = "data: [DONE]\n\n"
 
+// answering is how long a provider takes to answer a request. The transport stamps the request
+// written on its own goroutine, which can run after an answer that came back at once was read:
+// such a request has no wait.
+const answering = 20 * time.Millisecond
+
 // provider is a TLS provider that waits beforeHeaders before its headers, beforeToken before it
 // streams body and afterToken before it ends the stream, each cut short when the request is
 // cancelled.
@@ -179,7 +184,7 @@ func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
 
 func (s *StagesSuite) TestAReusedConnectionIsCountedButHasNoConnectStage() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, 0, answer), config)
+	session := s.session(s.provider(answering, 0, 0, answer), config)
 
 	s.ask(s.T().Context(), session)
 	s.ask(s.T().Context(), session)
@@ -196,7 +201,7 @@ func (s *StagesSuite) TestACustomModelIsObservedUnderCustom() {
 	config := s.config()
 	config.Provider = routing.CustomProvider
 	before, _ := s.stage(config, routing.CustomProvider, routing.StageWait)
-	session := s.session(s.provider(0, 0, 0, answer), config)
+	session := s.session(s.provider(answering, 0, 0, answer), config)
 
 	s.ask(s.T().Context(), session)
 
@@ -226,6 +231,7 @@ func (s *StagesSuite) TestARequestCancelledBeforeItsHeadersHasNoWaitOrStream() {
 func (s *StagesSuite) TestARequestRefusedAfterItsHeadersHasAWaitButNoStream() {
 	config := s.config()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(answering)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, `{"error":{"message":"no","type":"invalid_request_error"}}`)
@@ -323,7 +329,7 @@ func (s *StagesSuite) TestAnAnswerReadAfterTheAttemptWasCancelledHasNoWait() {
 
 func (s *StagesSuite) TestAnAnswerThatNeverSaidAnythingHasNoStream() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, 0, ""), config)
+	session := s.session(s.provider(answering, 0, 0, ""), config)
 
 	s.ask(s.T().Context(), session)
 
@@ -358,7 +364,7 @@ func (s *StagesSuite) TestAProviderThatMakesNoHTTPRequestHasOnlyTheRoutersStage(
 
 func (s *StagesSuite) TestATraceTheCallerSetStillRuns() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, 0, answer), config)
+	session := s.session(s.provider(answering, 0, 0, answer), config)
 	var heard atomic.Bool
 	ctx := httptrace.WithClientTrace(s.T().Context(), &httptrace.ClientTrace{
 		GotFirstResponseByte: func() { heard.Store(true) },
@@ -373,7 +379,7 @@ func (s *StagesSuite) TestATraceTheCallerSetStillRuns() {
 
 func (s *StagesSuite) TestEachHedgedAttemptRecordsItsOwnStages() {
 	stalled := s.provider(time.Minute, 0, 0, answer)
-	quick := s.provider(0, 0, 0, answer)
+	quick := s.provider(answering, 0, 0, answer)
 	original, hedge := s.config(), s.config()
 	registry := NewRegistry()
 	for _, candidate := range []struct {
