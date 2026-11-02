@@ -315,7 +315,8 @@ func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Ad
 
 // Quota returns what one of a customer's end users may spend in a day, each number the first
 // set of the user's own policy, the app's, the organization's and defaults. A limit of zero
-// is no cap. A policy that could not be read leaves the level below it in place.
+// is no cap. A policy that could not be read leaves the level below it in place; a user's own
+// is then marked Unread, so a debit still counts what they spend.
 //
 // The app's and the organization's numbers come from the app's decision in memory. Whether
 // any of the app's users has a policy of their own is read through appconfig, not the
@@ -345,6 +346,7 @@ func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, default
 			e.logger.Error("could not read a user's own quota, holding them to their app's",
 				"customer", customerID, "error", err)
 		}
+		held.Unread = true
 		return held
 	}
 	return layered(held, own.Quota, quota.Setter{Level: quota.LevelUser, ID: userID})

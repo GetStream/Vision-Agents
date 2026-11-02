@@ -3,12 +3,14 @@
 package quota
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -627,4 +629,81 @@ type sourceFunc func(ctx context.Context, customerID, userID string, defaults Li
 
 func (f sourceFunc) Quota(ctx context.Context, customerID, userID string, defaults Limits) Quota {
 	return f(ctx, customerID, userID, defaults)
+}
+
+// unreadSource is a Source whose user's own quota could not be read: it knows the limits it
+// is given and marks the answer Unread.
+func unreadSource(known Quota) sourceFunc {
+	return func(_ context.Context, _, _ string, _ Limits) Quota {
+		known.Unread = true
+		return known
+	}
+}
+
+func (s *QuotaSuite) TestADebitIsCountedInTheCustomersBucketWhenTheUsersOwnQuotaCouldNotBeRead() {
+	// Only the user's own policy sets a limit, and reading it failed: the app's quota is all
+	// that is known, and it is none. What the user spent still reaches the customer's bucket.
+	appLimit := Quota{Messages: Limit{PerDay: 2, By: Setter{Level: LevelApp, ID: s.customer}}}
+	cases := []struct {
+		name       string
+		known      Quota
+		caller     routing.Caller
+		wantWarned int
+	}{
+		{name: "a device caller, nothing else known", caller: s.caller, wantWarned: 1},
+		{name: "a customer's backend, nothing else known", caller: routing.Caller{UserID: s.caller.UserID, ServerSide: true}, wantWarned: 1},
+		{name: "the deployment's limit alone is known", known: Quota{Tokens: Limit{PerDay: 100}}, caller: s.caller, wantWarned: 1},
+		{name: "the app's limit is known, so no bucket was skipped", known: appLimit, caller: s.caller},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			customer := s.customer + "-" + strings.ReplaceAll(tc.name, " ", "-")
+			var logs bytes.Buffer
+			limiter, err := New(s.redis, Limits{}, unreadSource(tc.known), slog.New(slog.NewTextHandler(&logs, nil)))
+			s.Require().NoError(err)
+
+			limiter.Debit(s.ctx, customer, tc.caller, 10)
+
+			spent, err := limiter.spent(s.ctx, customerKey(customer, tc.caller.UserID, time.Now()))
+			s.Require().NoError(err)
+			s.Equal(spend{messages: 1, tokens: 10}, spent[0])
+			s.Equal(tc.wantWarned, strings.Count(logs.String(), "level=WARN"), logs.String())
+		})
+	}
+}
+
+func (s *QuotaSuite) TestADebitStillCountsADeviceCallersAddressWhenTheUsersOwnQuotaCouldNotBeRead() {
+	limiter := s.limiterWith(Limits{}, unreadSource(Quota{}))
+
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	spent, err := limiter.spent(s.ctx, deviceKeys(s.customer, s.caller, time.Now())...)
+	s.Require().NoError(err)
+	s.Equal([]spend{{messages: 1, tokens: 10}, {messages: 1, tokens: 10}}, spent)
+}
+
+func (s *QuotaSuite) TestADebitCountsNothingForAUserHeldToNoLimitWhoseQuotaWasRead() {
+	// The control: a quota that was read and sets nothing is not counted, as before.
+	var logs bytes.Buffer
+	limiter, err := New(s.redis, Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota { return Quota{} }),
+		slog.New(slog.NewTextHandler(&logs, nil)))
+	s.Require().NoError(err)
+
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	keys := append(deviceKeys(s.customer, s.caller, time.Now()), customerKey(s.customer, s.caller.UserID, time.Now()))
+	for _, key := range keys {
+		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
+		s.Require().NoError(err)
+		s.Zero(exists, key)
+	}
+	s.Empty(logs.String())
+}
+
+func (s *QuotaSuite) TestARequestWhoseUsersOwnQuotaCouldNotBeReadIsStillAllowed() {
+	// Admission stays open on an unread policy; only the debit changed.
+	limiter := s.limiterWith(Limits{}, unreadSource(Quota{}))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	s.NoError(s.allow(limiter, s.customer, s.caller))
 }

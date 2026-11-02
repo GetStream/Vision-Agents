@@ -111,6 +111,10 @@ type Limit struct {
 type Quota struct {
 	Messages Limit
 	Tokens   Limit
+	// Unread is set when the user's own quota could not be read, so a limit it sets is not in
+	// Messages and Tokens. A debit counts what the user spent all the same, which that limit
+	// reads once it can be read again.
+	Unread bool
 }
 
 // Default is the deployment's limits, which a customer that decided nothing is held to.
@@ -267,7 +271,8 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 //
 // It reports nothing, because it is called once a response has already been generated and
 // there is no longer a decision left for the answer to inform. A debit that does not land
-// is logged and the caller keeps the tokens.
+// is logged and the caller keeps the tokens. A user whose own quota could not be read is
+// counted as one held to a limit of the customer's, since that is where the limit would count.
 //
 // It waits for the write at most writeTimeout, counted from the call, and leaves a write
 // still going then to finish on its own. A write held to that deadline would never be sent
@@ -283,12 +288,17 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	defer cancel()
 	now := time.Now()
 	held := l.quota(ctx, customerID, named(caller))
-	if !held.Enforced() {
+	if !held.Enforced() && !held.Unread {
 		return
 	}
 	var keys []string
-	if key := customerKey(customerID, named(caller), now); key != "" && len(held.enforced(true)) > 0 {
+	customer := len(held.enforced(true)) > 0
+	if key := customerKey(customerID, named(caller), now); key != "" && (customer || held.Unread) {
 		keys = append(keys, key)
+	}
+	if held.Unread && !customer {
+		l.logger.Warn("could not read a user's own quota, counting what they spent anyway",
+			"customer", customerID)
 	}
 	if !caller.ServerSide {
 		keys = append(keys, deviceKeys(customerID, caller, now)...)
