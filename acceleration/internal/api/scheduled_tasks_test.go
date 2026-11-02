@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
@@ -212,9 +213,12 @@ func (m *schedulingModel) Create(ctx context.Context, params llm.ResponseParams)
 	// answer starts runs what the test queued for a later round, and is
 	// otherwise simply agreed with, and so is a call offering no tools, such
 	// as the summary of a thread's episode.
+	// What was said ends the conversation; the harness's notes come after it. A request told
+	// to call no tool calls none, as a provider holds it to.
 	var calls []llm.ToolCall
-	if len(params.Tools) > 0 && len(params.Input) > 0 {
-		switch params.Input[len(params.Input)-1].Role {
+	said := harness.WithoutNotes(params.Input)
+	if len(params.Tools) > 0 && params.ToolChoice != "none" && len(said) > 0 {
+		switch said[len(said)-1].Role {
 		case llm.User:
 			calls = m.script.next()
 		case llm.ToolResult:
@@ -320,10 +324,11 @@ func (m *schedulingModel) turnsOn(needle string) int {
 // startedBy is what somebody said to start the turn params asks for, or
 // nothing for a turn a tool's answer started.
 func startedBy(params llm.ResponseParams) string {
-	if len(params.Input) == 0 {
+	conversation := harness.WithoutNotes(params.Input)
+	if len(conversation) == 0 {
 		return ""
 	}
-	last := params.Input[len(params.Input)-1]
+	last := conversation[len(conversation)-1]
 	if last.Role != llm.User {
 		return ""
 	}
@@ -334,14 +339,27 @@ func startedBy(params llm.ResponseParams) string {
 	return said
 }
 
-// instructions is what the model was last told to be.
+// instructions is what the model was last told, besides the conversation: what it is to be,
+// and the harness's notes, which is where what moves on during a call, such as the day, is
+// told.
 func (m *schedulingModel) instructions() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.asked) == 0 {
 		return ""
 	}
-	return m.asked[len(m.asked)-1].Instructions
+	return toldModel(m.asked[len(m.asked)-1])
+}
+
+// toldModel is a request's instructions and every harness note in what it was sent.
+func toldModel(params llm.ResponseParams) string {
+	told := []string{params.Instructions}
+	for _, message := range params.Input {
+		if harness.IsNote(message) {
+			told = append(told, message.Content)
+		}
+	}
+	return strings.Join(told, "\n\n")
 }
 
 // ScheduledTasksSuite covers scheduled tasks end to end: the tools the agent

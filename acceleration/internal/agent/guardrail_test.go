@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -234,7 +235,7 @@ func (s *AgentSuite) TestARefusalCanBeAskedAbout() {
 		"the second turn never went out")
 
 	var spoken []string
-	for _, message := range s.model.requests()[1].Input {
+	for _, message := range harness.WithoutNotes(s.model.requests()[1].Input) {
 		spoken = append(spoken, message.Content)
 	}
 	s.Contains(spoken, theRefusal)

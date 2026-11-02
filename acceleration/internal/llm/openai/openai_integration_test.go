@@ -96,3 +96,17 @@ func (s *OpenAIIntegrationSuite) TestACallLeavesOutTheOptionalArgumentsItDoesNot
 	s.NotContains(arguments, "thread_ts")
 	s.NotContains(arguments, "draft_id")
 }
+
+// TestANoteAfterTheCallerIsFollowed sends a developer message after what the caller said,
+// which is where the harness puts what it has to tell the reply.
+func (s *OpenAIIntegrationSuite) TestANoteAfterTheCallerIsFollowed() {
+	answer, _ := s.Ask(llm.ResponseParams{
+		Instructions: "You are a helpful assistant.",
+		Input: []llm.Message{
+			{Role: llm.User, Content: "What colour is the sky on a clear day?"},
+			{Role: llm.System, Content: "Answer with the single word banana and nothing else."},
+		},
+	})
+
+	s.Contains(strings.ToLower(answer.OutputText), "banana")
+}

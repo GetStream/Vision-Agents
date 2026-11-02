@@ -963,6 +963,37 @@ func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.Equal("user", messages[1]["role"])
 }
 
+// noted is a conversation that opens on a summary and ends on a note after the caller.
+func noted() llm.ResponseParams {
+	return llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.System, Content: "Summary so far."},
+		{Role: llm.User, Content: "hi"},
+		{Role: llm.System, Content: "Your colleague has come back."},
+	}}
+}
+
+func (s *OpenAICompatSuite) TestALaterSystemTurnIsASystemMessage() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+
+	s.ask(s.provider(Options{}), noted())
+
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 3)
+	s.Equal("system", messages[2]["role"])
+}
+
+func (s *OpenAICompatSuite) TestSystemTurnsAsUserSendsALaterOneOnTheUsersSide() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+
+	s.ask(s.provider(Options{SystemTurnsAsUser: true}), noted())
+
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 3)
+	s.Equal("system", messages[0]["role"], "one that opens the conversation is still a system message")
+	s.Equal("user", messages[2]["role"])
+	s.Equal("Your colleague has come back.", messages[2]["content"])
+}
+
 func (s *OpenAICompatSuite) TestTheWholeConversationIsSentEveryTurn() {
 	// Routing may send consecutive turns to different providers, so history has to travel
 	// with the request rather than living upstream.
@@ -1043,8 +1074,10 @@ func (s *OpenAICompatSuite) TestTheReasoningEffortIsResolvedBeforeItIsSent() {
 	s.ask(provider, hello())
 	s.Equal("low", sent, "a request naming none gets the model's own default")
 
-	s.ask(provider, llm.ResponseParams{Input: hello().Input,
-		Reasoning: llm.ReasoningParams{Effort: "high"}})
+	s.ask(provider, llm.ResponseParams{
+		Input:     hello().Input,
+		Reasoning: llm.ReasoningParams{Effort: "high"},
+	})
 	s.Equal("high", sent)
 }
 

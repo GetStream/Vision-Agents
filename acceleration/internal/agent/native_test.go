@@ -249,7 +249,7 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.nativeFrame(peer, "response.create")
 	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
 	request := s.subagent.requests()[0]
-	s.Equal("My booking is for six people", request.Input[0].Content)
+	s.Equal("My booking is for six people", harness.WithoutNotes(request.Input)[0].Content)
 	s.True(s.agent.delegating())
 
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"chat"}}`)

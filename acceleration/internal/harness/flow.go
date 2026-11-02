@@ -345,7 +345,9 @@ func (f *flow) dropWaitingLocked() {
 func flowQuestion(turn FlowTurn) string {
 	var asked strings.Builder
 	asked.WriteString("Conversation so far:\n")
-	history := turn.History
+	// The harness's notes and the data ahead of them are not the conversation the controller
+	// rules on, and quoted here they would read as the caller's.
+	history := WithoutNotes(turn.History)
 	if len(history) > flowHistory {
 		history = history[len(history)-flowHistory:]
 	}
@@ -530,8 +532,10 @@ func (f *flow) yieldExpiredOverlap(asked *candidate) bool {
 	if !asked.turn.Unfinished || !asked.turn.Speaking || !errors.Is(asked.ctx.Err(), context.DeadlineExceeded) {
 		return false
 	}
-	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop,
-		TookMs: millis(time.Since(asked.askedAt)), Ruler: Deadline})
+	f.emitter.Send(Decided{
+		CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop,
+		TookMs: millis(time.Since(asked.askedAt)), Ruler: Deadline,
+	})
 	return true
 }
 

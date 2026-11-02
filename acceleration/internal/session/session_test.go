@@ -2070,7 +2070,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 // handed is what a model request handed the model, one "role: content" line per message.
 func handed(request llm.ResponseParams) []string {
 	lines := make([]string, 0, len(request.Input))
-	for _, message := range request.Input {
+	for _, message := range harness.WithoutNotes(request.Input) {
 		lines = append(lines, string(message.Role)+": "+message.Content)
 	}
 	return lines
@@ -2101,8 +2101,10 @@ func awaitReply(events <-chan Event) string {
 // events. Every connector hook is a no-op without a binding (AI-851).
 func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
-	server.AddTool(&mcpsdk.Tool{Name: "search", Description: "Finds a note.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+	server.AddTool(&mcpsdk.Tool{
+		Name: "search", Description: "Finds a note.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
 		})

@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -212,12 +213,15 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	if !first && s.then != "" {
 		reply = s.then
 	}
+	// Echoing is what the model was told: its instructions and the harness's notes, which is
+	// where what moves on during a call, such as the day, is told. Reciting is the conversation
+	// it was handed, without them.
 	if s.echoes {
-		reply = params.Instructions
+		reply = toldModel(params)
 	}
 	if s.recites {
 		handed := make([]string, 0, len(params.Input))
-		for _, message := range params.Input {
+		for _, message := range harness.WithoutNotes(params.Input) {
 			handed = append(handed, string(message.Role)+": "+message.Content)
 		}
 		reply = strings.Join(handed, "\n")

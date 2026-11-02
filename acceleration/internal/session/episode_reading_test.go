@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -191,7 +192,9 @@ func (s *EpisodeReadingSuite) replyTo(text string) llm.ResponseParams {
 		s.model.mu.Lock()
 		defer s.model.mu.Unlock()
 		for _, params := range s.model.asked {
-			if n := len(params.Input); n > 0 && params.Input[n-1].Role == llm.User && params.Input[n-1].Content == text {
+			// What the caller said is the last of the conversation; the harness's notes follow it.
+			said := harness.WithoutNotes(params.Input)
+			if n := len(said); n > 0 && said[n-1].Role == llm.User && said[n-1].Content == text {
 				found = params
 				return true
 			}
