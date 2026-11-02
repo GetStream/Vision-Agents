@@ -26,6 +26,8 @@ type MessageHooksSuite struct {
 	channelID string
 	// logged is what the router logged, at debug and up.
 	logged *lockedLog
+	// worker is what the customer's worker is handed, once a test connected one (handedOut).
+	worker <-chan dispatch.Message
 }
 
 func TestMessageHooksSuite(t *testing.T) {
