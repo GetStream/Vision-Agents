@@ -261,6 +261,29 @@ func (s *ScheduledTasksSuite) TestAPeerHandedOtherWordsSaysTheRunsPrompt() {
 	s.False(s.model().heard(forged), "the agent was told the payload's words")
 }
 
+// Each occurrence follows up under its own run's command id: under an earlier occurrence's,
+// the session would take it for that follow-up again and the agent would never hear it.
+func (s *ScheduledTasksSuite) TestAPeerHandedAnEarlierRunsCommandFollowsUpUnderItsOwn() {
+	other, _ := s.otherRouter(nil)
+	var handed map[string]any
+	first, answer, err := s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		handed = payload
+	})
+	s.delivers(first, answer, err)
+	now := time.Now()
+	next := store.ScheduledTaskRun{
+		TaskID: handed["task_id"].(string), CustomerID: s.customerID(), ScheduledFor: now,
+		Trigger: store.ScheduledTaskTriggerManual, Prompt: "peer-delivery-" + s.utils.uuid(),
+		State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &next))
+	handed["run_id"] = next.ID
+
+	answer, err = s.handOff(other, s.suiteCredential(), handed)
+
+	s.delivers(next.Prompt, answer, err)
+}
+
 // A run is the task's to deliver only while it runs: a finished one was carried out already.
 func (s *ScheduledTasksSuite) TestAPeerNamingAFinishedRunOfTheTaskIsRefused() {
 	other, _ := s.otherRouter(nil)
