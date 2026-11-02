@@ -113,6 +113,37 @@ func (s *RecordFlushSuite) TestFlushesWaitingTogetherDoNotWaitForRowsQueuedAfter
 	}
 }
 
+func (s *RecordFlushSuite) TestAFlushIsNotHeldByALaterFlushWaitingOnARowQueuedAfterIt() {
+	releaseFirst := s.holdWriter()
+	second, releaseSecond := s.heldRow()
+	s.records.Opened(second, nil)
+	first := make(chan error, 1)
+	var started sync.WaitGroup
+	started.Add(1)
+	go func() {
+		started.Done()
+		first <- s.records.Flush(s.bounded())
+	}()
+	started.Wait()
+	releaseFirst()
+	// The writer takes the first Flush in, then stalls on the second held row.
+	s.Require().Eventually(func() bool { return len(s.records.queue) == 0 }, settleFor, 5*time.Millisecond,
+		"the writer never took the second held row")
+	third, _ := s.heldRow()
+	s.records.Opened(third, nil)
+	go func() { _ = s.records.Flush(s.bounded()) }()
+	// Nothing shows that the later Flush has reached the writer; give it time to.
+	time.Sleep(50 * time.Millisecond)
+
+	releaseSecond()
+	select {
+	case err := <-first:
+		s.Require().NoError(err)
+	case <-time.After(recordWriteTimeout / 2):
+		s.FailNow("a Flush waited for a row queued after it, behind a later Flush")
+	}
+}
+
 func (s *RecordFlushSuite) TestFlushesWaitingForTheSameWritesShareOneEntry() {
 	var waiting flushWaiters
 	first := waiting.wait(5)
