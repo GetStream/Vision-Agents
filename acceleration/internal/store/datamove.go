@@ -776,9 +776,25 @@ func (s *Store) SkipOccurrencesBeforeCutOver(ctx context.Context, customerID str
 			if _, err := update.Exec(ctx); err != nil {
 				return fmt.Errorf("store: skip a moved task's occurrences before the cut-over: %w", err)
 			}
+			// A run of the occurrence the source had started when the last catch-up read it is
+			// settled as the run of an occurrence the task slept through here: nothing here
+			// finishes it, and a run left running reads as one a worker is on, keeps a completed
+			// task from the prune and is never pruned itself. What became of it there never
+			// reached this copy, so it is not written delivered or failed.
+			if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
+				Set("state = ?", ScheduledTaskRunMissed).
+				Set("error = ?", scheduledTaskRunPaused).
+				Set("finished_at = now()").
+				Where("customer_id = ?", task.CustomerID).
+				Where("task_id = ?", task.ID).
+				Where("scheduled_for = ?", *task.NextRunAt).
+				Where("state = ?", ScheduledTaskRunRunning).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("store: settle the source's run of a moved task's skipped occurrence: %w", err)
+			}
 			if at == nil && missed != nil {
 				missed.ID, missed.CreatedAt = newID(), time.Now().UTC()
-				// The occurrence's run, if the last catch-up brought one, stays as it is.
+				// The occurrence's run, if the last catch-up brought one, is the one on record.
 				if _, err := tx.NewInsert().Model(missed).On("CONFLICT DO NOTHING").Exec(ctx); err != nil {
 					return fmt.Errorf("store: record a moved task's missed occurrence: %w", err)
 				}
@@ -826,50 +842,23 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 			Scan(ctx); err != nil {
 			return fmt.Errorf("store: moved scheduled tasks: %w", err)
 		}
-		// The limit of each config, nil when it is deleted or missing; the active tasks of
-		// each user on each config, counting those resumed so far.
-		limits := map[string]*int{}
-		type holder struct{ user, config string }
-		held := map[holder]int{}
+		limits, held, err := moveRoom(ctx, tx, customerID, marked)
+		if err != nil {
+			return err
+		}
 		var resume, unmark []string
 		for _, task := range marked {
-			limit, read := limits[task.ConfigID]
-			if !read {
-				var config AgentConfig
-				err := tx.NewSelect().Model(&config).
-					Column("scheduling").
-					Where("customer_id = ?", customerID).
-					Where("id = ?", task.ConfigID).
-					Where("deleted_at IS NULL").
-					For("SHARE").
-					Scan(ctx)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return fmt.Errorf("store: lock the config of a moved scheduled task: %w", err)
-				}
-				if err == nil {
-					room := config.Scheduling.MaxActive()
-					limit = &room
-				}
-				limits[task.ConfigID] = limit
-			}
-			if limit == nil {
+			limit, live := limits[task.ConfigID]
+			if !live {
 				unmark = append(unmark, task.ID)
 				continue
 			}
-			key := holder{task.UserID, task.ConfigID}
-			count, counted := held[key]
-			if !counted {
-				var err error
-				if count, err = activeScheduledTasks(ctx, tx, customerID, task.UserID, task.ConfigID); err != nil {
-					return err
-				}
-			}
-			if count >= *limit {
-				held[key] = count
+			key := scheduledTaskHolder{task.UserID, task.ConfigID}
+			if held[key] >= limit {
 				overLimit++
 				continue
 			}
-			held[key] = count + 1
+			held[key]++
 			resume = append(resume, task.ID)
 		}
 		if len(resume) > 0 {
@@ -919,6 +908,60 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return 0, 0, 0, nil, stack.Wrap(err)
 	}
 	return resumed, skipped, overLimit, campaigns, nil
+}
+
+// scheduledTaskHolder is a user on an agent config, who holds at most its limit of active tasks.
+type scheduledTaskHolder struct{ user, config string }
+
+// moveRoom reads, for the tasks a cut-over is to resume, the limit of each live config they
+// are on and the active tasks each of their users holds on each, in one query each: the
+// configs stay locked until the cut-over's transaction ends, so a config edit waits for it. A
+// config deleted or missing has no limit.
+func moveRoom(ctx context.Context, tx bun.Tx, customerID string, marked []ScheduledTask) (map[string]int, map[scheduledTaskHolder]int, error) {
+	limits, held := map[string]int{}, map[scheduledTaskHolder]int{}
+	if len(marked) == 0 {
+		return limits, held, nil
+	}
+	configIDs := make([]string, 0, len(marked))
+	pairs := make([][]string, 0, len(marked))
+	for _, task := range marked {
+		configIDs = append(configIDs, task.ConfigID)
+		pairs = append(pairs, []string{task.UserID, task.ConfigID})
+	}
+
+	var configs []AgentConfig
+	if err := tx.NewSelect().Model(&configs).
+		Column("id", "scheduling").
+		Where("customer_id = ?", customerID).
+		Where("id IN (?)", bun.In(configIDs)).
+		Where("deleted_at IS NULL").
+		For("SHARE").
+		Scan(ctx); err != nil {
+		return nil, nil, fmt.Errorf("store: lock the configs of moved scheduled tasks: %w", err)
+	}
+	for _, config := range configs {
+		limits[config.ID] = config.Scheduling.MaxActive()
+	}
+
+	var counts []struct {
+		UserID   string `bun:"user_id"`
+		ConfigID string `bun:"config_id"`
+		Count    int    `bun:"count"`
+	}
+	if err := tx.NewSelect().Model((*ScheduledTask)(nil)).
+		Column("user_id", "config_id").
+		ColumnExpr("count(*) AS count").
+		Where("customer_id = ?", customerID).
+		Where("(user_id, config_id) IN (?)", bun.In(pairs)).
+		Where("state = ?", ScheduledTaskActive).
+		Group("user_id", "config_id").
+		Scan(ctx, &counts); err != nil {
+		return nil, nil, fmt.Errorf("store: count scheduled tasks: %w", err)
+	}
+	for _, count := range counts {
+		held[scheduledTaskHolder{count.UserID, count.ConfigID}] = count.Count
+	}
+	return limits, held, nil
 }
 
 // digitsKey is a number as most vendors read the one they are given, as SQL over a text

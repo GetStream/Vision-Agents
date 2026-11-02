@@ -13,11 +13,13 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -1022,6 +1024,97 @@ UPDATE scheduled_tasks SET user_id = 'kim' WHERE id = 'st-kim'`)
 	s.Require().NoError(err)
 	s.Equal(int64(3), resumed, "sam's second place on config-1, their task on the other config, and kim's")
 	s.Zero(overLimit)
+}
+
+// queriesSent records the queries a pool sends while on.
+type queriesSent struct {
+	mu      sync.Mutex
+	on      bool
+	queries []string
+}
+
+func (*queriesSent) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+
+func (q *queriesSent) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.on {
+		q.queries = append(q.queries, event.Query)
+	}
+}
+
+// matching is how many of the queries sent mention every one of words.
+func (q *queriesSent) matching(words ...string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	matched := 0
+	for _, query := range q.queries {
+		all := true
+		for _, word := range words {
+			all = all && strings.Contains(query, word)
+		}
+		if all {
+			matched++
+		}
+	}
+	return matched
+}
+
+// Each user on each config has the room their own limit leaves them, read for all of them at
+// once: one query locks the configs and one counts what every user holds on each, however
+// many users and configs the move brought.
+func (s *DataMoveSuite) TestTheCutOverReadsEveryUsersRoomOnEveryConfigInOneQueryEach() {
+	tasks := map[string][2]string{
+		"st-sam-1-a": {"sam", "config-1"}, "st-sam-1-b": {"sam", "config-1"}, "st-sam-1-c": {"sam", "config-1"},
+		"st-sam-2-a": {"sam", "config-2"}, "st-sam-2-b": {"sam", "config-2"},
+		"st-kim-1-a": {"kim", "config-1"}, "st-kim-1-b": {"kim", "config-1"},
+		"st-kim-2-a": {"kim", "config-2"},
+	}
+	// Made in id order, so each holder's "-a" task is its oldest.
+	for _, id := range slices.Sorted(maps.Keys(tasks)) {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief')")
+	s.Require().NoError(err)
+	for id, holder := range tasks {
+		_, err := s.source.DB().ExecContext(s.ctx,
+			"UPDATE scheduled_tasks SET user_id = ?, config_id = ? WHERE id = ?", holder[0], holder[1], id)
+		s.Require().NoError(err)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 1}' WHERE id = 'config-2'`)
+	s.Require().NoError(err)
+	s.madeHere("st-here-sam-1", "sam", "config-1")
+	s.madeHere("st-here-kim-2", "kim", "config-2")
+	sent := &queriesSent{on: true}
+	s.destination.DB().AddQueryHook(sent)
+
+	resumed, skipped, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	sent.mu.Lock()
+	sent.on = false
+	sent.mu.Unlock()
+	s.Require().NoError(err)
+	s.Equal(int64(4), resumed)
+	s.Zero(skipped)
+	s.Equal(int64(4), overLimit)
+	want := map[string]string{
+		// sam has one place left of 2 on config-1, and the 1 of config-2.
+		"st-sam-1-a": ScheduledTaskActive, "st-sam-1-b": ScheduledTaskPaused, "st-sam-1-c": ScheduledTaskPaused,
+		"st-sam-2-a": ScheduledTaskActive, "st-sam-2-b": ScheduledTaskPaused,
+		// kim has both places of config-1, and none of config-2.
+		"st-kim-1-a": ScheduledTaskActive, "st-kim-1-b": ScheduledTaskActive,
+		"st-kim-2-a": ScheduledTaskPaused,
+	}
+	for id, state := range want {
+		got, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(state, got, id)
+	}
+	s.Equal(1, sent.matching(`"agent_configs"`, "FOR SHARE"), "one query locks every config")
+	s.Equal(1, sent.matching(`"scheduled_tasks"`, "count("), "one query counts every user on every config")
 }
 
 func (s *DataMoveSuite) TestTheCutOverHoldsAConfigWithoutALimitToTheDefault() {

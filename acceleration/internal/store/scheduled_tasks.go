@@ -63,6 +63,10 @@ const maxScheduledTaskRunAttempts = 3
 // of the codes a device is shown, which this package cannot import.
 const scheduledTaskRunWorkersLost = "delivery_failed"
 
+// scheduledTaskRunPaused is the reason the cut-over of a move settles the source's run of an
+// occurrence it skips under: scheduling.ReasonPaused, which this package cannot import.
+const scheduledTaskRunPaused = "task_paused"
+
 // ScheduledTask is something the agent agreed to do for one end user at a
 // wall-clock time in that user's zone, once or on a repeat.
 type ScheduledTask struct {
