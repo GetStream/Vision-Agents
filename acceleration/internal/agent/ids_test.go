@@ -400,10 +400,17 @@ func TestUnsourcedTransfer(t *testing.T) {
 		"Hand off to (555) 000-1112":                       false,
 		"Hand off to +44 555 000 1111":                     false,
 		"Hand off to 555 000 1111 2222":                    false,
+		"Hand off to +44 (555) 000-1111":                   false,
+		"Hand off to +1 555 000 1111 2222":                 false,
+		"Hand off to 555 000 1111 (ext. 22)":               true,
+		"Hand off to 2. 555-000-1111":                      true,
 	} {
 		_, unsourced := unsourcedTransfer(nil, call, told)
 		assert.Equal(t, accepted, !unsourced, told)
 	}
+	german := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+13012345678"}`}
+	_, unsourced := unsourcedTransfer(nil, german, "Hand off to +49 (30) 1234 5678")
+	assert.True(t, unsourced, "a bracketed area code after another country code")
 }
 
 func TestUnsourcedTransferIgnoresANumberQuotedByAFailedTool(t *testing.T) {
