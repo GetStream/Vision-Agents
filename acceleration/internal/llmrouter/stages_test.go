@@ -30,13 +30,16 @@ type StagesSuite struct {
 
 func TestStages(t *testing.T) { suite.Run(t, new(StagesSuite)) }
 
-// answer is one chunk of text and the end of the stream, as an OpenAI-compatible provider
-// streams them.
-const answer = "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+// answer is one chunk of text, as an OpenAI-compatible provider streams it.
+const answer = "data: {\"id\":\"r\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n"
 
-// provider is a TLS provider that waits beforeHeaders before its headers and beforeToken
-// before it streams body, each cut short when the request is cancelled.
-func (s *StagesSuite) provider(beforeHeaders, beforeToken time.Duration, body string) *httptest.Server {
+// done ends an OpenAI-compatible stream.
+const done = "data: [DONE]\n\n"
+
+// provider is a TLS provider that waits beforeHeaders before its headers, beforeToken before it
+// streams body and afterToken before it ends the stream, each cut short when the request is
+// cancelled.
+func (s *StagesSuite) provider(beforeHeaders, beforeToken, afterToken time.Duration, body string) *httptest.Server {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		if !pause(r.Context(), beforeHeaders) {
@@ -49,6 +52,11 @@ func (s *StagesSuite) provider(beforeHeaders, beforeToken time.Duration, body st
 			return
 		}
 		fmt.Fprint(w, body)
+		w.(http.Flusher).Flush()
+		if !pause(r.Context(), afterToken) {
+			return
+		}
+		fmt.Fprint(w, done)
 	}))
 	s.T().Cleanup(server.Close)
 	return server
@@ -128,11 +136,12 @@ func (s *StagesSuite) connections(provider string, reused bool) float64 {
 func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
 	// Each stage takes a different multiple of unit, and a stage that took in any other's time
 	// is one unit or more off. The client stamps a byte when its goroutine reads it, so a busy
-	// machine moves the line between two stages by a little.
+	// machine moves the line between two stages by a little. The router's stage is admission and
+	// the screen's start; the stream goes on after its first token.
 	const unit, slack = 200 * time.Millisecond, 50 * time.Millisecond
-	const admitting, dialling, beforeHeaders, beforeToken = unit, 2 * unit, 4 * unit, 8 * unit
+	const admitting, screening, dialling, beforeHeaders, beforeToken, afterToken = unit, 2 * unit, 2 * unit, 4 * unit, 8 * unit, unit
 	config := s.config()
-	server := s.provider(beforeHeaders, beforeToken, answer)
+	server := s.provider(beforeHeaders, beforeToken, afterToken, answer)
 	client := server.Client()
 	transport := client.Transport.(*http.Transport)
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -144,11 +153,17 @@ func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
 		time.Sleep(admitting)
 		return routing.Admission{}, nil
 	}
+	session.screen = func(context.Context, routing.Owner, []llm.Message) <-chan error {
+		time.Sleep(screening)
+		passed := make(chan error)
+		close(passed)
+		return passed
+	}
 
 	s.Equal("hi", s.ask(s.T().Context(), session).OutputText)
 
 	for stage, least := range map[string]time.Duration{
-		routing.StageRouter:  admitting,
+		routing.StageRouter:  admitting + screening,
 		routing.StageConnect: dialling,
 		routing.StageWait:    beforeHeaders,
 		routing.StageStream:  beforeToken,
@@ -164,7 +179,7 @@ func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
 
 func (s *StagesSuite) TestAReusedConnectionIsCountedButHasNoConnectStage() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, answer), config)
+	session := s.session(s.provider(0, 0, 0, answer), config)
 
 	s.ask(s.T().Context(), session)
 	s.ask(s.T().Context(), session)
@@ -181,7 +196,7 @@ func (s *StagesSuite) TestACustomModelIsObservedUnderCustom() {
 	config := s.config()
 	config.Provider = routing.CustomProvider
 	before, _ := s.stage(config, routing.CustomProvider, routing.StageWait)
-	session := s.session(s.provider(0, 0, answer), config)
+	session := s.session(s.provider(0, 0, 0, answer), config)
 
 	s.ask(s.T().Context(), session)
 
@@ -193,7 +208,7 @@ func (s *StagesSuite) TestACustomModelIsObservedUnderCustom() {
 
 func (s *StagesSuite) TestARequestCancelledBeforeItsHeadersHasNoWaitOrStream() {
 	config := s.config()
-	session := s.session(s.provider(time.Minute, 0, answer), config)
+	session := s.session(s.provider(time.Minute, 0, 0, answer), config)
 	ctx, cancel := context.WithTimeout(s.T().Context(), 200*time.Millisecond)
 	defer cancel()
 
@@ -287,9 +302,28 @@ func (s *StagesSuite) TestARequestAnsweredBeforeItWasWrittenHasNoWait() {
 	}
 }
 
+func (s *StagesSuite) TestAnAnswerReadAfterTheAttemptWasCancelledHasNoWait() {
+	// Cancelling closes the connection, and the transport can still read the provider's answer
+	// in that window. The hooks run as the transport calls them.
+	config := s.config()
+	ctx, cancel := context.WithCancel(s.T().Context())
+	ctx, stages := traceStages(ctx)
+	trace := httptrace.ContextClientTrace(ctx)
+	trace.GetConn("provider:443")
+	trace.GotConn(httptrace.GotConnInfo{})
+	trace.WroteRequest(httptrace.WroteRequestInfo{})
+	cancel()
+	trace.GotFirstResponseByte()
+
+	stages.observe(config)
+
+	waits, _ := s.stage(config, config.Model, routing.StageWait)
+	s.Zero(waits)
+}
+
 func (s *StagesSuite) TestAnAnswerThatNeverSaidAnythingHasNoStream() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, "data: [DONE]\n\n"), config)
+	session := s.session(s.provider(0, 0, 0, ""), config)
 
 	s.ask(s.T().Context(), session)
 
@@ -324,7 +358,7 @@ func (s *StagesSuite) TestAProviderThatMakesNoHTTPRequestHasOnlyTheRoutersStage(
 
 func (s *StagesSuite) TestATraceTheCallerSetStillRuns() {
 	config := s.config()
-	session := s.session(s.provider(0, 0, answer), config)
+	session := s.session(s.provider(0, 0, 0, answer), config)
 	var heard atomic.Bool
 	ctx := httptrace.WithClientTrace(s.T().Context(), &httptrace.ClientTrace{
 		GotFirstResponseByte: func() { heard.Store(true) },
@@ -338,8 +372,8 @@ func (s *StagesSuite) TestATraceTheCallerSetStillRuns() {
 }
 
 func (s *StagesSuite) TestEachHedgedAttemptRecordsItsOwnStages() {
-	stalled := s.provider(time.Minute, 0, answer)
-	quick := s.provider(0, 0, answer)
+	stalled := s.provider(time.Minute, 0, 0, answer)
+	quick := s.provider(0, 0, 0, answer)
 	original, hedge := s.config(), s.config()
 	registry := NewRegistry()
 	for _, candidate := range []struct {
@@ -399,7 +433,7 @@ func (s *StagesSuite) TestEachHedgedAttemptRecordsItsOwnStages() {
 func (s *StagesSuite) TestConcurrentRequestsEachRecordTheirOwnStages() {
 	const requests = 8
 	config := s.config()
-	session := s.session(s.provider(10*time.Millisecond, 10*time.Millisecond, answer), config)
+	session := s.session(s.provider(10*time.Millisecond, 10*time.Millisecond, 0, answer), config)
 
 	var wg sync.WaitGroup
 	for range requests {

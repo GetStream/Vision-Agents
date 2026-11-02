@@ -49,6 +49,11 @@ func traceStages(ctx context.Context) (context.Context, *stageTrace) {
 			t.stamps.wrote = time.Now()
 		},
 		GotFirstResponseByte: func() {
+			// Cancelling the request closes the connection, and the provider can still answer
+			// it in that window: an answer the attempt gave up on is no wait.
+			if ctx.Err() != nil {
+				return
+			}
 			t.mu.Lock()
 			defer t.mu.Unlock()
 			t.stamps.firstByte = time.Now()
