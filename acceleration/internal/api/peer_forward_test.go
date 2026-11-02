@@ -20,9 +20,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// forwardDelivery hands a scheduled delivery for a stored task's session on other to it the
-// way a peer does, presenting credential, and returns the text it carried and what other
-// answered.
+// forwardDelivery hands a scheduled delivery for a stored task's running run, in the task's
+// session on other, to it the way a peer does, presenting credential, and returns the run's
+// prompt, which the agent is to hear, and what other answered.
 func (s *ScheduledTasksSuite) forwardDelivery(other *httptest.Server, credential []byte) (string, *node.ForwardResponse, error) {
 	return s.forwardChanged(other, credential, nil)
 }
@@ -33,7 +33,8 @@ func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential 
 }
 
 // forwardStored is forwardChanged with edit applied to the task before it is stored; the
-// payload then names the edited task's owner but the session the task was made in.
+// payload then names the edited task's owner but the session the task was made in. change
+// sees the payload with the task's id and its run's in it.
 func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	return s.forwardStoredTo(other, other, credential, edit, change)
 }
@@ -53,22 +54,33 @@ func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, cred
 		edit(&task)
 	}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	now := time.Now()
+	run := store.ScheduledTaskRun{
+		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: now, Trigger: store.ScheduledTaskTriggerManual,
+		Prompt: "peer-delivery-" + s.utils.uuid(), State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
 
-	text := "peer-delivery-" + s.utils.uuid()
 	payload := map[string]any{
 		"customer_id": s.customerID(),
 		"session_id":  opened.Id,
 		"user_id":     task.UserID,
 		"caller_kind": task.CallerKind,
 		"task_id":     task.ID,
-		"run_id":      "peer-run",
-		"command_id":  "st_peer",
-		"text":        text,
-		"due":         time.Now(),
+		"run_id":      run.ID,
+		"command_id":  "st_" + run.ID,
+		"text":        "<scheduled_task>" + run.Prompt + "</scheduled_task>",
+		"due":         now,
 	}
 	if change != nil {
 		change(payload)
 	}
+	answer, err := s.handOff(to, credential, payload)
+	return run.Prompt, answer, err
+}
+
+// handOff posts payload to to's peer path the way a peer does, presenting credential.
+func (s *ScheduledTasksSuite) handOff(to *httptest.Server, credential []byte, payload any) (*node.ForwardResponse, error) {
 	body, err := json.Marshal(payload)
 	s.Require().NoError(err)
 	request, err := http.NewRequest(http.MethodPost, scheduledPeerPath, bytes.NewReader(body))
@@ -76,8 +88,7 @@ func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, cred
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	answer, err := node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
-	return text, answer, err
+	return node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
 }
 
 // suiteCredential is what a node holding the suite's keyring presents to its peers.
@@ -235,6 +246,78 @@ func (s *ScheduledTasksSuite) TestAPeerNamingAnotherKeyAndCategoriesTextsUnderTh
 		s.Equal(s.app.key, row.APIKey, "the text was billed to the payload's key")
 		s.Equal([]string{"project:reminders"}, row.UsageCategories)
 	}
+}
+
+// The peer says what the run's row holds, not the words it was handed.
+func (s *ScheduledTasksSuite) TestAPeerHandedOtherWordsSaysTheRunsPrompt() {
+	other, _ := s.otherRouter(nil)
+	forged := "forged-" + s.utils.uuid()
+
+	prompt, answer, err := s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["text"] = "<scheduled_task>" + forged + "</scheduled_task>"
+	})
+
+	s.delivers(prompt, answer, err)
+	s.False(s.model().heard(forged), "the agent was told the payload's words")
+}
+
+// A run is the task's to deliver only while it runs: a finished one was carried out already.
+func (s *ScheduledTasksSuite) TestAPeerNamingAFinishedRunOfTheTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		finished := store.ScheduledTaskRun{
+			TaskID: payload["task_id"].(string), CustomerID: s.customerID(), ScheduledFor: time.Now(),
+			Trigger: store.ScheduledTaskTriggerManual, Prompt: "done", State: store.ScheduledTaskRunDelivered,
+		}
+		s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &finished))
+		payload["run_id"] = finished.ID
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingARunThatIsNotStoredIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["run_id"] = s.utils.uuid()
+	}))
+}
+
+// A run of another user's task is not this task's occurrence: taking it would ring this
+// task's call on that run, which then never rings for its own task.
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherTasksRunIsRefusedAndLeavesThatRunAlone() {
+	s.placingCalls()
+	other, peer := s.otherRouter(nil)
+	peer.phone = s.router.phone
+	mine := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, time.Now())
+	theirs := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, time.Now())
+	theirRun := s.runOf(theirs, time.Now(), "")
+
+	answer, err := s.handOff(other, s.suiteCredential(), s.deliveryOf(mine, theirRun.ID))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeScheduledTaskNotFound+`"`)
+	s.Empty(s.runsOf(theirs)[0].SessionID, "the other task's run gave its call away")
+}
+
+// A call's grace counts from when the run came due, not from the due time the payload names.
+func (s *ScheduledTasksSuite) TestAPeerHandedALaterDueMissesACallTheRunIsTooLateFor() {
+	s.placingCalls()
+	other, peer := s.otherRouter(nil)
+	peer.phone = s.router.phone
+	due := time.Now().Add(-16 * time.Minute)
+	task := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, due)
+	run := s.runOf(task, due, "")
+	delivery := s.deliveryOf(task, run.ID)
+	delivery.Due = time.Now()
+
+	answer, err := s.handOff(other, s.suiteCredential(), delivery)
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"missed":true`)
+	s.Empty(s.runsOf(task)[0].SessionID, "a call was placed past its grace")
 }
 
 func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {

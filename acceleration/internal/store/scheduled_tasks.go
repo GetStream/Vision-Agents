@@ -15,6 +15,9 @@ import (
 // ErrNoScheduledTask says a customer holds no task by that id.
 var ErrNoScheduledTask = errors.New("store: no such scheduled task")
 
+// ErrNoScheduledTaskRun says a customer's task has no run by that id.
+var ErrNoScheduledTaskRun = errors.New("store: no such scheduled task run")
+
 // ErrScheduledTaskIDTaken says a create named a task id the customer already holds.
 var ErrScheduledTaskIDTaken = errors.New("store: a scheduled task with that id already exists")
 
@@ -939,6 +942,27 @@ func (s *Store) ReleaseScheduledTaskRunCall(ctx context.Context, customerID, run
 		return stack.Wrap(fmt.Errorf("store: release scheduled task run call: %w", err))
 	}
 	return nil
+}
+
+// ScheduledTaskRun returns the run by id of a customer's task.
+func (s *Store) ScheduledTaskRun(ctx context.Context, customerID, taskID, id string) (ScheduledTaskRun, error) {
+	if customerID == "" || taskID == "" || id == "" {
+		return ScheduledTaskRun{}, stack.Wrap(errors.New("store: a customer, a task and a run id are required"))
+	}
+	var run ScheduledTaskRun
+	err := s.db.NewSelect().Model(&run).
+		Where("customer_id = ?", customerID).
+		Where("task_id = ?", taskID).
+		Where("id = ?", id).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ScheduledTaskRun{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoScheduledTaskRun, id))
+	}
+	if err != nil {
+		return ScheduledTaskRun{}, stack.Wrap(fmt.Errorf("store: scheduled task run: %w", err))
+	}
+	return run, nil
 }
 
 // ScheduledTaskRuns returns a page of a task's runs, newest first.
