@@ -15,7 +15,6 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -580,28 +579,6 @@ func (s *SessionSuite) says(created *Session, text string) {
 
 func (s *SessionSuite) eventually(condition func() bool, message string) {
 	s.Require().Eventually(condition, settleFor, 5*time.Millisecond, message)
-}
-
-// never fails t if condition holds at any of its checks, made every tick for waitFor. It is
-// testify's Never checked on the test's own goroutine: testify's runs each check on a goroutine
-// and returns at waitFor without waiting for the one still running, so a check that reads a
-// suite's fields would race the next test's setup rewriting them.
-func never(t *testing.T, condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
-	t.Helper()
-	timer := time.NewTimer(waitFor)
-	defer timer.Stop()
-	ticker := time.NewTicker(tick)
-	defer ticker.Stop()
-	for {
-		if condition() {
-			return assert.Fail(t, "Condition satisfied", msgAndArgs...)
-		}
-		select {
-		case <-timer.C:
-			return true
-		case <-ticker.C:
-		}
-	}
 }
 
 func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
