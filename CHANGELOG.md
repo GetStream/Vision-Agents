@@ -2,6 +2,9 @@
 
 ## Features
 
+### A Flutter app on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` in `vision_agents_rtc` now lets the agent look through the phone's camera, as the Swift, Kotlin and JS SDKs do. When the agent's `vision` skill asks what the camera shows (`get_video_frames`), the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken until the agent asks. A camera with nothing to show is said as the answer, so the agent asks the person to show it again; with the camera off the session does not answer, leaving the call to a video worker in the backend. Unlike the other SDKs, which keep the last few seconds, the pictures are taken just after the question rather than just before it. `vision_agents_rtc` now depends on `image` (#1449).
 ### First output latency by model
 
 `router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
