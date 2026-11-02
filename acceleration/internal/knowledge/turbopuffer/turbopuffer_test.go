@@ -19,6 +19,7 @@ import (
 type search struct {
 	server *httptest.Server
 
+	method string
 	path   string
 	auth   string
 	body   map[string]any
@@ -32,6 +33,7 @@ type search struct {
 func newSearch() *search {
 	stub := &search{status: http.StatusOK, respond: `{"rows":[]}`}
 	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stub.method = r.Method
 		stub.path = r.URL.Path
 		stub.auth = r.Header.Get("Authorization")
 
@@ -203,6 +205,35 @@ func (s *TurbopufferSuite) TestWritingWithoutANamespaceIsRejected() {
 	_, err := s.store.Upsert(s.ctx, "", []knowledge.Document{{ID: "1", Text: "a passage"}})
 
 	s.ErrorContains(err, "namespace")
+}
+
+func (s *TurbopufferSuite) TestDroppingAKnowledgeBaseDeletesItsNamespace() {
+	s.search.respond = `{"status":"OK"}`
+
+	dropped, err := s.store.Drop(s.ctx, "app-1__docs")
+
+	s.Require().NoError(err)
+	s.True(dropped.Existed)
+	s.EqualValues(1, dropped.Requests)
+	s.Equal(http.MethodDelete, s.search.method)
+	s.Equal("/v2/namespaces/app-1__docs", s.search.path)
+}
+
+func (s *TurbopufferSuite) TestDroppingAKnowledgeBaseTurbopufferDoesNotHaveIsNotAFailure() {
+	s.search.status = http.StatusNotFound
+	s.search.respond = `{"status":"error","error":"namespace not found"}`
+
+	dropped, err := s.store.Drop(s.ctx, "app-1__docs")
+
+	s.Require().NoError(err)
+	s.False(dropped.Existed)
+}
+
+func (s *TurbopufferSuite) TestDroppingWithoutANamespaceIsRejectedBeforeTheNetwork() {
+	_, err := s.store.Drop(s.ctx, "")
+
+	s.ErrorContains(err, "namespace")
+	s.Empty(s.search.bodies)
 }
 
 func (s *TurbopufferSuite) TestAFailureCarriesWhatTheServiceSaid() {

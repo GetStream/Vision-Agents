@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -908,13 +909,14 @@ func (s *stubConversation) Capabilities() sts.Capabilities { return s.capabiliti
 type knowledgeBase struct {
 	mu        sync.Mutex
 	namespace string
-	passages  map[string]knowledge.Document
+	// passages are each namespace's, by id.
+	passages map[string]map[string]knowledge.Document
 	// down makes every write fail, naming the namespace as turbopuffer's errors do.
 	down bool
 }
 
 func newKnowledgeBase() *knowledgeBase {
-	return &knowledgeBase{passages: map[string]knowledge.Document{}}
+	return &knowledgeBase{passages: map[string]map[string]knowledge.Document{}}
 }
 
 // failWrites makes every write fail until it is called with false.
@@ -941,33 +943,45 @@ func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []
 		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
 	}
 	b.namespace = namespace
+	if b.passages[namespace] == nil {
+		b.passages[namespace] = map[string]knowledge.Document{}
+	}
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
-		b.passages[document.ID] = document
+		b.passages[namespace][document.ID] = document
 		billed.BytesWritten += passageBytes(document)
 	}
 	return billed, nil
 }
 
-func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) (knowledge.Billed, error) {
+func (b *knowledgeBase) Delete(_ context.Context, namespace string, ids []string) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	billed := knowledge.Billed{Requests: 1}
 	for _, id := range ids {
-		delete(b.passages, id)
+		delete(b.passages[namespace], id)
 		billed.BytesWritten += int64(len(id))
 	}
 	return billed, nil
 }
 
-func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
+func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dropped, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, existed := b.passages[namespace]
+	delete(b.passages, namespace)
+	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil
+}
+
+func (b *knowledgeBase) Fetch(_ context.Context, namespace string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}
 	for _, id := range ids {
-		if document, ok := b.passages[id]; ok {
+		if document, ok := b.passages[namespace][id]; ok {
 			found.Documents = append(found.Documents, document)
 			found.BytesReturned += passageBytes(document)
 		}
@@ -990,14 +1004,23 @@ func (b *knowledgeBase) Provider() string { return "kept" }
 
 func (b *knowledgeBase) Close() error { return nil }
 
-// stored is the namespace last written to and the passages it holds.
+// holds reports whether the provider has the namespace.
+func (b *knowledgeBase) holds(namespace string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, ok := b.passages[namespace]
+	return ok
+}
+
+// stored is the namespace last written to and the passages every namespace holds.
 func (b *knowledgeBase) stored() (string, map[string]knowledge.Document) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	copied := make(map[string]knowledge.Document, len(b.passages))
-	for id, document := range b.passages {
-		copied[id] = document
+	copied := map[string]knowledge.Document{}
+	for _, passages := range b.passages {
+		maps.Copy(copied, passages)
 	}
 	return b.namespace, copied
 }
