@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -229,6 +231,40 @@ func (s *AnthropicSuite) TestUsageCountsTheWholePromptWithItsCachedAndWrittenPar
 		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: 80},
 		TotalTokens:         32160,
 	}, response.Usage)
+}
+
+func (s *AnthropicSuite) TestAnOutputCountFromTheOpeningAloneIsMarkedUnfinished() {
+	s.answerWith(http.StatusOK, stream(textBlock(0, "half a sentence")))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.EqualValues(5, response.Usage.InputTokens)
+	s.EqualValues(1, response.Usage.OutputTokens)
+	s.True(response.Usage.OutputUnfinished, "message_start counts output before any was generated")
+}
+
+func (s *AnthropicSuite) TestADeadlineMidStreamIsATimeoutNotAFailure() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		opening := strings.TrimSuffix(stream(textBlock(0, "half a sen")), "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+		fmt.Fprint(w, opening)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "test", BaseURL: server.URL, Model: "claude-opus-5-5"})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(s.T().Context(), 200*time.Millisecond)
+	defer cancel()
+
+	created, err := provider.Create(ctx, toolRound(1))
+	s.Require().NoError(err)
+	response, err := llm.Collect(created)
+
+	s.Require().Error(err)
+	s.True(response.TimedOut, "what was generated until the deadline is billed")
+	s.Equal("half a sen", response.OutputText)
 }
 
 func (s *AnthropicSuite) TestAToolCallStreamsWholeBesideTheText() {

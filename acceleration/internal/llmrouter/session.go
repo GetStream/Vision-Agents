@@ -180,8 +180,9 @@ func newSession(
 }
 
 // Create asks the selected provider for a response. The stream it returns records what the
-// response cost as it is drained, which is why a caller must drain it even after closing
-// it: an abandoned response still generated tokens.
+// response cost as it is drained, which is why a caller should drain it even after closing
+// it: an abandoned response still generated tokens. One closed and left undrained drains
+// itself after llm's drainGrace.
 func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	return s.attempt(ctx, params, nil)
 }
@@ -351,6 +352,12 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		stat = routing.Stat{Attributes: stat.Attributes}
 		stat.Use(llm.Estimate(params, response))
 		stat.Estimated()
+	} else if streamed := shortOutput(params, response); streamed > stat.OutputTokens {
+		// The provider's count stopped before the response did: its prompt stands, and the
+		// output is at least what streamed.
+		stat.OutputTokens = streamed
+		stat.Estimated()
+		estimated = true
 	}
 	slog.Info("model call timing", "call", s.owner.CallID, "operation", response.ID,
 		"purpose", params.Purpose, "turn", params.TurnID,
@@ -421,16 +428,29 @@ func reported(response llm.Response) routing.Stat {
 // unreported reports whether a response's row has to be estimated: its provider never said
 // what it used, and it either produced something or was cut short, by its caller or by a
 // deadline, which most providers then never report but bill all the same, the whole prompt
-// included. A provider that repeats its usage on every chunk has said, and a response cut
-// short keeps that count. A response the provider itself failed is not estimated: a vendor is
-// not taken to bill its own failure. One the screen refused is no failure of the vendor's, and
-// is cut short as a cancelled one is.
+// included. A provider that failed after it produced output generated those tokens and bills
+// them, so it is estimated too; one that failed before any is not taken to bill its own
+// failure. One the screen refused is no failure of the vendor's, and is cut short as a
+// cancelled one is.
 func unreported(response llm.Response) bool {
-	if response.UsageReported || (response.Status == llm.StatusFailed && !response.TimedOut && !response.Refused) {
+	if response.UsageReported {
 		return false
 	}
-	produced := response.OutputText != "" || response.ReasoningText != "" || len(response.ToolCalls) > 0
-	return produced || response.Status == llm.StatusCancelled || response.TimedOut || response.Refused
+	return produced(response) || response.Status == llm.StatusCancelled || response.TimedOut || response.Refused
+}
+
+// shortOutput is the router's count of the output a response streamed, for one whose
+// provider's output count was taken before it ended. Zero for any other: a provider that
+// counts as it goes, or that finished, has said what it generated.
+func shortOutput(params llm.ResponseParams, response llm.Response) int64 {
+	if !response.Usage.OutputUnfinished || !produced(response) {
+		return 0
+	}
+	return llm.Estimate(params, response)[pricing.OutputTokens]
+}
+
+func produced(response llm.Response) bool {
+	return response.OutputText != "" || response.ReasoningText != "" || len(response.ToolCalls) > 0
 }
 
 // reportedAttributes is what the provider said about how it served the response: the tier,

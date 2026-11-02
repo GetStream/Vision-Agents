@@ -176,7 +176,7 @@ func TestAStreamCutAfterItsUsageArrivedKeepsTheVendorsCount(t *testing.T) {
 	require.Empty(t, row.Attributes, "a vendor that repeats its usage on every chunk has said")
 }
 
-func TestAFailedStreamIsNotEstimated(t *testing.T) {
+func TestAStreamThatFailedAfterItsOutputIsBilledOnAnEstimate(t *testing.T) {
 	session, provider, sink := sinkSession(t)
 
 	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
@@ -186,8 +186,77 @@ func TestAFailedStreamIsNotEstimated(t *testing.T) {
 	drain(stream)
 
 	row := sink.only(t)
+	require.Equal(t, "provider_error", row.ErrorCode)
+	require.EqualValues(t, 1, row.Usage.InputTokens, "the vendor read the prompt before it failed")
+	require.EqualValues(t, 3, row.Usage.OutputTokens, "and generated what streamed")
+	require.Equal(t, map[string]string{routing.AttributeUsageEstimated: "true"}, row.Attributes)
+}
+
+func TestAStreamThatFailedBeforeAnyOutputIsNotEstimated(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).Fail(errors.New("upstream reset"), "stream")
+	drain(stream)
+
+	row := sink.only(t)
 	require.Zero(t, row.Usage.InputTokens)
 	require.Empty(t, row.Attributes)
+}
+
+func TestAnOutputCountTakenBeforeTheEndIsRaisedToWhatStreamed(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 1, OutputUnfinished: true})
+	provider.script(0).OutputText("half a sen")
+	require.True(t, stream.Next())
+	require.True(t, stream.Next())
+	require.NoError(t, stream.Close())
+	drain(stream)
+
+	row := sink.only(t)
+	require.EqualValues(t, 10, row.Usage.InputTokens, "the vendor's prompt count stands")
+	require.EqualValues(t, 3, row.Usage.OutputTokens, "its opening output count did not")
+	require.Equal(t, map[string]string{routing.AttributeUsageEstimated: "true"}, row.Attributes)
+}
+
+func TestAnUnfinishedOutputCountAboveWhatStreamedStands(t *testing.T) {
+	session, provider, sink := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("half a sen")
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 9, OutputUnfinished: true})
+	require.True(t, stream.Next())
+	require.True(t, stream.Next())
+	require.NoError(t, stream.Close())
+	drain(stream)
+
+	row := sink.only(t)
+	require.EqualValues(t, 9, row.Usage.OutputTokens)
+	require.Empty(t, row.Attributes)
+}
+
+func TestAClosedStreamNobodyDrainedStillWritesItsRow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		session, provider, sink := sinkSession(t)
+
+		stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+		require.NoError(t, err)
+		provider.script(0).OutputText("half a sen")
+		require.True(t, stream.Next())
+		require.True(t, stream.Next())
+		require.NoError(t, stream.Close())
+
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		row := sink.only(t)
+		require.Equal(t, routing.ErrorCancelled, row.ErrorCode)
+		require.EqualValues(t, 3, row.Usage.OutputTokens, "what it said before it was walked away from")
+	})
 }
 
 func TestAnAnswerThatSaidNothingAndReportedNothingIsLeftForTheAlarm(t *testing.T) {
