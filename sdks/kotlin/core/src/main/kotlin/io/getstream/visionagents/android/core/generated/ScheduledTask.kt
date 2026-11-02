@@ -49,7 +49,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param nextRunAt The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none.
  * @param schedule 
  * @param sessionId The conversation the task follows up in. Empty until its first occurrence opens one.
- * @param state active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+ * @param state active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
  * @param title 
  * @param upcoming Up to the next five occurrences, RFC 3339 with the task zone's offset.
  * @param updatedAt 
@@ -99,7 +99,7 @@ internal data class ScheduledTask (
     @SerialName(value = "session_id")
     val sessionId: kotlin.String,
 
-    /* active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it). */
+    /* active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it). */
     @SerialName(value = "state")
     val state: ScheduledTask.State,
 
@@ -150,7 +150,7 @@ internal data class ScheduledTask (
         }
     }
     /**
-     * active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+     * active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
      *
      * Values: active,paused,completed,failed,unknown_default_open_api
      */
