@@ -69,7 +69,8 @@ func (s *CampaignDialerMigrationSuite) TestCampaignDialerMigrationKeepsOldCampai
 			('c1', 'live', '+15550000001', 'pending'),
 			('c2', 'live', '+15550000002', 'calling'),
 			('c3', 'live', '+15550000003', 'done'),
-			('c4', 'live', '+15550000004', 'failed')`)
+			('c4', 'live', '+15550000004', 'failed'),
+			('c5', 'live', '+15550000001', 'pending')`)
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.db.Migrate(s.ctx))
@@ -94,7 +95,14 @@ func (s *CampaignDialerMigrationSuite) TestCampaignDialerMigrationKeepsOldCampai
 			s.NotNil(contact.NextAttemptAt, "%s is due", contact.ID)
 		}
 	}
-	s.Equal(map[string]string{"c1": Enrolled, "c2": Enrolled, "c3": ContactCompleted, "c4": Failed}, stages)
+	s.Equal(map[string]string{"c1": Enrolled, "c2": Enrolled, "c3": ContactCompleted, "c4": Failed, "c5": Rejected}, stages,
+		"c5 repeats the number of c1, which keeps its place")
+	for _, contact := range contacts {
+		if contact.ID == "c5" {
+			s.Equal("duplicate", contact.Reason)
+			s.Nil(contact.NextAttemptAt)
+		}
+	}
 
 	live, err := s.db.Campaign(s.ctx, "acme", "live")
 	s.Require().NoError(err)

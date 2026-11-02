@@ -63,8 +63,18 @@ UPDATE campaign_contacts SET step_id = 'step_1';
 UPDATE campaign_contacts SET next_attempt_at = now() WHERE stage = 'enrolled';
 ALTER TABLE campaign_contacts ALTER COLUMN stage SET DEFAULT 'enrolled';
 
+-- The old schema let one number be added twice to a campaign. The first stays as it was; each
+-- later one is kept, rejected, so no row is deleted and the unique index can be built.
+UPDATE campaign_contacts SET stage = 'rejected', reason = 'duplicate', next_attempt_at = NULL
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id, row_number() OVER (PARTITION BY campaign_id, to_number ORDER BY seq) AS position
+        FROM campaign_contacts) ranked
+    WHERE position > 1);
+
 DROP INDEX campaign_contacts_pending_idx;
-CREATE UNIQUE INDEX campaign_contacts_number_idx ON campaign_contacts (campaign_id, to_number);
+CREATE UNIQUE INDEX campaign_contacts_number_idx ON campaign_contacts (campaign_id, to_number)
+    WHERE reason IS DISTINCT FROM 'duplicate';
 CREATE INDEX campaign_contacts_due_idx ON campaign_contacts (campaign_id, stage, next_attempt_at);
 CREATE INDEX campaign_contacts_lease_idx ON campaign_contacts (leased_until) WHERE stage = 'in_progress';
 

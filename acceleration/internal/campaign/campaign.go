@@ -108,25 +108,13 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 	}
 
 	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
 		return stack.Wrap(errors.New("campaign: the runner is shut down"))
 	}
-	if _, already := r.running[campaign.ID]; already {
-		r.mu.Unlock()
-		return nil
-	}
-	_, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	r.running[campaign.ID] = cancel
-	r.mu.Unlock()
 
-	if err := r.store.SetCampaignState(ctx, customerID, campaign.ID, store.Running); err != nil {
-		r.forget(campaign.ID)
-		cancel()
-		return err
-	}
-
-	return nil
+	return r.store.SetCampaignState(ctx, customerID, campaign.ID, store.Running)
 }
 
 // Pause stops making new calls. The conversations already happening are left alone: a
