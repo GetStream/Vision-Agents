@@ -140,9 +140,12 @@ swift_assistant's `go run ./configure` again, which binds both:
   what it is doing and captions a sentence at a time, paced to its voice, as swift_assistant's
   are. The microphone is asked for as voice mode opens. Hang up, the
   close button or Back take the agent off the call and go back to the chat.
-- **The camera** button in voice mode turns on the phone's back camera on the call, with a
-  preview of it. Juno cannot look through it yet (see below). Try it on a phone or the Android
-  emulator, whose camera is a test scene; the iOS simulator has none.
+- **The camera** button in voice mode shows Juno what the phone is pointing at, through the back
+  lens, with a preview of it. Ask "what's this?" and the agent's `vision` skill asks the call's
+  session to look (`get_video_frames`), which answers with pictures the camera takes then: unlike
+  the Swift and Kotlin SDKs, which keep the last few frames, the Dart SDK takes them only when
+  asked. Try it on a phone or the Android emulator, whose camera is a test scene; the iOS
+  simulator has none.
 - **Tools on the phone**, in `device_tools.dart`: `get_local_context` (date, time, timezone),
   `get_location` (asks first), `list_events` (the calendar), `add_reminder` (asks first) and
   `send_email` (asks first, showing who it goes to). A tool that asks first asks on its step in
@@ -160,9 +163,6 @@ the backend's URLs, the customer id, the Stream key, the agent's name and the us
 Each of these waits on Stream's Flutter AI components, the Dart SDK or the router, not on the
 app.
 
-- **Looking through the camera.** Asked "what's this?", the agent's `vision` skill asks the call
-  for what the camera showed. The Swift and Kotlin SDKs answer that themselves (`CameraFrames`);
-  the Dart SDK does not yet (#1449).
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown tool's
   result is a citations object, and the built-in search answers in prose, so a searched reply
   never carries any. Stream's Flutter AI components have no view for them yet either.
