@@ -79,6 +79,57 @@ func (s *RecordFlushSuite) TestFlushesWaitingOnASlowWriterLeaveRoomForRows() {
 	s.True(s.stored(later.ID), "a row queued behind the waiting flushes is not stored")
 }
 
+func (s *RecordFlushSuite) TestFlushesWaitingTogetherDoNotWaitForRowsQueuedAfterThem() {
+	releaseFirst := s.holdWriter()
+	second, releaseSecond := s.heldRow()
+	s.records.Opened(second, nil)
+	const callers = 64
+	errs := make(chan error, callers)
+	var started sync.WaitGroup
+	for range callers {
+		started.Add(1)
+		go func() {
+			started.Done()
+			errs <- s.records.Flush(s.bounded())
+		}()
+	}
+	started.Wait()
+	releaseFirst()
+	// The writer takes in every waiting Flush, then stalls on the second held row.
+	s.Require().Eventually(func() bool { return len(s.records.queue) == 0 }, settleFor, 5*time.Millisecond,
+		"the writer never took the second held row")
+	third, _ := s.heldRow()
+	s.records.Opened(third, nil)
+
+	releaseSecond()
+	deadline := time.After(recordWriteTimeout / 2)
+	for range callers {
+		select {
+		case err := <-errs:
+			s.Require().NoError(err)
+		case <-deadline:
+			s.FailNow("a Flush waited for a row queued after the writer took it in")
+		}
+	}
+}
+
+func (s *RecordFlushSuite) TestFlushesWaitingForTheSameWritesShareOneEntry() {
+	var waiting flushWaiters
+	first := waiting.wait(5)
+	for range recordQueueSize {
+		s.Equal(first, waiting.wait(5))
+	}
+	second := waiting.wait(6)
+	s.Len(waiting, 2, "each Flush waiting for the same writes took an entry of its own")
+
+	waiting.release(5)
+	s.True(isClosed(first), "a Flush whose writes are all taken was not told")
+	s.False(isClosed(second), "a Flush was told before its writes were all taken")
+	waiting.release(6)
+	s.True(isClosed(second), "a Flush whose writes are all taken was not told")
+	s.Empty(waiting)
+}
+
 func (s *RecordFlushSuite) TestEachFlushWaitsForTheRowItsCallerQueuedBeforeIt() {
 	release := s.holdWriter()
 	const callers = 32
@@ -172,6 +223,16 @@ func (s *RecordFlushSuite) TestAFlushGivesUpWhenItsCallerDoes() {
 // returned release rolls that transaction back. The writer gives up on its own after
 // recordWriteTimeout, so a test releases well before that.
 func (s *RecordFlushSuite) holdWriter() (release func()) {
+	held, release := s.heldRow()
+	s.records.Opened(held, nil)
+	s.Require().Eventually(func() bool { return len(s.records.queue) == 0 }, settleFor, 5*time.Millisecond,
+		"the writer never took the held row")
+	return release
+}
+
+// heldRow is a session row another transaction is inserting, so the writer stalls on it
+// until the returned release rolls that transaction back, or the test ends.
+func (s *RecordFlushSuite) heldRow() (store.AgentSession, func()) {
 	held := s.row()
 	tx, err := s.store.DB().BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
@@ -180,11 +241,7 @@ func (s *RecordFlushSuite) holdWriter() (release func()) {
 	_, err = tx.ExecContext(s.ctx, "INSERT INTO agent_sessions (id, customer_id, state) VALUES (?, ?, ?)",
 		held.ID, held.CustomerID, store.SessionRunning)
 	s.Require().NoError(err)
-
-	s.records.Opened(held, nil)
-	s.Require().Eventually(func() bool { return len(s.records.queue) == 0 }, settleFor, 5*time.Millisecond,
-		"the writer never took the held row")
-	return rollback
+	return held, rollback
 }
 
 // bounded is a context a broken Flush cannot hang the suite past.
@@ -211,4 +268,13 @@ func (s *RecordFlushSuite) stored(id string) bool {
 		}
 	}
 	return false
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }

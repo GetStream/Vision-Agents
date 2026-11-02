@@ -112,8 +112,9 @@ type sessionRecorder struct {
 	queue chan recordWrite
 	// flushes takes each Flush to the writer beside the queue rather than in it: a reader
 	// waiting on a slow writer must not take the room the rows need, or enough of them at
-	// once would get every later row dropped.
-	flushes chan chan struct{}
+	// once would get every later row dropped. The writer answers each with the channel it
+	// closes once the Flush may return.
+	flushes chan chan (<-chan struct{})
 	done    chan struct{}
 
 	closeOnce sync.Once
@@ -125,7 +126,7 @@ func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecor
 		store:   pgStore,
 		logger:  logger,
 		queue:   make(chan recordWrite, recordQueueSize),
-		flushes: make(chan chan struct{}),
+		flushes: make(chan chan (<-chan struct{})),
 		done:    make(chan struct{}),
 	}
 	go r.run()
@@ -197,9 +198,10 @@ func (r *sessionRecorder) Item(item store.AgentResponseItem) {
 // Flush waits for the writer to catch up with everything queued before it. Unlike the other
 // writes it is never dropped, because the caller is about to read what it wrote.
 func (r *sessionRecorder) Flush(ctx context.Context) error {
-	flushed := make(chan struct{})
+	// The writer answers at once, so the reply never holds it up.
+	reply := make(chan (<-chan struct{}), 1)
 	select {
-	case r.flushes <- flushed:
+	case r.flushes <- reply:
 	case <-r.done:
 		// The writer drained the queue before it stopped.
 		return nil
@@ -207,7 +209,7 @@ func (r *sessionRecorder) Flush(ctx context.Context) error {
 		return stack.Wrap(ctx.Err())
 	}
 	select {
-	case <-flushed:
+	case <-<-reply:
 		return nil
 	case <-ctx.Done():
 		return stack.Wrap(ctx.Err())
@@ -249,23 +251,25 @@ func (r *sessionRecorder) run() {
 
 	// Each waiting Flush is released once the writer has taken everything that was queued
 	// when it arrived. The queue is first in, first out, so that is the writes taken so far
-	// plus those still in it. Waiters arrive in order of that count, so the ones due are
-	// always at the front.
+	// plus those still in it.
 	var taken int
-	var waiting []flushWaiter
+	var waiting flushWaiters
 	for {
-		due := slices.IndexFunc(waiting, func(waiter flushWaiter) bool { return waiter.after > taken })
-		if due < 0 {
-			due = len(waiting)
+		// Every Flush already waiting is taken in before the next write, so none waits on
+		// writes queued while the ones before it were taken in.
+		for registering := true; registering; {
+			select {
+			case reply := <-r.flushes:
+				reply <- waiting.wait(taken + len(r.queue))
+			default:
+				registering = false
+			}
 		}
-		if due > 0 {
+		if waiting.due(taken) {
 			// The items pending ahead of them are written before they are told.
 			r.writeItems(pending)
 			pending = pending[:0]
-			for _, waiter := range waiting[:due] {
-				close(waiter.flushed)
-			}
-			waiting = waiting[due:]
+			waiting.release(taken)
 		}
 		select {
 		case write, open := <-r.queue:
@@ -287,8 +291,8 @@ func (r *sessionRecorder) run() {
 				pending = pending[:0]
 			}
 			r.write(write)
-		case flushed := <-r.flushes:
-			waiting = append(waiting, flushWaiter{after: taken + len(r.queue), flushed: flushed})
+		case reply := <-r.flushes:
+			reply <- waiting.wait(taken + len(r.queue))
 		case <-flush.C:
 			if len(pending) > 0 {
 				r.writeItems(pending)
@@ -298,10 +302,42 @@ func (r *sessionRecorder) run() {
 	}
 }
 
-// flushWaiter is a Flush waiting until the writer has taken its first after writes.
+// flushWaiters are the Flushes waiting on the writer, in order of the writes they wait for.
+// Those waiting for the same writes share one entry, so there is at most one entry per write
+// still queued, however many callers wait.
+type flushWaiters []flushWaiter
+
+// flushWaiter is the Flushes waiting until the writer has taken its first after writes.
 type flushWaiter struct {
 	after   int
 	flushed chan struct{}
+}
+
+// wait returns the channel closed once the writer has taken its first after writes. after
+// never falls below the last one asked for, since the writer only takes and the queue only
+// grows in between.
+func (w *flushWaiters) wait(after int) <-chan struct{} {
+	if n := len(*w); n == 0 || (*w)[n-1].after != after {
+		*w = append(*w, flushWaiter{after: after, flushed: make(chan struct{})})
+	}
+	return (*w)[len(*w)-1].flushed
+}
+
+// due says whether any of them is released by the writer having taken taken writes.
+func (w flushWaiters) due(taken int) bool {
+	return len(w) > 0 && w[0].after <= taken
+}
+
+// release tells every one whose writes are all taken.
+func (w *flushWaiters) release(taken int) {
+	due := slices.IndexFunc(*w, func(waiter flushWaiter) bool { return waiter.after > taken })
+	if due < 0 {
+		due = len(*w)
+	}
+	for _, waiter := range (*w)[:due] {
+		close(waiter.flushed)
+	}
+	*w = (*w)[due:]
 }
 
 func (r *sessionRecorder) write(write recordWrite) {
