@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -791,17 +792,67 @@ void main() {
       expect(router.arrived.single.json, {'name': 'Guest'});
     });
 
-    test('asks for a fresh token under the same id when the remembered one expired', () async {
-      router.answer('POST /v1/agents/guests', Answer(201, guest('guest-1', token: 't2')));
+    test('remembers the refresh secret a minted guest is handed', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        Answer(201, {...guest('guest-1'), 'refresh_secret': 's1'}),
+      );
+      final store = MemoryGuestStore();
+
+      await agents.guestUser(store: store);
+
+      expect((jsonDecode((await store.read())!) as Map)['refresh_secret'], 's1');
+    });
+
+    test('a guest whose token expired comes back with their refresh secret', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        Answer(201, {...guest('guest-1', token: 't2'), 'refresh_secret': 's2'}),
+      );
       final store = MemoryGuestStore();
       await store.write(
-        '{"id":"guest-1","token":"t1","expires_at":"${DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String()}"}',
+        '{"id":"guest-1","token":"t1","refresh_secret":"s1","expires_at":"${DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String()}"}',
       );
 
       final renewed = await agents.guestUser(store: store);
 
       expect(renewed.token, 't2');
-      expect(router.arrived.single.json, {'id': 'guest-1'});
+      expect(router.arrived.single.json, {'id': 'guest-1', 'refresh_secret': 's1'});
+      expect((jsonDecode((await store.read())!) as Map)['refresh_secret'], 's2');
+    });
+
+    test('a spent secret is answered with somebody new, who is remembered instead', () async {
+      router.answer(
+        'POST /v1/agents/guests',
+        Answer(201, {...guest('guest-2', token: 't2'), 'refresh_secret': 's9'}),
+      );
+      final store = MemoryGuestStore();
+      await store.write(
+        '{"id":"guest-1","token":"t1","refresh_secret":"spent","expires_at":"${DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String()}"}',
+      );
+
+      final other = await agents.guestUser(store: store);
+      final again = await agents.guestUser(store: store);
+
+      expect(other.id, 'guest-2');
+      expect(again, other);
+      expect(router.arrived, hasLength(1));
+      final stored = jsonDecode((await store.read())!) as Map;
+      expect(stored['id'], 'guest-2');
+      expect(stored['refresh_secret'], 's9');
+    });
+
+    test('an expired guest with no secret does not name an id it cannot prove', () async {
+      router.answer('POST /v1/agents/guests', Answer(201, guest('guest-2')));
+      final store = MemoryGuestStore();
+      await store.write(
+        '{"id":"guest-1","token":"t1","expires_at":"${DateTime.now().subtract(const Duration(hours: 1)).toUtc().toIso8601String()}"}',
+      );
+
+      final other = await agents.guestUser(name: 'Guest', store: store);
+
+      expect(other.id, 'guest-2');
+      expect(router.arrived.single.json, {'name': 'Guest'});
     });
 
     test('a fresh guest ignores the one remembered, for a "not me" button', () async {
