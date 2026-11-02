@@ -146,8 +146,8 @@ func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKno
 	return nil, nil
 }
 
-// deleteKnowledge deletes one of the calling customer's knowledge bases: the documents and
-// pages it was filled from, then everything the provider holds of it. One an agent reads is
+// deleteKnowledge deletes one of the calling customer's knowledge bases: everything the
+// provider holds of it, then the documents and pages it was filled from. One an agent reads is
 // kept, since the agent would go on looking things up in nothing.
 func (s *Server) deleteKnowledge(ctx context.Context, request *deleteKnowledgeRequest) (*struct{}, error) {
 	customerID, ok := CustomerFrom(ctx)
