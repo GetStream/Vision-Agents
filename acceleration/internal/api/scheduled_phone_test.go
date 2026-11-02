@@ -136,6 +136,17 @@ func (s *ScheduledTasksSuite) shortCalls(ring, limit time.Duration) {
 	s.T().Cleanup(func() { scheduledPhoneWindow, scheduledCallLimit = window, longest })
 }
 
+// shortOfTime has calls ring for half of deliveryWait and last for all of it,
+// and answers deliveryWait as what is left of an occurrence short of the time
+// a call needs: less than the ring and the limit together. It is as long as
+// the suite waits for a delivery, so a Postgres or Redis stall shorter than
+// that cannot spend it before the call is weighed, as one over 5 s spent the
+// 5 s these tests were given.
+func (s *ScheduledTasksSuite) shortOfTime() time.Duration {
+	s.shortCalls(deliveryWait/2, deliveryWait)
+	return deliveryWait
+}
+
 // callRun is the run a placed call was taken on, as the store holds it now.
 func (s *ScheduledTasksSuite) callRun(call placedCall) store.ScheduledTaskRun {
 	return s.runsOf(store.ScheduledTask{ID: call.delivery.TaskID})[0]
@@ -458,10 +469,10 @@ func (s *ScheduledTasksSuite) TestAnOccurrenceTakenOverAfterItsCallWentUnanswere
 }
 
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall() {
-	s.shortCalls(2*time.Second, 10*time.Second)
+	left := s.shortOfTime()
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
 
-	run, err := s.deliverWithin(task, 5*time.Second)
+	run, err := s.deliverWithin(task, left)
 
 	var missed *scheduling.Missed
 	s.Require().ErrorAs(err, &missed, "the call would be hung up when the occurrence runs out")
@@ -469,10 +480,11 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIs
 }
 
 func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall() {
-	s.shortCalls(2*time.Second, 10*time.Second)
+	// Longer than the ring and than the limit, shorter than both together.
+	left := s.shortOfTime() + deliveryWait/4
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
 
-	run, err := s.deliverWithin(task, 11*time.Second)
+	run, err := s.deliverWithin(task, left)
 
 	var missed *scheduling.Missed
 	s.Require().ErrorAs(err, &missed, "the call would be hung up before its limit")
@@ -494,10 +506,10 @@ func (s *ScheduledTasksSuite) retryAfterUnansweredCall(task store.ScheduledTask,
 }
 
 func (s *ScheduledTasksSuite) TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered() {
-	s.shortCalls(2*time.Second, 10*time.Second)
+	left := s.shortOfTime()
 	task := s.silentTask([]string{"phone", "whatsapp"})
 
-	failure := s.retryAfterUnansweredCall(task, time.Now(), 5*time.Second)
+	failure := s.retryAfterUnansweredCall(task, time.Now(), left)
 
 	s.Equal(scheduling.ReasonNotAnswered, failure.Reason, "how the call went, not why the next channel failed")
 }
@@ -529,7 +541,7 @@ func (s *ScheduledTasksSuite) TestACallTheOccurrenceHasTimeToRingAndHoldIsTried(
 	s.shortCalls(2*time.Second, 10*time.Second)
 	task := s.phoneTask(s.data.createUser(), []string{"phone"}, time.Now())
 
-	run, err := s.deliverWithin(task, 30*time.Second)
+	run, err := s.deliverWithin(task, scheduledPhoneWindow+scheduledCallLimit+deliveryWait)
 
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonFailed, failure.Reason, "the call was tried, and none can be placed here")
@@ -774,13 +786,13 @@ func (s *ScheduledTasksSuite) TestAPhoneTaskTooLateForTheNodeHoldingItsConversat
 }
 
 func (s *ScheduledTasksSuite) TestACallTheNodeHoldingTheConversationHasNoTimeLeftToHoldIsMissed() {
-	s.shortCalls(2*time.Second, 10*time.Second)
+	left := s.shortOfTime()
 	other, peer := s.otherRouter(nil)
 	peer.phone = s.router.phone
 	user := s.data.createUser()
 	task := s.phoneTask(user.on(other), []string{"phone"}, time.Now())
 	run := s.runOf(task, time.Now(), "")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), left)
 	defer cancel()
 
 	_, handed, err := s.router.handDeliveryToPeer(ctx, s.deliveryOf(task, run.ID))
