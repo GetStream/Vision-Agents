@@ -88,6 +88,8 @@ const (
 	codeChannelAccountNotFound  = "channel_account_not_found"
 	codeCommandNotFound         = "command_not_found"
 	codeConnectionNotFound      = "connection_not_found"
+	codeKnowledgeBaseNotFound   = "knowledge_base_not_found"
+	codeKnowledgeBaseInUse      = "knowledge_base_in_use"
 	codeKnowledgeDocNotFound    = "knowledge_document_not_found"
 	codeKnowledgeURLNotFound    = "knowledge_url_not_found"
 	codePluginNotFound          = "plugin_not_found"

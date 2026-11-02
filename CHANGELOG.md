@@ -5,6 +5,9 @@
 ### A number or a 10DLC registration is paid for before it is bought
 
 `POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
+### A session sets how many tool rounds a reply may chain
+
+`max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.
 
 ### A Flutter app on a call can show the agent its camera
 
@@ -189,6 +192,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 `knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
+### A knowledge base can be deleted
+
+`DELETE /v1/agents/knowledge?namespace=<name>` deletes one of the caller's knowledge bases for good: everything turbopuffer holds of it, the documents it was filled with and the pages it was kept filled from, which are no longer read. A base an agent config reads is refused with a 409 `knowledge_base_in_use` naming those agents, and one the caller has nothing in is a 404 `knowledge_base_not_found`, whatever another app has under that name. The delete is one entry in the audit log. It is server-side only. Its name can then be filled again, in any region and account, as a base never written to (AI-1996).
+
 ### GPT-6.1 Terra is `openai/gpt-6.1-terra`
 
 OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
@@ -206,6 +213,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
 ## Bug Fixes
+
+### A bought or attached number reaches its agent
+
+Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
 
 ### A voice reply cut short is billed for what it generated
 
@@ -412,6 +423,10 @@ Every turn's instructions end with the date and the hour in UTC, and in the user
 ### The greeting is said when somebody joins the call, not when the agent does
 
 An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
+
+### A page removed while it is read stays out of its knowledge base
+
+The URL crawler wrote a page's passages even when the page was removed while it was read, so an agent went on answering out of a page no list showed. The crawler now looks for the page again before it writes and once it has written, and takes back what it wrote when the page is gone (AI-1996).
 
 ### Go clients keep working with a region
 

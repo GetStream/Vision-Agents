@@ -222,6 +222,9 @@ type stubLLM struct {
 	keepCalling bool
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
+	// callsUntil, when set, is the request, counted from 1, at which keepCalling stops and
+	// the model answers, so a chain no cap ends still ends.
+	callsUntil int
 	// senders are who each request was asked in the name of, in the order asked.
 	senders []routing.Caller
 	// scheduled is whether each request was asked as a turn a scheduled task fired.
@@ -331,7 +334,8 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		reply = append([]string(nil), s.then...)
 	}
 	var calls []llm.ToolCall
-	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling && len(params.Tools) > 0 {
+	if len(s.asked) == max(s.callsOn, 1) ||
+		s.keepCalling && len(params.Tools) > 0 && (s.callsUntil == 0 || len(s.asked) < s.callsUntil) {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
@@ -880,6 +884,8 @@ type AgentSuite struct {
 	callID string
 	// timezone is the user's zone a text agent joins with, empty unless a test names one.
 	timezone string
+	// toolRoundLimit is the MaxToolRounds a text agent joins with, zero unless a test names one.
+	toolRoundLimit int
 	// region is where the agent's work is done, and twinned a region every router also
 	// declares its stub in, beside the default one: both empty unless a test is about
 	// regions. builtIn is the region each modality's stub was built in, every time it was.
@@ -901,6 +907,7 @@ func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.callID = ""
 	s.timezone = ""
+	s.toolRoundLimit = 0
 	s.edgeFactory = nil
 	s.holdOpen = nil
 	s.remembers = nil
@@ -1012,6 +1019,7 @@ func (s *AgentSuite) joinText() {
 		Publish:            publish,
 		Instructions:       "be brief",
 		Timezone:           s.timezone,
+		MaxToolRounds:      s.toolRoundLimit,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
 		SubagentTarget:     subagentTarget,
@@ -4189,6 +4197,51 @@ func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2*(maxToolRounds+1) },
 		"the next message was not given its own tool rounds")
 	s.NotEmpty(s.model.requests()[maxToolRounds+2].Tools, "the next message's reply to a tool was made to answer at once")
+}
+
+func (s *AgentSuite) TestATextAgentWithAHigherToolRoundLimitChainsPastTheDefault() {
+	s.toolRoundLimit = maxToolRounds + 4
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == s.toolRoundLimit+1 },
+		"the reply at the configured limit was never asked")
+	requests := s.model.requests()
+	s.NotEmpty(requests[maxToolRounds].Tools, "the default's round was made to answer under a higher limit")
+	s.NotContains(requests[maxToolRounds].Instructions, "answer the caller now")
+	s.Empty(requests[s.toolRoundLimit].Tools, "the reply at the configured limit was still offered tools")
+	s.Contains(requests[s.toolRoundLimit].Instructions, "answer the caller now")
+}
+
+func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
+	s.toolRoundLimit = -1
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.model.callsUntil = 3 * maxToolRounds
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		history := s.agent.History()
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the chain never ended in an answer")
+	requests := s.model.requests()
+	s.Len(requests, s.model.callsUntil, "the chain ended before the model stopped calling")
+	for round, request := range requests {
+		s.NotEmpty(request.Tools, "round %d was offered no tools", round)
+		s.NotContains(request.Instructions, "answer the caller now", "round %d was told to answer", round)
+	}
 }
 
 func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {

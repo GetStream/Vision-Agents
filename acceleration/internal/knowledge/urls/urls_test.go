@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -95,16 +96,28 @@ func (unpaid) Admit(context.Context, routing.Owner) (routing.Admission, error) {
 type base struct {
 	mu       sync.Mutex
 	passages map[string]knowledge.Document
+	// namespaces are those a write made, as turbopuffer makes one on its first write.
+	namespaces map[string]struct{}
+	// writing, when set, runs once as the next write starts, before it is made.
+	writing func()
 }
 
 func newBase() *base {
-	return &base{passages: map[string]knowledge.Document{}}
+	return &base{passages: map[string]knowledge.Document{}, namespaces: map[string]struct{}{}}
 }
 
-func (b *base) Upsert(_ context.Context, _ string, documents []knowledge.Document) (knowledge.Billed, error) {
+func (b *base) Upsert(_ context.Context, namespace string, documents []knowledge.Document) (knowledge.Billed, error) {
+	b.mu.Lock()
+	writing := b.writing
+	b.writing = nil
+	b.mu.Unlock()
+	if writing != nil {
+		writing()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	b.namespaces[namespace] = struct{}{}
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
 		b.passages[document.ID] = document
@@ -125,6 +138,10 @@ func (b *base) Delete(_ context.Context, _ string, ids []string) (knowledge.Bill
 	return billed, nil
 }
 
+func (b *base) Drop(context.Context, string) (knowledge.Dropped, error) {
+	return knowledge.Dropped{}, errors.New("the crawler does not delete a knowledge base")
+}
+
 func (b *base) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -142,7 +159,19 @@ func (b *base) Search(context.Context, knowledge.Query) (knowledge.Found, error)
 	return knowledge.Found{}, errors.New("the crawler does not search")
 }
 
-func (b *base) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+func (b *base) Namespaces(_ context.Context, prefix string) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var names []string
+	for namespace := range b.namespaces {
+		if strings.HasPrefix(namespace, prefix) {
+			names = append(names, namespace)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
 
 func (b *base) Stored(context.Context, string) (knowledge.Billed, error) {
 	return knowledge.Billed{}, knowledge.ErrNoNamespace
@@ -495,6 +524,38 @@ func (s *URLsSuite) TestAPageRemovedBeforeItWasReadWritesNothing() {
 	s.drained(page)
 
 	s.Empty(s.base.ids())
+}
+
+func (s *URLsSuite) TestAPageRemovedWhileItWasReadWritesNothing() {
+	reading, release := s.holdReads()
+	defer release()
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	s.Require().NoError(err)
+	<-reading
+
+	s.Require().NoError(s.service.Remove(s.ctx, "acme", page.ID))
+	release()
+	s.drained(page)
+
+	s.Empty(s.base.ids(), "a page removed during its read does not come back")
+	made, err := s.base.Namespaces(s.ctx, "")
+	s.Require().NoError(err)
+	s.Empty(made, "nor makes its knowledge base again")
+}
+
+func (s *URLsSuite) TestAPageRemovedAsItsPassagesWereWrittenLeavesNoneBehind() {
+	page := s.added(Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
+	removed := make(chan error, 1)
+	s.base.mu.Lock()
+	s.base.writing = func() { removed <- s.service.Remove(s.ctx, "acme", page.ID) }
+	s.base.mu.Unlock()
+
+	_, err := s.service.Reindex(s.ctx, "acme", page.ID)
+	s.Require().NoError(err)
+	s.Require().NoError(<-removed)
+	s.drained(page)
+
+	s.Empty(s.base.ids(), "the passages written as the page was removed are taken back")
 }
 
 func (s *URLsSuite) TestAPageThatGotShorterLeavesNoOrphans() {

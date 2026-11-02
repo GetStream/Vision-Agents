@@ -195,6 +195,9 @@ type Options struct {
 	Keyterms []string
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
+	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
+	// answer rather than reach for another tool. Zero is maxToolRounds; negative is no limit.
+	MaxToolRounds int
 	// Overwrites is what whoever opened the session asked to change about how the model
 	// answers, written over every turn. Only the safe knobs are here -- effort, length,
 	// randomness, verbosity -- because instructions and tools belong to the agent and a
@@ -1995,7 +1998,8 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.generating = true
 	a.toolReply = false
 	a.toolRounds++
-	answers := a.toolRounds >= maxToolRounds
+	limit := cmp.Or(a.options.MaxToolRounds, maxToolRounds)
+	answers := limit > 0 && a.toolRounds >= limit
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()

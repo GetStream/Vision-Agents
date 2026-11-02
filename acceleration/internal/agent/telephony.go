@@ -134,7 +134,7 @@ func spokenResults(history []llm.Message) []llm.Message {
 // maxToolRounds is the reply to a tool result, counted since the caller last spoke, that is
 // made to answer rather than reach for another tool, on a call or in text. Progressive tools
 // spend a round describing each tool before running it, so it leaves room for three of them
-// and a query corrected once.
+// and a query corrected once. It is the default Options.MaxToolRounds overrides.
 const maxToolRounds = 8
 
 // lateResult introduces the result of a call answered with stillRunning. It comes after

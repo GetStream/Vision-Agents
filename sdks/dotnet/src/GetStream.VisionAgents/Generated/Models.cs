@@ -5028,6 +5028,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("max_tokens")]
         public int? MaxTokens { get; set; } = default!;
 
+        /// <summary>
+        /// The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_tool_rounds")]
+        public int? MaxToolRounds { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("memory")]
         public SessionMemory? Memory { get; set; } = default!;
 

@@ -284,6 +284,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteKnowledge" => {
+          method: :delete, path: "/v1/agents/knowledge",
+          path_params: [].freeze, query: %w[namespace].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteKnowledgeDocument" => {
           method: :delete, path: "/v1/agents/knowledge/documents/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -2152,7 +2158,7 @@ module GetStream
           required: %w[title instructions schedule].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {

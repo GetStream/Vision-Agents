@@ -4243,6 +4243,9 @@ pub struct CreateSessionRequest {
     pub llm: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_tokens: ::std::option::Option<i64>,
+    ///The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_tool_rounds: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub memory: ::std::option::Option<SessionMemory>,
     ///How sure the transcriber must be before the agent answers rather than checks what was meant.
