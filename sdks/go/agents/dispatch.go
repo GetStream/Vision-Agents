@@ -229,7 +229,8 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 //
 // The response is created with this worker's own credential, acting for whoever wrote the
 // message, so it reaches a conversation that belongs to them and goes to the model rather
-// than back to a worker. It carries the message's command, so the answer lands on it.
+// than back to a worker. It carries the message's command, so the answer lands on it, and
+// the photos sent with it, by the URLs the router handed over.
 func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 	if message.SessionID == "" {
 		return errors.New("agents: no session is holding this message; open one with Conversation")
@@ -240,8 +241,12 @@ func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 	if err != nil {
 		return err
 	}
+	inputs := []client.Input{client.RequestID(message.RequestID)}
+	for _, image := range message.Images {
+		inputs = append(inputs, client.Image{URL: image.URL})
+	}
 	_, err = api.Agent(message.AgentID).Sessions.Responses(message.SessionID).
-		Create(ctx, message.Text, client.RequestID(message.RequestID))
+		Create(ctx, message.Text, inputs...)
 	return err
 }
 

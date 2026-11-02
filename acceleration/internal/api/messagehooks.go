@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -106,6 +105,16 @@ func (e messageEvent) photos() []llm.ImagePart {
 	return images
 }
 
+// dispatchedPhotos are the photos sent with a message as a worker is handed them: their URLs,
+// which it fetches itself. None is nil, so a frame without photos carries no images.
+func (e messageEvent) dispatchedPhotos() []dispatch.Image {
+	var images []dispatch.Image
+	for _, photo := range e.photos() {
+		images = append(images, dispatch.Image{URL: photo.URL})
+	}
+	return images
+}
+
 // receiveMessageEvent takes the message events Stream sends and turns a message written to
 // an agent into an answer.
 //
@@ -180,8 +189,8 @@ func chatHookAttribution(customerID string, event messageEvent) routing.Attribut
 // is delivered here, and a team's channel has nothing on the other end of it. A message
 // carrying a source: everything the agent stores does, whether it is speech it answered as
 // it was said or its own reply, and answering either is the agent talking to itself. And a
-// message with nothing written in it, which an attachment on its own is, except a photo on a
-// thread channel: the person in an external thread sent it to the agent (answerThread).
+// message with neither text nor a photo, such as a file or a video on its own, which nothing
+// that answers here reads.
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
@@ -191,7 +200,7 @@ func addressed(event messageEvent) bool {
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
 		return false
 	}
-	if event.Message.Text == "" && (!strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) || len(event.photos()) == 0) {
+	if event.Message.Text == "" && len(event.photos()) == 0 {
 		return false
 	}
 	return len(event.Message.Source) == 0
@@ -220,10 +229,6 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		origin.answer(func() { s.answerThread(origin, thread, event) })
 		return true
 	}
-	// Only a linked thread answers a photo sent without text (addressed).
-	if event.Message.Text == "" {
-		return true
-	}
 	if s.sessions != nil {
 		found, running, err := s.liveSessionOn(ctx, origin, event)
 		if errors.Is(err, store.ErrAmbiguousHook) {
@@ -247,6 +252,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 					ChannelID:   event.ChannelID,
 					Custom:      customOf(event.ChannelCustom),
 					Text:        event.Message.Text,
+					Images:      event.dispatchedPhotos(),
 					MessageID:   event.Message.ID,
 					UserID:      event.Message.User.ID,
 					UserName:    event.Message.User.Name,
@@ -312,6 +318,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		ConfigID:    configID,
 		Custom:      customOf(event.ChannelCustom),
 		Text:        event.Message.Text,
+		Images:      event.dispatchedPhotos(),
 		MessageID:   event.Message.ID,
 		UserID:      event.Message.User.ID,
 		UserName:    event.Message.User.Name,
@@ -565,7 +572,8 @@ func (s *Server) answerMessage(found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 
-	if _, err := found.Ask(ctx, event.Message.Text); err != nil {
+	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), event)
+	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
 			"channel", event.ChannelID, "session", found.ID(), "error", err)
 		return

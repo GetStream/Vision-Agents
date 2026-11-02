@@ -437,7 +437,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 			tools = nil
 		}
 	}
-	input := slices.Concat(withImages(turn.History, turn.Images), carried)
+	input := slices.Concat(WithImages(turn.History, turn.Images), carried)
 	if transient != "" {
 		input = append(input, llm.Message{Role: llm.System, Content: noteHeader + "\n" + transient})
 	}
@@ -577,10 +577,10 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 const resumption = "Carry on with the caller from the note that follows. Say only what a " +
 	"tool or your colleague actually returned."
 
-// withImages puts images on the caller's last message in history, after its words and each
+// WithImages puts images on the caller's last message in history, after its words and each
 // beside its caption. That is the last message of a reply to the caller, and comes before
 // the tool calls and results a reply to a tool follows.
-func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
+func WithImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 	at := len(history) - 1
 	for at >= 0 && history[at].Role != llm.User {
 		at--

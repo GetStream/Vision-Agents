@@ -111,7 +111,7 @@ func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() 
 	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhoto, said.Content)
 	s.Empty(imagesIn(said))
-	s.Contains(s.logged.String(), "could not fetch a photo of a message in a thread channel")
+	s.Contains(s.logged.String(), "could not fetch a photo of a message")
 	s.Contains(s.logged.String(), "127.0.0.1:1")
 	s.NotContains(s.logged.String(), signature, "a photo's signed URL stays out of the log")
 }
