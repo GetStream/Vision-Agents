@@ -168,12 +168,42 @@ userToken:, tokenLoader:)`, `makeCall(callType:, id:)`, `call.join(connectOption
 CallConnectOptions(microphone:, camera:, cameraFacingMode: FacingMode.environment,
 speakerDefaultOn: true))` (which creates the call too), `setMicrophoneEnabled`,
 `setCameraEnabled(constraints: CameraConstraints(...))`, `call.leave()`, `dispose()`,
-`call.state.valueStream`, `StreamVideoRenderer`. Results are `Result<T>`; a `Failure` becomes
-`VoiceState.failure`.
+`call.state.valueStream`, `StreamVideoRenderer`, `call.getTrack(...).captureScreenshot()`.
+Results are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
 
 - A token provider, not a token: `tokenLoader` asks the agents' token function again when the
   token expires an hour in.
 - The camera starts on the back lens as a join setting, so no front-facing frame is published.
+- The agent looks through the camera with the router's `get_video_frames` tool call, answered by
+  `AgentSession` through `camera` and never offered to the app's tools. `camera` is a
+  `CameraHandler`, `(at, limit)` to a list of `CameraPicture` records (both hidden from core's
+  exports), and is public only because `rtc` is a separate package (Kotlin and Swift keep all
+  of this internal, in one module). It is `@internal` (`package:meta`), so the analyzer warns an
+  app that touches it and its signature is `rtc`'s to change; `rtc`'s uses carry an `ignore`. With `camera` null the call is
+  left alone (a backend video worker may own it); with `run: false` it is left alone too, as JS
+  does; a `tool_cancel` drops the answer, as for the app's tools. Core reads `at_ms` and `limit`
+  (1 to 8), sends the pictures oldest first as `camera-n`, and answers an empty list or a throw
+  with the nothing-recent words.
+- `VoiceSession` sets `camera` while its camera is on, and `stop`s and clears it on camera off
+  (before Stream Video turns it off, so a look under way cannot finish on the pictures it took),
+  `leave` and `end`. Stream Video 1.6 has no Dart hook on outgoing frames, so `CameraShots` takes
+  a screenshot of the call's own track when the agent asks: `limit` pictures asked for 0.5 s apart, each
+  the camera's next frame at full size (a JPEG on Android, a PNG on iOS), scaled to 1024 px and
+  made JPEG q70 in `compute` (`package:image`, its JPEG and PNG decoders only, from 4.12.0, the first whose
+  decoders do not throw on short data). Nothing is taken while idle and nothing kept, so
+  `at` is not looked back to: the pictures come from just after the question, where iOS and
+  Android send the ones from just before it. Matching them needs a native frame processor in
+  `rtc` (`ProcessorProvider` and `setVideoEffects`); `camera` already carries `at` and each
+  `capturedAt`, so that changes nothing public.
+- A screenshot cannot be called off: its sink stays on the track until a frame comes. So a track
+  that still owes a picture shares it rather than being asked again, even across the camera
+  turned off and on. `stop` makes a look under way come back empty at once, even one waiting on
+  a stalled track, since what a camera turned off showed is not for the agent. `captureFrame`
+  writes every picture to the one `captureFrame.png` in the temp directory, so an app taking its
+  own `takeScreenshot` at the same moment can swap pictures with it. Several full-size pictures pass the router's 5 MiB socket
+  frame limit, which closes the socket; hence the scaling. A socket that names its `tools` must
+  name `get_video_frames` too, or the router sends the call with `run: false` and drops the
+  answer.
 - Permissions are the host app's: `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `CAMERA`,
   `BLUETOOTH_CONNECT`, `INTERNET`, `ACCESS_NETWORK_STATE`; `NSMicrophoneUsageDescription`,
   `NSCameraUsageDescription`. Emulators do not test echo cancellation or audio routing.
