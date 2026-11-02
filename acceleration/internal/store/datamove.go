@@ -115,6 +115,7 @@ var dataTables = []dataTable{
 	{name: "knowledge_documents", customer: "customer_id", vouched: []string{"state", "error", "object_key"}},
 	{name: "campaigns", customer: "customer_id"},
 	{name: "campaign_contacts", parent: "campaigns", parentColumn: "campaign_id"},
+	{name: "campaign_attempts", parent: "campaigns", parentColumn: "campaign_id"},
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
@@ -656,9 +657,13 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	}
 	switch table {
 	case "scheduled_tasks":
-		row, err = pauseImported(row, ScheduledTaskActive, ScheduledTaskPaused, true)
+		row, err = pauseImported(row, []string{ScheduledTaskActive}, ScheduledTaskPaused, true)
 	case "campaigns":
-		row, err = pauseImported(row, Running, Paused, false)
+		row, err = pauseImported(row, []string{Running, Scheduled}, Paused, false)
+	case "campaign_contacts":
+		row, err = requeueImportedContact(row, time.Now())
+	case "campaign_attempts":
+		row, err = abandonImportedAttempt(row)
 	}
 	if err != nil {
 		return err
@@ -898,15 +903,14 @@ FROM %s`, sequence.name)
 // or failed there keeps its state and loses the mark: the user paused it, so the cut-over
 // leaves it paused.
 //
-// A campaign running there does not ring anybody here either way: only resuming it here
-// does, after which a router's runner tick claims its contacts. It arrives paused so that it says so, and marked so that the
-// cut-over can name the campaigns to start.
-func pauseImported(row json.RawMessage, active, paused string, claimed bool) (json.RawMessage, error) {
+// A campaign running or scheduled there does not ring anybody here either way: every router
+// dials a running campaign, so it arrives paused and marked, and the cut-over resumes it here.
+func pauseImported(row json.RawMessage, active []string, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
 		return nil, fmt.Errorf("store: read an imported row: %w", err)
 	}
-	moved := string(fields["state"]) == `"`+active+`"`
+	moved := slices.ContainsFunc(active, func(state string) bool { return string(fields["state"]) == `"`+state+`"` })
 	if moved {
 		fields["state"] = json.RawMessage(`"` + paused + `"`)
 	}
@@ -915,6 +919,43 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 		fields["claim_id"] = json.RawMessage(`""`)
 		fields["lease_until"] = json.RawMessage("null")
 	}
+	return json.Marshal(fields)
+}
+
+// requeueImportedContact makes a contact that was being rung there one that is waiting here:
+// the call and the runner that held it are in the deployment it came from, so no one here
+// would ever settle it. It is due now, with no lease.
+func requeueImportedContact(row json.RawMessage, now time.Time) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return nil, fmt.Errorf("store: read an imported row: %w", err)
+	}
+	if stage := string(fields["stage"]); stage != `"`+InProgress+`"` && stage != `"`+AwaitingOutcome+`"` {
+		return row, nil
+	}
+	due, err := json.Marshal(now)
+	if err != nil {
+		return nil, fmt.Errorf("store: write an imported row: %w", err)
+	}
+	fields["stage"] = json.RawMessage(`"` + Enrolled + `"`)
+	fields["leased_by"] = json.RawMessage(`""`)
+	fields["leased_until"] = json.RawMessage("null")
+	fields["next_attempt_at"] = due
+	return json.Marshal(fields)
+}
+
+// abandonImportedAttempt gives up reading the outcome of a call from its transcript here: its
+// contact arrives waiting to be rung again, as a contact that settled before the outcome was
+// read does (classify_state abandoned).
+func abandonImportedAttempt(row json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return nil, fmt.Errorf("store: read an imported row: %w", err)
+	}
+	if string(fields["classify_state"]) != `"pending"` {
+		return row, nil
+	}
+	fields["classify_state"] = json.RawMessage(`"` + classifyAbandoned + `"`)
 	return json.Marshal(fields)
 }
 
@@ -1025,10 +1066,9 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 // cancelled or paused tasks here.
 //
 // It returns how many tasks it resumed, how many it left paused for want of a config, how many
-// for want of room, and the campaigns that were running there. Those it leaves paused and
-// marked: a campaign rings only once it is resumed here, so each is resumed here
-// (POST /v1/agents/campaigns/{id}/resume), and any change of its state here clears the mark
-// (setCampaignState). Running it again resumes nothing twice.
+// for want of room, and the campaigns that were running or scheduled there. Those it leaves paused and
+// marked: the caller resumes each (ResumeCampaign), and any change of a campaign's state here
+// clears the mark (transitionIn). Running it again names nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var marked []ScheduledTask

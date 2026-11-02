@@ -2387,14 +2387,15 @@ func (s *DataMoveSuite) seedCampaign(customerID, state string) string {
 
 func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() {
 	running := s.seedCampaign("acme", Running)
+	scheduled := s.seedCampaign("acme", Scheduled)
 	paused := s.seedCampaign("acme", Paused)
 	draft := s.seedCampaign("acme", Draft)
 	s.move("acme", "moved")
 
 	_, campaigns := s.resume("moved")
 
-	s.Equal([]string{running}, campaigns)
-	for id, want := range map[string]string{running: Paused, paused: Paused, draft: Draft} {
+	s.ElementsMatch([]string{running, scheduled}, campaigns)
+	for id, want := range map[string]string{running: Paused, scheduled: Paused, paused: Paused, draft: Draft} {
 		campaign, err := s.destination.Campaign(s.ctx, "moved", id)
 		s.Require().NoError(err)
 		s.Equal(want, campaign.State, "only starting it here rings anybody")
@@ -2402,6 +2403,76 @@ func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() 
 	source, err := s.source.Campaign(s.ctx, "acme", running)
 	s.Require().NoError(err)
 	s.Equal(Running, source.State, "the deployment it left goes on ringing")
+}
+
+func (s *DataMoveSuite) TestContactsMidCallArriveEnrolledAndDueWithNoLease() {
+	campaign := s.seedCampaign("acme", Draft)
+	_, _, err := s.source.AddContacts(s.ctx, campaign, []Contact{
+		{ToNumber: "+15550000001"}, {ToNumber: "+15550000002"}, {ToNumber: "+15550000003"}})
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", campaign, Running))
+	_, err = s.source.DB().ExecContext(s.ctx, `UPDATE campaign_contacts SET
+		stage = CASE to_number WHEN '+15550000001' THEN 'in_progress' WHEN '+15550000002' THEN 'awaiting_outcome' ELSE 'completed' END,
+		leased_by = 'router-a', leased_until = now() + interval '1 hour', next_attempt_at = now() + interval '2 days'
+		WHERE campaign_id = ?`, campaign)
+	s.Require().NoError(err)
+	before := time.Now().Add(-time.Second)
+
+	s.move("acme", "moved")
+
+	type moved struct {
+		Stage, LeasedBy string
+		LeasedUntil     *time.Time
+		NextAttemptAt   *time.Time
+	}
+	got := map[string]moved{}
+	rows, err := s.destination.DB().QueryContext(s.ctx, `SELECT to_number, stage, leased_by, leased_until, next_attempt_at
+		FROM campaign_contacts WHERE campaign_id = ?`, campaign)
+	s.Require().NoError(err)
+	defer rows.Close()
+	for rows.Next() {
+		var number string
+		var m moved
+		s.Require().NoError(rows.Scan(&number, &m.Stage, &m.LeasedBy, &m.LeasedUntil, &m.NextAttemptAt))
+		got[number] = m
+	}
+	s.Require().NoError(rows.Err())
+	for _, number := range []string{"+15550000001", "+15550000002"} {
+		m := got[number]
+		s.Equal(Enrolled, m.Stage, number)
+		s.Empty(m.LeasedBy, number)
+		s.Nil(m.LeasedUntil, number)
+		s.Require().NotNil(m.NextAttemptAt, number)
+		s.True(m.NextAttemptAt.After(before) && m.NextAttemptAt.Before(time.Now().Add(time.Second)), "%s is due now, not in two days", number)
+	}
+	s.Equal(ContactCompleted, got["+15550000003"].Stage, "a settled contact is not rung again")
+}
+
+func (s *DataMoveSuite) TestAttemptsMoveWithTheirContactsAndAPendingClassificationIsAbandoned() {
+	campaign := s.seedCampaign("acme", Draft)
+	other := s.seedCampaign("other", Draft)
+	for _, c := range []string{campaign, other} {
+		_, _, err := s.source.AddContacts(s.ctx, c, []Contact{{ToNumber: "+15550000001"}})
+		s.Require().NoError(err)
+	}
+	_, err := s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts
+		(id, campaign_id, contact_id, step_id, attempt, result, classify_state, classify_after)
+		SELECT 'att-' || campaign_id, campaign_id, id, 'step_1', 1, 'answered', 'pending', now() FROM campaign_contacts`)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	var ids []string
+	s.Require().NoError(s.destination.DB().NewRaw("SELECT id FROM campaign_attempts").Scan(s.ctx, &ids))
+	s.Equal([]string{"att-" + campaign}, ids, "another customer's attempts do not move")
+	var state string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT classify_state FROM campaign_attempts WHERE id = ?", "att-"+campaign).Scan(&state))
+	s.Equal("abandoned", state, "nobody here reads the transcript of a call the source made")
+	var source string
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT classify_state FROM campaign_attempts WHERE id = ?", "att-"+campaign).Scan(&source))
+	s.Equal("pending", source)
 }
 
 func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {

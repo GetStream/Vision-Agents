@@ -166,9 +166,7 @@ func (s *ReplicateResumeSuite) TestResumeRefusesToCatchUpFromTheSourceFirst() {
 	s.Equal(store.ScheduledTaskPaused, s.state("st-active"))
 }
 
-// A campaign the source was still running at the last --once may have rung contacts the copy
-// still holds pending: the cut-over leaves it paused and says so.
-func (s *ReplicateResumeSuite) TestResumeLeavesACampaignStillRunningAtTheSourcePausedAndNamesIt() {
+func (s *ReplicateResumeSuite) TestResumeStartsTheCampaignsHere() {
 	campaign := &store.Campaign{CustomerID: "acme", Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
 	s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
 	var raw []byte
@@ -181,53 +179,11 @@ func (s *ReplicateResumeSuite) TestResumeLeavesACampaignStillRunningAtTheSourceP
 	s.Require().NoError(resumeMove(s.ctx, s.store, "acme", &out))
 
 	s.Equal("resumed 1 scheduled tasks\n"+
-		"campaign "+campaign.ID+" was still running where it came from at the last --once, so it stays paused here: "+
-		"contacts rung there since then are still pending here, and starting it here rings them again. "+
-		"Read its contacts there (GET /v1/agents/campaigns/"+campaign.ID+"/contacts) before you start it here. "+
-		"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
+		"resumed campaign "+campaign.ID+"\n",
 		out.String())
 	moved, err := s.store.Campaign(s.ctx, "acme", campaign.ID)
 	s.Require().NoError(err)
-	s.Equal(store.Paused, moved.State)
-}
-
-// A campaign the user paused at the source before the last --once is the user's: the cut-over
-// leaves it paused and does not name it.
-func (s *ReplicateResumeSuite) TestResumeLeavesACampaignPausedAtTheSourceAlone() {
-	campaign := &store.Campaign{CustomerID: "acme", Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
-	s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
-	var raw []byte
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT to_jsonb(c) || '{\"state\": \"paused\"}' FROM campaigns c WHERE id = ?", campaign.ID).Scan(&raw))
-	s.Require().NoError(s.store.ImportRow(s.ctx, "acme", "campaigns", raw))
-
-	s.Equal("resumed 0 scheduled tasks\n", s.cutOver())
-	moved, err := s.store.Campaign(s.ctx, "acme", campaign.ID)
-	s.Require().NoError(err)
-	s.Equal(store.Paused, moved.State)
-}
-
-// A campaign the user paused at the source without waiting for its calls to end holds contacts
-// still calling: the cut-over names it and how many a start here rings again.
-func (s *ReplicateResumeSuite) TestResumeNamesAPausedCampaignThatStillHoldsContactsCalling() {
-	campaign := &store.Campaign{CustomerID: "acme", Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
-	s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
-	s.Require().NoError(s.store.AddContacts(s.ctx, []store.Contact{
-		{CampaignID: campaign.ID, ToNumber: "+15550101"}, {CampaignID: campaign.ID, ToNumber: "+15550102"},
-		{CampaignID: campaign.ID, ToNumber: "+15550103"}}))
-	var raw []byte
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT to_jsonb(c) || '{\"state\": \"paused\"}' FROM campaigns c WHERE id = ?", campaign.ID).Scan(&raw))
-	s.Require().NoError(s.store.ImportRow(s.ctx, "acme", "campaigns", raw))
-	_, err := s.store.DB().ExecContext(s.ctx,
-		"UPDATE campaign_contacts SET state = 'calling', attempts = 1 WHERE campaign_id = ? AND to_number <> '+15550103'", campaign.ID)
-	s.Require().NoError(err)
-
-	s.Equal("resumed 0 scheduled tasks\n"+
-		"campaign "+campaign.ID+" is paused here with 2 contacts in a call where it came from at the last --once: "+
-		"starting it here rings them again. Check them there (GET /v1/agents/campaigns/"+campaign.ID+"/contacts) before you start it here. "+
-		"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
-		s.cutOver())
+	s.Equal(store.Running, moved.State)
 }
 
 func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForADeletedConfig() {
