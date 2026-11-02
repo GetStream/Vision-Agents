@@ -27,13 +27,25 @@ const chunkDuration = 20 * time.Millisecond
 // reply at once would have nothing left to drop when the caller cuts in.
 const playoutAhead = 400 * time.Millisecond
 
+// MinSampleRate and MaxSampleRate bound the rate the socket carries: the rates a caller's PCM
+// comes in at. 8 kHz is a phone line; 192 kHz is the highest rate a browser's AudioContext or
+// a studio interface captures at, with the rates between (Opus's 8, 12, 16, 24 and 48 kHz,
+// RFC 6716 section 2, CD's 44.1 kHz, Android's 11.025 kHz) below it. Every frame heard is
+// resampled to 16 kHz, and the result grows with the ratio of the two rates, so a rate outside
+// the range is refused rather than resampled.
+const (
+	MinSampleRate = 8_000
+	MaxSampleRate = 192_000
+)
+
 // ErrLeft is what hearing or publishing more audio returns once the call is over. It is
 // agent.ErrCallLeft, which is how the agent tells a caller hanging up from a failure.
 var ErrLeft = fmt.Errorf("socketedge: %w", agent.ErrCallLeft)
 
 // Options configures an Edge.
 type Options struct {
-	// SampleRate is the rate the socket carries in both directions. Zero means 16 kHz.
+	// SampleRate is the rate the socket carries in both directions, from MinSampleRate to MaxSampleRate.
+	// Zero means 16 kHz.
 	SampleRate int
 	// Caller is who the inbound audio is from.
 	Caller stt.Participant
@@ -70,10 +82,13 @@ type Edge struct {
 	hearing sync.WaitGroup
 }
 
-// New returns an edge that has not been joined.
-func New(options Options) *Edge {
-	if options.SampleRate <= 0 {
+// New returns an edge that has not been joined. It fails only for a rate outside MinSampleRate to MaxSampleRate.
+func New(options Options) (*Edge, error) {
+	if options.SampleRate == 0 {
 		options.SampleRate = stt.SampleRate
+	}
+	if options.SampleRate < MinSampleRate || options.SampleRate > MaxSampleRate {
+		return nil, fmt.Errorf("socketedge: sample rate %d is not from %d to %d", options.SampleRate, MinSampleRate, MaxSampleRate)
 	}
 	return &Edge{
 		rate:    options.SampleRate,
@@ -84,7 +99,7 @@ func New(options Options) *Edge {
 		drained: make(chan struct{}),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
-	}
+	}, nil
 }
 
 // Join starts sending the agent's speech. An edge is one call: joining it again changes
@@ -102,6 +117,9 @@ func (e *Edge) Join(context.Context) error {
 	go e.playout()
 	return nil
 }
+
+// SampleRate is the rate the socket carries in both directions.
+func (e *Edge) SampleRate() int { return e.rate }
 
 // Left reports whether the call has been left.
 func (e *Edge) Left() bool {

@@ -164,3 +164,27 @@ VALUES (?, 'acme', 'alice', 'Stretch', 'Remind them.', '2026-11-06 10:00', 'Euro
 	s.Require().NoError(rows.Err())
 	s.Equal(map[string]string{"after": "", "before": ""}, threads)
 }
+
+// pruneIndexesVersion is 20261206100000_scheduled_tasks_prune_idx.sql; beforePruneIndexesVersion
+// is the one before it.
+const (
+	pruneIndexesVersion       int64 = 20261206100000
+	beforePruneIndexesVersion int64 = 20261205140000
+)
+
+func (s *ScheduledTasksMigrationSuite) TestThePruneIndexesApplyComeOffAndApplyAgain() {
+	prune := []string{"scheduled_task_runs_finished_idx", "scheduled_tasks_pruned_idx"}
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", beforePruneIndexesVersion))
+	before := s.indexes()
+	s.NotContains(before, prune[0])
+	s.NotContains(before, prune[1])
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", pruneIndexesVersion))
+	s.Subset(s.indexes(), prune)
+
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", beforePruneIndexesVersion))
+	s.Equal(before, s.indexes())
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", pruneIndexesVersion))
+	s.Subset(s.indexes(), prune)
+}

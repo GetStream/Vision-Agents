@@ -6,9 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 const day = 24 * time.Hour
@@ -269,4 +272,34 @@ func (s *StoreSuite) TestPruneLeavesTheRowsAnotherPruneHoldsAndDoesNotWait() {
 	s.EqualValues(1, runs)
 	s.EqualValues(1, tasks)
 	s.Empty(s.taskIDs())
+}
+
+// The prune reads each table through an index of its own, with the cut as the index's
+// condition, not a filter on a scan of the whole index. Sequential scans are off so the plan
+// shows which index the planner can use: the tables of a test are too small for it to prefer one.
+func (s *StoreSuite) TestPruneReadsItsIndexes() {
+	for _, c := range []struct {
+		name, query string
+		batch       int
+		index, cond string
+		outer       string
+	}{
+		{"runs", pruneScheduledTaskRunsSQL, scheduledTaskRunsPruned, "scheduled_task_runs_finished_idx", "(finished_at <", "Index Cond: (id = ANY ("},
+		{"tasks", pruneScheduledTasksSQL, scheduledTasksPruned, "scheduled_tasks_pruned_idx", "(updated_at <", ""},
+	} {
+		var plan []string
+		err := s.store.db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if _, err := tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+				return err
+			}
+			return tx.NewRaw("EXPLAIN "+c.query, ScheduledTasksKept.Seconds(), c.batch).Scan(ctx, &plan)
+		})
+		s.Require().NoError(err, c.name)
+		read := strings.Join(plan, "\n")
+		s.Contains(read, c.index, "%s: %s", c.name, read)
+		s.Contains(read, "Index Cond: "+c.cond, "the index is walked by the cut, not filtered after it: %s: %s", c.name, read)
+		if c.outer != "" {
+			s.Contains(read, c.outer, "the delete reads the batch's rows by key, not by a scan of the table: %s: %s", c.name, read)
+		}
+	}
 }

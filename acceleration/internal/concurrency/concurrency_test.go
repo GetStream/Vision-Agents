@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // AddressEnvVar is where the tests look for a Redis to run against.
@@ -38,7 +40,7 @@ func (s *SlotsSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skipf("%s not set", AddressEnvVar)
 	}
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.redis = client
 	s.ctx = context.Background()

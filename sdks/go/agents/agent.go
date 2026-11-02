@@ -52,6 +52,11 @@ type Options struct {
 	CostTracking map[string]string
 	// MemoryFilter is who the memories are about, under "user_id", and what narrows recall.
 	MemoryFilter map[string]string
+	// Timezone is the IANA zone, such as Europe/Lisbon, that the agent's sessions and calls
+	// are in unless one names its own. It is sent as the session's zone, so it sets the zone
+	// the agent reads dates in and, for a named user, is remembered as theirs. Empty sends
+	// none, which leaves the user's stored zone, then the stored config's default, to decide.
+	Timezone string
 	// Edge creates the Stream calls the backend joins. Nil builds one from the environment
 	// the first time a call is needed.
 	Edge *edge.Edge
@@ -181,7 +186,8 @@ type SessionOptions struct {
 	ModelOverwrites *acceleration.ModelOverwrites
 	// Timezone is the end user's IANA timezone, such as Europe/Amsterdam. It sets the
 	// zone the agent reads dates in for this conversation and, for a named user, is
-	// remembered as theirs for the scheduled tasks and sessions that follow.
+	// remembered as theirs for the scheduled tasks and sessions that follow. It wins over
+	// the agent's Options.Timezone, and empty takes the agent's.
 	Timezone string
 }
 
@@ -244,6 +250,7 @@ func (a *Agent) join(ctx context.Context, remote stream.Call, options ...Session
 	remote.AgentID = a.options.UserID
 	remote.Tags = a.options.CostTracking
 	remote.Memory = memoryOf(a.options.MemoryFilter)
+	remote.Timezone = a.options.Timezone
 	if len(options) > 0 {
 		chosen := options[0]
 		remote.Title = chosen.Title
@@ -252,7 +259,9 @@ func (a *Agent) join(ctx context.Context, remote stream.Call, options ...Session
 		remote.Custom = chosen.Custom
 		remote.Incognito = chosen.Incognito
 		remote.ModelOverwrites = chosen.ModelOverwrites
-		remote.Timezone = chosen.Timezone
+		if chosen.Timezone != "" {
+			remote.Timezone = chosen.Timezone
+		}
 		if chosen.AgentID != "" {
 			remote.AgentID = chosen.AgentID
 		}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // LimiterSuite runs the Limiter against Redis: how long a provider's 429 holds a key, and
@@ -50,7 +51,7 @@ func (s *LimiterSuite) SetupTest() {
 
 // connect is a client of its own, as each router has.
 func (s *LimiterSuite) connect(address string) rueidis.Client {
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	return client

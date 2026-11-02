@@ -25,8 +25,9 @@ const defaultReviewTarget = "multilingual-high-accuracy"
 // than this is summarised from its beginning, which is where what it was about is.
 const reviewLimit = 400
 
-// reviewTimeout bounds the whole pass, and reviewTokens bounds what it may write. A
-// summary long enough to need more is not a summary.
+// reviewTimeout bounds the whole pass, and reviewTokens bounds the answer it may write. A
+// summary long enough to need more is not a summary. A model that thinks first is given
+// llm.ThinkingRoom on top, since its thinking counts against the same cap.
 const (
 	reviewTimeout = 90 * time.Second
 	reviewTokens  = 500
@@ -150,36 +151,7 @@ func (r *reviewer) Close() {
 }
 
 func (r *reviewer) review(ctx context.Context, call store.Call, region, target, guide string, said []spoken) error {
-	session, err := r.llm.Start(ctx, llmrouter.Request{
-		CustomerID: call.CustomerID,
-		AgentID:    call.AgentID,
-		CallID:     call.CallID,
-		Region:     region,
-		Tags:       call.Tags,
-		Target:     target,
-	})
-	if err != nil {
-		return err
-	}
-	defer session.Close()
-
-	stream, err := session.Create(ctx, llm.ResponseParams{
-		ID:              call.ID,
-		Instructions:    reviewPrompt(guide),
-		Input:           []llm.Message{{Role: llm.User, Content: conversation(said)}},
-		MaxOutputTokens: reviewTokens,
-		Text:            llm.TextParams{Format: llm.FormatJSONObject},
-	})
-	if err != nil {
-		return err
-	}
-
-	response, err := llm.Collect(stream)
-	if err != nil {
-		return err
-	}
-
-	verdict, err := parseJudgement(response.OutputText)
+	verdict, err := r.judge(ctx, call, region, target, guide, said)
 	if err != nil {
 		return err
 	}
@@ -189,6 +161,45 @@ func (r *reviewer) review(ctx context.Context, call store.Call, region, target, 
 		score = &verdict.Score
 	}
 	return r.store.ReviewCall(ctx, call.CustomerID, call.ID, verdict.Summary, score, verdict.Notes)
+}
+
+// judge asks the reviewer's model what it made of the call.
+func (r *reviewer) judge(ctx context.Context, call store.Call, region, target, guide string, said []spoken) (judgement, error) {
+	session, err := r.llm.Start(ctx, llmrouter.Request{
+		CustomerID: call.CustomerID,
+		AgentID:    call.AgentID,
+		CallID:     call.CallID,
+		Region:     region,
+		Tags:       call.Tags,
+		Target:     target,
+	})
+	if err != nil {
+		return judgement{}, err
+	}
+	defer session.Close()
+
+	stream, err := session.Create(ctx, llm.ResponseParams{
+		ID:              call.ID,
+		Instructions:    reviewPrompt(guide),
+		Input:           []llm.Message{{Role: llm.User, Content: conversation(said)}},
+		MaxOutputTokens: reviewTokens + llm.ThinkingRoom,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
+	})
+	if err != nil {
+		return judgement{}, err
+	}
+
+	response, err := llm.Collect(stream)
+	if err != nil {
+		return judgement{}, err
+	}
+	read, err := parseJudgement(response.OutputText)
+	// An answer the cap cut off reads as broken JSON, which hides what broke it.
+	if err != nil && response.Status == llm.StatusIncomplete {
+		return judgement{}, fmt.Errorf("session: the review stopped early (%s) after %d output tokens, %d of them thinking",
+			response.IncompleteReason, response.Usage.OutputTokens, response.Usage.OutputTokensDetails.ReasoningTokens)
+	}
+	return read, err
 }
 
 // conversation is the call as the reviewer reads it. It is quoted rather than replayed as

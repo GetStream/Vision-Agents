@@ -14,6 +14,7 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -350,4 +351,18 @@ func (s *StreamAppSuite) TestAnAnswerResolvedAcrossAnInvalidationIsNotKept() {
 	second, err := clients.For(context.Background(), "acme")
 	s.Require().NoError(err)
 	s.Equal("new-key", second.Identity.APIKey, "and is not kept past it")
+}
+
+func (s *StreamAppSuite) TestAUserTokenSignedWithTheAppsSecretGoesWithTheKeyOfThatSecret() {
+	// Only the gateway can sign for another key; a secret signs for its own.
+	clients := NewClients(deployment(), ClientsOptions{})
+	bound, err := clients.For(context.Background(), "acme")
+	s.Require().NoError(err)
+
+	token, key, err := clients.MintUserToken(context.Background(), bound, "another-key", "guest-1", time.Hour)
+
+	s.Require().NoError(err)
+	s.Equal("deploy-key", key)
+	_, err = jwt.Parse(token, func(*jwt.Token) (any, error) { return []byte("deploy-secret"), nil })
+	s.NoError(err)
 }

@@ -135,7 +135,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	was := sandboxOfConfig(config)
 
 	patch := request.Body
-	if message, ok := configComplaint(AgentConfigRequest{
+	if message, ok := configComplaint(ctx, AgentConfigRequest{
 		Name:           override(config.Name, patch.Name),
 		Mode:           patch.Mode,
 		Region:         patch.Region,

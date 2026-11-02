@@ -688,7 +688,11 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?", "", nil, options.LLM{})
 	s.Require().NoError(err)
-	setMembers("alice")
+	// Chat ignores the data of a query for a channel that exists, so a member leaves by
+	// an update.
+	_, err = client.Chat().UpdateChannel(s.ctx, "agent", channelID,
+		&getstream.UpdateChannelRequest{RemoveMembers: []string{"bob"}})
+	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "", nil, options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.Command("bob-command")
@@ -700,6 +704,9 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	detachBob()
 	_, err = s.manager.Create(s.ctx, spec)
 	s.Require().Error(err, "a removed member cannot reopen the shared channel")
+	spec.Caller.UserID = "alice"
+	_, err = s.manager.Create(s.ctx, spec)
+	s.NoError(err, "the member left in the channel still opens it")
 }
 
 func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {

@@ -44,7 +44,7 @@ var (
 	usageEstimated = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_estimated_total",
-		Help:      "Billable work the vendor never said the usage of, billed on the router's own count: reason cancelled for a response its caller cut short, timeout for one a deadline did, missing for one that finished",
+		Help:      "Billable work the vendor never said the usage of, billed on the router's own count: reason cancelled for a response its caller or the prompt injection screen cut short, timeout for one a deadline did, missing for one that finished",
 	}, []string{"modality", "provider", "model", "reason"})
 	usageUnpriced = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -102,7 +102,8 @@ func (r *Recorder) watch(config ProviderConfig, entry Stat, request store.Reques
 	case entry.Attributes[AttributeUsageEstimated] == "true":
 		reason := estimatedMissing
 		switch request.ErrorCode {
-		case ErrorCancelled:
+		case ErrorCancelled, ErrorRefused:
+			// A refusal cuts the response off as a cancel does, before its usage arrives.
 			reason = estimatedCancelled
 		case ErrorTimeout:
 			reason = estimatedTimeout

@@ -26,6 +26,7 @@ import (
 
 	"github.com/uptrace/bun/driver/pgdriver"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -238,7 +239,8 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 	flags := flag.NewFlagSet("prices show", flag.ContinueOnError)
 	atText := flags.String("at", "", "the time to show the list at, RFC 3339; empty is now")
 	asJSON := flags.Bool("json", false, "write JSON")
-	unpricedOnly := flags.Bool("unpriced", false, "list only the routed items no entry prices")
+	unpricedOnly := flags.Bool("unpriced", false, "list only the billed items no entry prices: routed models and their BYOK twins, "+
+		"knowledge, sandboxes, phone, texts, 10DLC fees and runtime")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -274,7 +276,11 @@ func runPricesShow(ctx context.Context, args []string, settings config.Config, o
 	if err != nil {
 		return fmt.Errorf("prices: the list in force does not build: %w", err)
 	}
-	shown.Unpriced = append(shown.Unpriced, list.Unpriced(routing.Items(routingConfig))...)
+	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
+	if err != nil {
+		return err
+	}
+	shown.Unpriced = append(shown.Unpriced, list.Unpriced(billable.Items(billableOf(settings, routingConfig, vendorConfig)))...)
 
 	switch {
 	case *asJSON:

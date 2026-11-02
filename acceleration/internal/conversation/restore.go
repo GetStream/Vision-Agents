@@ -6,6 +6,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -69,8 +70,21 @@ func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
 
 // openedIn reports whether the page holds the conversation's first message: all of the
 // conversation was read, or what was recorded as said first is in it.
-func openedIn(p Page, opening string) bool {
-	return !p.Truncated || opening != "" && slices.ContainsFunc(p.Messages, func(m Message) bool {
+func openedIn(p Page, all []entry, opening string) bool {
+	if !p.Truncated || opening == "" {
+		return !p.Truncated
+	}
+	if opening == agent.WithheldInput {
+		// A first message a refused reply was asked is recorded withheld, as entries reads
+		// it back: the page holds it when its oldest user turn is withheld too.
+		for k := len(all) - 1; k >= 0; k-- {
+			if all[k].message.Role == llm.User {
+				return all[k].message.Content == agent.WithheldInput
+			}
+		}
+		return false
+	}
+	return slices.ContainsFunc(p.Messages, func(m Message) bool {
 		return m.Role == "user" && m.Text == opening
 	})
 }
@@ -137,7 +151,7 @@ func (t told) size() int {
 func withTools(p Page, all []entry, rounds map[string][]llm.Message, opening string, limit, budget int, tr bool) ([]llm.Message, bool) {
 	// opened is where the conversation's first message is in all, when all reaches it.
 	opened := -1
-	if openedIn(p, opening) {
+	if openedIn(p, all, opening) {
 		opening = ""
 		for k := len(all) - 1; k >= 0 && opened < 0; k-- {
 			if all[k].message.Role == llm.User {

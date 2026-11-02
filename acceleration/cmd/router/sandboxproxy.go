@@ -95,9 +95,9 @@ func serveSandboxProxy(proxy *egress.Proxy, addr string, fd int, publicURL strin
 	public, valid := config.ProxyURL(publicURL)
 	secure := valid && public.Scheme == "https"
 	// ErrorLog: a failed handshake is the router's log line, as in a tunnel, not the std log's.
-	// IdleTimeout: a sandbox's connection that sends no next request is closed, as a tunnel's
-	// is; a CONNECT tunnel is hijacked and has its own idle limit in the proxy.
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: proxy.IdleTimeout(),
+	// IdleTimeout: a sandbox's connection that sends no next request is closed, as a grant's
+	// tunnel's is; a CONNECT tunnel is hijacked and has its own idle limit in the proxy.
+	server := &http.Server{Handler: proxy, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: proxy.KeepAliveTimeout(),
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelInfo)}
 	// mu orders a listen while waiting against the hand-over, so a router done with the
 	// address never takes it.

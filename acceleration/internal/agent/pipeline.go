@@ -410,6 +410,8 @@ func (a *Agent) startNative(prep *prepared) {
 	}
 	a.voicePrompt, a.performs = "", false
 	a.nativeListening, a.nativeAwaiting = false, false
+	// The new session heard none of the old one's stops, so it owes no answer to one.
+	a.nativeAnswerDue = false
 	a.mu.Unlock()
 	a.nativeMode.Store(true)
 

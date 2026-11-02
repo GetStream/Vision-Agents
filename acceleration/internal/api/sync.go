@@ -209,7 +209,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if s.store == nil {
 		return nil, errNoConfigs
 	}
-	if message, ok := syncComplaint(body); !ok {
+	if message, ok := syncComplaint(ctx, body); !ok {
 		return nil, invalidRequest(message)
 	}
 
@@ -435,14 +435,14 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 // syncComplaint reports what is wrong with the settings a directory declared, if
 // anything. It is the same reading configComplaint does, since a directory decides the
 // same things a config written by hand does.
-func syncComplaint(body SyncAgentRequest) (string, bool) {
+func syncComplaint(ctx context.Context, body SyncAgentRequest) (string, bool) {
 	if _, ok := modeOf(body.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
 	}
 	if complaint, ok := agentRegionComplaint(body.Region); !ok {
 		return complaint, false
 	}
-	if complaint, ok := guardrailComplaint(body.Guardrail); !ok {
+	if complaint, ok := guardrailComplaint(ctx, body.Guardrail); !ok {
 		return complaint, false
 	}
 	if len(keytermsOf(body.Keyterms)) > stt.MaxKeyterms {

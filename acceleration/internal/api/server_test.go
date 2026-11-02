@@ -133,7 +133,7 @@ func (s *ServerSuite) TestRollupThenStatsReportsTheCustomersUsage() {
 	s.recordTurn(s.base.Add(7*time.Minute), 1000, 360, false)
 
 	var rollup RollupResult
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/stats/rollup",
+	s.Require().Equal(http.StatusOK, s.ops().do(http.MethodPost, "/v1/ops/stats/rollup",
 		map[string]any{"granularity": "hourly", "from": s.from(), "to": s.to(time.Hour)}, &rollup))
 	s.Equal(GranularityHourly, rollup.Granularity)
 	s.Positive(rollup.BucketsWritten)
@@ -189,12 +189,38 @@ func (s *ServerSuite) TestStatsAreScopedToTheCallingCustomer() {
 	s.EqualValues(3000, buckets[0].AudioMsTotal)
 }
 
+func (s *ServerSuite) TestAnAppsBackendCannotRollUpAnotherAppsUsage() {
+	project := map[string]string{"project": "support"}
+	s.recordLabelled(s.base.Add(5*time.Minute), 3000, project)
+	s.recordLabelled(s.base.Add(40*time.Minute), 2000, project)
+	s.rollup(time.Hour)
+	owner := s.app
+
+	// Another app's backend, over a window that starts inside the hour the first app's
+	// bucket covers.
+	s.useApp(s.data.createApp())
+	window := map[string]any{"granularity": "hourly",
+		"from": s.base.Add(30 * time.Minute).Format(time.RFC3339), "to": s.to(time.Hour)}
+	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodPost, "/v1/ops/stats/rollup", window, nil),
+		"an app's backend is not staff")
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodPost, "/v1/stats/rollup", window, nil),
+		"the rollup is no longer an app's operation")
+
+	s.useApp(owner)
+	var buckets []TagStatsBucket
+	path := fmt.Sprintf("/v1/llm/stats/tags?key=project&from=%s&to=%s", s.from(), s.to(time.Hour))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, path, nil, &buckets))
+	s.Require().Len(buckets, 1)
+	s.EqualValues(5000, buckets[0].CostMicrosTotal, "the first app's bucket keeps both requests")
+	s.EqualValues(2, buckets[0].RequestCount)
+}
+
 func (s *ServerSuite) TestDailyGranularityCollapsesTheHours() {
 	s.recordTurn(s.base.Add(1*time.Hour), 1000, 100, true)
 	s.recordTurn(s.base.Add(6*time.Hour), 2000, 100, true)
 
 	var rollup RollupResult
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/stats/rollup",
+	s.Require().Equal(http.StatusOK, s.ops().do(http.MethodPost, "/v1/ops/stats/rollup",
 		map[string]any{"granularity": "daily", "from": s.from(), "to": s.to(24 * time.Hour)}, &rollup))
 	s.Equal(GranularityDaily, rollup.Granularity)
 
@@ -489,8 +515,13 @@ func (s *ServerSuite) to(after time.Duration) string {
 
 // rollup writes the buckets for the window, which is what the stats endpoints read.
 func (s *ServerSuite) rollup(window time.Duration) {
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/stats/rollup",
+	s.Require().Equal(http.StatusOK, s.ops().do(http.MethodPost, "/v1/ops/stats/rollup",
 		map[string]any{"from": s.from(), "to": s.to(window)}, nil))
+}
+
+// ops is Stream staff's tooling, which runs the rollup with the ops key and no app.
+func (s *ServerSuite) ops() *testClient {
+	return &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 }
 
 // stats reads one modality's buckets over the window.

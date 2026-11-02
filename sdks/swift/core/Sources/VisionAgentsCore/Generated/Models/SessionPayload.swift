@@ -61,6 +61,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let tts: String?
     /// What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
     let usage: CallUsage?
+    /// The name the agent joined the call as. It is not the owner of the session.
     let userId: String
     let video: SessionVideo?
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.

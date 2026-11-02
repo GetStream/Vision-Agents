@@ -103,10 +103,14 @@ val chat = agents.agent("docs").chat(
 remembered.
 
 `timezone` names the user's zone, which the phone knows and the router does not, so the agent
-reads "at six" in it and remembers it for the scheduled tasks that follow:
+reads "at six" in it and remembers it for the scheduled tasks that follow. Left out, it is the
+phone's own zone, `TimeZone.getDefault().id`, when the phone names it the IANA way; a phone set
+to a bare offset such as `GMT+05:30` sends none, since the router would refuse it. A zone you
+name is sent as it is, and `null` sends none:
 
 ```kotlin
-SessionOptions(memory = SessionOptions.Memory(), timezone = TimeZone.getDefault().id)
+SessionOptions(timezone = "Europe/Amsterdam")
+SessionOptions(timezone = null)
 ```
 
 ### A tool that runs on the phone

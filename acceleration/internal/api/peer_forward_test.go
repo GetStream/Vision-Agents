@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -16,32 +17,66 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// forwardDelivery hands a scheduled delivery for a session on other to it the way a peer
-// does, presenting credential, and returns the text it carried and what other answered.
+// forwardDelivery hands a scheduled delivery for a stored task's session on other to it the
+// way a peer does, presenting credential, and returns the text it carried and what other
+// answered.
 func (s *ScheduledTasksSuite) forwardDelivery(other *httptest.Server, credential []byte) (string, *node.ForwardResponse, error) {
+	return s.forwardChanged(other, credential, nil)
+}
+
+// forwardChanged is forwardDelivery with change applied to the payload before it is sent.
+func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential []byte, change func(map[string]any)) (string, *node.ForwardResponse, error) {
+	return s.forwardStored(other, credential, nil, change)
+}
+
+// forwardStored is forwardChanged with edit applied to the task before it is stored; the
+// payload then names the edited task's owner but the session the task was made in.
+func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
+	return s.forwardStoredTo(other, other, credential, edit, change)
+}
+
+// forwardStoredTo is forwardStored for a session opened on holding, handed to to.
+func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	config := s.agentWithScheduling(nil)
-	opened := s.data.createUser().on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	user := s.data.createUser()
+	opened := user.on(holding).createSession(CreateSessionRequest{ConfigId: &config})
+	task := store.ScheduledTask{
+		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
+		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
+		Instructions: "Remind them to stretch.",
+		StartLocal:   time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second), Timezone: "UTC",
+	}
+	if edit != nil {
+		edit(&task)
+	}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
 
 	text := "peer-delivery-" + s.utils.uuid()
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"customer_id": s.customerID(),
 		"session_id":  opened.Id,
-		"caller_kind": "server",
-		"task_id":     "peer-task",
+		"user_id":     task.UserID,
+		"caller_kind": task.CallerKind,
+		"task_id":     task.ID,
 		"run_id":      "peer-run",
 		"command_id":  "st_peer",
 		"text":        text,
 		"due":         time.Now(),
-	})
+	}
+	if change != nil {
+		change(payload)
+	}
+	body, err := json.Marshal(payload)
 	s.Require().NoError(err)
 	request, err := http.NewRequest(http.MethodPost, scheduledPeerPath, bytes.NewReader(body))
 	s.Require().NoError(err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	answer, err := node.NewForwarder(nil, credential).Ask(ctx, other.Listener.Addr().String(), request, body)
+	answer, err := node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
 	return text, answer, err
 }
 
@@ -54,6 +89,16 @@ func (s *ScheduledTasksSuite) suiteCredential() []byte {
 // refused checks that a forwarded delivery was turned away and never reached the session.
 func (s *ScheduledTasksSuite) refused(text string, err error) {
 	s.Equal(codes.Unauthenticated, status.Code(err), "error: %v", err)
+	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
+		"the refused delivery reached the session")
+}
+
+// refusedAsNoTask checks that an authenticated peer's delivery was answered as no such
+// task and never reached the session.
+func (s *ScheduledTasksSuite) refusedAsNoTask(text string, answer *node.ForwardResponse, err error) {
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeScheduledTaskNotFound+`"`)
 	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
 		"the refused delivery reached the session")
 }
@@ -87,6 +132,143 @@ func (s *ScheduledTasksSuite) TestAPeerHoldingTheKeyringDelivers() {
 	other, _ := s.otherRouter(nil)
 
 	s.delivers(s.forwardDelivery(other, s.suiteCredential()))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherUserThanTheStoredTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["user_id"] = s.utils.uuid()
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherSessionThanAServerTasksIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		task.CallerKind = string(auth.KindServer)
+		task.SessionID = s.utils.uuid()
+	}, nil))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingAServerTasksOwnSessionDelivers() {
+	other, _ := s.otherRouter(nil)
+
+	s.delivers(s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		task.CallerKind = string(auth.KindServer)
+	}, nil))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingChannelsTheStoredTaskLacksDeliversInTheConversation() {
+	other, _ := s.otherRouter(nil)
+
+	s.delivers(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["channels"] = []string{"sms"}
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		number := s.lineNumber()
+		s.seedSMSLine(number)
+		config := s.agentWithScheduling(func(r *AgentConfigRequest) {
+			r.Channels = &AgentChannels{Sms: &ChannelLineRequest{Number: number}}
+		})
+		s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+			CustomerID: s.customerID(), ConfigID: config, Kind: "sms", Address: writer, UserID: task.UserID,
+		}))
+		task.ConfigID = config
+		task.Channels = []string{"sms"}
+	}, nil)
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
+	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 }, 10*time.Second, 50*time.Millisecond,
+		"the stored task's text never went out")
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "user_id")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingTheServerForAUsersTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["caller_kind"] = string(auth.KindServer)
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoCallerKindIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "caller_kind")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingATaskThatIsNotStoredIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["task_id"] = s.utils.uuid()
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "task_id")
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoCustomerIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		delete(payload, "customer_id")
+	}))
+}
+
+// A node with no store has no task to check a peer's word against: it is no such task, and
+// nothing is delivered. A node with no store opens no session, so the one the delivery
+// names is held by another node.
+func (s *ScheduledTasksSuite) TestANodeWithNoStoreRefusesAPeersDelivery() {
+	holding, _ := s.otherRouter(nil)
+	logged := &loggedText{}
+	other, _, _ := s.otherNodeServingFrom(nil, nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+
+	s.refusedAsNoTask(s.forwardStoredTo(holding, other, s.suiteCredential(), nil, nil))
+	s.NotContains(logged.String(), "a request panicked", "the refusal went on to read a store there is none of")
+}
+
+// A node that could not read the task says so, so the router that handed it over tries
+// again, and nothing is delivered.
+func (s *ScheduledTasksSuite) TestANodeThatCouldNotReadTheTaskAnswersAnError() {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	logged := &loggedText{}
+	other, _, _ := s.otherNodeServingFrom(closed, nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+
+	text, answer, err := s.forwardDelivery(other, s.suiteCredential())
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusInternalServerError), answer.GetStatus(), "body: %s", answer.GetBody())
+	var answered struct{ Error struct{ Code string } }
+	s.Require().NoError(json.Unmarshal(answer.GetBody(), &answered), "more than the one error was answered: %s", answer.GetBody())
+	s.Equal("internal_error", answered.Error.Code)
+	s.Contains(logged.String(), "could not read a peer's scheduled task")
+	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
+		"a delivery whose task could not be read reached the session")
 }
 
 func (s *ScheduledTasksSuite) TestAPeerStillOnTheOlderKeyDeliversToARotatedNode() {

@@ -313,8 +313,9 @@ type Recorded struct {
 	URL string
 	// Audio is the file, for a caller with a clip and nowhere to host it.
 	Audio []byte
-	// Callback is a URL the finished job is POSTed to. Set it and Recording returns as soon
-	// as the job is accepted rather than waiting for it.
+	// Callback is a public https URL, without userinfo, the finished job is POSTed to; the
+	// router refuses private, loopback and link-local addresses. Set it and Recording
+	// returns as soon as the job is accepted rather than waiting for it.
 	Callback string
 }
 

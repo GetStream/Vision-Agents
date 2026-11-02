@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
@@ -97,7 +98,7 @@ func Redis(t testing.TB) rueidis.Client {
 	options, err := rueidis.ParseURL(RedisURL(t))
 	require.NoError(t, err)
 	options.DisableCache = true
-	client, err := rueidis.NewClient(options)
+	client, err := redisready.NewClient(options)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	return client

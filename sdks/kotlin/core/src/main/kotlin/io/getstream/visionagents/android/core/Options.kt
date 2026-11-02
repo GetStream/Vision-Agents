@@ -10,6 +10,7 @@ import io.getstream.visionagents.android.core.generated.SessionSort
 import io.getstream.visionagents.android.core.generated.SessionSortField
 import io.getstream.visionagents.android.core.generated.TextMatch
 import io.getstream.visionagents.android.core.generated.TimeRange
+import java.util.TimeZone
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonObject
 
@@ -77,12 +78,14 @@ public data class SessionOptions(
      */
     val memory: Memory? = null,
     /**
-     * The user's IANA zone, such as `TimeZone.getDefault().id`, which the device knows and the
-     * router does not. The agent reads dates in it, and it is remembered as the user's for the
-     * scheduled tasks that follow. Null sends none, and a zone the router does not know is
-     * refused.
+     * The user's IANA zone, which the device knows and the router does not. The agent reads
+     * dates in it, and it is remembered as the user's for the scheduled tasks that follow.
+     * Left out, it is the device's own zone, `TimeZone.getDefault().id`, when the device names
+     * it the IANA way. A device set to a bare offset, such as `GMT+05:30`, sends none rather
+     * than a zone the router would refuse. Null sends none. A zone named here is sent as it
+     * is, and one the router does not know is refused.
      */
-    val timezone: String? = null,
+    val timezone: String? = deviceTimezone(),
 ) {
     /**
      * What a session remembers about the user [Backend.setUser] named. It is always theirs: a
@@ -99,6 +102,20 @@ public data class SessionOptions(
             SessionMemory(appId = appId?.ifEmpty { null }, filter = filter.ifEmpty { null }, userId = userId)
     }
 }
+
+/**
+ * Where the device's zone is read from: the JVM's default, which Android keeps as the zone the
+ * phone is set to. Tests stand another in.
+ */
+internal var deviceZoneId: () -> String? = { TimeZone.getDefault().id }
+
+/**
+ * The device's zone, when the device names it the IANA way, such as `Europe/Amsterdam` or
+ * `UTC`. A bare offset, such as `GMT+05:30`, is not a name the router knows, so it is none
+ * rather than a session the router refuses.
+ */
+internal fun deviceTimezone(): String? =
+    deviceZoneId()?.takeIf { it.contains('/') || it == "UTC" || it == "GMT" }
 
 /** What the agent says as it joins a call, before anyone speaks. */
 public data class Greeting(

@@ -179,3 +179,18 @@ func quote(pricer pricing.Pricer, modality Modality, config ProviderConfig, attr
 	}
 	return pricer.Quote(ItemOf(modality, config, attributes), used)
 }
+
+// quoteBesideQuoted is quote for work whose cost the vendor quoted outright, such as a number's
+// monthly charge: the amount the vendor quoted is its price, so an item with no entry is not
+// logged as billable work with no price.
+func quoteBesideQuoted(pricer pricing.Pricer, modality Modality, config ProviderConfig, attributes map[string]string, used pricing.Quantities) pricing.Quote {
+	if config.Provider == CustomProvider {
+		return quote(pricer, modality, config, attributes, used)
+	}
+	item := ItemOf(modality, config, attributes)
+	entry, ok := pricer.Entry(item)
+	if !ok {
+		entry = pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK}
+	}
+	return entry.Quote(used)
+}
