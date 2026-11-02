@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -123,6 +124,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "hanging-up", Model: "hanging-up-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
@@ -212,12 +214,15 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	if !first && s.then != "" {
 		reply = s.then
 	}
+	// Echoing is what the model was told: its instructions and the harness's notes, which is
+	// where what moves on during a call, such as the day, is told. Reciting is the conversation
+	// it was handed, without them.
 	if s.echoes {
-		reply = params.Instructions
+		reply = toldModel(params)
 	}
 	if s.recites {
 		handed := make([]string, 0, len(params.Input))
-		for _, message := range params.Input {
+		for _, message := range harness.WithoutNotes(params.Input) {
 			handed = append(handed, string(message.Role)+": "+message.Content)
 		}
 		reply = strings.Join(handed, "\n")
@@ -970,6 +975,9 @@ func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dro
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.down {
+		return knowledge.Dropped{}, fmt.Errorf("turbopuffer: delete %s: 503 Service Unavailable", namespace)
+	}
 	_, existed := b.passages[namespace]
 	delete(b.passages, namespace)
 	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil

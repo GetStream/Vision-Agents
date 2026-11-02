@@ -399,6 +399,33 @@ func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
 	s.NotContains(string(raw), "You are Ashley.")
 }
 
+func (s *OpenAISuite) TestANoteAfterTheCallerIsADeveloperMessageAfterThem() {
+	// A note goes at the end of what is sent, so a continued response is handed it with the
+	// caller's words and nothing before them changes.
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	raw, err := json.Marshal(provider.params(llm.ResponseParams{
+		Instructions: "You are Ashley.",
+		Input: []llm.Message{
+			{Role: llm.User, Content: "and tomorrow?"},
+			{Role: llm.System, Content: "Your colleague has come back."},
+		},
+		PreviousResponseID: "resp_1",
+	}))
+	s.Require().NoError(err)
+	var sent struct {
+		Input []struct {
+			Role string `json:"role"`
+		} `json:"input"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &sent))
+
+	s.Require().Len(sent.Input, 2)
+	s.Equal("user", sent.Input[0].Role)
+	s.Equal("developer", sent.Input[1].Role)
+}
+
 func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThatResult() {
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)

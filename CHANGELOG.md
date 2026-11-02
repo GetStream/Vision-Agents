@@ -2,6 +2,9 @@
 
 ## Features
 
+### A number or a 10DLC registration is paid for before it is bought
+
+`POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
 ### A session sets how many tool rounds a reply may chain
 
 `max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.
@@ -12,6 +15,10 @@
 ### First output latency by model
 
 `router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
+
+### Where an LLM request's first token time goes
+
+`router_llm_stage_seconds{provider, model, stage}` splits it into `router` (from `Session.Create` to the provider call), `connect` (dial and TLS of a new connection), `wait` (request written to response headers) and `stream` (headers to first token); `router_llm_connections_total{provider, reused}` counts pooled and new connections (AI-2498).
 
 ### The Python SDK sets spend limits, puts users in teams and tags their work
 
@@ -210,6 +217,21 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
 ## Bug Fixes
+
+### Changing a live session's models waits for voice to start or stop
+
+A change to a running session's models, voice or overwrites (`PATCH /v1/agents/sessions/{id}`) and starting or stopping its voice now run one after the other. A change made while voice started or stopped could be applied to the agent being left and answer as done, while the agent that took over kept the earlier settings. The change now reaches the agent that holds the session once the move is done. An interrupt is not held back by either (AI-2500).
+### A video input is read only as a video
+
+The router reads a clip sent to `POST /v1/agents/sessions/{id}/responses` with ffmpeg only as MP4, MOV, 3GP, MKV or WebM, and only from the file it was written to. Before, ffmpeg chose the format from the bytes, so an HLS playlist or an ffmpeg concat list sent as the clip made it open the files the list named. Such a clip is now refused as `not a video ffmpeg can read`, as are clips in other containers (#1606).
+
+### Changing a live session's models keeps its labels
+
+Moving a running session onto other models or another voice (`PATCH /v1/agents/sessions/{id}`) wrote back the whole session as it was read before the move, so a title, custom data or a connector chosen while the models moved was lost. It now writes back only the models, voice and overwrites it changed, under the lock the session's other changes take, and the session's log rows, fan-out and API reads take the same lock (AI-2481).
+
+### A knowledge base whose delete failed can be deleted again
+
+`DELETE /v1/agents/knowledge` now drops the base at the provider before it deletes the base's documents and pages. Before, a drop that failed left the 500 with the documents and pages already gone, so the base was in no list while its passages were still searched and billed. Now its documents and pages stay listed, and deleting it again works (AI-2493).
 
 ### A bought or attached number reaches its agent
 

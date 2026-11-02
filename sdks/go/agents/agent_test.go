@@ -610,6 +610,110 @@ func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
 	}
 }
 
+func TestAFolderDeclaresCalls(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `calls:
+  end_call:
+    enabled: true
+    when: The caller said goodbye, or their question is answered and they need nothing else.
+  press:
+    enabled: false
+  transfer:
+    enabled: true
+    destinations:
+      - name: Sales
+        number: "+15550001111"
+        when: The caller wants to buy, upgrade or ask about pricing.
+        warm: true
+      - name: Billing
+        number: "+15550002222"
+        when: A charge they don't recognise.
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	calls := router.syncs[0].Calls
+	if calls == nil || calls.EndCall == nil || calls.Press == nil || calls.Transfer == nil {
+		t.Fatalf("the calls went as %+v", calls)
+	}
+	if !*calls.EndCall.Enabled || *calls.EndCall.When != "The caller said goodbye, or their question is answered and they need nothing else." {
+		t.Errorf("end_call went as %+v", calls.EndCall)
+	}
+	if *calls.Press.Enabled {
+		t.Errorf("press went as %+v", calls.Press)
+	}
+	if !*calls.Transfer.Enabled || calls.Transfer.Destinations == nil || len(*calls.Transfer.Destinations) != 2 {
+		t.Fatalf("transfer went as %+v", calls.Transfer)
+	}
+	sales, billing := (*calls.Transfer.Destinations)[0], (*calls.Transfer.Destinations)[1]
+	if sales.Name != "Sales" || sales.Number != "+15550001111" || *sales.When != "The caller wants to buy, upgrade or ask about pricing." ||
+		sales.Warm == nil || !*sales.Warm {
+		t.Errorf("Sales went as %+v", sales)
+	}
+	if billing.Name != "Billing" || billing.Number != "+15550002222" || *billing.When != "A charge they don't recognise." ||
+		(billing.Warm != nil && *billing.Warm) {
+		t.Errorf("Billing went as %+v", billing)
+	}
+}
+
+// A sync replaces what the dashboard changed, so a file with no calls sends the defaults.
+func TestAFolderWithoutCallsSendsTheDefaults(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "llm: llm-fast\n")
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	calls := router.syncs[0].Calls
+	if calls == nil || calls.EndCall == nil || calls.Press == nil || calls.Transfer == nil {
+		t.Fatalf("the calls went as %+v", calls)
+	}
+	if *calls.EndCall.Enabled || !*calls.Press.Enabled || !*calls.Transfer.Enabled {
+		t.Errorf("defaults went as end_call %v, press %v, transfer %v", *calls.EndCall.Enabled, *calls.Press.Enabled, *calls.Transfer.Enabled)
+	}
+	if calls.Transfer.Destinations != nil && len(*calls.Transfer.Destinations) != 0 {
+		t.Errorf("destinations went as %+v", *calls.Transfer.Destinations)
+	}
+}
+
+// A tool block without enabled takes that tool's default.
+func TestACallsToolWithoutEnabledTakesItsDefault(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", `calls:
+  end_call:
+    when: They are done.
+  transfer:
+    destinations:
+      - name: Sales
+        number: "+15550001111"
+`)
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	calls := router.syncs[0].Calls
+	if *calls.EndCall.Enabled || *calls.EndCall.When != "They are done." || !*calls.Press.Enabled ||
+		!*calls.Transfer.Enabled || len(*calls.Transfer.Destinations) != 1 {
+		t.Errorf("the calls went as %+v", calls)
+	}
+}
+
 // A file saying nothing about scheduling leaves the stored setting alone.
 func TestSyncSendsNoSchedulingWhenTheFileNamesNone(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
@@ -746,6 +850,8 @@ func TestAnAgentWhoseFolderNamesPluginsIsNotMade(t *testing.T) {
 
 // emptyPluginsYAML names plugins and plugin_events with nothing in them. Its sync body was
 // probed on 259da758b, while the SDK still read both keys.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const emptyPluginsYAML = "name: concierge\nplugins: []\nplugin_events: []\nconnectors:\n  - linear\n"
 
 func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
@@ -760,7 +866,7 @@ func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"5d7a06efa5f0e215c95f81ffe13b0585","name":"concierge"}`
+	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"5d7a06efa5f0e215c95f81ffe13b0585","name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}
@@ -1004,6 +1110,8 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 // controlYAML is an agent.yaml with no connectors key. Its sync body was probed on
 // 80773902 (connectors/tool-patterns), before connectors were read, and again on
 // 259da758b once it named no plugins.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
 
 func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
@@ -1018,7 +1126,7 @@ func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"hash":"357bca9fcbc1f2902b8344437a2baecd","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge"}`
+	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"hash":"357bca9fcbc1f2902b8344437a2baecd","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}
@@ -1188,6 +1296,8 @@ func TestSyncSendsRequireApprovalOnEachBindingThatSetsIt(t *testing.T) {
 
 // sandboxlessYAML is a connector entry with no sandbox key. Its sync body was probed on
 // e5d6d8057, before agent.yaml read sandbox on a connector.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const sandboxlessYAML = "name: concierge\nconnectors:\n  - name: github\n    required: true\n"
 
 func TestSyncOfAConnectorWithoutSandboxSendsTheBodyItSentBefore(t *testing.T) {
@@ -1202,7 +1312,7 @@ func TestSyncOfAConnectorWithoutSandboxSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"github","name":"github","required":true,"tool_patterns":["*"],"tools":[]}],"hash":"aeda4c2bbe3be818d7c79f48ee9ab0b8","name":"concierge"}`
+	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"github","name":"github","required":true,"tool_patterns":["*"],"tools":[]}],"hash":"aeda4c2bbe3be818d7c79f48ee9ab0b8","name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}
@@ -1314,6 +1424,8 @@ func TestSyncResolvesTheOneConnectionWithThatLabel(t *testing.T) {
 
 // resolvingYAML names a session binding and a connection the app has. Its sync body was
 // probed on a5721c90, before a missing connection was left out.
+// The body now also carries calls, which a sync always sends; an older router ignores it
+// (Huma's AllowAdditionalPropertiesByDefault).
 const resolvingYAML = "name: concierge\nconnectors:\n  - linear\n  - name: code\n    connector: github\n    connection: company\n"
 
 func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
@@ -1332,7 +1444,7 @@ func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]},{"connection":{"connection_id":"conn-1","type":"fixed"},"connector_id":"github","name":"code","tool_patterns":["*"],"tools":[]}],"hash":"84cee98b6c473b082438ee7b52cea7c6","name":"concierge"}`
+	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]},{"connection":{"connection_id":"conn-1","type":"fixed"},"connector_id":"github","name":"code","tool_patterns":["*"],"tools":[]}],"hash":"84cee98b6c473b082438ee7b52cea7c6","name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}
@@ -1393,7 +1505,7 @@ func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const want = `{"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"370694e1e9f5b6495455c9b89fce3218",` +
+	const want = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"370694e1e9f5b6495455c9b89fce3218",` +
 		`"left_out_connectors":[{"connection":"company","connector_id":"issues","name":"issues"},{"connection":"team","connector_id":"github","name":"code"}],"name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != want {
 		t.Errorf("body = %s", router.syncRaw)

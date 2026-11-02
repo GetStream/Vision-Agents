@@ -101,7 +101,10 @@ type Edge struct {
 	listening map[string]chan struct{}
 	// subscribed is the whole subscription list, because the SFU replaces it wholesale on
 	// every update rather than adding to it.
-	subscribed  []*signal_rpc.TrackSubscriptionDetails
+	subscribed []*signal_rpc.TrackSubscriptionDetails
+	// present are the sessions reported as in the call, with the name they were reported
+	// under, so one announced both by joining and by publishing arrives once.
+	present     map[string]string
 	unregisters []func()
 	left        bool
 
@@ -137,6 +140,7 @@ func New(options Options) (*Edge, error) {
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
 		listening: map[string]chan struct{}{},
+		present:   map[string]string{},
 		leftDone:  make(chan struct{}),
 	}, nil
 }
@@ -459,36 +463,42 @@ func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, s
 // how someone who joins later gets heard.
 func (e *Edge) watchForNewTracks(ctx context.Context) {
 	unregister := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
-		published := event.TrackPublished
-		if published.GetUserId() == e.options.User.ID {
-			return
-		}
-		if published.GetType() != sfu_models.TrackType_TRACK_TYPE_AUDIO {
-			return
-		}
-
-		e.mu.Lock()
-		if e.left {
-			e.mu.Unlock()
-			return
-		}
-		e.subscribed = append(e.subscribed, &signal_rpc.TrackSubscriptionDetails{
-			UserId:    published.GetUserId(),
-			SessionId: published.GetSessionId(),
-			TrackType: published.GetType(),
-		})
-		subscriptions := slices.Clone(e.subscribed)
-		e.mu.Unlock()
-
-		if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
-			e.logger.Error("could not subscribe to a new track",
-				"participant", published.GetUserId(), "error", err)
-		}
+		e.trackPublished(ctx, event.TrackPublished)
 	})
 
 	e.mu.Lock()
 	e.unregisters = append(e.unregisters, unregister)
 	e.mu.Unlock()
+}
+
+// trackPublished reports who published a track as arriving, and subscribes to it when it is
+// audio.
+func (e *Edge) trackPublished(ctx context.Context, published *sfu_events.TrackPublished) {
+	if published.GetUserId() == e.options.User.ID {
+		return
+	}
+	e.publishedBy(published)
+	if published.GetType() != sfu_models.TrackType_TRACK_TYPE_AUDIO {
+		return
+	}
+
+	e.mu.Lock()
+	if e.left {
+		e.mu.Unlock()
+		return
+	}
+	e.subscribed = append(e.subscribed, &signal_rpc.TrackSubscriptionDetails{
+		UserId:    published.GetUserId(),
+		SessionId: published.GetSessionId(),
+		TrackType: published.GetType(),
+	})
+	subscriptions := slices.Clone(e.subscribed)
+	e.mu.Unlock()
+
+	if err := e.call.SubscribeToTracks(ctx, subscriptions...); err != nil {
+		e.logger.Error("could not subscribe to a new track",
+			"participant", published.GetUserId(), "error", err)
+	}
 }
 
 // watchAttendance reports arrivals and departures.
@@ -517,7 +527,21 @@ func (e *Edge) reportPresent(state *sfu_models.CallState) {
 	}
 }
 
-// report puts one arrival or departure on the channel, leaving out the agent itself.
+// publishedBy reports whoever published a track as arriving. The SFU may leave a join
+// unannounced and name the participant on their track instead (TrackPublished.Participant),
+// and a join it sent while the agent was still joining reached no handler. Either way the
+// agent hears them, and without this nobody is told they are there.
+func (e *Edge) publishedBy(published *sfu_events.TrackPublished) {
+	participant := published.GetParticipant()
+	if participant == nil {
+		participant = &sfu_models.Participant{UserId: published.GetUserId(), SessionId: published.GetSessionId()}
+	}
+	e.report(participant, true)
+}
+
+// report puts one arrival or departure on the channel, leaving out the agent itself and
+// anybody reported as arriving already, unless this names somebody reported without a name:
+// an unnamed track carries no name, and the arrivals are where the name is read from.
 func (e *Edge) report(participant *sfu_models.Participant, joined bool) {
 	if participant == nil || participant.GetUserId() == e.options.User.ID {
 		return
@@ -525,8 +549,15 @@ func (e *Edge) report(participant *sfu_models.Participant, joined bool) {
 
 	e.mu.Lock()
 	left := e.left
+	name, present := e.present[participant.GetSessionId()]
+	known := present && (name != "" || participant.GetName() == "")
+	if joined && !known {
+		e.present[participant.GetSessionId()] = participant.GetName()
+	} else if !joined {
+		delete(e.present, participant.GetSessionId())
+	}
 	e.mu.Unlock()
-	if left {
+	if left || (joined && known) {
 		return
 	}
 

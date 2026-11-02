@@ -1325,7 +1325,7 @@ func (s *SessionSuite) TestTheGreetingWaitsForSomebodyToJoinTheCall() {
 	s.manages()
 	s.joins(Spec{Greeting: "Hi, I'm listening."})
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
@@ -1342,7 +1342,7 @@ func (s *SessionSuite) TestTheGreetingGivesWhoeverJoinedTimeToHearIt() {
 
 	s.call().arrives(visitor)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
 		"the greeting started the moment somebody joined")
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
 }
@@ -1366,7 +1366,7 @@ func (s *SessionSuite) TestTheGreetingIsSaidOnceWhoeverJoinsAfter() {
 	s.saw(events, caller, true)
 
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
-	s.Never(func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said again")
 }
 
@@ -1376,7 +1376,7 @@ func (s *SessionSuite) TestTheAgentsOwnVideoUserIsNotGreeted() {
 
 	s.rings(Spec{Greeting: "Hi, I'm listening."}, video)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the agent greeted itself")
 }
 
@@ -1395,7 +1395,7 @@ func (s *SessionSuite) TestStartingVoiceGreetsWhoeverJoinsTheCall() {
 	created := s.writes(Spec{Greeting: "Hi, I'm listening."})
 	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
@@ -2070,7 +2070,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 // handed is what a model request handed the model, one "role: content" line per message.
 func handed(request llm.ResponseParams) []string {
 	lines := make([]string, 0, len(request.Input))
-	for _, message := range request.Input {
+	for _, message := range harness.WithoutNotes(request.Input) {
 		lines = append(lines, string(message.Role)+": "+message.Content)
 	}
 	return lines
@@ -2101,8 +2101,10 @@ func awaitReply(events <-chan Event) string {
 // events. Every connector hook is a no-op without a binding (AI-851).
 func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
-	server.AddTool(&mcpsdk.Tool{Name: "search", Description: "Finds a note.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+	server.AddTool(&mcpsdk.Tool{
+		Name: "search", Description: "Finds a note.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
 		})

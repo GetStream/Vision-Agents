@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -308,13 +310,21 @@ func (s *RateLimitSuite) attachWith(manager *Manager, bindings ...store.Connecto
 
 // logged is the error types of the count rows connection's calls left, once all are written.
 func (s *RateLimitSuite) logged(connection string, count int) []string {
+	fetch := func() ([]store.ConnectorInvocation, error) {
+		return s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+	}
 	read := func() []store.ConnectorInvocation {
-		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		rows, err := fetch()
 		s.Require().NoError(err)
 		return rows
 	}
-	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		rows, err := fetch()
+		require.NoError(c, err)
+		require.GreaterOrEqual(c, len(rows), count)
+	}, 5*time.Second, 20*time.Millisecond)
+	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
 	var types []string
 	for _, row := range read() {
 		types = append(types, row.ErrorType)

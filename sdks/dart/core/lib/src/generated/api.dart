@@ -1330,6 +1330,7 @@ final class Session {
     required this.createdAt,
     this.custom,
     this.description,
+    this.endReason,
     this.forkedFrom,
     required this.id,
     this.incognito,
@@ -1394,6 +1395,10 @@ final class Session {
       description: switch (json['description']) {
         null => null,
         final Object value => _string(value, 'Session.description'),
+      },
+      endReason: switch (json['end_reason']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_reason'),
       },
       forkedFrom: switch (json['forked_from']) {
         null => null,
@@ -1494,6 +1499,7 @@ final class Session {
   final DateTime createdAt;
   final Map<String, Object?>? custom;
   final String? description;
+  final String? endReason;
   final String? forkedFrom;
   final String id;
   final bool? incognito;
@@ -1532,6 +1538,7 @@ final class Session {
     'created_at': createdAt.toUtc().toIso8601String(),
     'custom': ?custom,
     'description': ?description,
+    'end_reason': ?endReason,
     'forked_from': ?forkedFrom,
     'id': id,
     'incognito': ?incognito,

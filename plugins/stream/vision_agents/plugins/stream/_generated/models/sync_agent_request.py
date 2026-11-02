@@ -14,6 +14,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
@@ -48,6 +49,7 @@ class SyncAgentRequest:
             name (str): What the config is called, which is also the directory's name.
             base_change (str | Unset): The newest change the caller has already seen, as last_change named it. Everything up
                 to it is taken as decided, so the sync is not refused for it again.
+            calls (AgentCalls | Unset): The tools an agent on a phone call is offered: end the call, press keys, transfer.
             channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
                 number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
                 that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
@@ -131,6 +133,7 @@ class SyncAgentRequest:
     hash_: str
     name: str
     base_change: str | Unset = UNSET
+    calls: AgentCalls | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
@@ -175,6 +178,10 @@ class SyncAgentRequest:
         name = self.name
 
         base_change = self.base_change
+
+        calls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.calls, Unset):
+            calls = self.calls.to_dict()
 
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
@@ -331,6 +338,8 @@ class SyncAgentRequest:
         )
         if base_change is not UNSET:
             field_dict["base_change"] = base_change
+        if calls is not UNSET:
+            field_dict["calls"] = calls
         if channels is not UNSET:
             field_dict["channels"] = channels
         if check_changes is not UNSET:
@@ -404,6 +413,7 @@ class SyncAgentRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
@@ -429,6 +439,13 @@ class SyncAgentRequest:
         name = d.pop("name")
 
         base_change = d.pop("base_change", UNSET)
+
+        _calls = d.pop("calls", UNSET)
+        calls: AgentCalls | Unset
+        if isinstance(_calls, Unset):
+            calls = UNSET
+        else:
+            calls = AgentCalls.from_dict(_calls)
 
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
@@ -650,6 +667,7 @@ class SyncAgentRequest:
             hash_=hash_,
             name=name,
             base_change=base_change,
+            calls=calls,
             channels=channels,
             check_changes=check_changes,
             connectors=connectors,

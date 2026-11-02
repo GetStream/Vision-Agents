@@ -53,6 +53,10 @@ What the table is saying:
   is the first; the rest is the provider's. TTL is not a duration anyone picks either — 30m or
   nothing, 5m or 1h, a hint, or no say at all — which is why `CacheTTLs` is a list of what a
   provider accepts rather than a number.
+- **Render earlier messages the same way every time.** Don't reorder or rewrite them, and
+  don't put a cache breakpoint on a mid-conversation system message: every request has to open
+  with the one before it, or the cache and `previous_response_id` are lost (see
+  `internal/harness/AGENTS.md`).
 - **The conversation still lives in the caller, though it no longer has to.** OpenAI, Grok,
   Muse and Gemini's Interactions API will all hold it now; Anthropic and DeepSeek will not.
   Sending it whole every time is what makes a failover to one of those two work, and what lets

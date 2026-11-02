@@ -387,6 +387,7 @@ func (s *AgentSuite) TestAnAnswerToDelegatedWorkIsRecordedAsAFollowUpToTheCaller
 func (s *AgentSuite) TestTheIntroductionOfAWarmTransferIsRecordedAsAHandoffToTheCallerTurn() {
 	s.onACall()
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"One moment."}
 	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
 	participant := stt.Participant{ID: "alice"}

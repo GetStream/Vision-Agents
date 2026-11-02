@@ -201,6 +201,14 @@ type Session struct {
 	// session can be reached.
 	transcribedInto string
 
+	// moving serializes what moves the session onto other models or another agent:
+	// SetSettings and voice starting or stopping (swap). Either one runs whole, so a settings
+	// change lands on the agent that holds the session once the swap is done, and a swap
+	// builds its agent from the settings a change left. It is taken before commandMu and
+	// never under it: SetSettings waits on the reply in flight without commandMu, which an
+	// interrupt of that reply needs. It is a one-slot channel rather than a mutex so that
+	// either waits only as long as its caller does (move).
+	moving chan struct{}
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
 	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
@@ -233,7 +241,9 @@ type Session struct {
 	// call's last leaves still arrive while the session closes.
 	closing bool
 	// end ends this session when its timeout is reached (Manager.end).
-	end func(TimeoutReason)
+	end func(EndReason)
+	// ended is why the session ended, the first reason given (noteEnd).
+	ended EndReason
 	// runs are who is in the call, per agent run that can tell (presence). callerSeen is
 	// whether a phone caller has been in the session's call, and settledOnce whether any run
 	// has settled, which only the first may start a phone session's start timeout from.
@@ -258,8 +268,10 @@ type Session struct {
 	// there is no channel to name.
 	naming *naming
 	// labelMu guards title and description, which are what naming last called the
-	// conversation, over the spec's own. It also guards the spec's labels, which Describe
-	// rewrites while the session runs.
+	// conversation, over the spec's own. It also guards the spec's fields a running session
+	// changes: its labels (Describe), connector selections (chose), models and voice
+	// (SetSettings) and the call it is held on (swap). The rest are set before the session
+	// can be reached and are read without it.
 	labelMu     sync.Mutex
 	title       string
 	description string
@@ -390,7 +402,7 @@ func (s *Session) Resolved() (stt, llm, tts, subagent string) {
 // speaking, which is that default when it asked for none. The one speaking is empty when
 // the provider picked it on its side and cannot say which.
 func (s *Session) Voice() (asked, used string) {
-	asked = s.spec.Voice
+	asked = s.Spec().Voice
 	if s.current() == nil {
 		return asked, ""
 	}
@@ -409,10 +421,11 @@ func (s *Session) Voice() (asked, used string) {
 // Mode is what holds the conversation: "text", "native" for one speech-to-speech model, or
 // "cascade" for a transcriber, a conversation model and a voice.
 func (s *Session) Mode() string {
+	spec := s.Spec()
 	switch {
-	case s.spec.Text:
+	case spec.Text:
 		return "text"
-	case s.current() != nil && s.current().Native(), s.current() == nil && s.spec.Native():
+	case s.current() != nil && s.current().Native(), s.current() == nil && spec.Native():
 		return "native"
 	default:
 		return "cascade"
@@ -465,13 +478,13 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
-	return s.WatchAs(Seat{Owner: OwnerOf(s.spec)})
+	return s.WatchAs(Seat{Owner: OwnerOf(s.Spec())})
 }
 
 // WatchPendingVoiceTools opts a durable tool host into replay of pending live
 // voice requests. Text command recovery uses the persistent conversation path.
 func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
-	return s.WatchAs(Seat{Owner: OwnerOf(s.spec), ReplayPendingVoiceTools: true})
+	return s.WatchAs(Seat{Owner: OwnerOf(s.Spec()), ReplayPendingVoiceTools: true})
 }
 
 // WatchAs is Watch for a watcher that says who it is and which tools it runs, which is
@@ -527,7 +540,7 @@ func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Even
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
 	}
-	if seat.ReplayPendingVoiceTools && !s.spec.Text && s.tools != nil {
+	if seat.ReplayPendingVoiceTools && s.Voicing() && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
 			if resent[pending.ID] {
 				continue
@@ -888,7 +901,7 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	switch {
 	case s.records == nil:
 		return stack.Wrap(fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind))
-	case s.spec.Native():
+	case s.Spec().Native():
 		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
 	case s.persisted != nil:
 		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
@@ -1052,7 +1065,14 @@ var ErrCardedToNative = errors.New("session: a session that started with episode
 // cascade and a speech-to-speech model. The agent config it started from is untouched,
 // and nothing changes when it fails.
 func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
+	moved, err := s.move(ctx)
+	if err != nil {
+		return err
+	}
+	defer moved()
+	s.labelMu.Lock()
 	next := s.spec
+	s.labelMu.Unlock()
 	if next.Text && (settings.STT != nil || settings.TTS != nil || settings.STS != nil || settings.Voice != nil) {
 		return stack.Wrap(errors.New("session: a text session has no voice, so it has no speech models to change"))
 	}
@@ -1101,11 +1121,32 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 	}); err != nil {
 		return err
 	}
-	s.spec = next
+	// Only what was set here is written back, so labels or selections changed while the
+	// models moved are kept.
+	s.labelMu.Lock()
+	s.spec.LLMTarget, s.spec.ControllerTarget = next.LLMTarget, next.ControllerTarget
+	s.spec.STTTarget, s.spec.TTSTarget, s.spec.STSTarget = next.STTTarget, next.TTSTarget, next.STSTarget
+	s.spec.Voice, s.spec.ModelOverwrites = next.Voice, next.ModelOverwrites
+	s.labelMu.Unlock()
 	if s.calls != nil {
 		s.calls.Changed(row(s))
 	}
 	return nil
+}
+
+// move waits for the session's other SetSettings or swap to finish, or for ctx to end, which
+// it returns with nothing changed. The returned func lets the next one go.
+func (s *Session) move(ctx context.Context) (func(), error) {
+	// A call whose caller has given up never takes a free slot: select would pick at random.
+	if err := ctx.Err(); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	select {
+	case s.moving <- struct{}{}:
+		return func() { <-s.moving }, nil
+	case <-ctx.Done():
+		return nil, stack.Wrap(ctx.Err())
+	}
 }
 
 // ErrVoiceUnavailable refuses starting voice on a session that cannot hold a call.
@@ -1139,6 +1180,11 @@ func (s *Session) StopVoice(ctx context.Context) error {
 // one that held it. The new agent is joined before anything changes, so a call that cannot
 // be joined leaves the session as it was.
 func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
+	moved, err := s.move(ctx)
+	if err != nil {
+		return err
+	}
+	defer moved()
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.State() == Ended {
@@ -1389,7 +1435,7 @@ func (s *Session) ResolveTool(id, output, failure string) bool {
 
 // ResolveToolParts is ResolveTool for a result that may carry images.
 func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure string) bool {
-	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" {
+	if s.persisted != nil && !s.Voicing() && s.spec.Caller.UserID != "" {
 		return false
 	}
 	return s.tools.Resolve(id, "", parts, failure)
@@ -1397,7 +1443,7 @@ func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure s
 
 // ResolveTurnTool correlates a result of a turn on the call with its emitted turn.
 func (s *Session) ResolveTurnTool(id, turnID string, parts []llm.ContentPart, failure string) bool {
-	if (s.persisted != nil && s.spec.Text) || turnID == "" {
+	if (s.persisted != nil && !s.Voicing()) || turnID == "" {
 		return false
 	}
 	return s.tools.Resolve(id, turnID, parts, failure)
@@ -1517,6 +1563,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		defer transcript.Close()
 	}
 
+	transferred := false
 	for event := range held.Events() {
 		typed := transcript == nil || s.typedEvent(event)
 		if s.persisted != nil && typed {
@@ -1525,11 +1572,21 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		if transcript != nil && !typed {
 			transcript.Record(event)
 		}
+		if _, ok := event.(agent.Transferred); ok {
+			s.noteEnd(EndTransferred)
+			transferred = true
+		}
 		s.observe(run, event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
 		s.name(event)
+	}
+	// The agent leaves by itself once it has handed the caller over, after a warm transfer's
+	// summary, and nobody is left to report the caller leaving, so nothing else would end
+	// the session. A timeout of zero ends it off this goroutine, which closing waits for.
+	if transferred && s.current() == held {
+		s.SetTimeout(0, EndTransferred)
 	}
 }
 
@@ -1812,7 +1869,7 @@ func (s *Session) remember(event Event) {
 		// record of what was said to the agent is the prompt it was handed. Without this
 		// a text call is reviewed on the agent's half of it. A call with a voice reports
 		// both, and taking them both would record everything the caller said twice.
-		if !s.spec.Text {
+		if s.Voicing() {
 			return
 		}
 		line = spoken{text: typed.Prompt}
@@ -1879,7 +1936,7 @@ func (s *Session) placed(call ToolCall) ToolCall {
 		return call
 	}
 	call.SessionID = s.id
-	call.Conversation = &ToolConversation{CID: s.spec.ConversationID, Custom: s.spec.Custom}
+	call.Conversation = &ToolConversation{CID: s.spec.ConversationID, Custom: s.Spec().Custom}
 	if call.User == nil && s.spec.Caller.UserID != "" {
 		call.User = &ToolUser{ID: s.spec.Caller.UserID}
 	}
@@ -1898,7 +1955,7 @@ func (s *Session) askTool(call ToolCall) error {
 	// Only a conversation held in writing is asked by command. On a call a question is spoken,
 	// with no request id, and the vision skill's request for frames belongs to no turn: their
 	// results are taken by turn or by id (ResolveTurnTool, ResolveToolParts), as anywhere else.
-	if s.persisted != nil && s.spec.Text && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+	if s.persisted != nil && !s.Voicing() && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
 		return errors.New("session: tool call has no durable command binding")
 	}
 	s.mu.Lock()

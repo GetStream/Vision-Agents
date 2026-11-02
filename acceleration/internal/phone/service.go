@@ -436,6 +436,12 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	// Some vendors say what a number costs when it is offered and not when it is bought, so
 	// the offer is read first, while the number is still for sale.
 	quoted := s.quote(ctx, provider, purchase)
+	// The first month is paid out of credit booked now, so a number is never bought on credit
+	// that does not cover it.
+	booked, err := s.bookFirstMonth(ctx, purchase, quoted)
+	if err != nil {
+		return store.PhoneNumber{}, err
+	}
 	// A failed purchase is a row of its own; a bought number is billed by its months, the
 	// first of them below.
 	buying := routing.Meter{
@@ -449,6 +455,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return provider.BuyNumber(ctx, Order{E164: purchase.E164, Country: purchase.Country})
 	})
 	if err != nil {
+		booked.Release()
 		return store.PhoneNumber{}, err
 	}
 	if bought.MonthlyCostMicros == 0 {
@@ -470,6 +477,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	}
 	// The month it was bought in is charged at once, whether or not the row below is kept.
 	s.billMonth(held, purchase.Owner, held.PurchasedAt)
+	booked.Charged()
 	if s.store == nil {
 		return held, nil
 	}

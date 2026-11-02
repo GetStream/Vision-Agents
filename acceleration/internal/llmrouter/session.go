@@ -195,9 +195,12 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		trace.WithAttributes(
 			attribute.String("llm.provider", s.config.Provider),
 			attribute.String("llm.model", s.config.Model)))
-	stream, err := s.provider.Create(ctx, params)
+	// Each attempt is traced on its own, so a hedge's stages are its own provider's.
+	traced, stages := traceStages(ctx)
+	stream, err := s.provider.Create(traced, params)
 	tracing.Fail(span, err)
 	span.End()
+	passed := stages.observe(s.config)
 	held := claim(ctx)
 	reserved := held.idOf()
 	owner := s.owner
@@ -245,8 +248,9 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	charged := s.charged(ctx)
 	settled := s.keep(held)
 	return stream.Observe(func(event llm.Event) {
-		if _, done := event.(llm.ResponseCompleted); done {
+		if completed, done := event.(llm.ResponseCompleted); done {
 			settled()
+			passed.observeStream(s.config, createdAt, completed.Response)
 		}
 		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved)
 	}), nil
@@ -525,6 +529,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if closed {
 		return nil, stack.Wrap(errClosed)
 	}
+	enteredAt := time.Now()
 	ctx, span := tracer.Start(ctx, "llm.create")
 	defer span.End()
 	// The limit is asked here rather than only when the session was opened, because a
@@ -559,6 +564,9 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if s.hedges(params) {
 		open = s.hedged
 	}
+	// Measured once per request, up to its first attempt: a hedge or a fallback starts later by
+	// design, which is not the router's own time.
+	routing.ObserveLLMStage(s.config, routing.StageRouter, time.Since(enteredAt))
 	stream, err := open(ctx, params)
 	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
 		return screened(stream, verdict), stack.Wrap(err)

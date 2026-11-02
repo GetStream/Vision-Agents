@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -920,7 +921,9 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	}
 	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
-	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	configs, err := redisready.Retry(address, func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))

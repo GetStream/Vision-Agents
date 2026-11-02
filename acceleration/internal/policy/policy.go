@@ -200,6 +200,8 @@ type Enforcer struct {
 	userQuotaLogs throttle
 
 	money money
+	// localBookings are the bookings of a router with no shared Redis.
+	localBookings localBookings
 }
 
 // tierSeen is an organization's tier, empty when none is known, and when it was last known to

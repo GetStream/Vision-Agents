@@ -207,10 +207,13 @@ type Settings struct {
 	// Scheduling is whether the agent may schedule tasks for its users: reminders
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
-	Keyterms   []string            `yaml:"keyterms"`
-	Tags       map[string]string   `yaml:"tags"`
-	Video      *VideoSettings      `yaml:"video"`
-	Dispatch   *DispatchSettings   `yaml:"dispatch"`
+	// Calls are the tools the agent has on a phone call. A sync always sends them, with
+	// the defaults for what the file leaves out, so it replaces what the dashboard set.
+	Calls    *CallSettings     `yaml:"calls"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -362,6 +365,44 @@ type SchedulingSettings struct {
 	// DefaultTimezone is the IANA zone a task takes when neither the user nor
 	// their session has ever named one.
 	DefaultTimezone string `yaml:"default_timezone"`
+}
+
+// CallSettings is the tools an agent on a phone call is offered.
+type CallSettings struct {
+	// EndCall lets the agent hang up. Off unless turned on.
+	EndCall *EndCallSettings `yaml:"end_call"`
+	// Press lets the agent press keys, to get through a menu. On unless turned off.
+	Press *CallToolSettings `yaml:"press"`
+	// Transfer lets the agent hand the call to one of its destinations. On unless turned off.
+	Transfer *TransferSettings `yaml:"transfer"`
+}
+
+// CallToolSettings is a call tool that is only on or off.
+type CallToolSettings struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// EndCallSettings is when the agent ends a call.
+type EndCallSettings struct {
+	Enabled *bool `yaml:"enabled"`
+	// When is when to hang up, in the caller's terms.
+	When string `yaml:"when"`
+}
+
+// TransferSettings is where the agent may send a call.
+type TransferSettings struct {
+	Enabled      *bool                 `yaml:"enabled"`
+	Destinations []TransferDestination `yaml:"destinations"`
+}
+
+// TransferDestination is one number the agent may transfer to.
+type TransferDestination struct {
+	Name   string `yaml:"name"`
+	Number string `yaml:"number"`
+	// When is when to transfer here, in the caller's terms.
+	When string `yaml:"when"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `yaml:"warm"`
 }
 
 // ChannelSettings is one line the agent is reachable on.
