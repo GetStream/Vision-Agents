@@ -722,6 +722,9 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
 	}
+	if err := s.pointCallHook(ctx, stream, pin); err != nil {
+		return Attached{}, err
+	}
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
