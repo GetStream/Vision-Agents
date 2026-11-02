@@ -61,6 +61,9 @@ type Toolset interface {
 	// Tools is in llm's shape rather than harness's, so core never pulls in harness, and
 	// through it llmrouter and store, and the store can still validate against core.
 	Tools() []llm.Tool
+	// Instructions is what the server said about using its tools when the session opened,
+	// as it said it: empty when it said nothing.
+	Instructions() string
 	Call(ctx context.Context, call llm.ToolCall) (Result, error)
 	Close()
 }

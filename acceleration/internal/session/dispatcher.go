@@ -75,6 +75,18 @@ type dispatcher struct {
 	reconnect []sandbox.Grant
 	// approvals are the calls held for their person to allow them (connector_approval.go).
 	approvals approvals
+	// instructions are what the servers of the custom bindings opened said about using
+	// their tools (said).
+	instructions []serverSaid
+}
+
+// said is what the servers of the custom bindings d opened said about using their tools,
+// for the agent's instructions; none when the config binds nothing.
+func (d *dispatcher) said() []serverSaid {
+	if d == nil {
+		return nil
+	}
+	return d.instructions
 }
 
 // route is what one offered name was opened for.

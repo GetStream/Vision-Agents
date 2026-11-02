@@ -261,7 +261,7 @@ func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
 
 	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, &plugins.Auth{HTTP: server.Client()}, slog.New(slog.DiscardHandler))
 	defer mcp.Close()
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, nil)
 
 	s.Require().Len(tools, 1)
 	s.Equal("tablejourney__search_places", tools[0].Name)
