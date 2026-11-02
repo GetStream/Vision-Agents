@@ -382,6 +382,9 @@ type Purchase struct {
 	Owner   routing.Owner
 }
 
+// ErrCallHook says the app's call hook could not be pointed at this router.
+var ErrCallHook = errors.New("phone: call hook")
+
 // pointCallHook makes the app deliver its call events to this router, when the router knows
 // where it is reachable from.
 func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) error {
@@ -389,7 +392,7 @@ func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) 
 		return nil
 	}
 	if _, err := stream.EnsureCallHook(ctx, s.publicURL, app); err != nil {
-		return stack.Wrap(err)
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrCallHook, err))
 	}
 	return nil
 }
@@ -722,13 +725,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
 	}
+	attachedHere := held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin
 	if err := s.pointCallHook(ctx, stream, pin); err != nil {
-		return Attached{}, err
+		if !attachedHere {
+			return Attached{}, err
+		}
+		// A running line is not taken down over a repair that failed: its program is asking
+		// again on every start.
+		s.logger.Error("could not point the call hook of a Stream app", "customer", attachment.CustomerID, "stream_app", pin, "error", err)
 	}
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin {
+	if attachedHere {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}

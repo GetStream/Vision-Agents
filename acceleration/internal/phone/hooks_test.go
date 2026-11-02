@@ -97,6 +97,16 @@ func (s *EnsureCallHookSuite) TestAHookUnderTheRouterForAnotherAppStillCounts() 
 	s.Equal(before, s.server.EventHooksJSON("test"))
 }
 
+func (s *EnsureCallHookSuite) TestAHookAtALongerPathIsNotTheRouters() {
+	s.server.SetEventHooks("test", s.rawHook("https://router.example/v1/phone/hooks/streamX", true, callHookEvents...))
+
+	wrote, err := s.stream.EnsureCallHook(s.ctx, testRouterURL, testApp)
+
+	s.Require().NoError(err)
+	s.True(wrote)
+	s.Len(s.server.EventHooks("test"), 2)
+}
+
 func (s *EnsureCallHookSuite) TestADisabledHookDoesNotCount() {
 	s.server.SetEventHooks("test", s.rawHook("https://router.example/v1/phone/hooks/stream/4242", false, callHookEvents...))
 

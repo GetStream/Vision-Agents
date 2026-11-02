@@ -613,6 +613,7 @@ var (
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+	errCallHookUnpointed  = unavailable("this app's Stream call hook could not be pointed at this router, so its calls would not reach an agent: try again")
 	errNumberNotAttached  = conflict("The number is not attached: attach the number first.")
 	errNumberOnItsOwnCall = conflict("Every caller of this number joins one call: attach the number again so each caller gets a session of their own.")
 	errTelephonySuspended = APIError{Type: ErrorTypePermission, Code: codeTelephonySuspended,
@@ -639,6 +640,10 @@ func phoneFailure(logger *slog.Logger, err error) error {
 		// The setting to fix it is the operator's, so it stays in the log.
 		logger.Warn("a phone number cannot be attached without a keyring", "error", err)
 		return errNoKeyring
+	}
+	if errors.Is(err, phone.ErrCallHook) {
+		logger.Error("could not point a Stream app's call hook", "error", err)
+		return errCallHookUnpointed
 	}
 	if refused, ok := errors.AsType[*phone.VendorError](err); ok {
 		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,

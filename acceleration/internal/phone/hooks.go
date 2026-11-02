@@ -201,7 +201,7 @@ func MissingCallHookEvents(hooks []CallHook, url string) ([]string, bool) {
 	found := false
 	for _, hook := range hooks {
 		if !hook.Enabled || (hook.HookType != "" && hook.HookType != webhookHookType) || url == "" ||
-			!strings.HasPrefix(hook.URL, url) {
+			(hook.URL != url && !strings.HasPrefix(hook.URL, url+"/")) {
 			continue
 		}
 		if len(hook.EventTypes) == 0 {

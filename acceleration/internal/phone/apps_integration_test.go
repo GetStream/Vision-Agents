@@ -827,6 +827,18 @@ func (s *AppsSuite) TestAnAttachWhoseHookCannotBePointedLeavesTheNumberDetached(
 	s.Empty(held.StreamTrunkID)
 }
 
+func (s *AppsSuite) TestAnAttachedNumberAttachedAgainStillAnswersWhenItsHookCannotBePointed() {
+	s.ownApp()
+	first, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+	s.Require().NoError(err)
+	s.service = s.serviceAt("ftp://router.example")
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, again.TrunkID)
+}
+
 func (s *AppsSuite) TestANumberInAnotherFormIsNotBought() {
 	_, err := s.service.Buy(s.ctx, Purchase{
 		Vendor: s.vendor.vendor, E164: strings.TrimPrefix(aNumber(), "+"), Owner: routing.Owner{CustomerID: s.customer},
