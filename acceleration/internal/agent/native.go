@@ -198,6 +198,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			}
 			a.nativeAnswerDue = false
 			a.mu.Unlock()
+			a.goodbyeBegan(typed.ResponseID)
 		case sts.SpeechStarted:
 			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
 			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
@@ -217,8 +218,6 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.nativeListening = false
 			a.nativeAnswerDue = !typed.Answered
 			a.mu.Unlock()
-		case sts.ResponseStarted:
-			a.goodbyeBegan(typed.ResponseID)
 		case sts.AudioChunk:
 			a.goodbyeBegan(typed.ResponseID)
 		}
