@@ -374,7 +374,10 @@ func (s *StagesSuite) TestEachHedgedAttemptRecordsItsOwnStages() {
 	s.Require().NoError(err)
 
 	// The original is cancelled when it loses, and records what it passed once its Create returns.
-	s.Eventually(func() bool { return s.connections(original.Provider, false) == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool {
+		connects, _ := s.stage(original, original.Model, routing.StageConnect)
+		return connects == 1
+	}, 5*time.Second, 10*time.Millisecond)
 	for _, want := range []struct {
 		config routing.ProviderConfig
 		stage  string
