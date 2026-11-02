@@ -275,6 +275,19 @@ pub struct AddTrunkNumberRequest {
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
+///The tools an agent on a phone call is offered: end the call, press keys, transfer.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AgentCalls {
+    ///Lets the agent hang up. Off by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_call: ::std::option::Option<EndCallSettings>,
+    ///Lets the agent press keys on the call, such as to get through a menu. On by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub press: ::std::option::Option<PressSettings>,
+    ///Lets the agent transfer the call to a person. On by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub transfer: ::std::option::Option<TransferSettings>,
+}
 ///What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentChanges {
@@ -302,6 +315,8 @@ pub struct AgentChannels {
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
     ///The bindings exactly as they were written. Absent when there are none.
@@ -393,6 +408,8 @@ pub struct AgentConfig {
 #[serde(deny_unknown_fields)]
 pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
     ///The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -477,6 +494,9 @@ pub struct AgentConfigPatch {
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    ///The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     ///Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
@@ -5015,6 +5035,16 @@ pub struct EffectiveQuota {
     pub tokens_per_user_per_day: i64,
     pub tokens_set_by: QuotaLevel,
 }
+///`EndCallSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct EndCallSettings {
+    ///Offer the tool. Omitted is off.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
+    ///When the agent should end the call, in the caller's terms.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub when: ::std::option::Option<::std::string::String>,
+}
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
     ::serde::Deserialize,
@@ -8171,6 +8201,13 @@ pub struct PressDigitsRequest {
     ///Who is carrying the call, e.g. "telnyx".
     pub vendor: ::std::string::String,
 }
+///`PressSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct PressSettings {
+    ///Offer the tool. Omitted is on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
+}
 ///What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Price {
@@ -9880,6 +9917,9 @@ pub struct Session {
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_reason: ::std::option::Option<SessionEndReason>,
     ///The session this one continued from, empty for one opened fresh.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub forked_from: ::std::option::Option<::std::string::String>,
@@ -9972,6 +10012,69 @@ pub struct SessionConnectorBinding {
     pub connection_id: ::std::string::String,
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
+}
+///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SessionEndReason {
+    #[serde(rename = "agent_hangup")]
+    AgentHangup,
+    #[serde(rename = "transferred")]
+    Transferred,
+    #[serde(rename = "hangup")]
+    Hangup,
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "unanswered")]
+    Unanswered,
+}
+impl ::std::fmt::Display for SessionEndReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AgentHangup => f.write_str("agent_hangup"),
+            Self::Transferred => f.write_str("transferred"),
+            Self::Hangup => f.write_str("hangup"),
+            Self::Start => f.write_str("start"),
+            Self::Unanswered => f.write_str("unanswered"),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "agent_hangup" => Ok(Self::AgentHangup),
+            "transferred" => Ok(Self::Transferred),
+            "hangup" => Ok(Self::Hangup),
+            "start" => Ok(Self::Start),
+            "unanswered" => Ok(Self::Unanswered),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///Which sessions to list. A field not listed here is refused rather than ignored.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -11950,6 +12053,9 @@ pub struct SyncAgentRequest {
     ///The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub base_change: ::std::option::Option<::std::string::String>,
+    ///The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     ///Lines this agent answers on besides Stream Chat, each a number the app connected.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
@@ -12735,6 +12841,30 @@ pub struct TransferCallRequest {
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     ///The human being brought onto the call.
     pub to: ::std::string::String,
+}
+///`TransferDestination`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct TransferDestination {
+    ///What the agent calls this destination, such as Sales.
+    pub name: ::std::string::String,
+    ///The number to transfer to, in E.164 form.
+    pub number: ::std::string::String,
+    ///Announce the caller to the person answering before connecting them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub warm: ::std::option::Option<bool>,
+    ///When the agent should transfer here, in the caller's terms.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub when: ::std::option::Option<::std::string::String>,
+}
+///`TransferSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct TransferSettings {
+    ///The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub destinations: ::std::option::Option<::std::vec::Vec<TransferDestination>>,
+    ///Offer the tool. Omitted is on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
 }
 ///How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

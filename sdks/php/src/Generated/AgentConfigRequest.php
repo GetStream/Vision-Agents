@@ -13,6 +13,8 @@ final readonly class AgentConfigRequest
     public function __construct(
         // What the config is called, which is unique among the customer's own.
         public string $name,
+        // The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and p...
+        public ?AgentCalls $calls = null,
         // Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Eac...
         public ?AgentChannels $channels = null,
         // The connectors whose tools this agent may call, each under an alias unique within the config and different...
@@ -87,6 +89,7 @@ final readonly class AgentConfigRequest
     {
         return new self(
             name: Json::string($data, 'name'),
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
@@ -132,6 +135,9 @@ final readonly class AgentConfigRequest
     {
         $out = [];
         $out['name'] = $this->name;
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
+        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }

@@ -833,6 +833,12 @@ type AgentSuite struct {
 	// line is what the agent may do to the call, present only when a test gives it
 	// telephony.
 	line *stubTelephony
+	// destinations are who the agent may transfer to, by name, when a test gives it any.
+	destinations []Destination
+	// ender hangs up the call, present only when a test lets the agent end it, and
+	// endCallWhen is when the agent is told to.
+	ender       *stubEnder
+	endCallWhen string
 	// tools are what the model may run, which mean nothing without something to run them.
 	tools harness.Tools
 	// runner carries out the tools this package does not own, present only when a test
@@ -924,6 +930,9 @@ func (s *AgentSuite) SetupTest() {
 	s.box = nil
 	s.shelf = nil
 	s.line = nil
+	s.destinations = nil
+	s.ender = nil
+	s.endCallWhen = ""
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.toolPolicy = nil
@@ -1006,6 +1015,10 @@ func (s *AgentSuite) joinText() {
 	if s.runner != nil {
 		running = s.runner
 	}
+	var ending Ender
+	if s.ender != nil {
+		ending = s.ender
+	}
 	var box sandbox.Sandbox
 	if s.box != nil {
 		box = s.box
@@ -1028,6 +1041,7 @@ func (s *AgentSuite) joinText() {
 		Skills:             s.skills,
 		Tools:              s.tools,
 		ToolRunner:         running,
+		Ender:              ending,
 		LLM:                s.reasoner(logger),
 		LLMTarget:          "en-low-latency",
 		Knowledge:          reading,
@@ -1130,6 +1144,10 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	if s.runner != nil {
 		running = s.runner
 	}
+	var ending Ender
+	if s.ender != nil {
+		ending = s.ender
+	}
 	var reading *metered.Knowledge
 	if s.knows != nil {
 		reading = s.knowledgeBase()
@@ -1162,6 +1180,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Telephony:          calling,
+		Destinations:       s.destinations,
+		Ender:              ending,
+		EndCallWhen:        s.endCallWhen,
 		ToolRunner:         running,
 		ToolPolicy:         s.toolPolicy,
 		Tools:              s.tools,

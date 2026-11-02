@@ -37,6 +37,8 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     /// A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
     let llm: String?
     let maxTokens: Int?
+    /// The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+    let maxToolRounds: Int?
     /// Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
     let memory: SessionMemory?
     /// How sure the transcriber must be before the agent answers rather than checks what was meant.
@@ -80,7 +82,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, maxToolRounds: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.backchannel = backchannel
@@ -99,6 +101,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.languages = languages
         self.llm = llm
         self.maxTokens = maxTokens
+        self.maxToolRounds = maxToolRounds
         self.memory = memory
         self.minConfidence = minConfidence
         self.modelOverwrites = modelOverwrites
@@ -143,6 +146,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.languages = try container.decodeIfPresent([String].self, forKey: .languages)
         self.llm = try container.decodeIfPresent(String.self, forKey: .llm)
         self.maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens)
+        self.maxToolRounds = try container.decodeIfPresent(Int.self, forKey: .maxToolRounds)
         self.memory = try container.decodeIfPresent(SessionMemory.self, forKey: .memory)
         self.minConfidence = try container.decodeIfPresent(Double.self, forKey: .minConfidence)
         self.modelOverwrites = try container.decodeIfPresent(ModelOverwritesPayload.self, forKey: .modelOverwrites)
@@ -187,6 +191,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(languages, forKey: .languages)
         try container.encodeIfPresent(llm, forKey: .llm)
         try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(maxToolRounds, forKey: .maxToolRounds)
         try container.encodeIfPresent(memory, forKey: .memory)
         try container.encodeIfPresent(minConfidence, forKey: .minConfidence)
         try container.encodeIfPresent(modelOverwrites, forKey: .modelOverwrites)
@@ -233,6 +238,7 @@ extension CreateSessionRequest: Hashable {
         lhs.languages == rhs.languages &&
         lhs.llm == rhs.llm &&
         lhs.maxTokens == rhs.maxTokens &&
+        lhs.maxToolRounds == rhs.maxToolRounds &&
         lhs.memory == rhs.memory &&
         lhs.minConfidence == rhs.minConfidence &&
         lhs.modelOverwrites == rhs.modelOverwrites &&
@@ -276,6 +282,7 @@ extension CreateSessionRequest: Hashable {
         hasher.combine(languages)
         hasher.combine(llm)
         hasher.combine(maxTokens)
+        hasher.combine(maxToolRounds)
         hasher.combine(memory)
         hasher.combine(minConfidence)
         hasher.combine(modelOverwrites)

@@ -204,6 +204,42 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// The tools an agent on a phone call is offered: end the call, press keys, transfer.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentCalls
+    {
+
+        /// <summary>
+        /// Lets the agent hang up. Off by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_call")]
+        public EndCallSettings? EndCall { get; set; } = default!;
+
+        /// <summary>
+        /// Lets the agent press keys on the call, such as to get through a menu. On by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("press")]
+        public PressSettings? Press { get; set; } = default!;
+
+        /// <summary>
+        /// Lets the agent transfer the call to a person. On by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("transfer")]
+        public TransferSettings? Transfer { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -272,6 +308,9 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfig
     {
+
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
@@ -440,6 +479,9 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfigPatch
     {
 
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
 
@@ -579,6 +621,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfigRequest
     {
+
+        /// <summary>
+        /// The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
 
         /// <summary>
         /// Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
@@ -5882,6 +5930,33 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EndCallSettings
+    {
+
+        /// <summary>
+        /// Offer the tool. Omitted is off.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
+
+        /// <summary>
+        /// When the agent should end the call, in the caller's terms.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public string? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Equals
     {
 
@@ -9055,6 +9130,27 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PressSettings
+    {
+
+        /// <summary>
+        /// Offer the tool. Omitted is on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
     /// </summary>
@@ -11425,6 +11521,12 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
+        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
+
+        /// <summary>
         /// The session this one continued from, empty for one opened fresh.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("forked_from")]
@@ -13579,6 +13681,12 @@ namespace GetStream.VisionAgents.Models
         public string? BaseChange { get; set; } = default!;
 
         /// <summary>
+        /// The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
+
+        /// <summary>
         /// Lines this agent answers on besides Stream Chat, each a number the app connected.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
@@ -14568,6 +14676,72 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("to")]
         public string To { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TransferDestination
+    {
+
+        /// <summary>
+        /// What the agent calls this destination, such as Sales.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// The number to transfer to, in E.164 form.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("number")]
+        public string Number { get; set; } = default!;
+
+        /// <summary>
+        /// Announce the caller to the person answering before connecting them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("warm")]
+        public bool? Warm { get; set; } = default!;
+
+        /// <summary>
+        /// When the agent should transfer here, in the caller's terms.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public string? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TransferSettings
+    {
+
+        /// <summary>
+        /// The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("destinations")]
+        public System.Collections.Generic.List<TransferDestination>? Destinations { get; set; } = default!;
+
+        /// <summary>
+        /// Offer the tool. Omitted is on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

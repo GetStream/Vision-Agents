@@ -200,6 +200,19 @@ components:
           description: The customer's own cost labels.
           type: object
       type: object
+    AgentCalls:
+      description: 'The tools an agent on a phone call is offered: end the call, press keys, transfer.'
+      properties:
+        end_call:
+          $ref: '#/components/schemas/EndCallSettings'
+          description: Lets the agent hang up. Off by default.
+        press:
+          $ref: '#/components/schemas/PressSettings'
+          description: Lets the agent press keys on the call, such as to get through a menu. On by default.
+        transfer:
+          $ref: '#/components/schemas/TransferSettings'
+          description: Lets the agent transfer the call to a person. On by default.
+      type: object
     AgentChanges:
       description: 'What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.'
       properties:
@@ -232,6 +245,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        calls:
+          $ref: '#/components/schemas/AgentCalls'
         channels:
           $ref: '#/components/schemas/AgentChannels'
         connectors:
@@ -356,6 +371,8 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        calls:
+          $ref: '#/components/schemas/AgentCalls'
         channels:
           $ref: '#/components/schemas/AgentChannels'
         connectors:
@@ -463,6 +480,9 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        calls:
+          $ref: '#/components/schemas/AgentCalls'
+          description: 'The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.'
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: 'Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.'
@@ -4006,6 +4026,16 @@ components:
         - tokens_per_user_per_day
         - tokens_set_by
       type: object
+    EndCallSettings:
+      properties:
+        enabled:
+          description: Offer the tool. Omitted is off.
+          type: boolean
+        when:
+          description: When the agent should end the call, in the caller's terms.
+          maxLength: 1000
+          type: string
+      type: object
     Endpointing:
       description: 'What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.'
       enum:
@@ -6200,6 +6230,12 @@ components:
         - digits
         - vendor
       type: object
+    PressSettings:
+      properties:
+        enabled:
+          description: Offer the tool. Omitted is on.
+          type: boolean
+      type: object
     Price:
       description: 'What one item costs: a model of a provider in a modality, in a region, with the customer''s own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.'
       properties:
@@ -7783,6 +7819,10 @@ components:
           type: object
         description:
           type: string
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+          readOnly: true
         forked_from:
           description: The session this one continued from, empty for one opened fresh.
           type: string
@@ -7905,6 +7945,15 @@ components:
         - name
         - connection_id
       type: object
+    SessionEndReason:
+      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.'
+      enum:
+        - agent_hangup
+        - transferred
+        - hangup
+        - start
+        - unanswered
+      type: string
     SessionFilter:
       additionalProperties: false
       description: Which sessions to list. A field not listed here is refused rather than ignored.
@@ -9161,6 +9210,9 @@ components:
         base_change:
           description: The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
           type: string
+        calls:
+          $ref: '#/components/schemas/AgentCalls'
+          description: 'The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole.'
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: Lines this agent answers on besides Stream Chat, each a number the app connected.
@@ -9868,6 +9920,41 @@ components:
         - from
         - session_id
         - to
+      type: object
+    TransferDestination:
+      properties:
+        name:
+          description: What the agent calls this destination, such as Sales.
+          minLength: 1
+          type: string
+        number:
+          description: The number to transfer to, in E.164 form.
+          pattern: ^\+[1-9][0-9]{6,14}$
+          patternDescription: an E.164 number, such as +15550001111
+          type: string
+        warm:
+          description: Announce the caller to the person answering before connecting them.
+          type: boolean
+        when:
+          description: When the agent should transfer here, in the caller's terms.
+          maxLength: 1000
+          type: string
+      required:
+        - name
+        - number
+      type: object
+    TransferSettings:
+      properties:
+        destinations:
+          description: The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+          items:
+            $ref: '#/components/schemas/TransferDestination'
+          maxItems: 20
+          nullable: true
+          type: array
+        enabled:
+          description: Offer the tool. Omitted is on.
+          type: boolean
       type: object
     TtsOptions:
       description: How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.

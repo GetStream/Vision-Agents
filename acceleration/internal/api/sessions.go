@@ -882,7 +882,7 @@ func storedSessionOf(row store.AgentSession) Session {
 }
 
 // mergeStored writes what only the row knows onto a rendered session: the labels, and when
-// it ended.
+// and why it ended.
 func mergeStored(rendered *Session, row *store.AgentSession) {
 	// A live session knows its modality before the row that records it.
 	if rendered.Modality == "" {
@@ -914,6 +914,10 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.ModelOverwrites = modelOverwritesFor(row.ModelOverwrites)
 	}
 	rendered.ClosedAt = row.ClosedAt
+	if row.EndReason != "" {
+		reason := SessionEndReason(row.EndReason)
+		rendered.EndReason = &reason
+	}
 	rendered.LastResponseAt = row.LastResponseAt
 }
 

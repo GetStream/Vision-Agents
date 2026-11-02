@@ -69,7 +69,7 @@ func (r *heldRecorder) Flush(context.Context) error { return nil }
 
 func (r *heldRecorder) Opened(store.AgentSession, []store.ToolDefinition) {}
 
-func (r *heldRecorder) Closed(string, time.Time) {}
+func (r *heldRecorder) Closed(string, time.Time, EndReason) {}
 
 func (r *heldRecorder) Close() {}
 
