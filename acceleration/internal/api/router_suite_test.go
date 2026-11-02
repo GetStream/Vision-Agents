@@ -268,8 +268,9 @@ type RouterSuite struct {
 	// kept apart by, so this is the only thing stopping one suite's nodes from reading
 	// another's sessions.
 	relayPrefix string
-	// shardRedis is the address of the Redis every node's relay is on.
-	shardRedis string
+	// redisAddr and shardRedisAddr are the addresses of the deployment's Redis, which the work
+	// bus is on, and of the one every node's relay is on.
+	redisAddr, shardRedisAddr string
 	// shard and otherShard are the shards of the suite's node and of otherNode, for a suite
 	// about shards to set before it starts the harness. Nodes in two shards have a relay
 	// each. Empty is one deployment of one shard.
@@ -574,7 +575,7 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 	}
 
-	s.shardRedis = cmp.Or(os.Getenv("ROUTER_REDIS_SHARD_ADDR"), redisAddr)
+	s.redisAddr, s.shardRedisAddr = redisAddr, cmp.Or(os.Getenv("ROUTER_REDIS_SHARD_ADDR"), redisAddr)
 	liveClient, err := redisready.Retry(redisAddr, func() (*live.Client, error) {
 		return live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
 	})
@@ -1798,7 +1799,7 @@ func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatc
 // The workers subscribe to the bus as they are made, which is tried again as newNode's relay
 // is; a failed attempt's context is cancelled, which ends the subscriptions it left trying.
 func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.Directory, bus *relay.Bus) *node.Workers {
-	everyWorker, err := redisready.Retry(s.shardRedis, func() (*node.Workers, error) {
+	everyWorker, err := redisready.Retry(s.redisAddr, func() (*node.Workers, error) {
 		ctx, cancel := context.WithCancel(context.Background())
 		everyWorker, err := node.NewWorkers(ctx, workers, directory, bus, slog.New(slog.DiscardHandler))
 		if err != nil {
@@ -1839,8 +1840,8 @@ func (s *RouterSuite) nodeDirectory(listener *httptest.Server, shard string, log
 // process and goes on trying a failed one, so only closing the client ends what a node nobody
 // holds left subscribed, which would otherwise answer the relay beside the node that came up.
 func (s *RouterSuite) newNode(shard string, logger *slog.Logger, options Options) *Server {
-	server, err := redisready.Retry(s.shardRedis, func() (*Server, error) {
-		redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{s.shardRedis}, DisableCache: true})
+	server, err := redisready.Retry(s.shardRedisAddr, func() (*Server, error) {
+		redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{s.shardRedisAddr}, DisableCache: true})
 		if err != nil {
 			return nil, err
 		}
