@@ -935,16 +935,11 @@ func moveRoom(ctx context.Context, tx bun.Tx, customerID string, marked []Schedu
 	if len(marked) == 0 {
 		return limits, held, nil
 	}
-	// Each holder once, as two arrays read side by side: a list of pairs would be planned as
-	// one condition per pair.
-	var users, configIDs []string
-	seen := map[scheduledTaskHolder]bool{}
+	// The holders as two arrays read side by side: a list of pairs would be planned as one
+	// condition per pair.
+	users, configIDs := make([]string, 0, len(marked)), make([]string, 0, len(marked))
 	for _, task := range marked {
-		key := scheduledTaskHolder{task.UserID, task.ConfigID}
-		if !seen[key] {
-			seen[key] = true
-			users, configIDs = append(users, task.UserID), append(configIDs, task.ConfigID)
-		}
+		users, configIDs = append(users, task.UserID), append(configIDs, task.ConfigID)
 	}
 
 	var configs []AgentConfig

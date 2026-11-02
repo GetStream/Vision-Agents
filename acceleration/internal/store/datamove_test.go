@@ -1115,6 +1115,34 @@ func (s *DataMoveSuite) TestTheCutOverReadsEveryUsersRoomOnEveryConfigInOneQuery
 	}
 	s.Equal(1, sent.matching(`"agent_configs"`, "FOR SHARE"), "one query locks every config")
 	s.Equal(1, sent.matching(`"scheduled_tasks"`, "count("), "one query counts every user on every config")
+
+	sent.mu.Lock()
+	sent.on, sent.queries = true, nil
+	sent.mu.Unlock()
+	_, _, _, _, err = s.destination.ResumeMovedRows(s.ctx, "nobody")
+	s.Require().NoError(err)
+	s.Zero(sent.matching(`"agent_configs"`), "a cut-over with nothing to resume reads no config")
+	s.Zero(sent.matching("count("), "nor counts anybody's tasks")
+}
+
+// Another customer's tasks take none of this customer's room, though they name the same user
+// and config ids: no key ties a task's config to its customer.
+func (s *DataMoveSuite) TestTheCutOverCountsOnlyTheCustomersOwnTasks() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	s.limitHere(1)
+	_, err := s.destination.DB().ExecContext(s.ctx, `
+INSERT INTO scheduled_tasks (id, customer_id, config_id, user_id, caller_kind, title, instructions, start_local,
+	timezone, state, next_run_at, created_by, created_at, updated_at)
+VALUES ('st-theirs', 'other', 'config-1', 'sam', 'authenticated', 'Hydrate', 'Remind Sam to drink.', now(),
+	'UTC', 'active', now() + interval '1 day', 'api', now(), now())`)
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Zero(overLimit)
 }
 
 func (s *DataMoveSuite) TestTheCutOverHoldsAConfigWithoutALimitToTheDefault() {
