@@ -507,6 +507,21 @@ func (s *ForgetUserSuite) TestARunWhoseRedisDialStallsIsRunAgain() {
 	s.Contains(out, "redis: 8 keys\n", "the Redis was reached on the second run")
 }
 
+func (s *ForgetUserSuite) TestARunWhoseUsageServiceIsGoneFailsAtOnce() {
+	s.recorded(0, s.app, person, 100)
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.settings.Usage.URL = "http://" + closed.Addr().String()
+	s.Require().NoError(closed.Close())
+	started := time.Now()
+
+	err = s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com", "--dry-run"}, &bytes.Buffer{})
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "redis:")
+	s.Less(time.Since(started), 10*time.Second, "an error that is not the Redis dial is not run again")
+}
+
 func (s *ForgetUserSuite) TestARunThatStoppedIsFinishedWithItsReplacement() {
 	ids := []uuid.UUID{s.recorded(0, s.app, person, 300), s.recorded(1, s.app, person, 200)}
 	late := s.written(1, s.app, person, 50)
