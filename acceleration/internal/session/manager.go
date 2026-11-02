@@ -356,6 +356,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		runtime:       runtime,
 		runtimeMode:   store.ModalityVoice,
 		skills:        skills,
+		moving:        make(chan struct{}, 1),
 	}
 	if spec.Text {
 		created.modality = store.ModalityText
