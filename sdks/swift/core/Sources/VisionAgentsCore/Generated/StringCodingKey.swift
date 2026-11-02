@@ -131,6 +131,7 @@ extension StringCodingKey {
     static let quietHours: StringCodingKey = "quiet_hours"
     static let reasonArgument: StringCodingKey = "reason_argument"
     static let reasoningEffort: StringCodingKey = "reasoning_effort"
+    static let refreshSecret: StringCodingKey = "refresh_secret"
     static let `repeat`: StringCodingKey = "repeat"
     static let requestId: StringCodingKey = "request_id"
     static let requests: StringCodingKey = "requests"
