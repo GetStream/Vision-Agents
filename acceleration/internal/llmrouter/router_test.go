@@ -380,14 +380,16 @@ func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 		"the refusal is what ended it, whatever deadline it also ran past")
 }
 
-func (s *LLMRouterSuite) TestARefusalWithoutUsageIsEstimatedWhereAProviderFailureIsNot() {
+func (s *LLMRouterSuite) TestARefusalWithoutUsageIsEstimatedAsAFailureAfterOutputIs() {
 	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true}),
 		"the screen cut it off before the vendor said what it used, as a cancel does")
 	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, OutputText: "Sure"}))
 	s.False(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, UsageReported: true}),
 		"a vendor that said what it used is taken at its word")
-	s.False(unreported(llm.Response{Status: llm.StatusFailed, OutputText: "Sure"}),
-		"a vendor is not taken to bill its own failure")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, OutputText: "Sure"}),
+		"what streamed before the failure was generated, and the vendor bills it")
+	s.False(unreported(llm.Response{Status: llm.StatusFailed}),
+		"a failure before any output took nothing")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
