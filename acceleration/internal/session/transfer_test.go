@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +46,8 @@ type TransferSuite struct {
 	number   string
 	model    *stubLLM
 	manager  *Manager
+	// stream is the Stream the number's lines are made at and its calls ended at.
+	stream *chattest.Server
 }
 
 func TestTransferSuite(t *testing.T) {
@@ -92,8 +96,9 @@ func (s *TransferSuite) manages() *Manager {
 	registry.Register("telnyx", func() (phone.Provider, error) {
 		return telnyx.New(telnyx.Options{APIKey: "telnyx-key", ConnectionID: "texml-app", BaseURL: vendor.URL})
 	})
+	s.stream = chattest.NewServer(s.T())
 	telephony, err := phone.NewService(phone.ServiceOptions{
-		Registry: registry, Store: s.store, Stream: phone.NewStreamFromClient(chattest.NewServer(s.T()).Client), Logger: logger,
+		Registry: registry, Store: s.store, Stream: phone.NewStreamFromClient(s.stream.Client), Logger: logger,
 	})
 	s.Require().NoError(err)
 
@@ -104,10 +109,9 @@ func (s *TransferSuite) manages() *Manager {
 	s.T().Cleanup(transcriber.Close)
 	s.model = &stubLLM{reply: "Putting you through.", calls: []llm.ToolCall{{ID: "call-1", Name: "transfer", Arguments: `{"destination":"support"}`}}}
 	reasoning := llmrouter.NewRegistry()
-	var opened int
+	var opened atomic.Int32
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		opened++
-		if opened == 1 {
+		if opened.Add(1) == 1 {
 			return s.model, nil
 		}
 		return &stubLLM{reply: "Sure."}, nil
@@ -133,11 +137,14 @@ func (s *TransferSuite) manages() *Manager {
 }
 
 // answers opens the session of an agent answering a call to the suite's number, on a
-// config that transfers to support.
+// config that transfers to support and may hang up, so the session has a way to end the call.
 func (s *TransferSuite) answers() *Session {
-	spec := FromConfig(store.AgentConfig{ID: "cfg-1", Calls: store.AgentCalls{Transfer: &store.TransferSettings{
-		Enabled: true, Destinations: []store.TransferDestination{{Name: "support", Number: "+15125550199"}},
-	}}})
+	spec := FromConfig(store.AgentConfig{ID: "cfg-1", Calls: store.AgentCalls{
+		Transfer: &store.TransferSettings{
+			Enabled: true, Destinations: []store.TransferDestination{{Name: "support", Number: "+15125550199"}},
+		},
+		EndCall: &store.EndCallSettings{Enabled: true},
+	}})
 	spec.CustomerID, spec.CallType, spec.CallID = s.customer, "default", "phone-"+uuid.NewString()
 	spec.LLMTarget, spec.STTTarget, spec.TTSTarget = "en-low-latency", "en-low-latency", "en-low-latency"
 	spec.Phone = &PhoneSpec{Number: s.number}
@@ -159,6 +166,19 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 		return created.State() == Ended && !s.manager.Running(created.ID())
 	}, settleFor, 20*time.Millisecond, "the session outlived the agent that left on the transfer")
 	s.Equal(EndTransferred, created.endReason())
+	s.NotEmpty(s.asked("/sip/inbound_trunks"), "the transfer made no line at the suite's Stream")
+	s.Empty(s.asked("/mark_ended"), "the call the caller was handed over on was ended")
+}
+
+// asked is the requests the suite's Stream was sent whose path ends in suffix.
+func (s *TransferSuite) asked(suffix string) []string {
+	var paths []string
+	for _, request := range s.stream.Requests("test") {
+		if strings.HasSuffix(request.Path, suffix) {
+			paths = append(paths, request.Method+" "+request.Path)
+		}
+	}
+	return paths
 }
 
 // transferred waits for the agent to have handed the caller over.
