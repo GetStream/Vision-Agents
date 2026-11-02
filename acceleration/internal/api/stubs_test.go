@@ -523,11 +523,6 @@ const (
 	failToTranscribe = "fail to transcribe"
 )
 
-// wavHeader starts every WAV: what a router sniffing the bytes takes for audio/wave.
-const wavHeader = "RIFF\x00\x00\x00\x00WAVE"
-
-// wavOf is a WAV recordedTranscriber hears said in.
-func wavOf(said string) []byte { return []byte(wavHeader + said) }
 
 func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()

@@ -309,6 +309,50 @@ func (s *SessionSuite) TestACommandsPhotoIsShownToTheModelAndOnThePersonsMessage
 	s.Len(chat.Uploads(), 1, "a retry uploads its photo no second time")
 }
 
+func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	running := s.commands()
+	note := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("a voice note")}
+
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+
+	var shown []persistent.Message
+	s.eventually(func() bool {
+		shown = s.stored(running)
+		for _, message := range shown {
+			if message.ID == "command-a" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the voice note")
+	for _, message := range shown {
+		if message.ID == "command-a" {
+			s.Equal("The fryer is leaking", message.Text)
+			s.Equal("voice-note.mp4", message.Files[0].Name)
+			s.Equal("audio/mp4", message.Files[0].MIME)
+		}
+	}
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1)
+	s.Equal(note.Audio, uploads[0].Data)
+	s.JSONEq(`{"id":"employee-1"}`, uploads[0].User, "the voice note is uploaded as the person who sent it")
+
+	retry, _, err := running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+	s.True(retry.Duplicate)
+	s.Len(chat.Uploads(), 1, "a retry uploads its voice note no second time")
+
+	other := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("another voice note")}
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, other)
+	s.ErrorIs(err, persistent.ErrCommandConflict, "a retry is matched on the voice note as well as the text")
+}
+
 func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
 	s.persists()
 	running := s.commands()
