@@ -90,35 +90,23 @@ func (s *SessionSuite) TestTheSpecIsReadWhileItChanges() {
 	}()
 
 	targets := []string{"llm-flow", "en-low-latency"}
-	var running sync.WaitGroup
-	running.Go(func() {
-		for i := range 10 {
+	s.readsWhile(func() {
+		for i := range 20 {
 			s.NoError(created.SetSettings(s.ctx, Settings{LLM: &targets[i%2]}))
-		}
-	})
-	running.Go(func() {
-		for i := range 10 {
 			custom := map[string]any{"round": i}
 			created.Describe(s.ctx, Labels{Custom: &custom})
 			_, err := created.Respond(s.ctx, "hello", nil, options.LLM{})
 			s.NoError(err)
 		}
-	})
-	running.Go(func() {
-		for range 10 {
-			created.Voice()
-			created.Mode()
-			_, gone := created.Watch()
-			gone()
-			created.ResolveToolParts("unknown", llm.TextParts("output"), "")
-			created.ResolveTurnTool("unknown", "turn-1", llm.TextParts("output"), "")
-			created.placed(ToolCall{ID: "unknown"})
-		}
-	})
-	running.Wait()
+	},
+		func() { created.Voice() },
+		func() { created.Mode() },
+		func() { _, gone := created.Watch(); gone() },
+		func() { created.placed(ToolCall{ID: "unknown"}) },
+	)
 
 	s.Equal("en-low-latency", created.Spec().LLMTarget)
-	s.Equal(map[string]any{"round": 9}, created.Spec().Custom)
+	s.Equal(map[string]any{"round": 19}, created.Spec().Custom)
 	s.Equal("cascade", created.Mode())
 	s.eventually(func() bool { return len(logs) > 0 }, "no log row was written")
 	s.Equal("acme", (<-logs).CustomerID, "a log row names the session's customer")
@@ -142,38 +130,48 @@ func (s *SessionSuite) TestTheSpecIsReadWhileVoiceStartsAndStops() {
 		}
 	}()
 
-	var running sync.WaitGroup
-	running.Go(func() {
-		for range 3 {
+	s.readsWhile(func() {
+		for range 5 {
 			s.NoError(created.StartVoice(s.ctx, Call{}))
 			s.NoError(created.StopVoice(s.ctx))
-		}
-	})
-	running.Go(func() {
-		for range 10 {
 			// A reply still being written in the conversation refuses the next one.
 			if _, err := created.Respond(s.ctx, "hello", nil, options.LLM{}); err != nil {
 				s.ErrorIs(err, persistent.ErrResponseRunning)
 			}
 		}
-	})
-	running.Go(func() {
-		for range 10 {
-			created.Voice()
-			created.Mode()
-			_, gone := created.WatchPendingVoiceTools()
-			gone()
-			created.ResolveToolParts("unknown", llm.TextParts("output"), "")
-			created.ResolveTurnTool("unknown", "turn-1", llm.TextParts("output"), "")
-			_ = created.askTool(ToolCall{ID: "unknown", Name: "unknown", TurnID: "turn-1"})
-		}
-	})
-	running.Wait()
+	},
+		func() { created.Mode() },
+		func() { _, gone := created.WatchPendingVoiceTools(); gone() },
+		func() { created.ResolveToolParts("unknown", llm.TextParts("output"), "") },
+		func() { created.ResolveTurnTool("unknown", "turn-1", llm.TextParts("output"), "") },
+		func() { _ = created.askTool(ToolCall{ID: "unknown", Name: "unknown", TurnID: "turn-1"}) },
+	)
 
 	s.False(created.Voicing())
 	s.Equal("text", created.Mode())
 	s.eventually(func() bool { return len(logs) > 0 }, "no log row was written")
 	s.Equal("acme", (<-logs).CustomerID, "a log row names the session's customer")
+}
+
+// readsWhile runs each reader over and over on a goroutine of its own until change returns.
+func (s *SessionSuite) readsWhile(change func(), readers ...func()) {
+	changed := make(chan struct{})
+	var reading sync.WaitGroup
+	for _, read := range readers {
+		reading.Go(func() {
+			for {
+				select {
+				case <-changed:
+					return
+				default:
+					read()
+				}
+			}
+		})
+	}
+	change()
+	close(changed)
+	reading.Wait()
 }
 
 // openedModels is how many models the agent opened after its first.
