@@ -1200,6 +1200,61 @@ func (s *HarnessSuite) TestATurnMadeToAnswerIsOfferedNoToolsAndToldWhy() {
 	s.Contains(shown(s.fast.requests()[0]), answerNow)
 }
 
+func (s *HarnessSuite) TestACallOnAReplyOfferedNoToolsIsDropped() {
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+
+	for name, turn := range map[string]Turn{
+		"made to answer": {Answers: true},
+		"nobody spoken":  {NoTools: true},
+		"offered tools":  {},
+	} {
+		turn.ID, turn.Instructions = "turn-"+strings.ReplaceAll(name, " ", "-"), "be brief"
+		turn.History = []llm.Message{{Role: llm.User, Content: "where is my order"}}
+		s.answer(turn)
+
+		got := s.harness.DropUnoffered(turn.ID, called)
+		if turn.Answers || turn.NoTools {
+			s.Empty(got, "%s: the call was kept", name)
+		} else {
+			s.Equal(called, got, "%s: a reply offered tools lost its call", name)
+		}
+	}
+}
+
+func (s *HarnessSuite) TestACallOnTheReplyCarryingAColleaguesQuestionIsDropped() {
+	s.tools = testTools()
+	s.build(true)
+	s.slow.automatic = "NEED: which date did you want?"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `Let me look. <ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+	s.respond("turn-2", "")
+
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	s.Empty(s.harness.DropUnoffered("turn-2", called), "the reply carrying the question was offered no tools")
+}
+
+func (s *HarnessSuite) TestWhatAReplyWasOfferedIsNotCarriedToTheNextWithItsId() {
+	// A reply asked for again after one thrown away shares its id, and is judged on what
+	// it was offered.
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
+	s.harness.Forget("turn-1")
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history})
+	s.Equal(called, s.harness.DropUnoffered("turn-1", called), "a forgotten reply's offer was carried to the next")
+
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history, Answers: true})
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history})
+	s.Equal(called, s.harness.DropUnoffered("turn-2", called), "a written reply's offer was carried to the next")
+}
+
 func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
 	// Only a question leaves nothing to look up. An answer coming back is often exactly
 	// when acting on it becomes possible.
