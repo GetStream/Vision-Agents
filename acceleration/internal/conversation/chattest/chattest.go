@@ -61,6 +61,8 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
+	// failing are the path suffixes Fail answers 500 to, by method.
+	failing map[string]map[string]bool
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
@@ -414,6 +416,20 @@ func (s *Server) LiftRateLimit(suffix string) {
 	delete(s.db.limited, suffix)
 }
 
+// Fail answers every request of method whose path ends in suffix with a 500, as Stream does
+// for a call it could not update. Other methods on that path are served.
+func (s *Server) Fail(method, suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.failing == nil {
+		s.db.failing = map[string]map[string]bool{}
+	}
+	if s.db.failing[method] == nil {
+		s.db.failing[method] = map[string]bool{}
+	}
+	s.db.failing[method][suffix] = true
+}
+
 // wait keeps the request Hold asked for waiting until it is let go.
 func (db *store) wait(path string) {
 	db.holdMu.Lock()
@@ -630,6 +646,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", "60")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 9, "message": "Too many requests", "StatusCode": http.StatusTooManyRequests})
+			return
+		}
+	}
+	for suffix := range db.failing[r.Method] {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": http.StatusInternalServerError})
 			return
 		}
 	}

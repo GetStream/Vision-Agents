@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -1542,6 +1543,36 @@ func (s *AppsSuite) TestADialWithCustomIntoAnAgentsOwnCallPutsItsCustomOnIt() {
 			s.Equal("+15550001111", s.vendor.dialed.To)
 			data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
 			s.Equal(map[string]any{"lead": "42"}, data["custom"])
+		})
+	}
+}
+
+func (s *AppsSuite) TestADialWithCustomIsRefusedWhenItsCustomCannotBePutOnTheCall() {
+	// The call is held with no custom, so the dial puts its custom there; when Stream
+	// refuses that, the dial must not ring with the agent reading no custom.
+	for _, line := range []struct {
+		name   string
+		shared bool
+	}{{"shared line", true}, {"its own trunk", false}} {
+		s.Run(line.name, func() {
+			s.SetupTest()
+			s.ownApp()
+			if line.shared {
+				s.sealed()
+			}
+			// A first dial elsewhere makes the shared line, so only a trunk of this dial counts.
+			s.Require().NoError(s.dialInto(uuid.NewString(), "+15550009999", nil))
+			s.vendor.dialed = Outbound{}
+			session := uuid.NewString()
+			s.heldWith(session, nil)
+			trunks := len(s.own.Trunks())
+			s.own.Fail(http.MethodPatch, "/video/call/"+defaultCallType+"/"+session)
+
+			err := s.dialInto(session, "+15550001111", map[string]string{"lead": "42"})
+
+			s.Error(err)
+			s.Empty(s.vendor.dialed.To)
+			s.Len(s.own.Trunks(), trunks)
 		})
 	}
 }

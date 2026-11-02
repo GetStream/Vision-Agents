@@ -325,6 +325,11 @@ func TestCallStatusSuite(t *testing.T) {
 	runSuite(t, new(CallStatusSuite))
 }
 
+// unreachableVendor is where the suite's vendors are pointed: port 1 on this host refuses
+// at once, so a dial that gets past the router's own checks fails here and never reaches a
+// real vendor with the suite's nonsense credentials.
+const unreachableVendor = "http://127.0.0.1:1"
+
 func (s *CallStatusSuite) SetupSuite() {
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
@@ -337,10 +342,10 @@ func (s *CallStatusSuite) SetupSuite() {
 	}
 	registry := vendors.Registry(config)
 	registry.Register("twilio", func() (phone.Provider, error) {
-		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t"})
+		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t", BaseURL: unreachableVendor})
 	})
 	registry.Register("telnyx", func() (phone.Provider, error) {
-		return telnyx.New(telnyx.Options{APIKey: "k"})
+		return telnyx.New(telnyx.Options{APIKey: "k", BaseURL: unreachableVendor})
 	})
 	s.phoneVendors = registry
 	s.phoneOnChat = true
