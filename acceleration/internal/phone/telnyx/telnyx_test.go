@@ -518,50 +518,20 @@ func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
 	s.ErrorContains(err, "bridge uri is required")
 }
 
-// bridged answers as Telnyx does for placed calls: the person's leg cc-1, and the leg its
-// TeXML dialled to Stream in the same call session, listed among other calls on a second
-// page; and cc-3, whose TeXML has not reached Stream yet. It returns where digits were sent.
-func (s *TelnyxSuite) bridged() *[]string {
-	var pressed []string
+func (s *TelnyxSuite) TestPressingDigitsActsOnThePersonsLegWithoutEndingIt() {
+	// Telnyx plays the tones out of the leg named, to whoever that leg reaches. The id
+	// placing returned is the person's leg; the leg its TeXML bridged to Stream would play
+	// them to the agent. Sent as an action on the live call, so the agent stays bridged.
+	var asked []string
 	s.respond = func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v2/calls/cc-1":
-			_, _ = w.Write([]byte(`{"data":{"call_control_id":"cc-1","call_session_id":"session-1","is_alive":true}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v2/calls/cc-3":
-			_, _ = w.Write([]byte(`{"data":{"call_control_id":"cc-3","call_session_id":"session-3","is_alive":true}}`))
-		case r.URL.Path == "/v2/connections/conn-1/active_calls" && r.URL.Query().Get("page[after]") == "":
-			_, _ = w.Write([]byte(`{"data":[{"call_control_id":"cc-1","call_session_id":"session-1"},
-				{"call_control_id":"other-1","call_session_id":"session-2"}],"meta":{"cursors":{"after":"next"}}}`))
-		case r.URL.Path == "/v2/connections/conn-1/active_calls":
-			_, _ = w.Write([]byte(`{"data":[{"call_control_id":"cc-3","call_session_id":"session-3"},
-				{"call_control_id":"cc-2","call_session_id":"session-1"}],"meta":{"cursors":{}}}`))
-		case strings.HasSuffix(r.URL.Path, "/actions/send_dtmf"):
-			pressed = append(pressed, r.URL.Path)
-			_, _ = w.Write([]byte(`{"data":{"result":"ok"}}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+		asked = append(asked, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"result":"ok"}}`))
 	}
-	return &pressed
-}
-
-func (s *TelnyxSuite) TestPressingDigitsSendsThemFromTheLegBridgedToTheAgent() {
-	// Telnyx plays the tones to the other end of the call from the leg named. From the
-	// person's own leg they would reach the agent, not the menu.
-	pressed := s.bridged()
 
 	s.Require().NoError(s.provider.SendDigits(s.ctx, "cc-1", "4123"))
 
-	s.Equal([]string{"/v2/calls/cc-2/actions/send_dtmf"}, *pressed)
+	s.Equal([]string{"POST /v2/calls/cc-1/actions/send_dtmf"}, asked)
 	s.Equal("4123", s.seen.body["digits"])
-}
-
-func (s *TelnyxSuite) TestPressingBeforeTheAgentIsBridgedSendsNothing() {
-	pressed := s.bridged()
-
-	s.ErrorContains(s.provider.SendDigits(s.ctx, "cc-3", "1"), "not bridged")
-
-	s.Empty(*pressed, "tones were sent where the person would not hear them")
 }
 
 func (s *TelnyxSuite) TestPressingWithoutACallOrDigitsIsRejected() {
