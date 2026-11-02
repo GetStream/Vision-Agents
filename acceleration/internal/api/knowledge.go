@@ -180,14 +180,14 @@ func (s *Server) deleteKnowledge(ctx context.Context, request *deleteKnowledgeRe
 		}
 	}
 
-	// The rows go first: a page read that writes after the provider's copy is gone then finds
-	// its page gone and takes the write back. A delete that failed at the provider can still be
-	// asked for again, since the provider still has the base.
-	documents, pages, err := s.store.DeleteKnowledgeBase(ctx, customerID, namespace)
+	// The provider's copy goes first: a delete that failed there leaves the documents and pages
+	// listed, so the base can be deleted again. A page read whose write lands after the drop
+	// finds its page gone once the rows are, and takes the write back.
+	existed, err := s.knowledgeFor(ctx, customerID, "").Drop(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
-	existed, err := s.knowledgeFor(ctx, customerID, "").Drop(ctx, namespace)
+	documents, pages, err := s.store.DeleteKnowledgeBase(ctx, customerID, namespace)
 	if err != nil {
 		return nil, err
 	}

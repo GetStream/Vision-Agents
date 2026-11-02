@@ -214,6 +214,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A knowledge base whose delete failed can be deleted again
+
+`DELETE /v1/agents/knowledge` now drops the base at the provider before it deletes the base's documents and pages. Before, a drop that failed left the 500 with the documents and pages already gone, so the base was in no list while its passages were still searched and billed. Now its documents and pages stay listed, and deleting it again works (AI-2493).
+
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
