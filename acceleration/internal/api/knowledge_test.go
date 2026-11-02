@@ -147,6 +147,20 @@ func (s *KnowledgeSuite) TestADeletedKnowledgeBaseHoldsNothingAndListsNothing() 
 	s.Empty(pages)
 }
 
+func (s *KnowledgeSuite) TestAKnowledgeBaseTheProviderFailedToDeleteIsStillListedToDeleteAgain() {
+	s.post("# Refunds\n\nThirty days.")
+	s.knowledge.failWrites(true)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+
+	s.Require().Equal(http.StatusInternalServerError, s.deleteBase())
+	s.Len(s.documents(), 1)
+
+	s.knowledge.failWrites(false)
+	s.Require().Equal(http.StatusNoContent, s.deleteBase())
+	s.False(s.knowledge.holds(knowledge.Scoped(s.customerID(), s.namespace)))
+	s.Empty(s.documents())
+}
+
 func (s *KnowledgeSuite) TestAKnowledgeBaseThatDoesNotExistIsNotFound() {
 	s.Equal(http.StatusNotFound, s.deleteBase())
 }
