@@ -2,12 +2,16 @@ package io.getstream.visionagents.android.core
 
 import android.content.Context
 import io.getstream.chat.android.client.ChatClient
+import io.getstream.chat.android.client.api.state.watchChannelAsState
 import io.getstream.chat.android.client.channel.ChannelClient
+import io.getstream.chat.android.client.channel.state.ChannelState
 import io.getstream.chat.android.client.token.TokenProvider
 import io.getstream.chat.android.models.Message
 import io.getstream.chat.android.models.User
 import io.getstream.result.Result
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 
 private const val KIND = "chat"
@@ -33,6 +37,31 @@ public fun VisionAgents.use(client: ChatClient) {
  * the same user and refused otherwise, rather than replaced.
  */
 public suspend fun AgentSession.chat(context: Context): ChannelClient {
+    val (client, channel) = open(context)
+    return client.channel(channel)
+}
+
+/**
+ * The state of the Stream Chat channel this conversation is kept in: its messages, oldest
+ * first, as the client keeps them, live and again after a reconnect.
+ *
+ * It is watched in [scope] on the same client as [chat], with the latest [messageLimit] messages
+ * loaded, and is null until the client is ready. The client watches the channel again after a
+ * reconnect only while this flow is held, so keep it for as long as the conversation is shown.
+ * Stream Chat's `ChatClient.loadOlderMessages(cid, messageLimit)` loads the messages before
+ * these into the same state.
+ */
+public suspend fun AgentSession.channelState(
+    context: Context,
+    scope: CoroutineScope,
+    messageLimit: Int = 30,
+): StateFlow<ChannelState?> {
+    val (client, channel) = open(context)
+    return client.watchChannelAsState(channel, messageLimit, scope)
+}
+
+/** The client [chat] opens on, connected as the user `setUser` named, and the conversation's channel id. */
+private suspend fun AgentSession.open(context: Context): Pair<ChatClient, String> {
     val channel = session.conversationId
     if (channel.isEmpty()) {
         throw AgentsException.Configuration(
@@ -56,7 +85,7 @@ public suspend fun AgentSession.chat(context: Context): ChannelClient {
                 "it as the same user, or the conversation is somebody else's",
         )
     }
-    return client.channel(channel)
+    return client to channel
 }
 
 /** Uses a client the app built without handing it over, if it is connected as the same user. */
