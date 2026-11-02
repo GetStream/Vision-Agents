@@ -200,7 +200,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `no_phone_number` | The user never texted this agent by SMS; a number used only on WhatsApp is not rung | yes |
 | `no_agent_number` | The config has no SMS line to ring from | yes |
 | `not_answered` | Nobody picked up within the 90 s ring | no |
-| `already_called` | A call was placed for this occurrence already | no |
+| `already_called` | A call was placed for this occurrence already, and its end is not recorded; no channel after `phone` is tried. That call may have carried the task out, so the run leaves the failure streak as it is and the task moves on as after a run that did not fail (a one-shot is `completed`) | no |
 | `task_paused` | On a `missed` run: a one-shot whose time came while it was paused | — |
 
 A failure is retried after 30 s, 2 min and 10 min (`DeliveryRetries`) only when the failure

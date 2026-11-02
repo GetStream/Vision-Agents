@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -76,14 +77,32 @@ func (s *AppHooksSuite) config(customer string) string {
 
 // message is a message.new on the suite's channel, which names the config given.
 func (s *AppHooksSuite) message(configID string) string {
+	return s.messageIn(fmt.Sprintf(`{%q: %q}`, ConfigField, configID))
+}
+
+// messageIn is a message.new on the suite's channel, created with the custom data given.
+func (s *AppHooksSuite) messageIn(custom string) string {
 	return fmt.Sprintf(`{
   "type": "message.new",
   "channel_id": %q,
   "channel_type": "agent",
   "created_at": %q,
-  "channel_custom": {%q: %q},
+  "channel_custom": %s,
   "message": {"id": %q, "text": "is my order on its way?", "user": {"id": "sam", "name": "Sam"}}
-}`, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), ConfigField, configID, "message-"+s.utils.uuid())
+}`, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom, "message-"+s.utils.uuid())
+}
+
+// dispatchingSession opens a session for the app's backend on the suite's channel, whose agent
+// leaves text to the customer's dispatch worker, and returns its id and what the worker is
+// handed.
+func (s *AppHooksSuite) dispatchingSession() (string, <-chan dispatch.Message) {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "en-low-latency", DispatchText: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, Agent: &config.Name, Incognito: pointerTo(true)})
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	s.T().Cleanup(release)
+	return opened.Id, worker.Messages()
 }
 
 func (s *AppHooksSuite) reaches(messages <-chan dispatch.Message) bool {
@@ -141,6 +160,51 @@ func (s *AppHooksSuite) TestAChannelConfigIsHonouredOnlyForTheHooksApp() {
 	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.message(s.config(other))))
 
 	s.False(s.reaches(somebodyElse.Messages()))
+}
+
+// A hook from the customer's own app is the customer's, so its session answers a channel there
+// whatever the channel names as its customer.
+func (s *AppHooksSuite) TestAMessageInTheCustomersOwnAppReachesItsSessionWhateverTheChannelNames() {
+	opened, worker := s.dispatchingSession()
+	body := s.messageIn(fmt.Sprintf(`{%q: "somebody-else"}`, conversation.CustomerField))
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), body))
+
+	select {
+	case message := <-worker:
+		s.Equal(opened, message.SessionID)
+	case <-time.After(settleFor):
+		s.Fail("the customer's own session was handed nothing")
+	}
+}
+
+// A channel in the deployment's app naming a customer who now acts in its own app does not
+// reach that customer's session there: the channel names whose session answers, never which
+// app's.
+func (s *AppHooksSuite) TestAMessageInTheDeploymentAppNamingACustomerNowElsewhereReachesNotTheirSession() {
+	_, worker := s.dispatchingSession()
+	body := s.messageIn(fmt.Sprintf(`{%q: %q}`, conversation.CustomerField, s.customerID()))
+
+	s.Equal(http.StatusOK, s.hook("/v1/chat/hooks/stream", body, suiteStreamSecret, ""))
+
+	s.False(s.reaches(worker))
+}
+
+// A session in a customer's own app is not in the deployment's, so it makes no channel there
+// one that two customers' sessions run on: the session in the deployment's app answers.
+func (s *AppHooksSuite) TestAMessageInTheDeploymentAppIsAnsweredThereWhateverRunsInAnotherApp() {
+	s.dispatchingSession()
+	s.useApp(s.data.createApp())
+	opened, worker := s.dispatchingSession()
+
+	s.Equal(http.StatusOK, s.hook("/v1/chat/hooks/stream", s.messageIn("{}"), suiteStreamSecret, ""))
+
+	select {
+	case message := <-worker:
+		s.Equal(opened, message.SessionID)
+	case <-time.After(settleFor):
+		s.Fail("the session in the deployment's app was handed nothing")
+	}
 }
 
 func (s *AppHooksSuite) TestAMessageInTheDeploymentAppIsNotDispatchedToACustomerNowElsewhere() {

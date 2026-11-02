@@ -50,7 +50,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param id 
  * @param modality 
  * @param state 
- * @param userId 
+ * @param userId The name the agent joined the call as. It is not the owner of the session.
  * @param agent The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
  * @param callOutcome 
  * @param closedAt When the session ended. Absent while it is still running.
@@ -106,6 +106,7 @@ internal data class Session (
     @Contextual @SerialName(value = "state")
     val state: SessionState,
 
+    /* The name the agent joined the call as. It is not the owner of the session. */
     @SerialName(value = "user_id")
     val userId: kotlin.String,
 

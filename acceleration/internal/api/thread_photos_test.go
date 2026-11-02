@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -21,13 +22,13 @@ import (
 // text, and the reply leaves for the thread.
 func (s *SlackChannelSuite) TestAPhotoSentWithTextInAThreadReachesTheModel() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.vision.replies())
 	question := "what is on this screenshot? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"))
 
-	s.Equal("Two roses.", s.posted(1)[0].Text)
+	s.Equal("Two roses.", s.posted(2)[1].Text)
 	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Contains(turn.Content+llm.TextOf(turn.Parts), question)
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn), "the bytes fetched, not a URL the provider might fail to fetch")
@@ -36,12 +37,12 @@ func (s *SlackChannelSuite) TestAPhotoSentWithTextInAThreadReachesTheModel() {
 // A photo sent with no text in a thread channel is answered: the model is handed the photo alone.
 func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsAnswered() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"), s.photo("/photo.png"))
 
-	s.Equal("Two roses.", s.posted(1)[0].Text)
+	s.Equal("Two roses.", s.posted(2)[1].Text)
 	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Empty(strings.TrimSpace(turn.Content+llm.TextOf(turn.Parts)), "nothing was written with it")
 	s.Len(imagesIn(turn), 2)
@@ -51,13 +52,13 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsAnswered() {
 // photo, rather than leave the person with no reply.
 func (s *SlackChannelSuite) TestAnAgentThatCannotSeeAnswersTheTextAndSaysItCannotSeeThePhoto() {
 	s.answersWith("holding/holding-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.holding.replies())
 	question := "what is on this screenshot? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"))
 
-	s.Equal("Held.", s.posted(1)[0].Text)
+	s.Equal("Held.", s.posted(2)[1].Text)
 	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(question+"\n\n"+unseenPhotoWithText, said.Content)
 	s.Empty(imagesIn(said))
@@ -67,12 +68,12 @@ func (s *SlackChannelSuite) TestAnAgentThatCannotSeeAnswersTheTextAndSaysItCanno
 // look at photos.
 func (s *SlackChannelSuite) TestAnAgentThatCannotSeeRepliesToAPhotoAloneThatItCannotLookAtPhotos() {
 	s.answersWith("holding/holding-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.holding.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"))
 
-	s.Equal("Held.", s.posted(1)[0].Text)
+	s.Equal("Held.", s.posted(2)[1].Text)
 	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(unseenPhoto, said.Content)
 	s.Empty(imagesIn(said))
@@ -82,13 +83,13 @@ func (s *SlackChannelSuite) TestAnAgentThatCannotSeeRepliesToAPhotoAloneThatItCa
 // text alone.
 func (s *SlackChannelSuite) TestATextOnlyThreadMessageIsAnsweredFromItsText() {
 	s.answersWith("holding/holding-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.holding.replies())
 	question := "and yesterday's? " + s.utils.uuid()
 
 	s.sentInThread(channel, question)
 
-	s.Equal("Held.", s.posted(1)[0].Text)
+	s.Equal("Held.", s.posted(2)[1].Text)
 	said := s.lastTurn(s.holding.replies()[asked:])
 	s.Equal(question, said.Content)
 	s.Empty(imagesIn(said))
@@ -99,14 +100,14 @@ func (s *SlackChannelSuite) TestATextOnlyThreadMessageIsAnsweredFromItsText() {
 // logged.
 func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.vision.replies())
 	signature := "SECRETSIG" + s.utils.uuid()
 
 	// Port 1 takes no connection, so the fetch fails in transport, the error that names the URL.
 	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": "http://127.0.0.1:1/x.jpg?signature=" + signature})
 
-	s.Equal("Two roses.", s.posted(1)[0].Text)
+	s.Equal("Two roses.", s.posted(2)[1].Text)
 	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhoto, said.Content)
 	s.Empty(imagesIn(said))
@@ -119,13 +120,13 @@ func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() 
 // model is handed the rest and told to say it could not open that one.
 func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsDroppedAndTheRestAnswered() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.vision.replies())
 	question := "what are these? " + s.utils.uuid()
 
 	s.sentInThread(channel, question, s.photo("/photo.png"), s.photo("/gone.png"))
 
-	s.Equal("Two roses.", s.posted(1)[0].Text)
+	s.Equal("Two roses.", s.posted(2)[1].Text)
 	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Equal(question+"\n\n"+unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn), "the photo fetched, alone")
@@ -135,12 +136,12 @@ func (s *SlackChannelSuite) TestAPhotoThatCannotBeFetchedIsDroppedAndTheRestAnsw
 // told to say it could not open that one.
 func (s *SlackChannelSuite) TestPhotosSentAloneOfWhichOneCannotBeFetchedAreAnsweredFromTheRest() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "", s.photo("/gone.png"), s.photo("/photo.png"))
 
-	s.Equal("Two roses.", s.posted(1)[0].Text)
+	s.Equal("Two roses.", s.posted(2)[1].Text)
 	turn := s.turnWithImages(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhotoWithMore, turn.Content+llm.TextOf(turn.Parts))
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn))
@@ -156,27 +157,27 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneToAnAgentWithAVisionSkillIsAnswer
 		CustomerID: s.customerID(), ConfigID: s.config.ID, Name: "vision",
 		Description: "look at photos", Instructions: "Describe the photo.",
 	}))
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	asked := len(s.holding.replies())
 
 	s.sentInThread(channel, "", s.photo("/photo.png"))
 
-	s.Equal("Held.", s.posted(1)[0].Text)
+	s.Equal("Held.", s.posted(2)[1].Text)
 	s.Equal(unseenPhoto, s.lastTurn(s.holding.replies()[asked:]).Content)
 }
 
 // Control, as on base: a thread message with neither text nor a photo, such as a file alone or
 // the preview of a link, is not answered. The text message after it is, and alone.
 func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswered() {
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 
 	s.sentInThread(channel, "", map[string]any{"type": "file", "asset_url": s.images.URL + "/report.pdf", "mime_type": "application/pdf"})
 	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": s.images.URL + "/photo.png", "og_scrape_url": s.images.URL + "/photo.png"})
 	s.sentInThread(channel, "")
 	s.sentInThread(channel, "and now?")
 
-	s.Equal("Noted.", s.posted(1)[0].Text)
-	s.Never(func() bool { return len(s.slack.Posts()) > 1 }, time.Second, 10*time.Millisecond,
+	s.Equal("Noted.", s.posted(2)[1].Text)
+	s.Never(func() bool { return len(s.slack.Posts()) > 2 }, time.Second, 10*time.Millisecond,
 		"only the message with text was answered")
 }
 
@@ -185,15 +186,15 @@ func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswe
 // answers the next message reads the thread back from the channel.
 func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHistory() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	question := "what colour is this bike? " + s.utils.uuid()
 	author := s.writtenInThread(channel, question, s.photo("/photo.png"))
-	s.posted(1)
+	s.posted(2)
 	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "what colour was it?")
 
-	s.posted(2)
+	s.posted(3)
 	input := s.vision.replies()[asked].Input
 	s.Contains(input, llm.Message{Role: llm.User, Content: question + "\n\n[sent with a photo, not shown again]", Author: author})
 	s.Contains(input, llm.Message{Role: llm.Assistant, Content: "Two roses."}, "the reply that saw the photo")
@@ -204,14 +205,14 @@ func (s *SlackChannelSuite) TestAPhotoAnsweredInAThreadIsANoteInTheNextTurnsHist
 // the note alone.
 func (s *SlackChannelSuite) TestAPhotoSentAloneInAThreadIsANoteInTheNextTurnsHistory() {
 	s.answersWith("vision/vision-model")
-	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	channel := s.answeredThread()
 	author := s.writtenInThread(channel, "", s.photo("/photo.png"))
-	s.posted(1)
+	s.posted(2)
 	asked := len(s.vision.replies())
 
 	s.sentInThread(channel, "what colour was it?")
 
-	s.posted(2)
+	s.posted(3)
 	input := s.vision.replies()[asked].Input
 	s.Contains(input, llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Author: author})
 	s.False(llm.HasImage(input))
@@ -228,10 +229,20 @@ func (s *SlackChannelSuite) photo(path string) map[string]any {
 	return map[string]any{"type": "image", "image_url": s.images.URL + path, "fallback": "photo.png"}
 }
 
+// answeredThread is the thread channel of a Slack message the agent answered: the inbound
+// worker wrote it and handed it over.
+func (s *SlackChannelSuite) answeredThread() string {
+	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
+	s.posted(1)
+	return channel
+}
+
 // sentInThread delivers the message.new Stream Chat sends for another message of the thread's
-// first author, with text and attachments, signed with the app's secret.
+// first author, with text and attachments, signed with the app's secret. The person's app
+// wrote it through Stream Chat, not the bridge, so the hook answers it (bridged).
 func (s *SlackChannelSuite) sentInThread(channel, text string, attachments ...map[string]any) {
 	message := maps.Clone(s.chat.Delivered(channel)[0])
+	delete(message, channelbridge.BridgedField)
 	message["id"], message["text"], message["attachments"] = s.utils.uuid(), text, attachments
 	s.hookFor(channel, message)
 }

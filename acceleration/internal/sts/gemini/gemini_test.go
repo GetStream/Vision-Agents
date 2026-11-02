@@ -647,6 +647,25 @@ func (s *GeminiSuite) TestAnActivityOfAnotherTypeLeavesTheLastWordHeard() {
 	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "only an ACTIVITY_END places the stop")
 }
 
+func (s *GeminiSuite) TestAStopHeardDuringAReplyIsMarkedAnswered() {
+	// The reply open when the caller stops takes the stop; a stop with none open gets a reply
+	// of its own, so only the first is answered.
+	provider := s.newProvider()
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(heard("mhm"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+
+	var answered []bool
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			answered = append(answered, typed.Answered)
+		}
+	}
+	s.Equal([]bool{false, true}, answered)
+}
+
 func (s *GeminiSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {
 	provider := s.newProvider()
 	provider.handleMessage(heard("hello"))

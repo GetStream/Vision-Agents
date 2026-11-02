@@ -347,12 +347,12 @@ func (s *StoreSuite) TestTheWaitingRepliesOfAThreadAreTakenOnceOldestFirst() {
 	_, err = s.store.WaitChannelThreadMessage(s.ctx, "other-app", waiting("C0000CHAN:1", "1759740000.000500"))
 	s.Require().NoError(err)
 
-	taken, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
+	taken, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
 
 	s.Require().NoError(err)
 	s.Equal([]core.InboundMessage{waiting("C0000CHAN:1", "1759740000.000300"), waiting("C0000CHAN:1", "1759740000.000200")}, taken,
 		"the thread's own replies, in the order they waited, as they were kept")
-	again, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
+	again, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
 	s.Require().NoError(err)
 	s.Empty(again)
 }
@@ -366,7 +366,7 @@ func (s *StoreSuite) TestAReplyDeliveredAgainWaitsOnce() {
 
 	s.Require().NoError(err)
 	s.False(kept)
-	taken, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
+	taken, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
 	s.Require().NoError(err)
 	s.Len(taken, 1)
 }
@@ -383,7 +383,7 @@ func (s *StoreSuite) TestAWaitingReplyTakenBackIsNotTakenByItsThread() {
 	again, err := s.store.UnwaitChannelThreadMessage(s.ctx, "acme-app", reply)
 	s.Require().NoError(err)
 	s.False(again, "taken back once")
-	taken, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
+	taken, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
 	s.Require().NoError(err)
 	s.Empty(taken)
 }
@@ -397,7 +397,7 @@ func (s *StoreSuite) TestAReplyPastItsKeepIsNotTakenAndIsDropped() {
 		time.Now().UTC().Add(-channelWaitingKeep-time.Minute))
 	s.Require().NoError(err)
 
-	taken, err := s.store.TakeWaitingChannelThreadMessages(s.ctx, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
+	taken, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", "C0000CHAN:1")
 	s.Require().NoError(err)
 	s.Empty(taken)
 	_, err = s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting("C0000CHAN:2", "1759740000.000300"))

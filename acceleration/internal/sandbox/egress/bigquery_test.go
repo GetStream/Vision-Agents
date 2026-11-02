@@ -23,6 +23,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 const (
@@ -548,7 +549,7 @@ func (s *ProxySuite) TestASQLReadTakesOneContentType() {
 // then a 503; the query reaches BigQuery as the dry run alone.
 func (s *ProxySuite) TestAGrantThatEndsDuringTheDryRunSendsNothingOn() {
 	fake := s.readBigQuery()
-	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
 	s.T().Cleanup(s.proxy.Close)

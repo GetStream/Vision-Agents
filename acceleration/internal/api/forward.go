@@ -135,27 +135,26 @@ func sessionInPath(path string) (string, bool) {
 // Without it an agent answering on another node is invisible from here and the message
 // goes to a worker instead, which is a second agent writing into a conversation the first
 // is already answering in. So the directory decides, not the handover: a node that holds
-// the conversation and cannot be reached is still the only one that may answer.
-func (s *Server) forwardedMessage(r *http.Request, body []byte, event messageEvent) bool {
-	if s.directory == nil || s.forwarder == nil || r.Header.Get(node.ForwardedHeader) != "" {
-		return false
+// the conversation and cannot be reached is still the only one that may answer. taken is
+// false when that node could not be reached or would not take the message.
+func (s *Server) forwardedMessage(ctx context.Context, origin hookOrigin, event messageEvent) (elsewhere, taken bool) {
+	if s.directory == nil || s.forwarder == nil || origin.handOver == nil {
+		return false, false
 	}
 
-	address, err := s.directory.NodeByAgent(r.Context(), event.ChannelID)
+	address, err := s.directory.NodeByAgent(ctx, event.ChannelID)
 	if err != nil {
 		s.logger.Warn("could not find out which node is answering in a channel",
 			"channel", event.ChannelID, "error", err)
-		return false
+		return false, false
 	}
 	if address == "" || address == s.directory.Address() {
-		return false
+		return false, false
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
 	defer cancel()
-	// Handed over whole, signature and all, because the node answering it verifies the
-	// delivery for itself rather than taking this node's word that it came from Stream.
-	answer, err := s.forwarder.Ask(ctx, address, r, body)
+	answer, err := origin.handOver(ctx, address)
 	switch {
 	case err != nil:
 		s.logger.Error("could not reach the node answering in a channel",
@@ -163,9 +162,11 @@ func (s *Server) forwardedMessage(r *http.Request, body []byte, event messageEve
 	case answer.GetStatus() != http.StatusOK:
 		s.logger.Warn("the node answering in a channel would not take a message",
 			"node", address, "channel", event.ChannelID, "status", answer.GetStatus())
+	default:
+		return true, true
 	}
 
-	return true
+	return true, false
 }
 
 // forwardedToWorkers hands a hook to another node with a worker waiting for the customer,
@@ -176,29 +177,30 @@ func (s *Server) forwardedMessage(r *http.Request, body []byte, event messageEve
 // connected while a worker sits idle on the next one. A worker connected here is always
 // asked first, which costs nothing and is most of the time.
 //
-// Handed over whole, signature and all, for the same reason as forwardedMessage.
-func (s *Server) forwardedToWorkers(r *http.Request, body []byte, customerID string) bool {
-	if s.directory == nil || s.forwarder == nil || r.Header.Get(node.ForwardedHeader) != "" {
-		return false
+// Handed over with handOver, as forwardedMessage hands a message over; nil hands nothing over.
+// taken is false when that node could not be reached or would not take the hook.
+func (s *Server) forwardedToWorkers(ctx context.Context, handOver func(context.Context, string) (*node.ForwardResponse, error), customerID string) (elsewhere, taken bool) {
+	if s.directory == nil || s.forwarder == nil || handOver == nil {
+		return false, false
 	}
 	if len(s.dispatch.Workers(customerID)) > 0 {
-		return false
+		return false, false
 	}
 
-	addresses, err := s.directory.Waiting(r.Context(), customerID)
+	addresses, err := s.directory.Waiting(ctx, customerID)
 	if err != nil {
 		s.logger.Warn("could not find out which nodes have a customer's workers",
 			"customer", customerID, "error", err)
-		return false
+		return false, false
 	}
 	if len(addresses) == 0 {
-		return false
+		return false, false
 	}
 	address := addresses[rand.IntN(len(addresses))]
 
-	ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
 	defer cancel()
-	answer, err := s.forwarder.Ask(ctx, address, r, body)
+	answer, err := handOver(ctx, address)
 	switch {
 	case err != nil:
 		s.logger.Error("could not reach the node with a customer's workers",
@@ -206,7 +208,9 @@ func (s *Server) forwardedToWorkers(r *http.Request, body []byte, customerID str
 	case answer.GetStatus() != http.StatusOK:
 		s.logger.Warn("the node with a customer's workers would not take a hook",
 			"node", address, "customer", customerID, "status", answer.GetStatus())
+	default:
+		return true, true
 	}
 
-	return true
+	return true, false
 }

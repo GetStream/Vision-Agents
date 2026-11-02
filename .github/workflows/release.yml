@@ -5,7 +5,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write       # REQUIRED for PyPI Trusted Publishing (OIDC)
 
 jobs:
   integration:
@@ -18,12 +17,21 @@ jobs:
     name: Build & Test Core SDK
     runs-on: ubuntu-latest
     environment: pypi
+    # The OIDC token is this job's alone, so the integration job, which holds every
+    # provider secret, cannot mint one.
+    permissions:
+      contents: read
+      id-token: write       # REQUIRED for PyPI Trusted Publishing (OIDC)
     outputs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      # No dependency cache in a job that holds an OIDC token: a cache poisoned by another
+      # run would hand that token to whatever it planted.
       - uses: ./.github/actions/python-uv-setup
+        with:
+          enable-cache: "false"
 
       - name: Clean dist directory
         run: |

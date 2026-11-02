@@ -3,8 +3,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +16,44 @@ import (
 
 type RecordingsSuite struct {
 	RouterSuite
+
+	// called is every post the callback receiver took, by the path and query it was sent to.
+	called chan receivedCallback
+}
+
+// receivedCallback is one post a caller's callback endpoint took.
+type receivedCallback struct {
+	uri  string
+	body []byte
 }
 
 func TestRecordingsSuite(t *testing.T) {
 	runSuite(t, new(RecordingsSuite))
+}
+
+// SetupSuite stands up a caller's callback endpoint. A callback must name a public address, so
+// a job names one, and the router's callback client is handed a dial that reaches the receiver
+// on loopback whatever the address, as a public endpoint would answer.
+func (s *RecordingsSuite) SetupSuite() {
+	s.called = make(chan receivedCallback, 16)
+	receiver := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// A post nobody reads for must not hold the handler, or receiver.Close waits on it.
+		select {
+		case s.called <- receivedCallback{uri: r.URL.RequestURI(), body: body}:
+		default:
+		}
+	}))
+	s.T().Cleanup(receiver.Close)
+	transport := receiver.Client().Transport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, receiver.Listener.Addr().String())
+	}
+	// A name the receiver's certificate holds (net/http/internal/testcert), whatever host
+	// the job named.
+	transport.TLSClientConfig.ServerName = "example.com"
+	s.callbackHTTP = &http.Client{Transport: transport}
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *RecordingsSuite) SetupTest() {
@@ -172,26 +209,82 @@ func (s *RecordingsSuite) TestARecordingNamingItsModelInOptionsTargetIsServedByI
 }
 
 func (s *RecordingsSuite) TestAFinishedRecordingCallsBackWhoeverAskedToBeTold() {
-	told := make(chan Transcription, 1)
-	listener := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		var finished Transcription
-		s.Require().NoError(json.NewDecoder(r.Body).Decode(&finished))
-		told <- finished
-	}))
-	defer listener.Close()
-
+	// The path and the query are the caller's own and arrive as they were given.
+	uri := "/done/" + s.utils.uuid() + "?job=stt"
 	s.transcribe(map[string]any{
 		"source":   map[string]any{"url": "https://example.test/call.mp3"},
-		"callback": listener.URL + "/done",
+		"callback": "https://8.8.8.8" + uri, // public, Google DNS
 	})
 
-	select {
-	case finished := <-told:
-		s.Equal(RecordingStatusCompleted, finished.Status)
-		s.Equal("a call costs a penny", value(finished.Text))
-	case <-time.After(settleFor):
-		s.Fail("nobody was told the job had finished")
+	var finished Transcription
+	s.Require().NoError(json.Unmarshal(s.calledBack(uri), &finished))
+	s.Equal(RecordingStatusCompleted, finished.Status)
+	s.Equal("a call costs a penny", value(finished.Text))
+}
+
+func (s *RecordingsSuite) TestAFinishedSpeechJobCallsBackWhoeverAskedToBeTold() {
+	uri := "/done/" + s.utils.uuid()
+	var accepted Speech
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/tts/recordings",
+		map[string]any{"text": "hello", "callback": "https://[2001:4860:4860::8888]" + uri}, &accepted)) // public, Google DNS
+
+	var finished Speech
+	s.Require().NoError(json.Unmarshal(s.calledBack(uri), &finished))
+	s.Equal(accepted.Id, finished.Id)
+	s.Equal(RecordingStatusCompleted, finished.Status)
+}
+
+// privateCallbackURLs are callbacks the router would never post to, since it dials only
+// public https addresses. A path and a query, the caller's own, are kept on some.
+var privateCallbackURLs = []string{
+	"https://10.1.2.3/done",            // Private-Use, RFC 1918
+	"https://100.101.102.103/done",     // Shared Address Space, RFC 6598
+	"https://[fd7a:115c:a1e0::1]/done", // Unique-Local, RFC 4193
+	"https://127.0.0.1:8443/done?a=1",  // Loopback, RFC 1122 section 3.2.1.3
+	"https://[::1]/done",               // Loopback, RFC 4291
+	"https://169.254.169.254/done",     // Link Local, RFC 3927: the cloud metadata server
+	"https://[fe80::1]/done",           // Link-Local Unicast, RFC 4291
+	"https://localhost/done",           // resolves to loopback, RFC 6761 section 6.3
+	"https://2130706433/done",          // 127.0.0.1 written as one number
+	"https://hooks.acme.invalid/done",  // never resolves, RFC 6761 section 6.4
+	"https://user:pass@8.8.8.8/done",   // userinfo, which egress never sends
+	"https:///done",                    // no host
+	"https://hooks acme.com/done",      // a host url.Parse refuses
+	"http://8.8.8.8/done",              // plain http, which egress never sends
+	"8.8.8.8/done",                     // no scheme
+}
+
+func (s *RecordingsSuite) TestATranscriptionWithAPrivateCallbackIsRefused() {
+	for _, url := range privateCallbackURLs {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/stt/recordings", map[string]any{
+			"source": map[string]any{"url": "https://example.test/call.mp3"}, "callback": url,
+		})
+
+		s.Equal(http.StatusBadRequest, status, url)
+		s.Contains(failure, "callback must be a public https URL", url)
 	}
+}
+
+func (s *RecordingsSuite) TestASpeechJobWithAPrivateCallbackIsRefused() {
+	for _, url := range privateCallbackURLs {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
+			map[string]any{"text": "hello", "callback": url})
+
+		s.Equal(http.StatusBadRequest, status, url)
+		s.Contains(failure, "callback must be a public https URL", url)
+	}
+}
+
+func (s *RecordingsSuite) TestACallbackRefusalDoesNotTellAnUnresolvableNameFromAPrivateOne() {
+	refusals := map[string]bool{}
+	for _, url := range []string{"https://hooks.acme.invalid/done", "https://localhost/done", "https://10.1.2.3/done"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/tts/recordings",
+			map[string]any{"text": "hello", "callback": url})
+		s.Equal(http.StatusBadRequest, status, url)
+		refusals[failure] = true
+	}
+
+	s.Len(refusals, 1, "every refusal reads the same")
 }
 
 func (s *RecordingsSuite) TestATextSpokenInlineComesBackInTheAnswer() {
@@ -309,6 +402,22 @@ func (s *RecordingsSuite) transcribe(body map[string]any) Transcription {
 	s.Require().Equal(http.StatusAccepted,
 		s.serverClient.do(http.MethodPost, "/v1/stt/recordings", body, &accepted))
 	return accepted
+}
+
+// calledBack waits for the post the receiver took at uri and returns its body.
+func (s *RecordingsSuite) calledBack(uri string) []byte {
+	deadline := time.After(settleFor)
+	for {
+		select {
+		case call := <-s.called:
+			if call.uri == uri {
+				return call.body
+			}
+		case <-deadline:
+			s.FailNow("nobody was told the job had finished", uri)
+			return nil
+		}
+	}
 }
 
 // finishedTranscription polls a job until it is neither queued nor running.

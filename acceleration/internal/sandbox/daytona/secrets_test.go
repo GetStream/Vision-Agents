@@ -1,12 +1,14 @@
 package daytona
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -72,6 +74,8 @@ type SecretsSuite struct {
 	token    sandbox.Token
 	tokenErr error
 	box      *Sandbox
+	// logs are what the brokers granted made logged.
+	logs *bytes.Buffer
 }
 
 func TestSecretsSuite(t *testing.T) {
@@ -83,6 +87,7 @@ func (s *SecretsSuite) SetupTest() {
 	s.platform = newPlatform()
 	s.T().Cleanup(s.platform.server.Close)
 	s.token, s.tokenErr = sandbox.Token{Value: "gho_first", Revision: 1}, nil
+	s.logs = &bytes.Buffer{}
 	s.box = s.granted("stg", sandbox.Config{}, github)
 }
 
@@ -95,7 +100,7 @@ func (s *SecretsSuite) granted(prefix string, config sandbox.Config, grants ...s
 	key, url := "key-1", s.platform.server.URL+"/api"
 	broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: prefix, Session: "session-1",
 		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) { return s.token, s.tokenErr },
-		Logger: slog.New(slog.DiscardHandler)})
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
 	s.Require().NoError(err)
 	box, err := New(Options{APIKey: key, APIURL: url, Config: config, Grants: grants, Broker: broker})
 	s.Require().NoError(err)
@@ -274,8 +279,9 @@ func (s *SecretsSuite) TestASecretDaytonaWouldNotDeleteIsDeletedOnTheNextClose()
 }
 
 // TestADaytonaRefusalOnTheWayLosesNoSecret: Daytona refuses once the withdrawal or the update
-// of one of three grants, first, middle or last. The run fails; the grants before it are gone,
-// it and the ones after it stay held; the next run and Close leave nothing at Daytona.
+// of one of three grants, first, middle or last. The run fails; the grants before it hold what
+// the run put in, it and the ones after it what they held; the next run puts it in theirs, and
+// Close leaves nothing at Daytona.
 func (s *SecretsSuite) TestADaytonaRefusalOnTheWayLosesNoSecret() {
 	bindings := []string{"alpha", "bravo", "charlie"}
 	grants := make([]sandbox.Grant, len(bindings))
@@ -309,33 +315,56 @@ func (s *SecretsSuite) TestADaytonaRefusalOnTheWayLosesNoSecret() {
 
 				withdrawn, revision = true, 2
 				platform.mu.Lock()
-				if path == "withdraw" {
-					platform.refuseDelete = bindings[refused]
-				} else {
-					platform.refuseUpdate = bindings[refused]
-				}
+				platform.refuseUpdate = bindings[refused]
 				platform.mu.Unlock()
 				_, err = box.Run(s.ctx, "print(1)", nil)
 				s.Require().Error(err)
-				s.Len(platform.secretNames(), len(bindings)-refused, "the grants before the refused one are gone, it and the ones after it are held")
+				after := map[string]string{"withdraw": "va_withdrawn", "update": "gho_2"}[path]
+				want := map[string]string{}
+				for i, binding := range bindings {
+					want[binding] = "gho_1"
+					if i < refused {
+						want[binding] = "va_withdrawn"
+					}
+				}
+				s.Equal(want, platform.values(bindings), "the grants before the refused one hold the run's, it and the ones after it theirs")
 
 				platform.mu.Lock()
-				platform.refuseDelete, platform.refuseUpdate = "", ""
+				platform.refuseUpdate = ""
 				platform.mu.Unlock()
 				_, err = box.Run(s.ctx, "print(1)", nil)
 				s.Require().NoError(err)
-				if path == "update" {
-					platform.mu.Lock()
-					for _, held := range platform.secrets {
-						s.Equal("gho_2", held.Value, "the refused grant and the ones after it are updated by the next run")
-					}
-					platform.mu.Unlock()
+				for _, binding := range bindings[refused:] {
+					want[binding] = after
 				}
+				s.Equal(want, platform.values(bindings), "the refused grant and the ones after it get theirs on the next run")
 				s.Require().NoError(box.broker.Close(s.ctx))
 				s.Empty(platform.secretNames())
 			})
 		}
 	}
+}
+
+// TestAWithdrawnGrantsSecretHoldsAStandInUntilClose (AI-1876): a run after the connection is
+// revoked puts withdrawn in the secret rather than deleting it, so the sandbox's placeholder
+// reaches the host as a credential it refuses, not Daytona's 502. A reconnect puts nothing back,
+// and Close deletes the secret.
+func (s *SecretsSuite) TestAWithdrawnGrantsSecretHoldsAStandInUntilClose() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.tokenErr = sandbox.ErrNoCredential
+	_, err = s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.token, s.tokenErr = sandbox.Token{Value: "gho_second", Revision: 2}, nil
+	_, err = s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.Equal("va_withdrawn", s.platform.secrets["secret-1"].Value)
+	s.Equal(github.Hosts, s.platform.secrets["secret-1"].Hosts)
+	s.Equal([]string{"POST /api/secret", "POST /api/sandbox", "PATCH /api/secret/secret-1"}, s.platform.history())
+	s.Require().NoError(s.box.broker.Close(s.ctx))
+	s.Empty(s.platform.secretNames())
 }
 
 // TestARequiredGrantWithoutACredentialCreatesNoSandbox: the run fails before Daytona is asked
@@ -526,6 +555,41 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelEachEnvVarAndItsHosts() {
 	s.NotContains(description, "x-access-token")
 }
 
+// TestRunCodeTellsTheModelWhatARevokedGrantLooksLike: a grant connected at the start gets the
+// line for a connection revoked or removed. A late grant's 401 first means "not connected yet",
+// so it gets the revoked sentence only for a 401 or 403 after the user connected and it ran again.
+// Neither promises a retry in this session.
+func (s *SecretsSuite) TestRunCodeTellsTheModelWhatARevokedGrantLooksLike() {
+	late := sandbox.Grant{Binding: "linear", Env: "LINEAR_TOKEN", Hosts: []string{"api.linear.app"}, Late: true}
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit, late)).Description
+
+	s.Contains(description, " A 401 from api.github.com, github.com, or a 403 from the proxy, means the "+
+		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
+	s.Contains(description, " A 401 from api.linear.app means the user has not connected linear yet:")
+	s.Contains(description, "wait 20 seconds and run it once more. If it still gets 401 or 403 after the user connected and you ran it once more, "+
+		"the connection was revoked or removed: tell the user; running it again in this session will not help.")
+	s.NotContains(description, "means the linear connection was revoked")
+	s.NotContains(description, "api.linear.app, or a 403")
+	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{}, githubGit)).Description, "not connected", "a connected grant has no late text")
+	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{})).Description, "revoked", "no grant, no line")
+}
+
+// TestRunCodeTellsTheModelARequiredGrantIsNotLate: a required grant is connected when the sandbox
+// starts (Prepare refuses one that is also Late), so a 401 for it means revoked, never "not
+// connected yet".
+func (s *SecretsSuite) TestRunCodeTellsTheModelARequiredGrantIsNotLate() {
+	required := githubGit
+	required.Required = true
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, required)).Description
+
+	s.Contains(description, " A 401 from api.github.com, github.com, or a 403 from the proxy, means the "+
+		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
+	s.NotContains(description, "not connected")
+	s.NotContains(description, "wait 20 seconds")
+}
+
 // githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
 var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
 	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
@@ -590,6 +654,21 @@ func (p *platform) secretNames() []string {
 	return names
 }
 
+// values are what the secret of each of bindings holds, by binding.
+func (p *platform) values(bindings []string) map[string]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	values := map[string]string{}
+	for secret := range maps.Values(p.secrets) {
+		for _, binding := range bindings {
+			if strings.Contains(secret.Name, "_"+binding+"_") {
+				values[binding] = secret.Value
+			}
+		}
+	}
+	return values
+}
+
 func (p *platform) history() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -621,4 +700,165 @@ func (s *SecretsSuite) TestAGrantedSandboxIsCreatedAsOnBase() {
 		s.Equal([]string{"POST /api/secret", "POST /api/sandbox"}, s.platform.history())
 		s.Empty(s.platform.uploads)
 	}
+}
+
+// TestARequiredGrantsRefusalSaysWhyTheCredentialCannotBeHad: the error carries the class of the
+// credential's error, never its text.
+func (s *SecretsSuite) TestARequiredGrantsRefusalSaysWhyTheCredentialCannotBeHad() {
+	required := github
+	required.Required = true
+	box := s.granted("stg", sandbox.Config{}, required)
+	s.tokenErr = fmt.Errorf("refreshing: %w", context.DeadlineExceeded)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `required connector "github" gives the sandbox no credential: the credential cannot be had just now (deadline)`)
+}
+
+// TestAGrantLeftOutLogsWhyItsCredentialCannotBeHad: the warning names the class of the
+// credential's error.
+func (s *SecretsSuite) TestAGrantLeftOutLogsWhyItsCredentialCannotBeHad() {
+	s.tokenErr = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Contains(s.logs.String(), `msg="the sandbox is created without a connector's credential" connector=github connection=connection-1 class=network`)
+}
+
+// TestACredentialKeptOnARefusedRefreshLogsWhy: the warning names the class of the refresh's
+// error.
+func (s *SecretsSuite) TestACredentialKeptOnARefusedRefreshLogsWhy() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.tokenErr = fmt.Errorf("refreshing: %w", context.Canceled)
+
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err)
+	s.Regexp(`msg="a connector's credential could not be refreshed for the sandbox; it keeps the one it has" `+
+		`connector=github secret=va_stg_session-1_github_[0-9a-f]{8} class=canceled`, s.logs.String())
+}
+
+// TestAWithdrawnCredentialLogsWhy: the warning names the class of the error that withdrew it.
+func (s *SecretsSuite) TestAWithdrawnCredentialLogsWhy() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.tokenErr = fmt.Errorf("%w: the connection is not connected", sandbox.ErrNoCredential)
+
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err)
+	s.Regexp(`msg="a connector's credential is withdrawn from the sandbox" connector=github `+
+		`secret=va_stg_session-1_github_[0-9a-f]{8} class=no_credential`, s.logs.String())
+}
+
+// built is a sandbox of a built config with github granted: its timeout is the 20 minutes a
+// build may take, and its check 2 s, as defaultTimeout is shorter in tests.
+func (s *SecretsSuite) built() *Sandbox {
+	box := s.granted("stg", sandbox.Config{CPU: 1}, github)
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
+	box.check = 2 * time.Second
+	return box
+}
+
+// slowSecrets has every request of method about a secret wait slow, or until its caller gives up.
+func (s *SecretsSuite) slowSecrets(method string, slow time.Duration) {
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.platform.slowSecret = map[string]time.Duration{method: slow}
+}
+
+// cutRun runs code in box for a caller that waits 30 s, and checks the run ended at the check's
+// 2 s bound, well before them.
+func (s *SecretsSuite) cutRun(box *Sandbox) error {
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := box.Run(ctx, "print(1)", nil)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	return err
+}
+
+// TestAHungRefreshBeforeARunIsCutAtTheChecksTimeout: the refresh holds the gate, so a secret
+// update Daytona never answers is cut at defaultTimeout, and the next run gets in.
+func (s *SecretsSuite) TestAHungRefreshBeforeARunIsCutAtTheChecksTimeout() {
+	box := s.built()
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.token = sandbox.Token{Value: "gho_second", Revision: 2}
+	s.slowSecrets(http.MethodPatch, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodPatch, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+	s.Equal(map[string]string{"github": "gho_second"}, s.platform.values([]string{"github"}))
+}
+
+// TestAHungSecretCreationIsCutAtTheChecksTimeout: only the sandbox may take a build's 20
+// minutes; the secrets it is made with are bounded as a check is.
+func (s *SecretsSuite) TestAHungSecretCreationIsCutAtTheChecksTimeout() {
+	box := s.built()
+	s.slowSecrets(http.MethodPost, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodPost, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+}
+
+// TestAHungSecretDeleteBeforeASandboxIsMadeAgainIsCutAtTheChecksTimeout: a sandbox Daytona
+// deleted is made again with its secrets afresh, and deleting the last ones is bounded too.
+func (s *SecretsSuite) TestAHungSecretDeleteBeforeASandboxIsMadeAgainIsCutAtTheChecksTimeout() {
+	box := s.built()
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.lost()
+	s.slowSecrets(http.MethodDelete, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodDelete, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+	s.Equal([]string{"sandbox-2", "sandbox-4"}, s.platform.sandboxes(), "made again")
+}
+
+// TestAHungSecretDeleteAfterARefusedSandboxIsCutAtTheChecksTimeout: a sandbox Daytona would
+// not make leaves its secrets to be deleted, which is bounded as a check is, and the next run
+// gets in.
+func (s *SecretsSuite) TestAHungSecretDeleteAfterARefusedSandboxIsCutAtTheChecksTimeout() {
+	box := s.built()
+	s.platform.mu.Lock()
+	s.platform.createStatus = http.StatusServiceUnavailable
+	s.platform.mu.Unlock()
+	s.slowSecrets(http.MethodDelete, time.Minute)
+
+	err := s.cutRun(box)
+
+	s.ErrorContains(err, "no capacity")
+	s.ErrorContains(err, "context deadline exceeded")
+	s.platform.mu.Lock()
+	s.platform.createStatus = 0
+	s.platform.mu.Unlock()
+	s.slowSecrets(http.MethodDelete, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+}
+
+// TestASandboxCreationThatRanOutStillDeletesItsSecrets: the creation outlasting the sandbox's
+// timeout ends the context it ran on, so the secrets made for it are deleted on the caller's.
+func (s *SecretsSuite) TestASandboxCreationThatRanOutStillDeletesItsSecrets() {
+	box := s.built()
+	box.timeout = 2 * time.Second // buildTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowCreate = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Empty(s.platform.values([]string{"github"}), "no secret is left at Daytona")
 }

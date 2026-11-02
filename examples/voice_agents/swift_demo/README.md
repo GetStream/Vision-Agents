@@ -131,5 +131,6 @@ its own sessions and nothing else. A deployment verifying tokens draws the same 
 the `user_id` its token names, which is what stops one person reading another's conversation.
 
 The simulator reaches your Mac's localhost, so it works as it stands. On a device, put your
-Mac's address on the network in `Demo.routerURL`; `NSAllowsLocalNetworking` in `Info.plist` is
-what lets plain HTTP through to it.
+Mac's address on the network in `Demo.routerURL`, and start the router with
+`ROUTER_PUBLISH_ADDRESS=0.0.0.0` so compose publishes it beyond localhost;
+`NSAllowsLocalNetworking` in `Info.plist` is what lets plain HTTP through to it.

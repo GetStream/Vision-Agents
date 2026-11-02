@@ -37,7 +37,7 @@ class Session:
         modality (SessionModality): How the user took part: text for a conversation held in writing, voice for a call,
             and video once the agent has seen the user's video. It only moves up, from text or voice to video.
         state (SessionState): Whether the agent is still in the call.
-        user_id (str):
+        user_id (str): The name the agent joined the call as. It is not the owner of the session.
         agent (str | Unset): The name the agent was addressed as. Recorded on the session as well as the config id, so
             renaming a config does not rewrite what older sessions were opened against.
         call_outcome (SessionCallOutcome | Unset): How the call the router placed for a session ended.

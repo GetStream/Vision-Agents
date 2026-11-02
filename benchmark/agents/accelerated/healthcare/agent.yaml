@@ -1,3 +1,0 @@
-name: healthcare
-description: The skills the healthcare pack's subagent may run.
-subagent: openai/gpt-6.1-sol

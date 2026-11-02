@@ -7,7 +7,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -39,7 +41,14 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 		was = &store.AgentConfig{}
 	}
 
+	keyed, err := s.keyedIn(ctx, config.CustomerID, region)
+	if err != nil {
+		return "", false, err
+	}
 	var unmet []string
+	// billed is the work in the region the agent's save asks about, each named by its setting,
+	// which must have a price: work with none is recorded at nothing and reserves nothing.
+	var billed []settingItem
 	for _, model := range []struct {
 		setting       string
 		modality      routing.Modality
@@ -60,10 +69,14 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 			continue
 		}
 		served, err := router.InRegion(ctx, model.target, region)
-		if err != nil || served {
+		if err != nil {
 			continue
 		}
-		unmet = append(unmet, fmt.Sprintf("%s: no instance of %s in region %s", model.setting, model.target, region))
+		if !served {
+			unmet = append(unmet, fmt.Sprintf("%s: no instance of %s in region %s", model.setting, model.target, region))
+			continue
+		}
+		billed = append(billed, instancesIn(ctx, router, model.setting, model.modality, model.target, region, keyed)...)
 	}
 
 	namespace := strings.TrimSpace(config.KnowledgeNamespace)
@@ -78,15 +91,111 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 				namespace, place.Region))
 		case !kept && !slices.Contains(s.knowledge.Regions(), region):
 			unmet = append(unmet, fmt.Sprintf("knowledge: this deployment keeps no knowledge in region %s", region))
+		default:
+			billed = append(billed, vendorWorkIn("knowledge", routing.Knowledge, s.knowledge.Provider(), region, keyed,
+				metered.KnowledgeLookup, metered.KnowledgeWrite, metered.KnowledgeStorage)...)
 		}
 	}
 
-	if s.sessions != nil && config.Sandbox != "" && (moved || was.Sandbox == "") && !s.sessions.SandboxesIn(region) {
-		unmet = append(unmet, fmt.Sprintf("sandbox: this deployment runs no sandboxes in region %s", region))
+	if s.sessions != nil && config.Sandbox != "" && (moved || was.Sandbox == "") {
+		if s.sessions.SandboxesIn(region) {
+			billed = append(billed, vendorWorkIn("sandbox", routing.Sandbox, providerkeys.Daytona, region, keyed,
+				metered.SandboxRunning, metered.SandboxStopped)...)
+		} else {
+			unmet = append(unmet, fmt.Sprintf("sandbox: this deployment runs no sandboxes in region %s", region))
+		}
+	}
+
+	if list := s.priceList(); list != nil {
+		for _, work := range billed {
+			if len(list.Unpriced([]pricing.Item{work.item})) > 0 {
+				unmet = append(unmet, fmt.Sprintf("%s: %s has no price", work.setting, itemName(work.item)))
+			}
+		}
 	}
 
 	if len(unmet) == 0 {
 		return "", true, nil
 	}
 	return fmt.Sprintf("the agent's work cannot all be done in %s: %s", region, strings.Join(unmet, "; ")), false, nil
+}
+
+// settingItem is a piece of work an agent's setting asks for.
+type settingItem struct {
+	setting string
+	item    pricing.Item
+}
+
+// instancesIn is the work of each instance target resolves to in region, and its BYOK twin
+// where the router takes a customer key for the instance's vendor and keyed holds one. A
+// customer's own model bills nothing.
+func instancesIn(ctx context.Context, router routing.Inspector, setting string, modality routing.Modality, target, region string,
+	keyed map[string]bool) []settingItem {
+	candidates, err := router.Resolve(ctx, target, nil)
+	if err != nil {
+		return nil
+	}
+	takes, _ := router.(interface{ TakesCustomerKey(provider string) bool })
+	var billed []settingItem
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		instance := candidate.Config
+		if instance.Provider == routing.CustomProvider || cmp.Or(instance.Region, pricing.DefaultRegion) != region {
+			continue
+		}
+		own := routing.ItemOf(modality, instance, nil)
+		if seen[itemName(own)] {
+			continue
+		}
+		seen[itemName(own)] = true
+		billed = append(billed, settingItem{setting, own})
+		if takes != nil && keyed[instance.Provider] && takes.TakesCustomerKey(instance.Provider) {
+			instance.BYOK = true
+			billed = append(billed, settingItem{setting, routing.ItemOf(modality, instance, nil)})
+		}
+	}
+	return billed
+}
+
+// vendorWorkIn is each model of a vendor's work in region, and its BYOK twin where keyed holds
+// the customer's key for the vendor.
+func vendorWorkIn(setting string, modality routing.Modality, vendor, region string, keyed map[string]bool, models ...string) []settingItem {
+	var billed []settingItem
+	for _, model := range models {
+		work := pricing.Item{Modality: string(modality), Provider: vendor, Model: model, Region: region}
+		billed = append(billed, settingItem{setting, work})
+		if keyed[vendor] {
+			work.BYOK = true
+			billed = append(billed, settingItem{setting, work})
+		}
+	}
+	return billed
+}
+
+// keyedIn is the vendors the customer keeps a key for in region, read through appconfig. A key
+// is not opened: that one is kept is what bills its work under the BYOK twin.
+func (s *Server) keyedIn(ctx context.Context, customerID, region string) (map[string]bool, error) {
+	keyed := map[string]bool{}
+	if s.configs == nil || customerID == "" {
+		return keyed, nil
+	}
+	keys, err := s.configs.ProviderKeys(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		if key.Region == region {
+			keyed[key.Provider] = true
+		}
+	}
+	return keyed, nil
+}
+
+// priceList is the price list in force, nil where the server prices by something else.
+func (s *Server) priceList() *pricing.List {
+	if s.prices != nil {
+		return s.prices.List()
+	}
+	list, _ := s.pricer.(*pricing.List)
+	return list
 }

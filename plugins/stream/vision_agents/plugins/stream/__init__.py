@@ -10,13 +10,17 @@ from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
 from ._generated.models import (
+    Account,
     AgentConfigPatch,
     AttachedNumber,
+    CreditEntry,
     GuestUser,
     HistoryMessage,
     HistoryRole,
     ImageSource,
     ImageSourceDetail,
+    Limit,
+    LimitGrant,
     ModelOverwrites,
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
@@ -27,7 +31,11 @@ from ._generated.models import (
     SessionPhone,
     SimulationRequest,
     SkippedVendor,
+    SpendBucket,
+    SubjectUsage,
+    Team,
 )
+from .account import OrganizationAccount, Usage
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, ensure_agent, sync_agent
@@ -58,11 +66,14 @@ from .sessions import (
     Voice,
 )
 from .simulations import SimulationRuns, Simulations
+from .spend_limits import SpendLimits, usd
 from .sts import STS
 from .stt import STT
+from .teams import Teams
 from .tts import TTS
 
 __all__ = [
+    "Account",
     "Accelerated",
     "Agent",
     "AgentConfigPatch",
@@ -73,6 +84,7 @@ __all__ = [
     "CallNotHeld",
     "ChangeGate",
     "Client",
+    "CreditEntry",
     "DetectionProcessor",
     "Dispatch",
     "Folder",
@@ -88,6 +100,8 @@ __all__ = [
     "Items",
     "Knowledge",
     "LLM",
+    "Limit",
+    "LimitGrant",
     "Memories",
     "MessageContext",
     "ModelOverwrites",
@@ -96,6 +110,7 @@ __all__ = [
     "NumberSearchResult",
     "ObjectAppearedEvent",
     "ObjectDisappearedEvent",
+    "OrganizationAccount",
     "Participant",
     "Phone",
     "PhoneCapability",
@@ -116,12 +131,18 @@ __all__ = [
     "SimulationRuns",
     "Simulations",
     "SkippedVendor",
+    "SpendBucket",
+    "SpendLimits",
+    "SubjectUsage",
     "TTS",
+    "Team",
+    "Teams",
     "ToolCall",
     "ToolConversation",
     "ToolUser",
     "Track",
     "Tracks",
+    "Usage",
     "Voice",
     "get_tool_call_context",
     "define_agent",
@@ -132,4 +153,5 @@ __all__ = [
     "load",
     "sync_agent",
     "sync_routers",
+    "usd",
 ]

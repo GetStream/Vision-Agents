@@ -374,6 +374,21 @@ func (s *PricingSuite) TestUnpricedListsTheBillableItemsWithNoRate() {
 	s.Equal([]Item{llmItem("forgotten", nil), llmItem("unknown", nil)}, unpriced)
 }
 
+func (s *PricingSuite) TestAnEntryPricedUnderAConditionPricesTheItemWithNoAttributes() {
+	perClass := llmEntry("per-class", map[Meter]Rate{InputTokens: perMillion(1)})
+	perClass.When = map[string]string{"class": "container"}
+	underDefault := llmEntry("under-default", nil)
+	conditioned := llmEntry("under-default", map[Meter]Rate{InputTokens: perMillion(1)})
+	conditioned.When = map[string]string{"class": "container"}
+	list := s.list(perClass, underDefault, conditioned)
+
+	s.Empty(list.Unpriced([]Item{llmItem("per-class", nil)}), "priced for one class, so priced")
+	s.Equal([]Item{llmItem("per-class", map[string]string{"class": "vm"})},
+		list.Unpriced([]Item{llmItem("per-class", map[string]string{"class": "vm"})}), "an item with attributes matches as before")
+	s.Equal([]Item{llmItem("under-default", nil)}, list.Unpriced([]Item{llmItem("under-default", nil)}),
+		"the entry with no conditions decides, and it has no price")
+}
+
 func (s *PricingSuite) TestNewListRefusesTwoEntriesForTheSameItem() {
 	_, err := NewList("test", atCost(terra, terra), nil)
 

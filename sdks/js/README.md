@@ -102,6 +102,11 @@ The channel is the backend's to name, so a conversation is carried on by its ses
 rather than by its channel. A session id may also be one the caller picks, up to 64 of
 `A-Za-z0-9_-`, passed as `id` when it is created.
 
+`timezone` is the person's IANA zone, such as `Europe/Lisbon`, which the agent tells the date
+and the hour in. Opened from a page and left out, it is the zone the browser reports for the
+device, when that reads as a zone name; anywhere else nothing is read from the machine, and
+`timezone: ""` sends none anywhere, leaving the user's stored zone to decide.
+
 `session.close()` stops a conversation and keeps everything it recorded and remembered, so
 a conversation in writing is usually left running. `session.delete()`, or
 `sessions.delete(id)` without a handle, deletes it with its turns and what it taught
@@ -139,6 +144,10 @@ instructions, the same skills, the same knowledge, with nothing transcribed and 
 spoken. `session.voice.stop()` carries a conversation on in writing and
 `session.voice.start()` puts the agent back on the call. Instructions reach the backend
 with `agent.sync()`: a session runs on the stored config's.
+
+`new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
+`chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
+that call, over the agent's. Neither set sends none.
 
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is

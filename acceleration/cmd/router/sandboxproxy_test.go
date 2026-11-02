@@ -38,6 +38,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // TestARouterWithoutAProxyAddressServesNoProxy is the control: unset, as on every router
@@ -65,6 +66,7 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -80,6 +82,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -175,6 +178,7 @@ func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -193,6 +197,7 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	shard := forward(t, address)
 	redis, err := live.New(live.Options{Address: address, Shard: live.Shard{Address: shard.Addr().String()}})
 	require.NoError(t, err)
@@ -287,6 +292,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
+	require.NoError(t, redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
@@ -507,17 +513,33 @@ func servesProxy(address string) bool {
 	return response.StatusCode == http.StatusMethodNotAllowed
 }
 
-// TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout is the router proxy's keep-alive limit: a
-// sandbox connection that sends no next request is closed, where base held it open for ever.
-// The wait is bounded by 5 s, past the 200 ms timeout and short of the 10 s header timeout.
-func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
-	const idle = 200 * time.Millisecond
+// TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout is the router proxy's keep-alive
+// limit: a sandbox connection that sends no next request is closed, where base held it open for
+// ever, and not at the tunnels' shorter idle timeout. The wait is bounded by 5 s, past the 1 s
+// keep-alive timeout and short of the 10 s header timeout.
+//
+// The wait counts from the moment the server sets the connection idle, which net/http does just
+// before it arms the idle deadline (conn.serve in net/http/server.go). The client's own clock,
+// read once it has the body, can start after the server's: a client scheduled late then measures
+// less than the server waited (AI-2423: "997.976155ms" is not >= "1s").
+func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
+	const keepAlive = time.Second
 	caCert, caKey := newCA(t)
-	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: idle,
-		Logger: slog.New(slog.DiscardHandler)})
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: keepAlive / 5,
+		KeepAliveTimeout: keepAlive, Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 	address := freeAddress(t)
+	// idleSince is when the server set each connection idle, by the client's address.
+	var mu sync.Mutex
+	idleSince := map[string]time.Time{}
 	stop, _, err := serveSandboxProxy(proxy, address, 0, "", false, func(server *http.Server, listener net.Listener) {
+		server.ConnState = func(conn net.Conn, state http.ConnState) {
+			if state == http.StateIdle {
+				mu.Lock()
+				idleSince[conn.RemoteAddr().String()] = time.Now()
+				mu.Unlock()
+			}
+		}
 		_ = server.Serve(listener)
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -535,18 +557,23 @@ func TestTheProxyServerIdlesOutAfterTheProxysIdleTimeout(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
 	_, err = io.Copy(io.Discard, response.Body)
 	require.NoError(t, err)
-	answered := time.Now()
 
 	_, err = reader.ReadByte()
 
 	require.ErrorIs(t, err, io.EOF, "the idle connection was not closed")
-	require.GreaterOrEqual(t, time.Since(answered), idle)
+	mu.Lock()
+	idle, set := idleSince[conn.LocalAddr().String()]
+	mu.Unlock()
+	require.True(t, set, "the server never set the connection idle")
+	require.GreaterOrEqual(t, time.Since(idle), keepAlive)
 }
 
-// TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault: a router that sets nothing
-// gives the server the proxy's own default, the 90 s of egress/proxy.go:47 on base 131c510ab,
-// which a tunnel to a grant already had.
-func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing.T) {
+// TestTheProxyServerOutlastsEverySandboxClientsIdleLimitByDefault: a router that sets nothing
+// gives the server the proxy's own keep-alive default, which a client in the sandbox must reach
+// first, or it reuses a connection the proxy has just closed. Go's is http.DefaultTransport's
+// IdleConnTimeout; libcurl's (curl, git) is 118 s, the longest
+// (https://curl.se/libcurl/c/CURLOPT_MAXAGE_CONN.html).
+func TestTheProxyServerOutlastsEverySandboxClientsIdleLimitByDefault(t *testing.T) {
 	caCert, caKey := newCA(t)
 	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
@@ -558,7 +585,9 @@ func TestTheProxyServerHoldsAnIdleConnectionForNinetySecondsByDefault(t *testing
 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stop() })
-	require.Equal(t, 90*time.Second, (<-served).IdleTimeout)
+	keepAlive := (<-served).IdleTimeout
+	require.Greater(t, keepAlive, http.DefaultTransport.(*http.Transport).IdleConnTimeout)
+	require.Greater(t, keepAlive, 118*time.Second)
 }
 
 // TestAnAddressThatCannotBeListenedOnStillFailsTheStart: only an address another router holds
@@ -634,6 +663,7 @@ func (s *SandboxProxyHandOverSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
+	s.Require().NoError(redisready.Ready(address))
 	redis, err := live.New(live.Options{Address: address})
 	s.Require().NoError(err)
 	s.redis = redis

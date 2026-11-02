@@ -2,6 +2,7 @@ package streamapp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,22 +58,29 @@ func (m *Mint) UserToken(ctx context.Context, app int64, apiKey, userID string, 
 // gateway to ask for one.
 var ErrCannotMint = errors.New("streamapp: nothing can mint a user token in this app")
 
-// MintUserToken is a token for a user of a bound identity's app, lasting ttl. An identity
-// holding its app's secret signs it here; one acting with a forwarded token has the
-// gateway sign it, since a server token cannot.
-func (c *Clients) MintUserToken(ctx context.Context, bound Bound, userID string, ttl time.Duration) (string, error) {
+// MintUserToken is a token for a user of a bound identity's app, lasting ttl, and the key
+// it goes with. An identity holding its app's secret signs it here, for its own key; one
+// acting with a forwarded token has the gateway sign it, since a server token cannot.
+//
+// The gateway signs for apiKey, the key of the request being served: an app may be called
+// with several keys, and Stream accepts a token only with the key whose secret signed it,
+// while the identity holds whichever key's server token was forwarded last. Empty, for
+// work no request asked for, is the identity's own key.
+func (c *Clients) MintUserToken(ctx context.Context, bound Bound, apiKey, userID string, ttl time.Duration) (token, key string, err error) {
 	if !bound.Identity.Secret.Empty() {
-		return bound.Client.CreateToken(userID, getstream.WithExpiration(ttl))
+		token, err := bound.Client.CreateToken(userID, getstream.WithExpiration(ttl))
+		return token, bound.Identity.APIKey, err
 	}
 	forwarded, ok := c.Forwarded()
 	if !ok || forwarded.Mint() == nil || bound.Identity.Token.Empty() {
-		return "", ErrCannotMint
+		return "", "", ErrCannotMint
 	}
-	minted, err := forwarded.Mint().UserToken(ctx, bound.Identity.StreamApp, bound.Identity.APIKey, userID, ttl)
+	key = cmp.Or(apiKey, bound.Identity.APIKey)
+	minted, err := forwarded.Mint().UserToken(ctx, bound.Identity.StreamApp, key, userID, ttl)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return minted.Token.Reveal(), nil
+	return minted.Token.Reveal(), key, nil
 }
 
 func (m *Mint) mint(ctx context.Context, app int64, kind string, body map[string]any) (Minted, error) {

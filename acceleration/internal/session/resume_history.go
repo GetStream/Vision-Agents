@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -46,7 +48,11 @@ func (r recordedConversation) Rounds(ctx context.Context, cid string, turns []st
 		return nil
 	}
 	rounds := make(map[string][]llm.Message, len(replies))
-	for turn, items := range replies {
+	for turn, reply := range replies {
+		items := reply.Items
+		if reply.Refused {
+			items = withheldResults(items)
+		}
 		if replayed := roundsOf(items); len(replayed) > 0 {
 			rounds[turn] = replayed
 		}
@@ -55,12 +61,28 @@ func (r recordedConversation) Rounds(ctx context.Context, cid string, turns []st
 }
 
 func (r recordedConversation) Opening(ctx context.Context, cid string) string {
-	said, err := r.store.Opening(ctx, r.customerID, cid)
+	opening, err := r.store.Opening(ctx, r.customerID, cid)
 	if err != nil {
 		r.logger.Warn("resuming a conversation without its first message", "conversation", cid, "error", err)
 		return ""
 	}
-	return said
+	if opening.Refused {
+		return agent.WithheldInput
+	}
+	return opening.Said
+}
+
+// withheldResults is a refused response's items with the tool results the prompt injection
+// screen judged, those since its last answer, withheld as the live agent withheld them. A
+// result keeps its place, because its call still needs an answer.
+func withheldResults(items []store.AgentResponseItem) []store.AgentResponseItem {
+	out := slices.Clone(items)
+	for i := len(out) - 1; i >= 0 && out[i].Kind != store.ItemAnswer; i-- {
+		if out[i].Kind == store.ItemToolResult {
+			out[i].Text = agent.WithheldInput
+		}
+	}
+	return out
 }
 
 // roundsOf are one response's tool calls as the model was given them: for each step it

@@ -177,7 +177,7 @@ func (t *titler) ask(ctx context.Context, spec Spec, id string, said []spoken) (
 		ID:              id,
 		Instructions:    titleInstructions,
 		Input:           []llm.Message{{Role: llm.User, Content: quoted(said)}},
-		MaxOutputTokens: titleTokens,
+		MaxOutputTokens: titleTokens + llm.ThinkingRoom,
 		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
