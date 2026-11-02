@@ -103,6 +103,10 @@ func (s *SessionSuite) TestTheSpecIsReadWhileItChanges() {
 		func() { created.Mode() },
 		func() { _, gone := created.Watch(); gone() },
 		func() { created.placed(ToolCall{ID: "unknown"}) },
+		func() {
+			title := "renamed"
+			created.Describe(s.ctx, Labels{Title: &title})
+		},
 	)
 
 	s.Equal("en-low-latency", created.Spec().LLMTarget)
@@ -134,12 +138,14 @@ func (s *SessionSuite) TestTheSpecIsReadWhileVoiceStartsAndStops() {
 		for range 5 {
 			s.NoError(created.StartVoice(s.ctx, Call{}))
 			s.NoError(created.StopVoice(s.ctx))
+		}
+	},
+		func() {
 			// A reply still being written in the conversation refuses the next one.
 			if _, err := created.Respond(s.ctx, "hello", nil, options.LLM{}); err != nil {
 				s.ErrorIs(err, persistent.ErrResponseRunning)
 			}
-		}
-	},
+		},
 		func() { created.Mode() },
 		func() { _, gone := created.WatchPendingVoiceTools(); gone() },
 		func() { created.ResolveToolParts("unknown", llm.TextParts("output"), "") },
