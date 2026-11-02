@@ -5,12 +5,17 @@ package quota
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -361,6 +366,128 @@ func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
 	limiter.Debit(context.Background(), s.customer, s.caller, 10)
 
 	s.Less(time.Since(started), writeTimeout+time.Second)
+}
+
+func (s *QuotaSuite) TestADebitWhoseLimitsWereSlowToReadIsStillCounted() {
+	// Reading the limits used up the whole wait, and the response they count was answered
+	// all the same: what it cost is counted once it reaches Redis.
+	limiter := s.limiterWith(Limits{}, stalledSource{})
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.EventuallyWithT(func(c *assert.CollectT) {
+		spent, err := limiter.spent(s.ctx, deviceKeys(s.customer, s.caller, time.Now())...)
+		require.NoError(c, err)
+		assert.Equal(c, []spend{{messages: 1, tokens: 10}, {messages: 1, tokens: 10}}, spent)
+	}, writeTimeout, 10*time.Millisecond)
+}
+
+func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimitsAndRedisTogether() {
+	// A Redis too busy to answer, after limits that took the whole wait to read, must not
+	// hold the goroutine draining a finished response past the debit's own timeout either.
+	slow := newSlowRedis(s.T(), os.Getenv(AddressEnvVar))
+	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{slow.address()}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	limiter, err := New(client, Limits{}, stalledSource{}, slog.Default())
+	s.Require().NoError(err)
+	slow.hold()
+	started := time.Now()
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.Less(time.Since(started), writeTimeout+time.Second)
+	slow.release()
+}
+
+// slowRedis passes a test's commands to the suite's Redis on connections of its own, and
+// holds the replies back while it is held: a Redis too busy to answer, that no other suite
+// sharing the server feels.
+type slowRedis struct {
+	listener net.Listener
+	mu       sync.Mutex
+	// open is closed while replies pass.
+	open  chan struct{}
+	conns []net.Conn
+}
+
+func newSlowRedis(t *testing.T, target string) *slowRedis {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	open := make(chan struct{})
+	close(open)
+	redis := &slowRedis{listener: listener, open: open}
+	t.Cleanup(redis.close)
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			server, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			redis.mu.Lock()
+			redis.conns = append(redis.conns, client, server)
+			redis.mu.Unlock()
+			go func() { _, _ = io.Copy(server, client) }()
+			go redis.reply(client, server)
+		}
+	}()
+	return redis
+}
+
+func (r *slowRedis) address() string { return r.listener.Addr().String() }
+
+// hold keeps every reply back until release.
+func (r *slowRedis) hold() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.open = make(chan struct{})
+}
+
+func (r *slowRedis) release() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	select {
+	case <-r.open:
+	default:
+		close(r.open)
+	}
+}
+
+func (r *slowRedis) gate() chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.open
+}
+
+func (r *slowRedis) reply(client, server net.Conn) {
+	buffer := make([]byte, 32<<10)
+	for {
+		n, err := server.Read(buffer)
+		if n > 0 {
+			<-r.gate()
+			if _, err := client.Write(buffer[:n]); err != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (r *slowRedis) close() {
+	r.release()
+	_ = r.listener.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, conn := range r.conns {
+		_ = conn.Close()
+	}
 }
 
 // backend is the app's own process acting for the suite's user.

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -143,6 +145,16 @@ func (s *HarnessChargeSuite) day() int64 {
 	return messagesPerDay - status.Remaining
 }
 
+// counted waits for asker's day to show want answers. An answer is counted once its debit
+// reaches Redis, and the limiter stops waiting for one first when this process stalls.
+func (s *HarnessChargeSuite) counted(asker routing.Caller, want int64, msgAndArgs ...any) {
+	s.EventuallyWithT(func(c *assert.CollectT) {
+		status, err := s.limiter.Allow(s.ctx, "acme", asker)
+		require.NoError(c, err)
+		assert.EqualValues(c, want, messagesPerDay-status.Remaining, msgAndArgs...)
+	}, settleFor, 10*time.Millisecond)
+}
+
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnDelegatesIsNotCountedOnTheUsersDay() {
 	s.build(s.user)
 
@@ -160,7 +172,7 @@ func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesIsCountedOnTheirDay
 	s.reply(s.ctx, "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
+	s.counted(s.user, 2, "the reply and the work it delegated are both the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsCountedOnTheirDay() {
@@ -171,7 +183,7 @@ func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsCou
 	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	s.EqualValues(2, s.day(), "the reply and the work it delegated are both the user's")
+	s.counted(s.user, 2, "the reply and the work it delegated are both the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsRefusedOnceTheirDayIsSpent() {
@@ -199,7 +211,7 @@ func (s *HarnessChargeSuite) TestWorkAUserHandsOverInASessionABackendOpenedIsCou
 	cancel()
 
 	s.Equal(Done, s.settled().State, "the work outlives the turn that handed it over")
-	s.EqualValues(1, s.day(), "the work a user's turn handed over is the user's spend")
+	s.counted(s.user, 1, "the work a user's turn handed over is the user's spend")
 }
 
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnDelegatesInASessionABackendOpenedIsNotCountedOnTheUsersDay() {
@@ -222,7 +234,7 @@ func (s *HarnessChargeSuite) TestAConversationAUserTurnCompactsInASessionABacken
 
 	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
 		settleFor, 10*time.Millisecond, "the conversation was never compacted")
-	s.EqualValues(2, s.day(), "the reply and the summary it set off are both the user's")
+	s.counted(s.user, 2, "the reply and the summary it set off are both the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpenedIsCountedOnTheOwner() {
@@ -237,9 +249,7 @@ func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpened
 	s.reply(s.ctx, "turn-1", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	status, err := s.limiter.Allow(s.ctx, "acme", owner)
-	s.Require().NoError(err)
-	s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both the owner's")
+	s.counted(owner, 2, "the reply and the work it delegated are both the owner's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAndTheirAddress() {
@@ -264,9 +274,7 @@ func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAn
 		"as the user":    {UserID: s.user.UserID, Verified: true},
 		"at the address": {IP: address},
 	} {
-		status, err := s.limiter.Allow(s.ctx, "acme", asker)
-		s.Require().NoError(err)
-		s.EqualValues(2, messagesPerDay-status.Remaining, "the reply and the work it delegated are both counted %s", name)
+		s.counted(asker, 2, "the reply and the work it delegated are both counted %s", name)
 	}
 }
 
@@ -279,7 +287,7 @@ func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesAfterAScheduledTurn
 	s.reply(s.ctx, "turn-2", `<ask skill="think">15% of 84.20</ask>`)
 
 	s.Equal(Done, s.settled().State)
-	s.EqualValues(2, s.day(), "the user's own reply and the work it delegated are both the user's")
+	s.counted(s.user, 2, "the user's own reply and the work it delegated are both the user's")
 }
 
 func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUsersDay() {
@@ -323,5 +331,5 @@ func (s *HarnessChargeSuite) TestAConversationTheUsersOwnTurnCompactsIsCountedOn
 
 	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
 		settleFor, 10*time.Millisecond, "the conversation was never compacted")
-	s.EqualValues(2, s.day(), "the reply and the summary it set off are both the user's")
+	s.counted(s.user, 2, "the reply and the summary it set off are both the user's")
 }
