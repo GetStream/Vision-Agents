@@ -30,6 +30,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // Name is the registry name manifests list under schemes.
@@ -214,7 +215,19 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 	if err := server.checkPKCE(); err != nil {
 		return core.BeginOutput{}, err
 	}
-	c, err := s.pickClient(ctx, in.Ref, in.Manifest, server, in.RedirectURI, registrationOrder)
+	m := in.Manifest
+	if len(m.Scopes.List) == 0 && strings.HasPrefix(m.ConnectorID, store.CustomPrefix) {
+		// MCP 2025-11-25 «Scope Selection Strategy»
+		// (https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization): with
+		// no scope from a challenge, «use all scopes defined in scopes_supported from the
+		// Protected Resource Metadata document, omitting the scope parameter if
+		// scopes_supported is undefined». A custom definition is the general-purpose client
+		// that rule is for, as a URL-named plugin login is (internal/plugins/oauth.go); a
+		// built-in's scopes are what its manifest lists, so it is left as it is. The
+		// registration below then asks for the same scopes as the authorize request.
+		m.Scopes.List = slices.Clone(server.ScopesSupported)
+	}
+	c, err := s.pickClient(ctx, in.Ref, m, server, in.RedirectURI, registrationOrder)
 	if err != nil {
 		return core.BeginOutput{}, err
 	}
@@ -235,8 +248,8 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 	query := authorize.Query()
 	// The manifest's extra parameters go first, so none of them can replace a protocol
 	// parameter set below.
-	for _, key := range slices.Sorted(maps.Keys(in.Manifest.AuthorizeParams)) {
-		query.Set(key, in.Manifest.AuthorizeParams[key])
+	for _, key := range slices.Sorted(maps.Keys(m.AuthorizeParams)) {
+		query.Set(key, m.AuthorizeParams[key])
 	}
 	// RFC 6749 section 4.1.1.
 	query.Set("response_type", "code")
@@ -252,8 +265,8 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		// RFC 8707 section 2.1.
 		query.Set("resource", server.Resource)
 	}
-	if scopes := in.Manifest.Scopes.List; len(scopes) > 0 {
-		query.Set("scope", strings.Join(scopes, separator(in.Manifest)))
+	if scopes := m.Scopes.List; len(scopes) > 0 {
+		query.Set("scope", strings.Join(scopes, separator(m)))
 	}
 	authorize.RawQuery = query.Encode()
 
@@ -267,7 +280,7 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		TokenEndpoint: server.Token,
 		Revocation:    server.Revocation,
 		Resource:      server.Resource,
-		Scopes:        slices.Clone(in.Manifest.Scopes.List),
+		Scopes:        slices.Clone(m.Scopes.List),
 		ExpiresAt:     s.cfg.Now().Add(attemptTTL),
 	})
 	if err != nil {

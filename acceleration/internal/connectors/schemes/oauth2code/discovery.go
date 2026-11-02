@@ -43,6 +43,9 @@ type server struct {
 	// ViaResource is whether the server was found through an MCP endpoint's protected
 	// resource metadata, which is when the MCP authorization rules apply.
 	ViaResource bool
+	// ScopesSupported is that metadata's scopes_supported (RFC 9728 section 2), read only
+	// when ViaResource.
+	ScopesSupported []string
 }
 
 // discover is the manifest's endpoints first, then what metadata says for anything left.
@@ -79,6 +82,7 @@ func (s *Scheme) discover(ctx context.Context, m core.ResolvedManifest) (server,
 			d.Resource = resource.Resource
 		}
 		d.ViaResource = true
+		d.ScopesSupported = resource.ScopesSupported
 	}
 	if d.Issuer != "" {
 		metadata, err := s.authorizationServer(ctx, d.Issuer)
@@ -159,8 +163,22 @@ func (d server) checkPKCE() error {
 }
 
 type protectedResourceMetadata struct {
-	Resource             string   `json:"resource"`
-	AuthorizationServers []string `json:"authorization_servers"`
+	Resource             string     `json:"resource"`
+	AuthorizationServers []string   `json:"authorization_servers"`
+	ScopesSupported      scopesList `json:"scopes_supported"`
+}
+
+// scopesList is scopes_supported, which RFC 9728 section 2 makes a JSON array of strings. Any
+// other shape reads as none, so a document that breaks only this optional member is still
+// used, as it was before the member was read.
+type scopesList []string
+
+func (l *scopesList) UnmarshalJSON(raw []byte) error {
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		*l = list
+	}
+	return nil
 }
 
 // protectedResource reads RFC 9728 metadata for an MCP endpoint, at the path-inserted
