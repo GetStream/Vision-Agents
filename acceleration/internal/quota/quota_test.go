@@ -21,6 +21,7 @@ import (
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // AddressEnvVar is where the tests look for a Redis to run against.
@@ -46,7 +47,7 @@ func (s *QuotaSuite) SetupSuite() {
 		s.T().Skipf("%s not set", AddressEnvVar)
 	}
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	client, err := redisready.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{address},
 		DisableCache: true,
 	})

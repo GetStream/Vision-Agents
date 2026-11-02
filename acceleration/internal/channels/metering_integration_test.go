@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
@@ -100,7 +101,7 @@ func (s *TextMeteringSuite) TestAReplyPartlySentCountsOnceAgainstTheSandboxDay()
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)
 	gate := dlc.NewGate(s.store, redis, dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 30}, nil)
