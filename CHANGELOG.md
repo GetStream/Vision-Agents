@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### The session writer keeps its queue for rows
+
+Reads that wait for the session writer no longer take room in its queue. A wait after the router stopped its writer returns at once.
+
 ### A response is counted on its user's daily limit when Redis or the policies are slow
 
 A finished response's debit waits at most 2 s, as before, but no longer gives up its write when that wait runs out. A response whose policies took that long to read, or whose router stalled past it, went uncounted on its user's day; it is now counted once the write reaches Redis.
