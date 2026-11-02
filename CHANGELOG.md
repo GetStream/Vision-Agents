@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A call into a held session with other custom data is refused
+
+A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A session's call that carries no custom of its own, as one `Agent.outbound_call` makes, is given the `custom` sent and places. A call with the same custom as the session's call, or with none, places as before (AI-2471).
+
 ### The session writer keeps its queue for rows
 
 Reads that wait for the session writer no longer take room in its queue. A wait after the router stopped its writer returns at once.

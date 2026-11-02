@@ -83,7 +83,7 @@ adding one method.
 
 When a call has `custom`, the router creates the Stream call with it before dialing, with
 `created_by` set to `phone-router`. The agent creates the call only when it joins, and a
-shared rule carries no custom data of its own, so otherwise the leg would create the call
+shared rule carries only the number (`phone_number`), so otherwise the leg would create the call
 without it.
 
 ### What is stored

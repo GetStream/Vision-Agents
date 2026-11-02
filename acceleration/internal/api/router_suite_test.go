@@ -475,6 +475,9 @@ type RouterSuite struct {
 	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
 	// the harness. Nil is every vendor the router knows, with no credentials.
 	phoneVendors *phone.Registry
+	// phoneOnChat has the phone service place calls in the suite's Stream app, the chattest,
+	// for a suite to set before it starts the harness. Off, it has no Stream to place them in.
+	phoneOnChat bool
 	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
 	// suite to set before it starts the harness. Off, a session with a number cannot open.
 	sessionTelephony bool
@@ -1569,8 +1572,13 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 		registry = vendors.Registry(config)
 	}
 
+	var stream *phone.Stream
+	if s.phoneOnChat {
+		stream = phone.NewStreamFromClient(s.chat.Client)
+	}
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  registry,
+		Stream:    stream,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,
