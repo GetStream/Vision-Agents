@@ -212,6 +212,27 @@ func (s *PhoneSuite) TestCreatingACallThatIsInSessionStoresNoBody() {
 	s.Empty(kept, "a call in session is already there, with no custom")
 }
 
+func (s *PhoneSuite) TestPuttingCustomOnACallKeepsItsNumber() {
+	// Stream merges an update's custom into the call's own.
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+	_, err := stream.CreateCall(s.ctx, "agent", "abc", map[string]string{NumberKey: "+15550100100"})
+	s.Require().NoError(err)
+
+	s.Require().NoError(stream.PutCustom(s.ctx, "agent", "abc", map[string]string{"k": "v"}))
+
+	data, _ := fake.Call("agent", "abc")["data"].(map[string]any)
+	s.Equal(map[string]any{"k": "v", NumberKey: "+15550100100"}, data["custom"])
+}
+
+func (s *PhoneSuite) TestPuttingCustomOnACallThatIsNotThereFails() {
+	fake := chattest.NewServer(s.T())
+	stream := NewStreamFromClient(fake.Client)
+
+	s.Error(stream.PutCustom(s.ctx, "agent", "missing", map[string]string{"k": "v"}))
+	s.Nil(fake.Call("agent", "missing"))
+}
+
 func (s *PhoneSuite) TestEndingACallRecordsNoCreatedCall() {
 	// Ending a call is not creating one.
 	fake := chattest.NewServer(s.T())

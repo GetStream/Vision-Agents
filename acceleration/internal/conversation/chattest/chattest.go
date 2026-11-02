@@ -31,7 +31,8 @@ type store struct {
 	trunks   map[string]map[string]any
 	// calls are the participant ids in each call's session, by "<type>:<id>".
 	calls map[string][]string
-	// made are the bodies calls were created with, by "<type>:<id>".
+	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
+	// update merged in.
 	made     map[string]map[string]any
 	rules    map[string]map[string]any
 	order    []string
@@ -746,6 +747,34 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			custom = map[string]any{}
 		}
+		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
+	case r.Method == http.MethodPatch && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
+		// An update merges the custom it sends into the call's own: a key it leaves out is
+		// kept (seen on Stream Video, 2026-11-02). A call that is not there is refused.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		_, inSession := db.calls[cid]
+		made, exists := db.made[cid]
+		if !exists && !inSession {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "call " + cid + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		if made == nil {
+			made = map[string]any{}
+			db.made[cid] = made
+		}
+		data, ok := made["data"].(map[string]any)
+		if !ok {
+			data = map[string]any{}
+			made["data"] = data
+		}
+		custom, ok := data["custom"].(map[string]any)
+		if !ok {
+			custom = map[string]any{}
+			data["custom"] = custom
+		}
+		sent, _ := body["custom"].(map[string]any)
+		maps.Copy(custom, sent)
 		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {

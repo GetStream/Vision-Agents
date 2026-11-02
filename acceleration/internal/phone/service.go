@@ -985,16 +985,25 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
-	// The number's rule carries no custom data, so on its line a call that has some is created
-	// with it here, before the leg arrives; otherwise the leg creates the call. A session the
-	// caller named may hold its call already, which a get-or-create only loads, so that call
-	// is asked for here too, before anything is made for the leg.
+	// The number's rule carries only the number, so on its line a call with custom of its own
+	// is created with it here, before the leg arrives; otherwise the leg creates the call. A
+	// session the caller named may hold its call already, which a get-or-create only loads, so
+	// that call is asked for here too, before anything is made for the leg.
 	if len(request.Custom) > 0 && (shared || request.SessionID != "") {
 		kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
 		if err != nil {
 			return Placed{}, err
 		}
-		if !maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }) {
+		// The number is the router's, put there by a leg's rule, and no caller can send it.
+		delete(kept, NumberKey)
+		switch {
+		case maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }):
+		case len(kept) == 0:
+			// A call made without custom, as an agent makes its own call, takes this one.
+			if err := stream.PutCustom(ctx, callType, callID, request.Custom); err != nil {
+				return Placed{}, err
+			}
+		default:
 			return Placed{}, stack.Wrap(errCustomKept)
 		}
 	}

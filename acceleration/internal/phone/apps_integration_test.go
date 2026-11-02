@@ -5,6 +5,7 @@ package phone
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1472,21 +1473,28 @@ func (s *AppsSuite) TestADialWhoseHeldCallCannotBeReadMakesNoTrunk() {
 }
 
 func (s *AppsSuite) TestADialIntoAHeldSessionPlacesOnlyWhenItsCustomIsTheCalls() {
+	// The number is the router's own, which a leg's rule may have put on the call, so only
+	// the caller's keys are compared. A call with none of them takes the custom sent.
 	s.ownApp()
 	s.sealed()
 	sent := map[string]string{"k": "1"}
+	number := "+15550109999"
 	for name, edge := range map[string]struct {
 		kept    map[string]any
 		refused bool
+		after   map[string]any
 	}{
-		"the same":             {map[string]any{"k": "1"}, false},
-		"a number, not a text": {map[string]any{"k": 1}, true},
-		"null":                 {map[string]any{"k": nil}, true},
-		"another value":        {map[string]any{"k": "2"}, true},
-		"another key":          {map[string]any{"K": "1"}, true},
-		"a key more":           {map[string]any{"k": "1", "extra": "x"}, true},
-		"a key fewer":          {map[string]any{"other": "x"}, true},
-		"none":                 {nil, true},
+		"the same":                     {map[string]any{"k": "1"}, false, map[string]any{"k": "1"}},
+		"the same and the number":      {map[string]any{"k": "1", NumberKey: number}, false, map[string]any{"k": "1", NumberKey: number}},
+		"none":                         {nil, false, map[string]any{"k": "1"}},
+		"only the number":              {map[string]any{NumberKey: number}, false, map[string]any{"k": "1", NumberKey: number}},
+		"a number, not a text":         {map[string]any{"k": 1}, true, nil},
+		"null":                         {map[string]any{"k": nil}, true, nil},
+		"another value":                {map[string]any{"k": "2"}, true, nil},
+		"another value and the number": {map[string]any{"k": "2", NumberKey: number}, true, nil},
+		"another key":                  {map[string]any{"K": "1"}, true, nil},
+		"a key more":                   {map[string]any{"k": "1", "extra": "x"}, true, nil},
+		"a key fewer":                  {map[string]any{"other": "x"}, true, nil},
 	} {
 		s.Run(name, func() {
 			session := uuid.NewString()
@@ -1495,28 +1503,61 @@ func (s *AppsSuite) TestADialIntoAHeldSessionPlacesOnlyWhenItsCustomIsTheCalls()
 
 			err := s.dialInto(session, "+15550001111", sent)
 
+			data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
 			if edge.refused {
 				s.ErrorIs(err, errCustomKept)
 				s.Empty(s.vendor.dialed.To)
+				kept, err := json.Marshal(edge.kept)
+				s.Require().NoError(err)
+				now, err := json.Marshal(data["custom"])
+				s.Require().NoError(err)
+				s.JSONEq(string(kept), string(now), "a refused dial leaves the call's custom as it was")
 				return
 			}
 			s.Require().NoError(err)
 			s.Equal("+15550001111", s.vendor.dialed.To)
+			s.Equal(edge.after, data["custom"])
 		})
 	}
 }
 
-func (s *AppsSuite) TestADialWithCustomIntoASessionInProgressIsRefused() {
+func (s *AppsSuite) TestADialWithCustomIntoAnAgentsOwnCallPutsItsCustomOnIt() {
+	// An agent makes its call with no custom and then dials into it with some, as the Python
+	// SDK's Agent.outbound_call does.
+	for _, line := range []struct {
+		name   string
+		shared bool
+	}{{"shared line", true}, {"its own trunk", false}} {
+		s.Run(line.name, func() {
+			s.SetupTest()
+			s.ownApp()
+			if line.shared {
+				s.sealed()
+			}
+			session := uuid.NewString()
+			s.heldWith(session, nil)
+
+			s.Require().NoError(s.dialInto(session, "+15550001111", map[string]string{"lead": "42"}))
+
+			s.Equal("+15550001111", s.vendor.dialed.To)
+			data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
+			s.Equal(map[string]any{"lead": "42"}, data["custom"])
+		})
+	}
+}
+
+func (s *AppsSuite) TestADialWithCustomIntoASessionInProgressPutsItsCustomOnTheCall() {
 	// A session's call that is in progress is already there, whatever made it.
 	s.ownApp()
 	s.sealed()
 	session := uuid.NewString()
 	s.own.PutCall(defaultCallType, session, "agent-1")
 
-	err := s.dialInto(session, "+15550001111", map[string]string{"k": "v"})
+	s.Require().NoError(s.dialInto(session, "+15550001111", map[string]string{"k": "v"}))
 
-	s.ErrorIs(err, errCustomKept)
-	s.Empty(s.vendor.dialed.To)
+	s.Equal("+15550001111", s.vendor.dialed.To)
+	data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
+	s.Equal(map[string]any{"k": "v"}, data["custom"])
 }
 
 func (s *AppsSuite) TestADialIntoAHeldSessionWithTheSameCustomOrNonePlaces() {

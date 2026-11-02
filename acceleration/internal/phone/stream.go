@@ -221,6 +221,20 @@ func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom
 	return response.Data.Call.Custom, nil
 }
 
+// PutCustom puts custom data on a call that is already there. Stream merges it into the
+// call's own, so a key the call has and this leaves out, such as the number, is kept.
+func (s *Stream) PutCustom(ctx context.Context, callType, callID string, custom map[string]string) error {
+	data := make(map[string]any, len(custom))
+	for key, value := range custom {
+		data[key] = value
+	}
+	_, err := s.client.Video().UpdateCall(ctx, callType, callID, &getstream.UpdateCallRequest{Custom: data})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("phone: put custom on the call: %w", err))
+	}
+	return nil
+}
+
 func routeRequest(route Route) *getstream.CreateSIPInboundRoutingRuleRequest {
 	callType := route.CallType
 	if callType == "" {
