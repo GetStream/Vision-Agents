@@ -1014,7 +1014,7 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
 	service, err := dlc.NewService(dlc.Options{
 		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(),
-		Recorder: s.phoneRecorder, Logger: logger,
+		Recorder: s.phoneRecorder, Booker: s.gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.registrar10DLC = service

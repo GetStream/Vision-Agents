@@ -22,6 +22,7 @@ type Service struct {
 	registrar Registrar
 	hookURL   string
 	recorder  *routing.Recorder
+	booker    routing.Booker
 	clock     func() time.Time
 	logger    *slog.Logger
 }
@@ -36,6 +37,9 @@ type Options struct {
 	// Recorder files the registrar's fees as rows: a brand, a campaign's review and each
 	// month of a campaign. Nil records none.
 	Recorder *routing.Recorder
+	// Booker books each fee out of the app's credit before the registrar is paid it, and checks
+	// a use case submitted for review could pay them all (Gate.Book). Nil books nothing.
+	Booker routing.Booker
 	// Now is the clock a campaign's months are counted by. Nil is the wall clock.
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -54,7 +58,7 @@ func NewService(options Options) (*Service, error) {
 		hookURL = options.PublicURL + HookPath
 	}
 	return &Service{store: options.Store, registrar: options.Registrar, hookURL: hookURL,
-		recorder: options.Recorder, clock: options.Now, logger: options.Logger}, nil
+		recorder: options.Recorder, booker: options.Booker, clock: options.Now, logger: options.Logger}, nil
 }
 
 // Run checks the use cases a vendor holds every interval until ctx ends, for the reports a
@@ -152,6 +156,17 @@ func (s *Service) Submit(ctx context.Context, customerID, id string) (store.UseC
 	if err := errors.Join(ValidateProfile(profile), ValidateUseCase(useCase)); err != nil {
 		return store.UseCase{}, stack.Wrap(err)
 	}
+	// Registration comes after the review, maybe days later, so nothing is booked here: the
+	// credit is only checked to cover every fee it will book then.
+	fees := s.campaignFees(ctx, useCase)
+	if profile.VendorBrandID == "" {
+		fees += s.brandFee(ctx, useCase)
+	}
+	checked, err := s.book(ctx, useCase.CustomerID, fees)
+	if err != nil {
+		return store.UseCase{}, err
+	}
+	checked.Release()
 
 	from := useCase.Status
 	now := time.Now().UTC()
@@ -272,8 +287,17 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 	}
 	var brand Brand
 	if profile.VendorBrandID == "" {
+		booked, err := s.book(ctx, useCase.CustomerID, s.brandFee(ctx, useCase))
+		if err != nil {
+			return err
+		}
 		brand, err = routing.Call(ctx, s.feeMeter(ctx, ModelBrand, useCase.CustomerID, nil),
 			func(ctx context.Context) (Brand, error) { return s.registrar.RegisterBrand(ctx, profile) })
+		if err != nil {
+			booked.Release()
+			return err
+		}
+		booked.Charged()
 	} else {
 		brand, err = s.registrar.Brand(ctx, profile.VendorBrandID)
 	}
@@ -295,14 +319,20 @@ func (s *Service) register(ctx context.Context, useCase store.UseCase) error {
 		log.Notes, log.VendorPayload = "The vendor refused the brand: "+brand.Status+".", brand.Raw
 		return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
 	}
+	booked, err := s.book(ctx, useCase.CustomerID, s.campaignFees(ctx, useCase))
+	if err != nil {
+		return err
+	}
 	campaign, err := routing.Call(ctx, s.feeMeter(ctx, ModelCampaign, useCase.CustomerID,
 		map[string]string{AttributeUseCaseType: useCaseType(useCase)}),
 		func(ctx context.Context) (Campaign, error) {
 			return s.registrar.RegisterCampaign(ctx, brand.ID, useCase, s.hookURL)
 		})
 	if err != nil {
+		booked.Release()
 		return err
 	}
+	defer booked.Charged()
 	useCase.VendorCampaignID, useCase.VendorStatus = campaign.ID, campaign.Status
 	if useCase.Vendor == "" {
 		useCase.Vendor = s.registrar.Name()

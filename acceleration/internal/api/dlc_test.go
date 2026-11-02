@@ -79,6 +79,15 @@ func (r *campaignRegistry) campaignOf(e164 string) string {
 // DLCSuite is an app registering for 10DLC on the hosted router: sandboxed until a use case
 // is approved, reviewed by Stream staff, registered with Telnyx.
 type DLCSuite struct {
+	dlcRegistration
+}
+
+func TestDLCSuite(t *testing.T) {
+	runSuite(t, new(DLCSuite))
+}
+
+// dlcRegistration is the harness DLCSuite and DLCBookingSuite share.
+type dlcRegistration struct {
 	RouterSuite
 	registry *campaignRegistry
 	signing  ed25519.PrivateKey
@@ -86,11 +95,7 @@ type DLCSuite struct {
 	staff *testClient
 }
 
-func TestDLCSuite(t *testing.T) {
-	runSuite(t, new(DLCSuite))
-}
-
-func (s *DLCSuite) SetupSuite() {
+func (s *dlcRegistration) SetupSuite() {
 	s.registry = &campaignRegistry{campaigns: map[string]string{}, assigned: map[string]string{}}
 	fake := httptest.NewServer(s.registry)
 	s.T().Cleanup(fake.Close)
@@ -106,12 +111,12 @@ func (s *DLCSuite) SetupSuite() {
 }
 
 // Every test is an app of its own, so what one spent of its sandbox is not another's.
-func (s *DLCSuite) SetupTest() {
+func (s *dlcRegistration) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
 }
 
-func (s *DLCSuite) completeProfile() {
+func (s *dlcRegistration) completeProfile() {
 	address := store.PostalAddress{Street: "1 Main St", City: "Boulder", State: "CO", PostalCode: "80301", Country: "US"}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/phone/business-profile", BusinessProfileRequest{
 		LegalBusinessName: "Acme Inc", LegalEntityType: "corporation", OrganizationType: "private",
@@ -134,7 +139,7 @@ func completeUseCase(name string) UseCaseRequest {
 }
 
 // submitted is a complete use case the app sent to Stream's review.
-func (s *DLCSuite) submitted() UseCase {
+func (s *dlcRegistration) submitted() UseCase {
 	s.completeProfile()
 	var created, sent UseCase
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/phone/use-cases", completeUseCase("support"), &created))
@@ -142,7 +147,7 @@ func (s *DLCSuite) submitted() UseCase {
 	return sent
 }
 
-func (s *DLCSuite) review(id string, decision ReviewDecision, notes string) (int, UseCaseForReview) {
+func (s *dlcRegistration) review(id string, decision ReviewDecision, notes string) (int, UseCaseForReview) {
 	var reviewed UseCaseForReview
 	status := s.staff.do(http.MethodPost, "/v1/ops/use-cases/"+id+"/review",
 		ReviewUseCaseRequest{Decision: decision, Notes: notes, Reviewer: "reviewer@getstream.io"}, &reviewed)
@@ -150,7 +155,7 @@ func (s *DLCSuite) review(id string, decision ReviewDecision, notes string) (int
 }
 
 // report posts what Telnyx would send about a campaign, signed with the suite's key.
-func (s *DLCSuite) report(body string, signer ed25519.PrivateKey) int {
+func (s *dlcRegistration) report(body string, signer ed25519.PrivateKey) int {
 	seconds := strconv.FormatInt(time.Now().Unix(), 10)
 	request, err := http.NewRequest(http.MethodPost, s.server.URL+dlc.HookPath, bytes.NewBufferString(body))
 	s.Require().NoError(err)
@@ -163,16 +168,16 @@ func (s *DLCSuite) report(body string, signer ed25519.PrivateKey) int {
 	return response.StatusCode
 }
 
-func (s *DLCSuite) dial(to string) (int, string) {
+func (s *dlcRegistration) dial(to string) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{From: "+15550000001", To: to})
 }
 
-func (s *DLCSuite) transfer(to string) (int, string) {
+func (s *dlcRegistration) transfer(to string) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer",
 		TransferCallRequest{From: "+15550000001", To: to, SessionId: s.data.storedSession()})
 }
 
-func (s *DLCSuite) spend(field string, amount int) {
+func (s *dlcRegistration) spend(field string, amount int) {
 	key := "dlc:" + time.Now().UTC().Format("20060102") + ":" + s.customerID()
 	redis := s.live.Redis()
 	s.Require().NoError(redis.Do(context.Background(),
