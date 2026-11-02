@@ -3,10 +3,13 @@ package llm
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -732,4 +735,59 @@ func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
 	}
 	s.Equal("Sure, what time?", spoken)
 	s.Equal("Sure, what time?", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAClosedStreamNobodyReadsOutDrainsItselfForTheWatchers() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		var mu sync.Mutex
+		var watched []Event
+		seen := func() []Event {
+			mu.Lock()
+			defer mu.Unlock()
+			return watched
+		}
+		stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+			Observe(func(event Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				watched = append(watched, event)
+			})
+		require.True(t, stream.Next())
+		require.NoError(t, stream.Close())
+
+		time.Sleep(drainGrace - time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 1, "the caller has drainGrace to read it out itself")
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 2)
+		require.Equal(t, StatusCancelled, seen()[1].(ResponseCompleted).Response.Status)
+	})
+}
+
+func (s *LLMSuite) TestACallerReadingAfterTheDrainStillSeesEveryEventOnce() {
+	var watched []Event
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(event Event) { watched = append(watched, event) })
+	require.True(s.T(), stream.Next())
+	stream.Close()
+	stream.drain()
+
+	events := s.drain(stream)
+	s.Require().Len(events, 1)
+	s.IsType(ResponseCompleted{}, events[0], "the end the caller waits for is still there to read")
+	s.Len(watched, 2, "and the watchers saw it once")
+	s.Equal(StatusCancelled, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAStreamReadToItsEndBeforeTheGraceIsNotDrainedAgain() {
+	var watched int
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(Event) { watched++ })
+	stream.Close()
+	s.drain(stream)
+	stream.drain()
+
+	s.Equal(2, watched)
 }
