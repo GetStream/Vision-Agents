@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // VoiceNotesSuite covers a voice note sent with a question: what the person said in it is
@@ -62,6 +63,17 @@ func (s *VoiceNotesSuite) TestWhatAVoiceNoteSaysIsTheQuestionTheAgentAnswers() {
 	s.Equal(said, value(answering.Said), "what was said is what was asked")
 	asked := s.lastAsked(said)
 	s.Equal(said, asked, "the model is asked what was said")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsTranscribedByTheBatchModelForTheSessionsCustomer() {
+	opened := s.noting()
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("hello " + s.utils.uuid()))}}, nil))
+
+	rows := s.meteredRows(routing.STT, since, 1)
+	s.Equal("stub-batch", rows[0].Model, "an English session's note goes to the English batch model")
 }
 
 func (s *VoiceNotesSuite) TestTypedTextComesBeforeWhatTheVoiceNoteSays() {

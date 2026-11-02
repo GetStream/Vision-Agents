@@ -523,7 +523,6 @@ const (
 	failToTranscribe = "fail to transcribe"
 )
 
-
 func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()
 	registry.Register("stub", func(spec routing.Spec) (stt.Transcriber, error) {

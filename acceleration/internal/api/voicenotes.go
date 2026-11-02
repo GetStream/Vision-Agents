@@ -11,7 +11,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
@@ -22,10 +21,10 @@ var (
 	errNothingHeard = invalidRequest("no words were heard in the voice note")
 )
 
-// hearVoiceNote fetches the voice note at source, a URL or a data URI, and transcribes it
-// for the session's customer. It returns the audio, for a conversation kept in Stream Chat
-// to show, and what was said in it.
-func (s *Server) hearVoiceNote(ctx context.Context, found *session.Session, source string) (conversation.VoiceNote, string, error) {
+// hearVoiceNote fetches the voice note at source, a URL or a data URI, and transcribes it in
+// the session's languages for its customer. It returns the audio, for a conversation kept in
+// Stream Chat to show, and what was said in it.
+func (s *Server) hearVoiceNote(ctx context.Context, customerID string, languages []string, source string) (conversation.VoiceNote, string, error) {
 	if s.streams == nil || s.streams.Transcriptions == nil {
 		return conversation.VoiceNote{}, "", errNoVoiceNotes
 	}
@@ -38,10 +37,9 @@ func (s *Server) hearVoiceNote(ctx context.Context, found *session.Session, sour
 		return conversation.VoiceNote{}, "", invalidRequest(fmt.Sprintf("the voice note could not be used: %v", err))
 	}
 
-	spec := found.Spec()
-	held, recording := recordingOf(options.STT{Languages: spec.LanguageHints}, "", note.Audio)
+	held, recording := recordingOf(options.STT{Languages: languages}, "", note.Audio)
 	transcript, _, failure := s.streams.Transcriptions.Transcribe(ctx,
-		sttrouter.Recording{CustomerID: spec.CustomerID, Options: held, Source: recording})
+		sttrouter.Recording{CustomerID: customerID, Options: held, Source: recording})
 	if answer, refused := moneyError(failure); refused {
 		return conversation.VoiceNote{}, "", answer
 	}

@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
 // wavHeader starts every WAV: what a router sniffing the bytes takes for audio/wave.
@@ -149,9 +152,28 @@ func (s *VoiceNoteAudioSuite) TestADataURIThatDoesNotReadIsRefused() {
 }
 
 func (s *VoiceNoteAudioSuite) TestADeploymentThatTranscribesNothingRefusesAVoiceNote() {
-	_, _, err := (&Server{}).hearVoiceNote(context.Background(), nil, "data:audio/wav;base64,AAAA")
+	_, _, err := (&Server{}).hearVoiceNote(context.Background(), "acme", nil, "data:audio/wav;base64,AAAA")
 
 	s.Equal(errNoVoiceNotes, err)
+}
+
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsHeardInTheSessionsLanguages() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	heard := &heardTranscriber{}
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil })
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Config: config[routing.STT], Transcribers: transcribers})
+	s.Require().NoError(err)
+	server := &Server{streams: &Streams{Transcriptions: recordings}}
+
+	_, said, err := server.hearVoiceNote(context.Background(), "acme", []string{"es"},
+		"data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wavOf("hola")))
+
+	s.Require().NoError(err)
+	s.Equal("se oye", said)
+	s.Equal([]string{"es"}, heard.recording.Languages)
+	s.Equal(wavOf("hola"), heard.recording.Audio)
 }
 
 func (s *VoiceNoteAudioSuite) TestWhatWasSaidFollowsWhatWasTyped() {
@@ -164,3 +186,16 @@ func (s *VoiceNoteAudioSuite) fetched(body []byte, kind string) (conversation.Vo
 	s.served["/note"] = cdnFile{kind: kind, body: body}
 	return voiceNoteAt(context.Background(), s.cdn.Client(), s.cdn.URL+"/note")
 }
+
+// heardTranscriber keeps the recording it was handed, and hears the same words in any.
+type heardTranscriber struct{ recording stt.Recording }
+
+func (t *heardTranscriber) Transcribe(_ context.Context, recording stt.Recording) (stt.Transcription, error) {
+	t.recording = recording
+	return stt.Transcription{Text: " se oye "}, nil
+}
+
+func (t *heardTranscriber) Start(context.Context) error { return nil }
+func (t *heardTranscriber) Close() error                { return nil }
+func (t *heardTranscriber) Provider() string            { return "deepgram" }
+func (t *heardTranscriber) Model() string               { return "nova-3" }

@@ -72,7 +72,8 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	text := request.Body.Text
 	var notes []conversation.VoiceNote
 	if request.Body.Audio != nil {
-		note, said, failure := s.hearVoiceNote(ctx, found, request.Body.Audio.Url)
+		spec := found.Spec()
+		note, said, failure := s.hearVoiceNote(ctx, spec.CustomerID, spec.LanguageHints, request.Body.Audio.Url)
 		if failure != nil {
 			return nil, failure
 		}
