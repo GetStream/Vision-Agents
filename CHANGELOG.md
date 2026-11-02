@@ -220,6 +220,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A custom MCP connector without scopes asks for the scopes its server lists
+
+A new consent for a custom (`custom_`) `oauth2_code` connector whose definition lists no scopes now asks for every scope in its MCP server's protected resource metadata (`scopes_supported`), as the MCP authorization spec says and as a URL-named `mcp_servers` login already did. A server that lists none still gets no `scope`. The client the router registers for it asks for the same scopes. Built-in connectors and existing connections are unchanged (AI-2526).
+
 ### A scheduled task handed to another router is billed to its own key
 
 A router that runs a scheduled task for another router, because it holds the task's conversation, now takes the task's conversation, timezone, API key and usage categories from the stored task, and the occurrence's prompt and due time from its stored run, not from what the other router sent. It refuses a hand-off that names a run that is not the task's running run. A text it sends for the task is now recorded under the task's key, user and usage categories, as on the router that claimed the task. Before, it was recorded as `job:channel_notice` with no user (AI-2421).
