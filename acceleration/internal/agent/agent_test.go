@@ -220,6 +220,9 @@ type stubLLM struct {
 	// as a reply past maxToolRounds is, has nothing to reach for: calling anyway would
 	// chain turns until Close, and Close waits for every one of them to be written.
 	keepCalling bool
+	// ignoresNone makes the model return its calls on a reply offered no tools too, as a
+	// provider or model that disregards tool choice does.
+	ignoresNone bool
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
 	// callsUntil, when set, is the request, counted from 1, at which keepCalling stops and
@@ -335,7 +338,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	var calls []llm.ToolCall
 	// A model told to call no tool calls none, as a provider holds it to.
-	callable := len(params.Tools) > 0 && params.ToolChoice != "none"
+	callable := len(params.Tools) > 0 && params.ToolChoice != "none" || s.ignoresNone
 	if len(s.asked) == max(s.callsOn, 1) ||
 		s.keepCalling && callable && (s.callsUntil == 0 || len(s.asked) < s.callsUntil) {
 		calls = append([]llm.ToolCall(nil), s.calls...)
@@ -4233,6 +4236,110 @@ func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2*(maxToolRounds+1) },
 		"the next message was not given its own tool rounds")
 	s.NotEmpty(s.model.requests()[maxToolRounds+2].Tools, "the next message's reply to a tool was made to answer at once")
+}
+
+func (s *AgentSuite) TestATextReplyMadeToAnswerThatCallsAToolAnywayEndsWithItsText() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.model.ignoresNone = true
+	s.model.callsUntil = 3 * maxToolRounds
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		history := harness.WithoutNotes(s.agent.History())
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the reply made to answer was kept with its call")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 1, "the call on the reply made to answer ran")
+}
+
+func (s *AgentSuite) TestAVoiceReplyMadeToAnswerThatCallsAToolAnywayEndsWithItsText() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.logs = &logLines{}
+	s.join(false)
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.model.ignoresNone = true
+	s.model.callsUntil = 3 * maxToolRounds
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order": "12"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order": "13"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.model.requests()) >= maxToolRounds+1 }, "the rounds never ran out")
+	s.eventually(func() bool {
+		history := s.history()
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the reply made to answer was kept with its call")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 2, "the call on the reply made to answer ran")
+	s.True(s.spokenText("Order 12 ships tomorrow"), "the text of the reply made to answer was not said")
+	dropped := s.logs.records("a reply offered no tools asked for some, which were dropped")
+	s.Require().Len(dropped, 1, "the dropped calls were not logged exactly once")
+	s.Equal("WARN", dropped[0]["level"])
+	s.EqualValues(2, dropped[0]["calls"])
+}
+
+func (s *AgentSuite) TestAReplyMadeToAnswerThatAsksForNothingLogsNothing() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.logs = &logLines{}
+	s.join(false)
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+1 }, "the rounds never ran out")
+	s.eventually(func() bool { return s.spokenText("Order 12 ships tomorrow") }, "the answer was not said")
+	s.Empty(s.logs.records("a reply offered no tools asked for some, which were dropped"))
+}
+
+func (s *AgentSuite) TestAGreetingThatCallsAToolAnywayIsNotFollowed() {
+	// Nobody has spoken, so the reply is offered no tools; one returned anyway is no
+	// reason to run it and ask again.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Hello, how can I help?"}
+	s.model.ignoresNone = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "greet the caller", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return s.spokenText("Hello, how can I help?") }, "the greeting was not said")
+	s.Equal("none", s.model.requests()[0].ToolChoice, "the greeting was offered tools")
+	s.Empty(s.runner.asked(), "the call on the greeting ran")
+	s.Len(s.model.requests(), 1, "the greeting was followed by another reply")
+}
+
+func (s *AgentSuite) TestAModelThatIgnoresToolChoiceStillHasItsFirstCallRun() {
+	// The control: a turn offered tools has its call run and followed, whatever the model does
+	// with tool choice.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.ignoresNone = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+	s.Len(s.runner.asked(), 1)
 }
 
 func (s *AgentSuite) TestATextAgentWithAHigherToolRoundLimitChainsPastTheDefault() {

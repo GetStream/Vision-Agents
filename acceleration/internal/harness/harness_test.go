@@ -1253,6 +1253,11 @@ func (s *HarnessSuite) TestWhatAReplyWasOfferedIsNotCarriedToTheNextWithItsId() 
 	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
 	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history})
 	s.Equal(called, s.harness.DropUnoffered("turn-2", called), "a written reply's offer was carried to the next")
+
+	s.answer(Turn{ID: "turn-3", Instructions: "be brief", History: history, NoTools: true})
+	s.harness.Release("turn-3")
+	s.answer(Turn{ID: "turn-3", Instructions: "be brief", History: history})
+	s.Equal(called, s.harness.DropUnoffered("turn-3", called), "a cut off reply's offer was carried to the next")
 }
 
 func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {

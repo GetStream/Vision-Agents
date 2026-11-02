@@ -218,6 +218,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Tool rounds are bound even when a model calls a tool it was not offered
+
+A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
+
 ### Changing a live session's models waits for voice to start or stop
 
 A change to a running session's models, voice or overwrites (`PATCH /v1/agents/sessions/{id}`) and starting or stopping its voice now run one after the other. A change made while voice started or stopped could be applied to the agent being left and answer as done, while the agent that took over kept the earlier settings. The change now reaches the agent that holds the session once the move is done. An interrupt is not held back by either (AI-2500).
