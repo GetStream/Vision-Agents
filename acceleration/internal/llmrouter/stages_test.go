@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
@@ -130,9 +131,20 @@ func (s *StagesSuite) connections(provider string, reused bool) float64 {
 }
 
 func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
-	const admitting, beforeHeaders, beforeToken = 100 * time.Millisecond, 300 * time.Millisecond, 600 * time.Millisecond
+	// Each stage takes a different multiple of unit, and a stage that took in any other's time
+	// is one unit or more off. The client stamps a byte when its goroutine reads it, so a busy
+	// machine moves the line between two stages by a little.
+	const unit, slack = 200 * time.Millisecond, 50 * time.Millisecond
+	const admitting, dialling, beforeHeaders, beforeToken = unit, 2 * unit, 4 * unit, 8 * unit
 	config := s.config()
-	session := s.session(s.provider(beforeHeaders, beforeToken, answer), config)
+	server := s.provider(beforeHeaders, beforeToken, answer)
+	client := server.Client()
+	transport := client.Transport.(*http.Transport)
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		time.Sleep(dialling)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	session := s.session(server, config)
 	session.admit = func(context.Context, routing.Owner) (routing.Admission, error) {
 		time.Sleep(admitting)
 		return routing.Admission{}, nil
@@ -140,20 +152,16 @@ func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
 
 	s.Equal("hi", s.ask(s.T().Context(), session).OutputText)
 
-	// Each bound is the next stage's delay: a stage that took in a neighbour's time crosses it.
-	for _, want := range []struct {
-		stage         string
-		least, before time.Duration
-	}{
-		{routing.StageRouter, admitting, beforeHeaders},
-		{routing.StageConnect, time.Nanosecond, admitting},
-		{routing.StageWait, beforeHeaders, beforeToken},
-		{routing.StageStream, beforeToken, beforeToken + beforeHeaders},
+	for stage, least := range map[string]time.Duration{
+		routing.StageRouter:  admitting,
+		routing.StageConnect: dialling,
+		routing.StageWait:    beforeHeaders,
+		routing.StageStream:  beforeToken,
 	} {
-		count, took := s.stage(config, config.Model, want.stage)
-		s.EqualValues(1, count, want.stage)
-		s.GreaterOrEqual(took, want.least, want.stage)
-		s.Less(took, want.before, want.stage)
+		count, took := s.stage(config, config.Model, stage)
+		s.EqualValues(1, count, stage)
+		s.GreaterOrEqual(took, least-slack, stage)
+		s.Less(took, least+unit-slack, stage)
 	}
 	s.Equal(1.0, s.connections(config.Provider, false))
 	s.Zero(s.connections(config.Provider, true))
@@ -224,6 +232,37 @@ func (s *StagesSuite) TestARequestRefusedAfterItsHeadersHasAWaitButNoStream() {
 	s.Zero(streams)
 }
 
+func (s *StagesSuite) TestARetryThatGotNoHeadersHasNoWaitFromTheTryBefore() {
+	config := s.config()
+	var tries atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if tries.Add(1) == 1 {
+			// Asked again at once: the client honours how soon the provider says to retry.
+			w.Header().Set("Retry-After-Ms", "1")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		<-r.Context().Done()
+	}))
+	s.T().Cleanup(server.Close)
+	session := s.session(server, config)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	go func() {
+		for tries.Load() < 2 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+
+	_, err := session.Create(ctx, llm.ResponseParams{Input: prompt()})
+	s.Require().Error(err)
+
+	s.EqualValues(2, tries.Load())
+	waits, _ := s.stage(config, config.Model, routing.StageWait)
+	s.Zero(waits, "the request that counts never heard back")
+}
+
 func (s *StagesSuite) TestAnAnswerThatNeverSaidAnythingHasNoStream() {
 	config := s.config()
 	session := s.session(s.provider(0, 0, "data: [DONE]\n\n"), config)
@@ -238,14 +277,16 @@ func (s *StagesSuite) TestAnAnswerThatNeverSaidAnythingHasNoStream() {
 
 func (s *StagesSuite) TestAProviderThatMakesNoHTTPRequestHasOnlyTheRoutersStage() {
 	config := s.config()
-	session := newSession(newStubLLM(), config, routing.Owner{CustomerID: "acme"}, nil, nil)
+	provider := newStubLLM()
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, nil, nil)
 	session.recorder = &statSink{}
 	s.T().Cleanup(func() { _ = session.Close() })
 
 	stream, err := session.Create(s.T().Context(), llm.ResponseParams{Input: prompt()})
 	s.Require().NoError(err)
-	s.Require().NoError(stream.Close())
-	drain(stream)
+	provider.script(0).OutputText("hi")
+	provider.script(0).Done()
+	s.Equal("hi", drain(stream).OutputText)
 
 	for stage, want := range map[string]uint64{
 		routing.StageRouter: 1, routing.StageConnect: 0, routing.StageWait: 0, routing.StageStream: 0,
