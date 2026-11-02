@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 )
 
@@ -24,8 +26,10 @@ func TestKnowledgeSuite(t *testing.T) {
 	runSuite(t, new(KnowledgeSuite))
 }
 
+// SetupTest gives every test an app of its own, because deleting a knowledge base reads every
+// agent config of the app.
 func (s *KnowledgeSuite) SetupTest() {
-	s.useFixture("standard")
+	s.useApp(s.data.createApp())
 	s.namespace = "namespace-" + s.utils.uuid()
 	s.source = s.utils.uuid() + ".md"
 }
@@ -122,6 +126,71 @@ func (s *KnowledgeSuite) TestAnotherAppsDocumentIsNeitherReadNorDeleted() {
 	})
 }
 
+func (s *KnowledgeSuite) TestADeletedKnowledgeBaseHoldsNothingAndListsNothing() {
+	s.post("# Refunds\n\nThirty days.")
+	var page KnowledgeUrl
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		map[string]any{"namespace": s.namespace, "url": "https://example.com/pricing"}, &page))
+	s.Require().Eventually(func() bool {
+		var read KnowledgeUrl
+		return s.serverClient.do(http.MethodGet, "/v1/agents/knowledge/urls/"+page.Id, nil, &read) == http.StatusOK &&
+			read.LastIndexedAt != nil
+	}, settleFor, 10*time.Millisecond, "the page was never read")
+
+	s.Require().Equal(http.StatusNoContent, s.deleteBase())
+
+	s.False(s.knowledge.holds(knowledge.Scoped(s.customerID(), s.namespace)))
+	s.Empty(s.documents())
+	var pages []KnowledgeUrl
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/knowledge/urls?namespace="+s.namespace, nil, &pages))
+	s.Empty(pages)
+}
+
+func (s *KnowledgeSuite) TestAKnowledgeBaseThatDoesNotExistIsNotFound() {
+	s.Equal(http.StatusNotFound, s.deleteBase())
+}
+
+func (s *KnowledgeSuite) TestADeletedKnowledgeBaseIsNotThereToDeleteAgain() {
+	s.post("# Refunds\n\nThirty days.")
+	s.Require().Equal(http.StatusNoContent, s.deleteBase())
+
+	s.Equal(http.StatusNotFound, s.deleteBase())
+}
+
+func (s *KnowledgeSuite) TestOnlyTheAppsOwnBackendMayDeleteAKnowledgeBase() {
+	s.post("# Refunds\n\nThirty days.")
+
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodDelete, "/v1/agents/knowledge?namespace="+s.namespace, nil, nil)
+	})
+}
+
+func (s *KnowledgeSuite) TestAnotherAppsKnowledgeBaseOfTheSameNameIsLeftAlone() {
+	s.post("# Refunds\n\nThirty days.")
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodDelete, "/v1/agents/knowledge?namespace="+s.namespace, nil, nil)
+	})
+
+	s.Len(s.documents(), 1)
+	s.NotEmpty(s.storedOfSource())
+}
+
+func (s *KnowledgeSuite) TestAKnowledgeBaseAnAgentReadsIsNotDeleted() {
+	s.post("# Refunds\n\nThirty days.")
+	name := "reader-" + s.utils.uuid()
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": name, "knowledge_namespace": s.namespace}, nil))
+
+	status, payload := s.serverClient.call(http.MethodDelete, "/v1/agents/knowledge?namespace="+s.namespace, nil)
+
+	s.Equal(http.StatusConflict, status, string(payload))
+	s.Contains(string(payload), name, "the answer names the agent to change first")
+	s.Len(s.documents(), 1)
+	s.NotEmpty(s.storedOfSource())
+}
+
 func (s *KnowledgeSuite) TestAFiveMegabyteDocumentIsIngested() {
 	// Five times what an operation reads by default.
 	line := "A penny for every word of the price list.\n\n"
@@ -209,6 +278,11 @@ func (s *KnowledgeSuite) post(text string) {
 			"namespace": s.namespace,
 			"documents": []map[string]string{{"source": s.source, "text": text}},
 		}, nil))
+}
+
+// deleteBase deletes the test's knowledge base.
+func (s *KnowledgeSuite) deleteBase() int {
+	return s.serverClient.do(http.MethodDelete, "/v1/agents/knowledge?namespace="+s.namespace, nil, nil)
 }
 
 // documents lists what the test's knowledge base holds.

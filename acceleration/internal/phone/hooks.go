@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -57,15 +58,39 @@ func (s *Stream) CallHooks(ctx context.Context) ([]CallHook, error) {
 
 	hooks := make([]CallHook, 0, len(response.Data.App.EventHooks))
 	for _, hook := range response.Data.App.EventHooks {
-		hooks = append(hooks, CallHook{
-			URL:         value(hook.WebhookUrl),
-			EventTypes:  hook.EventTypes,
-			Enabled:     hook.Enabled == nil || *hook.Enabled,
-			HookType:    value(hook.HookType),
-			Destination: destinationOf(hook),
-		})
+		hooks = append(hooks, callHookOf(hook))
 	}
 	return hooks, nil
+}
+
+// EnsureCallHook makes the app deliver call events to the router, and writes only when it
+// does not already.
+//
+// A hook under the router's path counts whichever app segment it carries, and is left as it
+// is: rewriting it through the SDK would drop fields the SDK does not model.
+//
+// Reports whether it wrote.
+func (s *Stream) EnsureCallHook(ctx context.Context, publicURL string, app int64) (bool, error) {
+	base := strings.TrimSuffix(publicURL, "/") + CallHookPath
+	url := base
+	if app != 0 {
+		url += "/" + strconv.FormatInt(app, 10)
+	}
+
+	var wrote bool
+	err := s.ChangeHooks(ctx, func(hooks []chat.Hook) ([]chat.Hook, bool, error) {
+		current := make([]CallHook, 0, len(hooks))
+		for _, hook := range hooks {
+			current = append(current, callHookOf(hook.EventHook))
+		}
+		if _, found := MissingCallHookEvents(current, base); found {
+			return hooks, false, nil
+		}
+		hooks, _, err := WithCallHook(hooks, url)
+		wrote = err == nil
+		return hooks, wrote, err
+	})
+	return wrote, err
 }
 
 // PointCallHook makes the app deliver call events to a url, leaving every other hook alone.
@@ -176,7 +201,7 @@ func MissingCallHookEvents(hooks []CallHook, url string) ([]string, bool) {
 	found := false
 	for _, hook := range hooks {
 		if !hook.Enabled || (hook.HookType != "" && hook.HookType != webhookHookType) || url == "" ||
-			!strings.HasPrefix(hook.URL, url) {
+			(hook.URL != url && !strings.HasPrefix(hook.URL, url+"/")) {
 			continue
 		}
 		if len(hook.EventTypes) == 0 {
@@ -208,6 +233,16 @@ func WithoutHook(hooks []chat.Hook, url string) ([]chat.Hook, bool) {
 		kept = append(kept, hook)
 	}
 	return kept, len(kept) != len(hooks)
+}
+
+func callHookOf(hook getstream.EventHook) CallHook {
+	return CallHook{
+		URL:         value(hook.WebhookUrl),
+		EventTypes:  hook.EventTypes,
+		Enabled:     hook.Enabled == nil || *hook.Enabled,
+		HookType:    value(hook.HookType),
+		Destination: destinationOf(hook),
+	}
 }
 
 // destinationOf describes where a hook delivers, for a human reading a list of them.

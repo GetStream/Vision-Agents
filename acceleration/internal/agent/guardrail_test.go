@@ -3,12 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 

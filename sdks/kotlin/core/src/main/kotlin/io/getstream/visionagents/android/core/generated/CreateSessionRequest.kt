@@ -64,6 +64,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param languages Language hints, which narrow the candidates in every modality.
  * @param llm A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
  * @param maxTokens 
+ * @param maxToolRounds The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
  * @param memory 
  * @param minConfidence How sure the transcriber must be before the agent answers rather than checks what was meant.
  * @param modelOverwrites 
@@ -159,6 +160,10 @@ internal data class CreateSessionRequest (
 
     @SerialName(value = "max_tokens")
     val maxTokens: kotlin.Int? = null,
+
+    /* The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups. */
+    @SerialName(value = "max_tool_rounds")
+    val maxToolRounds: kotlin.Int? = null,
 
     @SerialName(value = "memory")
     val memory: SessionMemory? = null,

@@ -1438,6 +1438,7 @@ func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) ([]llm.Conte
 	close(r.stopped)
 	return nil, ctx.Err()
 }
+
 func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 	s.ownsTools("")
 	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}

@@ -303,8 +303,10 @@ func (s *speculation) drop() {
 func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 	if err != nil {
 		if spec.ctx.Err() == nil {
-			spec.harness.Rule(harness.Decided{CandidateID: spec.ready.ID, Err: err,
-				TookMs: float64(time.Since(spec.startedAt).Microseconds()) / 1000})
+			spec.harness.Rule(harness.Decided{
+				CandidateID: spec.ready.ID, Err: err,
+				TookMs: float64(time.Since(spec.startedAt).Microseconds()) / 1000,
+			})
 		}
 		return
 	}

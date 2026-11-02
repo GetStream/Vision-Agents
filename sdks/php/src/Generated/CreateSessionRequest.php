@@ -51,6 +51,8 @@ final readonly class CreateSessionRequest
         // A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no con...
         public ?string $llm = null,
         public ?int $maxTokens = null,
+        // The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to an...
+        public ?int $maxToolRounds = null,
         public ?SessionMemory $memory = null,
         // How sure the transcriber must be before the agent answers rather than checks what was meant.
         public ?float $minConfidence = null,
@@ -118,6 +120,7 @@ final readonly class CreateSessionRequest
             languages: array_key_exists('languages', $data) && $data['languages'] !== null ? Json::strings($data, 'languages') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
             maxTokens: array_key_exists('max_tokens', $data) && $data['max_tokens'] !== null ? Json::int($data, 'max_tokens') : null,
+            maxToolRounds: array_key_exists('max_tool_rounds', $data) && $data['max_tool_rounds'] !== null ? Json::int($data, 'max_tool_rounds') : null,
             memory: array_key_exists('memory', $data) && $data['memory'] !== null ? SessionMemory::fromArray(Json::object($data, 'memory')) : null,
             minConfidence: array_key_exists('min_confidence', $data) && $data['min_confidence'] !== null ? Json::float($data, 'min_confidence') : null,
             modelOverwrites: array_key_exists('model_overwrites', $data) && $data['model_overwrites'] !== null ? ModelOverwrites::fromArray(Json::object($data, 'model_overwrites')) : null,
@@ -204,6 +207,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->maxTokens !== null) {
             $out['max_tokens'] = $this->maxTokens;
+        }
+        if ($this->maxToolRounds !== null) {
+            $out['max_tool_rounds'] = $this->maxToolRounds;
         }
         if ($this->memory !== null) {
             $out['memory'] = $this->memory->toArray();

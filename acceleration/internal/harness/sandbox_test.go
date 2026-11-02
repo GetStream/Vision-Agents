@@ -366,7 +366,8 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 // call github__list_tools, so the line also says to tell the user.
 func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect() {
 	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Unconnected: []sandbox.Grant{
-		{Binding: "github", Hosts: []string{"api.github.com"}}}}}
+		{Binding: "github", Hosts: []string{"api.github.com"}},
+	}}}
 	s.build(true)
 	s.slow.calls = runCode("call-1", "print(issues())")
 	s.slow.automatic = "Connect GitHub first."
@@ -385,7 +386,8 @@ func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHav
 // on a connection whose connector revision cannot bind the grant.
 func (s *HarnessSuite) TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemReconnect() {
 	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Reconnect: []sandbox.Grant{
-		{Binding: "github", Hosts: []string{"api.github.com", "uploads.github.com"}}}}}
+		{Binding: "github", Hosts: []string{"api.github.com", "uploads.github.com"}},
+	}}}
 	s.build(true)
 	s.slow.calls = runCode("call-1", "print(issues())")
 	s.slow.automatic = "Reconnect GitHub first."
@@ -494,8 +496,10 @@ func (s *HarnessSuite) TestASearchThatFailedIsToldToTheSubagent() {
 // pdfSkills is a stored skill that came as a folder, with a reference and a script.
 func pdfSkills() Skills {
 	return Skills{
-		Skills: []Skill{{Name: "pdf", Description: "fill PDF forms", Deadline: time.Minute,
-			Files: []string{"reference/forms.md", "scripts/fill.py"}}},
+		Skills: []Skill{{
+			Name: "pdf", Description: "fill PDF forms", Deadline: time.Minute,
+			Files: []string{"reference/forms.md", "scripts/fill.py"},
+		}},
 		Load: func(context.Context, string) (Loaded, error) {
 			return Loaded{Instructions: "Fill the form.", Files: map[string]string{
 				"reference/forms.md": "# Forms\nUse field names as printed.",
@@ -559,7 +563,9 @@ func (s *HarnessSuite) TestASandboxMadeAgainGetsTheSkillsFilesAgain() {
 	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
 
 	s.Equal(Done, s.awaitSettled(1)[0].State)
-	s.Equal([]string{"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
-		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py"}, s.box.writes(),
+	s.Equal([]string{
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+	}, s.box.writes(),
 		"the new sandbox holds nothing written into the last")
 }

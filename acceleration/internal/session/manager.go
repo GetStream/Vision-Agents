@@ -793,6 +793,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			LanguageHints:      spec.LanguageHints,
 			Keyterms:           spec.Keyterms,
 			MaxTokens:          spec.MaxTokens,
+			MaxToolRounds:      spec.MaxToolRounds,
 			Overwrites:         spec.LLMOverwrites(),
 			Memory:             remembering,
 			Knowledge:          m.options.Knowledge,

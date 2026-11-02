@@ -3,10 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"log/slog"
 	"sync"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"

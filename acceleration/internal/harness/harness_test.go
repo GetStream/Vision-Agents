@@ -647,8 +647,10 @@ func (s *HarnessSuite) TestAnInterruptedToolReplyResendsTheToolResult() {
 	s.fast.capabilities.Store = true
 	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
 	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
-	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	s.harness.Remember(llm.Response{
+		ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup",
+	})
 	history = append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
@@ -668,14 +670,18 @@ func (s *HarnessSuite) TestAFinishedToolReplyCanStillBeContinued() {
 	s.fast.capabilities.Store = true
 	history := []llm.Message{{Role: llm.User, Content: "find my booking"}}
 	s.answer(Turn{ID: "lookup", Instructions: "be brief", History: history})
-	s.harness.Remember(llm.Response{ID: "lookup", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup"})
+	s.harness.Remember(llm.Response{
+		ID: "lookup", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-lookup",
+	})
 	history = append(history,
 		llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}},
 		llm.Message{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booking found"})
 	s.answer(Turn{ID: "tool-reply", Instructions: "be brief", History: history})
-	s.harness.Remember(llm.Response{ID: "tool-reply", Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer"})
+	s.harness.Remember(llm.Response{
+		ID: "tool-reply", Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: "provider-answer",
+	})
 	added := []llm.Message{{Role: llm.Assistant, Content: "Your booking is tomorrow."}, {Role: llm.User, Content: "thanks"}}
 	s.answer(Turn{ID: "thanks", Instructions: "be brief", History: append(history, added...)})
 	sent := s.fast.requests()[2]

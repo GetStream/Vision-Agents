@@ -3,7 +3,6 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -305,8 +305,10 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 }
 
 func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
-	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "uh-huh okay", "got it", "thank you", "uh yeah",
-		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks"} {
+	for _, assent := range []string{
+		"okay okay", "yeah yeah", "uh huh", "uh-huh", "uh-huh okay", "got it", "thank you", "uh yeah",
+		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks",
+	} {
 		s.Run(assent, func() {
 			s.False(takesFloor(assent), "assent is somebody listening")
 		})

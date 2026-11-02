@@ -1074,8 +1074,10 @@ func (s *OpenAICompatSuite) TestTheReasoningEffortIsResolvedBeforeItIsSent() {
 	s.ask(provider, hello())
 	s.Equal("low", sent, "a request naming none gets the model's own default")
 
-	s.ask(provider, llm.ResponseParams{Input: hello().Input,
-		Reasoning: llm.ReasoningParams{Effort: "high"}})
+	s.ask(provider, llm.ResponseParams{
+		Input:     hello().Input,
+		Reasoning: llm.ReasoningParams{Effort: "high"},
+	})
 	s.Equal("high", sent)
 }
 

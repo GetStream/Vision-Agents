@@ -296,6 +296,18 @@ func (s *Store) ClaimKnowledgePlace(ctx context.Context, customerID, namespace s
 	return kept.Place(), nil
 }
 
+// ForgetKnowledgePlace forgets where a customer's knowledge base is kept, once it is dropped.
+func (s *Store) ForgetKnowledgePlace(ctx context.Context, customerID, namespace string) error {
+	_, err := s.db.NewDelete().Model((*KnowledgeNamespace)(nil)).
+		Where("customer_id = ?", customerID).
+		Where("namespace = ?", namespace).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: forget knowledge place: %w", err))
+	}
+	return nil
+}
+
 // KnowledgeInCustomerAccounts is every knowledge base kept in a customer's own account, by
 // customer and then namespace: what the hourly storage job reads on each one's key, since the
 // deployment's account does not list them.
@@ -393,6 +405,43 @@ func (s *Store) DeleteKnowledgeDocument(ctx context.Context, customerID, id stri
 		return unknownKnowledgeDocument(id)
 	}
 	return nil
+}
+
+// DeleteKnowledgeBase forgets every document and marks every page of one knowledge base as
+// gone, and returns how many of each there were. Their passages are the caller's to remove,
+// since they are not in this database.
+func (s *Store) DeleteKnowledgeBase(ctx context.Context, customerID, namespace string) (documents, pages int64, err error) {
+	if customerID == "" || namespace == "" {
+		return 0, 0, stack.Wrap(errors.New("store: a customer and a namespace are required"))
+	}
+
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		deleted, err := tx.NewDelete().Model((*KnowledgeDocument)(nil)).
+			Where("customer_id = ?", customerID).
+			Where("namespace = ?", namespace).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if documents, err = deleted.RowsAffected(); err != nil {
+			return err
+		}
+		marked, err := tx.NewUpdate().Model((*KnowledgeURL)(nil)).
+			Set("deleted_at = ?", time.Now().UTC()).
+			Where("customer_id = ?", customerID).
+			Where("namespace = ?", namespace).
+			Where("deleted_at IS NULL").
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		pages, err = marked.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return 0, 0, stack.Wrap(fmt.Errorf("store: delete knowledge base: %w", err))
+	}
+	return documents, pages, nil
 }
 
 func unknownKnowledgeDocument(id string) error {

@@ -273,6 +273,7 @@ type CreateSessionRequest struct {
 	Languages            *[]string          `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
 	Llm                  *string            `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
 	MaxTokens            *int               `json:"max_tokens,omitempty"`
+	MaxToolRounds        *int               `json:"max_tool_rounds,omitempty" doc:"The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups."`
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
@@ -299,6 +300,7 @@ type CreateSessionRequest struct {
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_tokens"].Format = ""
+	schema.Properties["max_tool_rounds"].Format = ""
 	schema.Properties["tool_timeout_ms"].Format = ""
 	return schema
 }

@@ -2,6 +2,10 @@
 
 ## Features
 
+### A session sets how many tool rounds a reply may chain
+
+`max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.
+
 ### A Flutter app on a call can show the agent its camera
 
 `VoiceSession.join(camera: true)` or `setCameraEnabled(true)` in `vision_agents_rtc` now lets the agent look through the phone's camera, as the Swift, Kotlin and JS SDKs do. When the agent's `vision` skill asks what the camera shows (`get_video_frames`), the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken until the agent asks. A camera with nothing to show is said as the answer, so the agent asks the person to show it again; with the camera off the session does not answer, leaving the call to a video worker in the backend. Unlike the other SDKs, which keep the last few seconds, the pictures are taken just after the question rather than just before it. `vision_agents_rtc` now depends on `image` (#1449).
@@ -93,6 +97,14 @@ new conversation's session names `io.getstream.visionagents.androidassistant:/co
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
 
+### Kotlin sessions read their channel as Stream Chat keeps it
+
+`AgentSession.channelState(context, scope)` in the Kotlin SDK watches the conversation's Stream
+Chat channel on the client `chat(context)` opens and answers Stream Chat's
+`StateFlow<ChannelState?>`: its messages, oldest first, kept live by the client and watched again
+after a reconnect while the flow is held. `ChatClient.loadOlderMessages(cid, limit)` pages back
+into it. An incognito session, or a client connected as somebody else, is refused as by `chat`.
+
 ### Kotlin apps manage the user's scheduled tasks
 
 `agents.scheduledTasks` in the Kotlin SDK lists, reads, changes, pauses, resumes and deletes the
@@ -177,6 +189,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 `knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
+### A knowledge base can be deleted
+
+`DELETE /v1/agents/knowledge?namespace=<name>` deletes one of the caller's knowledge bases for good: everything turbopuffer holds of it, the documents it was filled with and the pages it was kept filled from, which are no longer read. A base an agent config reads is refused with a 409 `knowledge_base_in_use` naming those agents, and one the caller has nothing in is a 404 `knowledge_base_not_found`, whatever another app has under that name. The delete is one entry in the audit log. It is server-side only. Its name can then be filled again, in any region and account, as a base never written to (AI-1996).
+
 ### GPT-6.1 Terra is `openai/gpt-6.1-terra`
 
 OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
@@ -195,6 +211,16 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A bought or attached number reaches its agent
+
+Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+
+### A voice reply cut short is billed for what it generated
+
+A speech-to-speech reply the caller hung up on, one cut off by a dropped connection, and one a newer reply took the place of were recorded with no usage, so they cost nothing. On OpenAI Realtime, xAI and Qwen, closing the session mid-reply cancels the reply and waits up to a second for the vendor's count of it, and a reply a newer one took the place of is billed with its own count when it arrives. On Gemini Live an interrupted reply is billed with the usage the server sends when it ends the turn. A reply the vendor never counts is billed on an estimate, marked estimated and counted in `router_usage_estimated_total` with the reason `cancelled`: the input of the last reply the vendor counted in the session, output audio tokens at the session's own rate for the audio it streamed (before any reply is counted, 20 a second for OpenAI and Qwen, 50 for xAI, 25 for Gemini), and its transcript at four characters a token. An xAI reply estimated so also carries the audio it sent to the session's last row, unless a later xAI count already took it in. Qwen-Audio, which never reports usage, is not estimated (AI-1726).
+### A model response cut short is billed for what it generated
+
+A Claude response cut off before its final usage event was recorded with the one output token Anthropic counts as it opens. Its row now keeps Anthropic's prompt count and bills the output at least at what streamed, marked estimated; a deadline that ends one is a timeout, billed the same way, not a provider error. A response that fails after streaming output is billed on an estimate, as a cancelled one is, and counted in `router_usage_estimated_total` with the reason `failed`; one that fails before any output stays unbilled. A response its caller closed and never read to the end writes its row 5 seconds after the close instead of never (AI-1726).
 ### A call into a held session with other custom data is refused
 
 A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A session's call that carries no custom of its own, as one `Agent.outbound_call` makes, is given the `custom` sent and places. A call with the same custom as the session's call, or with none, places as before (AI-2471).
@@ -394,6 +420,10 @@ Every turn's instructions end with the date and the hour in UTC, and in the user
 ### The greeting is said when somebody joins the call, not when the agent does
 
 An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
+
+### A page removed while it is read stays out of its knowledge base
+
+The URL crawler wrote a page's passages even when the page was removed while it was read, so an agent went on answering out of a page no list showed. The crawler now looks for the page again before it writes and once it has written, and takes back what it wrote when the page is gone (AI-1996).
 
 ### Go clients keep working with a region
 

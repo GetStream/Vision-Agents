@@ -2,11 +2,11 @@ package agent
 
 import (
 	"errors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )

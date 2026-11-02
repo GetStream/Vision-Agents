@@ -33,8 +33,10 @@ func (k *kept) answer(turnID string) llm.ResponseParams {
 // replies writes a reply to the last turn and keeps it, with what it was sent, as the agent does.
 func (k *kept) replies(turnID, providerID, said string) {
 	k.s.reply(turnID, said)
-	carried := k.s.harness.Remember(llm.Response{ID: turnID, Status: llm.StatusCompleted,
-		Provider: "stub", Model: "stub-model", ProviderResponseID: providerID})
+	carried := k.s.harness.Remember(llm.Response{
+		ID: turnID, Status: llm.StatusCompleted,
+		Provider: "stub", Model: "stub-model", ProviderResponseID: providerID,
+	})
 	k.history = append(k.history, carried...)
 	k.history = append(k.history, llm.Message{Role: llm.Assistant, Content: strings.TrimSpace(said)})
 }

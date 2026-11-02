@@ -134,7 +134,7 @@ func spokenResults(history []llm.Message) []llm.Message {
 // maxToolRounds is the reply to a tool result, counted since the caller last spoke, that is
 // made to answer rather than reach for another tool, on a call or in text. Progressive tools
 // spend a round describing each tool before running it, so it leaves room for three of them
-// and a query corrected once.
+// and a query corrected once. It is the default Options.MaxToolRounds overrides.
 const maxToolRounds = 8
 
 // lateResult introduces the result of a call answered with stillRunning. It comes after
@@ -292,8 +292,10 @@ func changedState(history []llm.Message, i int) bool {
 
 // transientWords are what a tool's error says when it failed for a reason of the moment
 // rather than because of the values it was sent.
-var transientWords = []string{"timeout", "timed out", "rate limit", "too many requests",
-	"service unavailable", "temporarily unavailable"}
+var transientWords = []string{
+	"timeout", "timed out", "rate limit", "too many requests",
+	"service unavailable", "temporarily unavailable",
+}
 
 // transientResult reports whether a failed tool result says the same call may succeed if made
 // again: an HTTP status that says so (llm.TransientStatus) under "status", "status_code" or
