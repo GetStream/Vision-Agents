@@ -3,10 +3,14 @@
 package redisready
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -65,6 +69,9 @@ func NewClient(options rueidis.ClientOption) (rueidis.Client, error) {
 // empty address skips Ready.
 //
 // A failed build must leave nothing running: what it returned with its error is dropped.
+//
+// Only a dial that stalled, was refused or was cut is tried again: a deterministic error, such
+// as a missing option, fails at once.
 func Retry[T any](address string, build func() (T, error)) (T, error) {
 	var none T
 	if address != "" {
@@ -78,11 +85,22 @@ func Retry[T any](address string, build func() (T, error)) (T, error) {
 		if err == nil {
 			return built, nil
 		}
+		if !dialFailure(err) {
+			return none, err
+		}
 		if time.Now().After(deadline) {
 			return none, fmt.Errorf("redisready: %s still failing within %s: %w", address, ready, err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// dialFailure is whether err is a connection that did not come up in time or was cut, which
+// a later try can get past.
+func dialFailure(err error) bool {
+	var network net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.As(err, &network)
 }
 
 // Wait returns once the Redis at address answers PING, or an error after the given time.
@@ -105,7 +123,8 @@ func Wait(address string, within time.Duration) error {
 }
 
 // ping sends one inline PING and wants +PONG back. A Redis still loading its dataset
-// answers with an error instead, which is not ready.
+// answers with an error instead, which is not ready. A -NOAUTH answer is a Redis that is up and
+// wants a password, which the client built after the wait sends.
 func ping(address string) error {
 	conn, err := net.DialTimeout("tcp", address, redisAttempt)
 	if err != nil {
@@ -123,7 +142,7 @@ func ping(address string) error {
 	if _, err := io.ReadFull(conn, reply); err != nil {
 		return err
 	}
-	if string(reply) != pong {
+	if string(reply) != pong && !strings.HasPrefix(string(reply), "-NOAUTH") {
 		return fmt.Errorf("unexpected reply %q", reply)
 	}
 	return nil

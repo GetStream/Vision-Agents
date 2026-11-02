@@ -271,6 +271,9 @@ type RouterSuite struct {
 	// redisAddr and shardRedisAddr are the addresses of the deployment's Redis, which the work
 	// bus is on, and of the one every node's relay is on.
 	redisAddr, shardRedisAddr string
+	// workRedis, set by a test about a node made again, is the client the work bus is on, in
+	// place of the suite's own.
+	workRedis rueidis.Client
 	// shard and otherShard are the shards of the suite's node and of otherNode, for a suite
 	// about shards to set before it starts the harness. Nodes in two shards have a relay
 	// each. Empty is one deployment of one shard.
@@ -1863,8 +1866,12 @@ func (s *RouterSuite) newNode(shard string, logger *slog.Logger, options Options
 
 // workBus is one node's end of the bus its workers take work on, which every shard shares.
 func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
+	redis := s.live.Redis()
+	if s.workRedis != nil {
+		redis = s.workRedis
+	}
 	bus, err := relay.New(relay.Options{
-		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
+		Redis: redis, Prefix: s.relayPrefix, Logger: logger,
 	})
 	s.Require().NoError(err)
 	return bus
