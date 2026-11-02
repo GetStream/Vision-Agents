@@ -331,8 +331,8 @@ func (s *OAuthSuite) TestALoginForSomeToolsetsIsForTheWholeServer() {
 }
 
 func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
-	s.T().Setenv("CALENDAR_MCP_CLIENT_ID", "web-client")
-	s.T().Setenv("CALENDAR_MCP_CLIENT_SECRET", "web-secret")
+	s.T().Setenv("GOOGLE_CALENDAR_MCP_CLIENT_ID", "web-client")
+	s.T().Setenv("GOOGLE_CALENDAR_MCP_CLIENT_SECRET", "web-secret")
 	var secrets []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secrets = append(secrets, r.FormValue("client_secret"))
@@ -342,13 +342,13 @@ func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
 	auth := &Auth{HTTP: server.Client()}
 
 	_, err := auth.Exchange(context.Background(), Owner{}, Pending{
-		PluginID: "calendar", ClientID: "web-client", TokenEndpoint: server.URL,
+		PluginID: "google_calendar", ClientID: "web-client", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
-	_, err = auth.Refresh(context.Background(), Owner{}, "calendar", server.URL, "web-client", "ref")
+	_, err = auth.Refresh(context.Background(), Owner{}, "google_calendar", server.URL, "web-client", "ref")
 	s.Require().NoError(err)
 	_, err = auth.Exchange(context.Background(), Owner{}, Pending{
-		PluginID: "calendar", ClientID: "registered-on-the-fly", TokenEndpoint: server.URL,
+		PluginID: "google_calendar", ClientID: "registered-on-the-fly", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
 
@@ -422,6 +422,45 @@ func (s *OAuthSuite) TestAServerNamedByURLNeverTakesTheDeploymentsClient() {
 		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", Scopes: []string{"read"}, ByURL: true}, "")
 
 	s.ErrorContains(err, "does not advertise dynamic client registration")
+}
+
+// The client id a server named by URL registers is whatever it answers, so it may be the
+// one the deployment holds a secret for under the server's name. The client is public all
+// the same, and the secret never goes to that server's token endpoint.
+func (s *OAuthSuite) TestAServerNamedByURLNeverGetsTheDeploymentsSecret() {
+	var secrets []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "http://" + r.Host + "/authorize",
+			TokenEndpoint:         "http://" + r.Host + "/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "deployment-client"})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("deployment-client", r.FormValue("client_id"))
+		secrets = append(secrets, r.FormValue("client_secret"))
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", RefreshToken: "ref"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	s.T().Setenv("NOTES_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("NOTES_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+
+	pending, err := auth.StartAuthorize(context.Background(), Owner{},
+		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", ByURL: true}, "")
+	s.Require().NoError(err)
+	s.Require().Equal("deployment-client", pending.ClientID)
+	_, err = auth.Exchange(context.Background(), Owner{}, pending, "code")
+	s.Require().NoError(err)
+	_, err = auth.Refresh(context.Background(), Owner{}, pending.PluginID, pending.TokenEndpoint, pending.ClientID, "ref")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"", ""}, secrets, "the exchange and the refresh both go without the secret")
 }
 
 func (s *OAuthSuite) TestAServerWithALoginTheRouterCanMakePassesTheCheck() {
