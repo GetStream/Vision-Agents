@@ -29,7 +29,7 @@ func roles(body map[string]any) []string {
 }
 
 func (s *AnthropicSuite) TestALaterSystemTurnIsASystemMessageOnAModelThatTakesOne() {
-	_, err := s.collect(s.provider(Options{Model: "claude-sonnet-5-5"}), noteTurn())
+	_, err := s.collect(s.provider(Options{Model: "claude-opus-5"}), noteTurn())
 	s.Require().NoError(err)
 
 	body := s.sent()[0].body
@@ -38,7 +38,7 @@ func (s *AnthropicSuite) TestALaterSystemTurnIsASystemMessageOnAModelThatTakesOn
 }
 
 func (s *AnthropicSuite) TestALaterSystemTurnIsToldOnTheUsersSideOnOneThatDoesNot() {
-	for _, model := range []string{"claude-sonnet-5", "claude-sonnet-5-20260301", "claude-unknown-9"} {
+	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-sonnet-5-20260301", "claude-unknown-9"} {
 		s.SetupTest()
 		_, err := s.collect(s.provider(Options{Model: model}), noteTurn())
 		s.Require().NoError(err)

@@ -91,15 +91,12 @@ func newMessages(options Options) (*LLM, error) {
 	}, nil
 }
 
-// systemTurnModels take a system message after a user turn mid-conversation, and apply it as
-// a system instruction without disturbing the cached prefix before it. Claude Sonnet 5 does
-// not, and neither does a model this list has not heard of: a later system message is told
-// to those on the user's side, as it always was.
-var systemTurnModels = []string{
-	"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8",
-	"claude-sonnet-5-5", "claude-haiku-5-5",
-	"claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
-}
+// systemTurnModels take a system message after a user turn mid-conversation and follow it,
+// without disturbing the cached prefix before it. The API takes one from more models than
+// these, but Sonnet 5.5 followed one in 6 of 9 tries and Haiku 5.5 in 1 of 8, against every
+// try when it was told on the user's side; the Opus models followed every one. Any other
+// model, measured or not, is told on the user's side, as it always was.
+var systemTurnModels = []string{"claude-opus-5-5", "claude-opus-5"}
 
 // datedModel is a model name pinned to a snapshot date, which is the same model.
 var datedModel = regexp.MustCompile(`-\d{8}$`)
