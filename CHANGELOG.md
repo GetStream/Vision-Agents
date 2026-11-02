@@ -214,6 +214,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### Changing a live session's models keeps its labels
+
+Moving a running session onto other models or another voice (`PATCH /v1/agents/sessions/{id}`) wrote back the whole session as it was read before the move, so a title, custom data or a connector chosen while the models moved was lost. It now writes back only the models, voice and overwrites it changed, under the lock the session's other changes take, and the session's log rows, fan-out and API reads take the same lock (AI-2481).
+
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
