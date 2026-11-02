@@ -6092,6 +6092,8 @@ export type components = {
             /** @description A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured. */
             readonly llm?: string;
             readonly max_tokens?: number;
+            /** @description The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups. */
+            readonly max_tool_rounds?: number;
             readonly memory?: components["schemas"]["SessionMemory"];
             /**
              * Format: double

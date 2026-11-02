@@ -3406,6 +3406,9 @@ components:
           type: string
         max_tokens:
           type: integer
+        max_tool_rounds:
+          description: The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+          type: integer
         memory:
           $ref: '#/components/schemas/SessionMemory'
         min_confidence:

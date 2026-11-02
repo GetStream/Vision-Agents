@@ -2,6 +2,10 @@
 
 ## Features
 
+### A session sets how many tool rounds a reply may chain
+
+`max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.
+
 ### A Flutter app on a call can show the agent its camera
 
 `VoiceSession.join(camera: true)` or `setCameraEnabled(true)` in `vision_agents_rtc` now lets the agent look through the phone's camera, as the Swift, Kotlin and JS SDKs do. When the agent's `vision` skill asks what the camera shows (`get_video_frames`), the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken until the agent asks. A camera with nothing to show is said as the answer, so the agent asks the person to show it again; with the camera off the session does not answer, leaving the call to a video worker in the backend. Unlike the other SDKs, which keep the last few seconds, the pictures are taken just after the question rather than just before it. `vision_agents_rtc` now depends on `image` (#1449).

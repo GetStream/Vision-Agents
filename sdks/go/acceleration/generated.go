@@ -5056,6 +5056,9 @@ type CreateSessionRequest struct {
 	Llm       *string `json:"llm,omitempty"`
 	MaxTokens *int    `json:"max_tokens,omitempty"`
 
+	// MaxToolRounds The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+	MaxToolRounds *int `json:"max_tool_rounds,omitempty"`
+
 	// Memory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
 	Memory *SessionMemory `json:"memory,omitempty"`
 
