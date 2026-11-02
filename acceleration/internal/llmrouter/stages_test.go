@@ -279,6 +279,44 @@ func (s *StagesSuite) TestARetryThatGotNoHeadersHasNoWaitFromTheTryBefore() {
 	s.Zero(waits, "the request that counts never heard back")
 }
 
+func (s *StagesSuite) TestARetryThatGotNoConnectionHasNoWaitFromTheTryBefore() {
+	config := s.config()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(answering)
+		// Asked again at once, on a new connection.
+		w.Header().Set("Retry-After-Ms", "1")
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	s.T().Cleanup(server.Close)
+	var dials atomic.Int32
+	never := make(chan struct{})
+	s.T().Cleanup(func() { close(never) })
+	transport := server.Client().Transport.(*http.Transport)
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if dials.Add(1) > 1 {
+			<-never
+			return nil, errors.New("never dialled")
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	session := s.session(server, config)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	go func() {
+		for dials.Load() < 2 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+
+	_, err := session.Create(ctx, llm.ResponseParams{Input: prompt()})
+	s.Require().Error(err)
+
+	waits, _ := s.stage(config, config.Model, routing.StageWait)
+	s.Zero(waits, "the request that counts never got a connection")
+}
+
 func (s *StagesSuite) TestARequestAnsweredBeforeItWasWrittenHasNoWait() {
 	// A provider may answer, a 413 say, while the request is still being written; the write
 	// then fails, or ends after the answer was read. The hooks run as the transport calls them.
