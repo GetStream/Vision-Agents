@@ -1325,7 +1325,7 @@ func (s *SessionSuite) TestTheGreetingWaitsForSomebodyToJoinTheCall() {
 	s.manages()
 	s.joins(Spec{Greeting: "Hi, I'm listening."})
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
@@ -1342,7 +1342,7 @@ func (s *SessionSuite) TestTheGreetingGivesWhoeverJoinedTimeToHearIt() {
 
 	s.call().arrives(visitor)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
 		"the greeting started the moment somebody joined")
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
 }
@@ -1366,7 +1366,7 @@ func (s *SessionSuite) TestTheGreetingIsSaidOnceWhoeverJoinsAfter() {
 	s.saw(events, caller, true)
 
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
-	s.Never(func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said again")
 }
 
@@ -1376,7 +1376,7 @@ func (s *SessionSuite) TestTheAgentsOwnVideoUserIsNotGreeted() {
 
 	s.rings(Spec{Greeting: "Hi, I'm listening."}, video)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the agent greeted itself")
 }
 
@@ -1395,7 +1395,7 @@ func (s *SessionSuite) TestStartingVoiceGreetsWhoeverJoinsTheCall() {
 	created := s.writes(Spec{Greeting: "Hi, I'm listening."})
 	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
