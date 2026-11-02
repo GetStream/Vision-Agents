@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -88,47 +89,40 @@ func (s *StagesSuite) ask(ctx context.Context, session *Session) llm.Response {
 	return response
 }
 
-// stage is how many requests router_llm_stage_seconds observed a stage of, and their total.
-func (s *StagesSuite) stage(config routing.ProviderConfig, model, stage string) (uint64, time.Duration) {
+// series is the metric of that name with those labels, nil when nothing was observed under them.
+func (s *StagesSuite) series(name string, labels map[string]string) *dto.Metric {
 	families, err := prometheus.DefaultGatherer.Gather()
 	s.Require().NoError(err)
 	for _, family := range families {
-		if family.GetName() != "router_llm_stage_seconds" {
+		if family.GetName() != name {
 			continue
 		}
 		for _, metric := range family.GetMetric() {
-			labels := map[string]string{}
+			matched := 0
 			for _, pair := range metric.GetLabel() {
-				labels[pair.GetName()] = pair.GetValue()
+				if labels[pair.GetName()] == pair.GetValue() {
+					matched++
+				}
 			}
-			if labels["provider"] == config.Provider && labels["model"] == model && labels["stage"] == stage {
-				histogram := metric.GetHistogram()
-				return histogram.GetSampleCount(), time.Duration(histogram.GetSampleSum() * float64(time.Second))
+			if matched == len(labels) {
+				return metric
 			}
 		}
 	}
-	return 0, 0
+	return nil
+}
+
+// stage is how many requests router_llm_stage_seconds observed a stage of, and their total.
+func (s *StagesSuite) stage(config routing.ProviderConfig, model, stage string) (uint64, time.Duration) {
+	histogram := s.series("router_llm_stage_seconds",
+		map[string]string{"provider": config.Provider, "model": model, "stage": stage}).GetHistogram()
+	return histogram.GetSampleCount(), time.Duration(histogram.GetSampleSum() * float64(time.Second))
 }
 
 // connections is router_llm_connections_total for a provider.
 func (s *StagesSuite) connections(provider string, reused bool) float64 {
-	families, err := prometheus.DefaultGatherer.Gather()
-	s.Require().NoError(err)
-	for _, family := range families {
-		if family.GetName() != "router_llm_connections_total" {
-			continue
-		}
-		for _, metric := range family.GetMetric() {
-			labels := map[string]string{}
-			for _, pair := range metric.GetLabel() {
-				labels[pair.GetName()] = pair.GetValue()
-			}
-			if labels["provider"] == provider && labels["reused"] == fmt.Sprint(reused) {
-				return metric.GetCounter().GetValue()
-			}
-		}
-	}
-	return 0
+	return s.series("router_llm_connections_total",
+		map[string]string{"provider": provider, "reused": fmt.Sprint(reused)}).GetCounter().GetValue()
 }
 
 func (s *StagesSuite) TestEachStageIsTheTimeSpentInItAlone() {
