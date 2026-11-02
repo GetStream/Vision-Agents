@@ -1,0 +1,417 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// ErrNotLeaseHolder is a runner settling a contact it no longer holds: another took it over
+// after its lease ran out, or it was settled already.
+var ErrNotLeaseHolder = errors.New("store: another runner holds this contact")
+
+// Whether an answered dial's outcome is still to be read from its transcript.
+const (
+	classifyPending = "pending"
+	classifyDone    = "done"
+)
+
+// Claimed is a contact a runner now holds the lease of, with its campaign.
+type Claimed struct {
+	Campaign Campaign
+	Contact  Contact
+}
+
+// StartDueCampaigns starts the scheduled campaigns whose start time has come.
+func (s *Store) StartDueCampaigns(ctx context.Context, now time.Time) error {
+	_, err := s.db.NewUpdate().Model((*Campaign)(nil)).
+		Set("state = ?", Running).
+		Set("started_at = COALESCE(started_at, ?)", now).
+		Where("state = ?", Scheduled).
+		Where("start_at <= ?", now).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: start due campaigns: %w", err))
+	}
+	return nil
+}
+
+// ClaimDueContacts leases up to max contacts that are due to be rung, to owner until now+lease.
+// A campaign never has more contacts in progress than its concurrency, however many runners
+// claim at once.
+func (s *Store) ClaimDueContacts(ctx context.Context, owner string, now time.Time, lease time.Duration, max int) ([]Claimed, error) {
+	if owner == "" {
+		return nil, stack.Wrap(errors.New("store: a claim needs an owner"))
+	}
+	if max <= 0 {
+		return nil, nil
+	}
+
+	var claimed []Claimed
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Holding the campaign's row is what keeps two runners from both counting the same
+		// free slots: whoever holds it counts and claims, the other skips the campaign this
+		// tick. At most max campaigns are held, so the rest stay free for other runners.
+		var campaigns []Campaign
+		err := tx.NewSelect().Model(&campaigns).
+			Where("cp.state = ?", Running).
+			Where(`EXISTS (SELECT 1 FROM campaign_contacts cc WHERE cc.campaign_id = cp.id
+				AND cc.stage = ? AND cc.next_attempt_at <= ?)`, Enrolled, now).
+			Where(`cp.concurrency > (SELECT count(*) FROM campaign_contacts cc WHERE cc.campaign_id = cp.id
+				AND cc.stage = ?)`, InProgress).
+			Order("cp.started_at ASC", "cp.id ASC").
+			Limit(max).
+			For("UPDATE SKIP LOCKED").
+			Scan(ctx)
+		if err != nil {
+			return fmt.Errorf("store: lock due campaigns: %w", err)
+		}
+
+		for _, campaign := range campaigns {
+			remaining := max - len(claimed)
+			if remaining == 0 {
+				break
+			}
+			inProgress, err := tx.NewSelect().Model((*Contact)(nil)).
+				Where("campaign_id = ?", campaign.ID).
+				Where("stage = ?", InProgress).
+				Count(ctx)
+			if err != nil {
+				return fmt.Errorf("store: count calls in progress: %w", err)
+			}
+			free := min(campaign.Concurrency-inProgress, remaining)
+			if free <= 0 {
+				continue
+			}
+
+			var contacts []Contact
+			err = tx.NewRaw(`WITH due AS (
+	SELECT id FROM campaign_contacts
+	WHERE campaign_id = ? AND stage = ? AND next_attempt_at <= ?
+	ORDER BY next_attempt_at, seq
+	LIMIT ?
+	FOR UPDATE SKIP LOCKED
+), claimed AS (
+	UPDATE campaign_contacts cc SET stage = ?, leased_by = ?, leased_until = ?
+	FROM due WHERE cc.id = due.id
+	RETURNING cc.*
+)
+SELECT * FROM claimed ORDER BY next_attempt_at, seq`,
+				campaign.ID, Enrolled, now, free, InProgress, owner, now.Add(lease)).Scan(ctx, &contacts)
+			if err != nil {
+				return fmt.Errorf("store: claim due contacts: %w", err)
+			}
+			for _, contact := range contacts {
+				claimed = append(claimed, Claimed{Campaign: campaign, Contact: contact})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return claimed, nil
+}
+
+// TakeOverExpired leases to owner up to max contacts whose call's runner stopped renewing its
+// lease, most likely because it died. The new owner settles the call; it never dials again.
+func (s *Store) TakeOverExpired(ctx context.Context, owner string, now time.Time, lease time.Duration, max int) ([]Claimed, error) {
+	if owner == "" {
+		return nil, stack.Wrap(errors.New("store: a take-over needs an owner"))
+	}
+	if max <= 0 {
+		return nil, nil
+	}
+
+	var contacts []Contact
+	err := s.db.NewRaw(`WITH expired AS (
+	SELECT id FROM campaign_contacts
+	WHERE stage = ? AND leased_until < ?
+	ORDER BY leased_until
+	LIMIT ?
+	FOR UPDATE SKIP LOCKED
+)
+UPDATE campaign_contacts cc SET leased_by = ?, leased_until = ?
+FROM expired WHERE cc.id = expired.id
+RETURNING cc.*`, InProgress, now, max, owner, now.Add(lease)).Scan(ctx, &contacts)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: take over expired leases: %w", err))
+	}
+	if len(contacts) == 0 {
+		return nil, nil
+	}
+
+	campaigns, err := campaignsOf(ctx, s.db, contacts)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	claimed := make([]Claimed, 0, len(contacts))
+	for _, contact := range contacts {
+		claimed = append(claimed, Claimed{Campaign: campaigns[contact.CampaignID], Contact: contact})
+	}
+	return claimed, nil
+}
+
+// Settle is where a contact goes once its lease holder is done with a call.
+type Settle struct {
+	// Stage is Enrolled for another attempt, AwaitingOutcome for an answered call not yet
+	// classified, or where the sequence ended it.
+	Stage string
+	// StepID moves the contact to another step of the sequence; empty keeps the one it is on.
+	StepID        string
+	Attempt       int
+	NextAttemptAt *time.Time
+	Outcome       string
+	Converted     bool
+	Reason        string
+	// CallID and VendorCallID are the last dial's; empty keeps the ones already stored.
+	CallID, VendorCallID string
+}
+
+// SettleContact records where a call left a contact and releases owner's lease on it. A contact
+// stopped while in the call, or whose campaign was stopped, is stopped rather than rung again;
+// one the sequence finished, or whose answered call still awaits its outcome, settles as given. A
+// contact that no longer exists, because its campaign was deleted mid-call, is nothing to settle.
+func (s *Store) SettleContact(ctx context.Context, owner, contactID string, settle Settle) error {
+	if owner == "" || contactID == "" {
+		return stack.Wrap(errors.New("store: an owner and a contact id are required"))
+	}
+	if settle.Stage == "" || settle.Stage == InProgress {
+		return stack.Wrap(fmt.Errorf("store: a contact cannot settle in stage %q", settle.Stage))
+	}
+
+	// Only a stage that would ring the contact again gives way to a stop. An answered call
+	// still gets its outcome read, and settles stopped from there.
+	stoppable := settle.Stage == Enrolled
+	result, err := s.db.ExecContext(ctx, `UPDATE campaign_contacts cc SET
+	stage = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN ? ELSE ? END,
+	next_attempt_at = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN NULL ELSE ?::timestamptz END,
+	reason = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN cc.reason ELSE ? END,
+	step_id = COALESCE(?, cc.step_id),
+	attempt = ?,
+	outcome = ?,
+	converted = ?,
+	call_id = COALESCE(?, cc.call_id),
+	vendor_call_id = COALESCE(?, cc.vendor_call_id),
+	leased_by = '',
+	leased_until = NULL
+FROM campaigns cp
+WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN (?, ?)`,
+		stoppable, Stopped, ContactStopped, settle.Stage,
+		stoppable, Stopped, settle.NextAttemptAt,
+		stoppable, Stopped, nullable(settle.Reason),
+		nullable(settle.StepID), settle.Attempt, settle.Outcome, settle.Converted,
+		nullable(settle.CallID), nullable(settle.VendorCallID),
+		contactID, owner, InProgress, AwaitingOutcome)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: settle contact: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: settle contact: %w", err))
+	}
+	if affected > 0 {
+		return nil
+	}
+	exists, err := s.db.NewSelect().Model((*Contact)(nil)).Where("id = ?", contactID).Exists(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: settle contact: %w", err))
+	}
+	if exists {
+		return stack.Wrap(ErrNotLeaseHolder)
+	}
+	return nil
+}
+
+// StartDial records a dial about to be placed, filling in its id and, when not set, when it
+// started.
+func (s *Store) StartDial(ctx context.Context, attempt *CampaignAttempt) error {
+	if attempt.CampaignID == "" || attempt.ContactID == "" {
+		return stack.Wrap(errors.New("store: a dial needs a campaign and a contact"))
+	}
+	attempt.ID = newID()
+	if attempt.StartedAt.IsZero() {
+		attempt.StartedAt = time.Now().UTC()
+	}
+	if attempt.Dial == 0 {
+		attempt.Dial = 1
+	}
+	if _, err := s.db.NewInsert().Model(attempt).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: start dial: %w", err))
+	}
+	return nil
+}
+
+// EndDial records how a dial ended. A classifyAfter marks an answered call whose outcome is to
+// be read from its transcript once it is written. A dial deleted with its campaign is nothing
+// to end.
+func (s *Store) EndDial(ctx context.Context, id string, result, callID, vendorCallID string, endedAt time.Time, classifyAfter *time.Time) error {
+	classify := ""
+	if classifyAfter != nil {
+		classify = classifyPending
+	}
+	_, err := s.db.NewUpdate().Model((*CampaignAttempt)(nil)).
+		Set("result = ?", result).
+		Set("call_id = COALESCE(NULLIF(?, ''), call_id)", callID).
+		Set("vendor_call_id = COALESCE(NULLIF(?, ''), vendor_call_id)", vendorCallID).
+		Set("ended_at = ?", endedAt).
+		Set("classify_state = ?", classify).
+		Set("classify_after = ?", classifyAfter).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: end dial: %w", err))
+	}
+	return nil
+}
+
+// LatestDial returns a contact's most recent dial, and false when it was never dialed.
+func (s *Store) LatestDial(ctx context.Context, contactID string) (CampaignAttempt, bool, error) {
+	var attempt CampaignAttempt
+	err := s.db.NewSelect().Model(&attempt).
+		Where("contact_id = ?", contactID).
+		Order("started_at DESC", "dial DESC").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CampaignAttempt{}, false, nil
+	}
+	if err != nil {
+		return CampaignAttempt{}, false, stack.Wrap(fmt.Errorf("store: latest dial: %w", err))
+	}
+	return attempt, true, nil
+}
+
+// Classifying is an answered dial whose outcome a runner is to read, with the contact it now
+// holds the lease of and the campaign.
+type Classifying struct {
+	Attempt  CampaignAttempt
+	Contact  Contact
+	Campaign Campaign
+}
+
+// ClaimClassifications hands owner up to max answered dials whose transcript should be written
+// by now. Each is put off by lease, so another runner retries it if this one dies, and its
+// contact is leased to owner so owner can settle it.
+func (s *Store) ClaimClassifications(ctx context.Context, owner string, now time.Time, lease time.Duration, max int) ([]Classifying, error) {
+	if owner == "" {
+		return nil, stack.Wrap(errors.New("store: a claim needs an owner"))
+	}
+	if max <= 0 {
+		return nil, nil
+	}
+
+	var claimed []Classifying
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var attempts []CampaignAttempt
+		err := tx.NewRaw(`WITH due AS (
+	SELECT ca.id FROM campaign_attempts ca
+	JOIN campaign_contacts cc ON cc.id = ca.contact_id
+	WHERE ca.classify_state = ? AND ca.classify_after <= ? AND cc.stage = ?
+	ORDER BY ca.classify_after
+	LIMIT ?
+	FOR UPDATE OF ca, cc SKIP LOCKED
+)
+UPDATE campaign_attempts ca SET classify_after = ?, classify_tries = ca.classify_tries + 1
+FROM due WHERE ca.id = due.id
+RETURNING ca.*`, classifyPending, now, AwaitingOutcome, max, now.Add(lease)).Scan(ctx, &attempts)
+		if err != nil {
+			return fmt.Errorf("store: claim classifications: %w", err)
+		}
+		if len(attempts) == 0 {
+			return nil
+		}
+
+		contactIDs := make([]string, 0, len(attempts))
+		for _, attempt := range attempts {
+			contactIDs = append(contactIDs, attempt.ContactID)
+		}
+		var contacts []Contact
+		err = tx.NewUpdate().Model(&contacts).
+			Set("leased_by = ?", owner).
+			Set("leased_until = ?", now.Add(lease)).
+			Where("id IN (?)", bun.In(contactIDs)).
+			Returning("*").
+			Scan(ctx)
+		if err != nil {
+			return fmt.Errorf("store: lease contacts to classify: %w", err)
+		}
+		campaigns, err := campaignsOf(ctx, tx, contacts)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]Contact, len(contacts))
+		for _, contact := range contacts {
+			byID[contact.ID] = contact
+		}
+		for _, attempt := range attempts {
+			contact := byID[attempt.ContactID]
+			claimed = append(claimed, Classifying{Attempt: attempt, Contact: contact, Campaign: campaigns[contact.CampaignID]})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return claimed, nil
+}
+
+// Classified records an answered dial's outcome. A dial deleted with its campaign is nothing to
+// record.
+func (s *Store) Classified(ctx context.Context, attemptID, outcome string, converted bool) error {
+	_, err := s.db.NewUpdate().Model((*CampaignAttempt)(nil)).
+		Set("classify_state = ?", classifyDone).
+		Set("classify_after = NULL").
+		Set("outcome = ?", outcome).
+		Set("converted = ?", converted).
+		Where("id = ?", attemptID).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: classified: %w", err))
+	}
+	return nil
+}
+
+// CompleteCampaigns completes the running campaigns that have nobody left to ring and no call
+// whose outcome is still unknown. An auto-enroll campaign waits for more people instead.
+func (s *Store) CompleteCampaigns(ctx context.Context, now time.Time) error {
+	_, err := s.db.NewUpdate().Model((*Campaign)(nil)).
+		Set("state = ?", Completed).
+		Set("finished_at = ?", now).
+		Where("cp.state = ?", Running).
+		Where("cp.type = ?", Standard).
+		Where(`NOT EXISTS (SELECT 1 FROM campaign_contacts cc WHERE cc.campaign_id = cp.id
+			AND ((cc.stage = ? AND cc.next_attempt_at IS NOT NULL) OR cc.stage IN (?, ?)))`,
+			Enrolled, InProgress, AwaitingOutcome).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: complete campaigns: %w", err))
+	}
+	return nil
+}
+
+// campaignsOf returns the campaigns of contacts, by id.
+func campaignsOf(ctx context.Context, db bun.IDB, contacts []Contact) (map[string]Campaign, error) {
+	var ids []string
+	for _, contact := range contacts {
+		if !slices.Contains(ids, contact.CampaignID) {
+			ids = append(ids, contact.CampaignID)
+		}
+	}
+	var campaigns []Campaign
+	if err := db.NewSelect().Model(&campaigns).Where("id IN (?)", bun.In(ids)).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("store: campaigns of contacts: %w", err)
+	}
+	byID := make(map[string]Campaign, len(campaigns))
+	for _, campaign := range campaigns {
+		byID[campaign.ID] = campaign
+	}
+	return byID, nil
+}

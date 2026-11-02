@@ -132,7 +132,7 @@ func (s *StoreSuite) SetupTest() {
 				" connector_event_destinations, connector_event_deliveries, contact_map, user_phones, episodes,"+
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
-				" campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
+				" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
 				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls CASCADE",
 		)
 		s.Require().NoError(err)
