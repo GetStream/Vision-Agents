@@ -260,9 +260,11 @@ kept across `setUser` and never disconnected here; one connected as another user
 closes nothing. A client is built only when a session first asks for one.
 
 **Guests.** `agents.guestUser(_:store:)` mints a guest (`createGuestUser`), or hands back the
-one a `GuestStore` remembers; one whose token has expired is asked for again by id, which the
-router answers with the same guest and a fresh token. `setUser(_ guest:)` acts as them, and
-`forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
+one a `GuestStore` remembers; one whose token has expired is asked for again with its id and
+the `refresh_secret` the store keeps beside it, which the router answers with the same guest, a
+fresh token and the next secret. A secret works once, so whatever comes back replaces what was
+stored; one lost or spent gets a new guest. The secret stays in the store, never on `Guest`.
+`setUser(_ guest:)` acts as them, and `forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
 keeps the guest wherever it keeps things, the keychain included; `FileGuestStore(url:)` is the
 one provided, and a store holding something unreadable means a new guest, not an error.
 `GuestOptions(fresh: true)` is a "not me" button. Claiming a guest's history for an account is

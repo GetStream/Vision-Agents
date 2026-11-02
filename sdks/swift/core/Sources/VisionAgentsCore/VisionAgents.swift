@@ -155,7 +155,9 @@ public struct VisionAgents: Sendable {
     /// Gets or creates a guest, so somebody can talk to an agent before they sign up.
     ///
     /// Remembered in `store` where there is one, so the next launch is the same guest and not
-    /// a second one with an empty history. Pass it to `setUser` to act as them. With no user
+    /// a second one with an empty history. Once its token expires it comes back with the
+    /// refresh secret the store keeps beside it, which works once; a store that lost it, or
+    /// holds one already spent, gets a new guest. Pass it to `setUser` to act as them. With no user
     /// set it is asked for anonymously, which a router must admit; one that does not is
     /// answered with a guest your backend mints instead. Moving a
     /// guest's conversations onto the account they turn out to be is server-side only: it is
