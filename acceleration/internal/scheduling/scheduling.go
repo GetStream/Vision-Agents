@@ -71,7 +71,7 @@ func CheckMove(next time.Time, current *time.Time, now time.Time) error {
 
 // MaxActivePerUser is the default cap on a user's active tasks, used when the
 // agent config does not set one.
-const MaxActivePerUser = 25
+const MaxActivePerUser = store.DefaultMaxActiveTasks
 
 const (
 	maxCount = 1000
@@ -290,6 +290,31 @@ func FromStored(task store.ScheduledTask) (*Schedule, error) {
 		schedule.Repeat = rule.String()
 	}
 	return schedule, nil
+}
+
+// StoredClock reads a time-of-day at (09:00) that names the stored start's
+// time of day as the stored start itself, so resending it is not a new time.
+// A time-of-day reads as today, which on a recurring task is never the stored
+// date. Any other at is returned as written. Only a repeating schedule reads
+// it so: on a one-shot, a time-of-day moves to its next occurrence.
+func StoredClock(at string, stored time.Time) string {
+	at = strings.TrimSpace(at)
+	for _, layout := range []string{"15:04:05", "15:04"} {
+		if parsed, err := time.ParseInLocation(layout, at, time.UTC); err == nil {
+			stored = wallOf(stored)
+			if parsed.Hour() == stored.Hour() && parsed.Minute() == stored.Minute() && parsed.Second() == stored.Second() {
+				return stored.Format("2006-01-02T15:04:05")
+			}
+		}
+	}
+	return at
+}
+
+// MovesStartFrom reports whether this schedule starts at a different clock
+// reading than a stored start. A reschedule that sends the stored one back, editing only its repeat
+// or until, does not move the start.
+func (s *Schedule) MovesStartFrom(stored time.Time) bool {
+	return !s.StartLocal.Equal(wallOf(stored))
 }
 
 // FromNow moves a repeat whose first occurrence has passed to start at its

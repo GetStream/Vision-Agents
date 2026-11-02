@@ -63,7 +63,8 @@ func (s *RegionsSuite) SetupSuite() {
 			Endpoint: s.us.URL, APIKeyEnv: regionsUSKey},
 		{Provider: anthropic.ProviderName, Model: model, Languages: []string{"la"}, Region: pricing.RegionEU,
 			Endpoint: s.eu.URL, APIKeyEnv: regionsEUKey},
-		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU},
+		// Run in process, so free work rather than unpriced, as a model a deployment runs itself.
+		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU, Local: true},
 		// What the flow controller and the title of an eu agent's session run on (llm-flow, llm-fast).
 		{Provider: "stub", Model: "stub-model", Languages: []string{"en"}, Realtime: true, Region: pricing.RegionEU},
 	}
@@ -258,6 +259,28 @@ func (s *RegionsSuite) TestASyncNamingModelsWithNoInstanceInItsRegionIsRefusedNa
 	s.NotContains(refusal, haiku, "haiku has an eu instance")
 }
 
+func (s *RegionsSuite) TestAnAgentWhoseWorkInItsRegionHasNoPriceIsRefusedNamingEach() {
+	status, _, refusal := s.synced(map[string]any{"name": "unpriced-" + s.utils.uuid(), "region": pricing.RegionEU,
+		"llm": "stub/stub-model", "subagent": haiku})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(refusal, "llm: llm/stub/stub-model (eu) has no price")
+	s.NotContains(refusal, "claude-haiku", "haiku is priced in the eu")
+}
+
+func (s *RegionsSuite) TestAnAgentOnTheCustomersOwnKeyIsSavedWhenItsBYOKWorkIsPriced() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": "turbopuffer", "region": pricing.RegionEU, "api_key": "tpuf_own"}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": anthropic.ProviderName, "region": pricing.RegionEU, "api_key": "sk-own"}, nil))
+
+	status, agent, refusal := s.synced(map[string]any{"region": pricing.RegionEU, "llm": haiku, "mode": "text",
+		"knowledge": []map[string]string{{"source": "refunds.md", "text": "Refunds take thirty days."}}})
+
+	s.Require().Equal(http.StatusOK, status, refusal)
+	s.Equal(pricing.RegionEU, agent.Region)
+}
+
 func (s *RegionsSuite) TestARefusedSyncStoresNothing() {
 	name := "far-" + s.utils.uuid()
 
@@ -279,24 +302,27 @@ func (s *RegionsSuite) TestARegionOfAnotherFormIsRefused() {
 }
 
 func (s *RegionsSuite) TestAConfigNamingAModelWithNoInstanceInItsRegionIsRefusedOnACreateAPutAndAPatch() {
+	// The deployment runs it itself, in the default region only, so it is saved there on a
+	// list that prices nothing of the suite's.
+	const usOnly = "echo/local-model"
 	status, refusal := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
-		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo("counted/counted-model"),
+		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo(usOnly),
 	})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "llm: no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "llm: no instance of "+usOnly+" in region eu")
 
 	var stored AgentConfig
-	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo("counted/counted-model")}
+	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo(usOnly)}
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &stored))
 	s.Equal(pricing.RegionUS, stored.Region)
 	request.Region = pointerTo(pricing.RegionEU)
 	status, refusal = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+stored.Id, request)
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 	status, refusal = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+stored.Id,
 		AgentConfigPatch{Region: pointerTo(pricing.RegionEU)})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 }
 
 func (s *RegionsSuite) TestAPutLeavingTheRegionOutKeepsTheStoredOne() {

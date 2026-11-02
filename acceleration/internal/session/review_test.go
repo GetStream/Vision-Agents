@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/stretchr/testify/suite"
@@ -252,6 +253,43 @@ func (s *ReviewSuite) judgedBy(thinker *llmtest.Thinker) (judgement, error) {
 	s.T().Cleanup(reviews.Close)
 	return reviews.judge(context.Background(), store.Call{ID: "call-thought-over", CustomerID: "customer-reviewed"},
 		"", "en-low-latency", "", thoughtOver)
+}
+
+// screenedBy is a router to provider whose prompt injection screen refuses input quoting
+// injected, as the live screen refuses a review or a title that quotes a refused turn.
+func screenedBy(s *suite.Suite, config routing.ModalityConfig, provider llmrouter.Provider) *llmrouter.Router {
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return provider, nil })
+	screen := func(_ context.Context, _ routing.Owner, input []llm.Message) <-chan error {
+		verdict := make(chan error, 1)
+		for _, message := range input {
+			if strings.Contains(message.Content, injected) {
+				verdict <- screenRefusal
+			}
+		}
+		close(verdict)
+		return verdict
+	}
+	router, err := llmrouter.New(llmrouter.Options{Config: config, Registry: reasoning, Screen: screen, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *ReviewSuite) TestACallWithARefusedTurnIsReviewedWithItWithheld() {
+	reviews := newReviewer(screenedBy(&s.Suite, stubConfig(), &llmtest.Thinker{Answer: reviewAnswer}), nil, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(reviews.Close)
+	call := store.Call{ID: "call-refused", CustomerID: "customer-reviewed"}
+
+	// The refused line quoted as it was said is refused again, which is the review failing.
+	_, err := reviews.judge(context.Background(), call, "", "en-low-latency", "",
+		[]spoken{{text: injected}, {agent: true, text: "It ships on Friday."}})
+	s.Require().ErrorIs(err, policy.ErrPromptInjection)
+
+	verdict, err := reviews.judge(context.Background(), call, "", "en-low-latency", "", refusedCall())
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
 }
 
 // Claude Opus 5.5 thought for up to 456 tokens before writing a review on staging, all of

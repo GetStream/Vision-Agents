@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -917,12 +918,18 @@ func (s *Session) FlushRecords(ctx context.Context) error {
 	return s.records.Flush(ctx)
 }
 
-// HistoryOf is recorded turns as a model is handed them: each question, then its answer.
+// HistoryOf is recorded turns as a model is handed them: each question, then its answer. A
+// turn the prompt injection screen refused is withheld as the live agent withheld it, with
+// no answer after it.
 func HistoryOf(exchanges []store.Exchange) []llm.Message {
 	history := make([]llm.Message, 0, 2*len(exchanges))
 	for _, exchange := range exchanges {
 		if exchange.Said != "" {
 			history = append(history, llm.Message{Role: llm.User, Content: exchange.Said})
+		}
+		if exchange.Refused {
+			history = agent.Withheld(history)
+			continue
 		}
 		if exchange.Answer != "" {
 			history = append(history, llm.Message{Role: llm.Assistant, Content: exchange.Answer})
@@ -1624,7 +1631,7 @@ func (s *Session) write(event Event) {
 		// An error names which part failed rather than which turn, because a transcriber or
 		// a voice falling over is not a property of one turn. So it fails whatever was in
 		// flight: a turn left open would be read back forever as a question nobody answered.
-		s.failTurns(typed.Context, typed.Err)
+		s.failTurns(typed.Context, typed.Err, typed.TurnID)
 	}
 }
 
@@ -1747,23 +1754,31 @@ func (s *Session) abandonTurns() {
 	}
 }
 
-// failTurns records a failure against every turn still in flight and closes them.
-func (s *Session) failTurns(where string, cause error) {
+// failTurns records a failure against every turn still in flight and closes them. The turn
+// the prompt injection screen refused, with every reply that continued it, is closed as
+// refused, so what it asked is never replayed to a model; the others failed with it.
+func (s *Session) failTurns(where string, cause error, refusedTurn string) {
 	reason := cause.Error()
 	if where != "" {
 		reason = where + ": " + reason
 	}
 
 	s.turnsMu.Lock()
+	refused := s.turns[refusedTurn]
 	failing := make([]string, 0, len(s.turns))
-	for turnID := range s.turns {
+	statuses := make(map[string]string, len(s.turns))
+	for turnID, turn := range s.turns {
 		failing = append(failing, turnID)
+		statuses[turnID] = store.ResponseFailed
+		if turn == refused {
+			statuses[turnID] = store.ResponseRefused
+		}
 	}
 	s.turnsMu.Unlock()
 
 	for _, turnID := range failing {
 		s.item(turnID, store.ItemError, reason, "", nil)
-		s.endTurn(turnID, store.ResponseFailed, reason)
+		s.endTurn(turnID, statuses[turnID], reason)
 	}
 }
 
@@ -1805,6 +1820,11 @@ func (s *Session) remember(event Event) {
 		line = spoken{agent: true, text: typed.Text}
 	case agent.Said:
 		line = spoken{agent: true, text: typed.Text}
+	case agent.Error:
+		if errors.Is(typed.Err, policy.ErrPromptInjection) {
+			s.withhold()
+		}
+		return
 	default:
 		return
 	}
@@ -1816,6 +1836,17 @@ func (s *Session) remember(event Event) {
 	defer s.saidMu.Unlock()
 	if len(s.said) < reviewLimit {
 		s.said = append(s.said, line)
+	}
+}
+
+// withhold replaces what the caller said since the agent last spoke, which the prompt
+// injection screen refused, as agent.Withheld does in the agent's history. A review or a
+// title that quoted it would be refused by the same screen.
+func (s *Session) withhold() {
+	s.saidMu.Lock()
+	defer s.saidMu.Unlock()
+	for i := len(s.said) - 1; i >= 0 && !s.said[i].agent; i-- {
+		s.said[i].text = agent.WithheldInput
 	}
 }
 

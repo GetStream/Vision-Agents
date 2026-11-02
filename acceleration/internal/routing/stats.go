@@ -228,6 +228,10 @@ const ErrorCancelled = store.ErrorCancelled
 // generated until then is billed.
 const ErrorTimeout = "timeout"
 
+// ErrorRefused is the ErrorCode of a response the prompt injection screen refused. The
+// provider answered as asked, so it is kept out of its health as a cancelled request is.
+const ErrorRefused = store.ErrorRefused
+
 // ErrorKeyRefused is the ErrorCode of work on a customer's own key (BYOK) that the vendor refused
 // the key for: revoked, mistyped, or without access to the model. It is the customer's to fix,
 // and like every failure on their key it is kept out of the vendor's health.
@@ -420,7 +424,11 @@ func (r *Recorder) lose(config ProviderConfig, entry Stat, cause error) {
 func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pricing.Quote) {
 	request := row(r.modality, config, entry)
 	request.UserID = userOnRow(entry.CustomerID, entry.UserID)
-	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
+	pricedBy := quote
+	if entry.CostMicros != 0 {
+		pricedBy = quoteBesideQuoted
+	}
+	priced := pricedBy(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	request.BaseCostMicros, request.PriceVersion, request.SKU = priced.BaseCostMicros, priced.Version, priced.SKU
 	if entry.CostMicros != 0 {
@@ -585,9 +593,9 @@ func liveUsage(request store.Request) live.Usage {
 
 // measuresProvider reports whether a request says anything about its provider's health.
 // One its caller cancelled does not: it neither failed nor was served, and how long it ran
-// is how long it was left to, not how long the provider took. It is still billed for what
-// it generated before it was cut off, so it is kept in the customer's spend and the request
-// log.
+// is how long it was left to, not how long the provider took. Nor does one the screen
+// refused, which the provider answered as asked. Both are still billed for what they
+// generated, so they are kept in the customer's spend and the request log.
 func measuresProvider(request store.Request) bool {
-	return request.ErrorCode != ErrorCancelled
+	return request.ErrorCode != ErrorCancelled && request.ErrorCode != ErrorRefused
 }

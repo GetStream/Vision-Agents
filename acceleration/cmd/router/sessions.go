@@ -35,7 +35,8 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 		if identity.Secret.Empty() && userToken == "" {
 			// An app acted in with a forwarded token: the agent joins with a user token
 			// the gateway signs, since the router holds no secret to sign one with.
-			minted, err := clients.MintUserToken(ctx, stream, spec.UserID, agentTokenValidity)
+			// The agent joins with the identity's own key, so its token is minted for that key.
+			minted, _, err := clients.MintUserToken(ctx, stream, "", spec.UserID, agentTokenValidity)
 			if err != nil {
 				return nil, err
 			}

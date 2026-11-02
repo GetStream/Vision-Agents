@@ -53,7 +53,12 @@ type scripted struct {
 }
 
 func (s *scripted) Advance(w *ResponseWriter) bool {
-	if s.closed.Load() || len(s.chunks) == 0 {
+	if s.closed.Load() {
+		// As every provider does: closing cancels the request, which it reports as a cancel.
+		w.Cancelled()
+		return false
+	}
+	if len(s.chunks) == 0 {
 		return false
 	}
 	next := s.chunks[0]
@@ -165,6 +170,7 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.IsType(ResponseFailed{}, events[len(events)-2])
 	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+	s.True(stream.Response().Refused)
 }
 
 func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
@@ -247,8 +253,27 @@ func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
 	s.drain(stream)
 
 	s.ErrorIs(stream.Err(), refusal)
-	s.Equal(StatusFailed, stream.Response().Status)
+	s.Equal(StatusFailed, stream.Response().Status, "the provider reported the screen's close as a cancel")
+	s.True(stream.Response().Refused)
 	s.NotContains(stream.Response().OutputText, "system prompt")
+}
+
+func (s *LLMSuite) TestAScreenedResponseItsCallerClosedIsCancelledNotRefused() {
+	verdict := make(chan error, 1)
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("never arrives") },
+	).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+	verdict <- nil
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCancelled, stream.Response().Status)
+	s.False(stream.Response().Refused)
 }
 
 func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {

@@ -1029,6 +1029,17 @@ type AgentScheduling struct {
 	DefaultTimezone string `json:"default_timezone,omitempty"`
 }
 
+// DefaultMaxActiveTasks is the cap on a user's active tasks when the config sets none.
+const DefaultMaxActiveTasks = 25
+
+// MaxActive is how many active tasks one user may hold on this config.
+func (a AgentScheduling) MaxActive() int {
+	if a.MaxTasksPerUser > 0 {
+		return a.MaxTasksPerUser
+	}
+	return DefaultMaxActiveTasks
+}
+
 // Lines are the channels named, by kind.
 func (c AgentChannels) Lines() map[string]string {
 	named := map[string]string{}
@@ -1971,6 +1982,9 @@ const (
 	// ResponseCancelled is one interrupted partway, which is a different thing from
 	// failing: the caller stopped it, and what it had already said still counts.
 	ResponseCancelled = "cancelled"
+	// ResponseRefused is one the prompt injection screen refused. What it was asked is kept
+	// on the row, but never handed to a model again.
+	ResponseRefused = "refused"
 )
 
 // AgentResponse is one turn the agent took in a session.
@@ -1997,6 +2011,17 @@ type Exchange struct {
 	ResponseID string
 	Said       string
 	Answer     string
+	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
+	Refused bool
+}
+
+// Reply is what one reply a conversation's transcript wrote did: its answer and tool_result
+// items, in the order they happened.
+type Reply struct {
+	Items []AgentResponseItem
+	// Refused is a response the prompt injection screen refused, whose tool results since
+	// its last answer are what the screen judged and are not to be replayed.
+	Refused bool
 }
 
 // The kinds of item a response is made of.

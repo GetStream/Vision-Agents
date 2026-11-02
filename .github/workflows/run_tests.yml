@@ -117,8 +117,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
+      # Ubuntu 26.04's PortAudio (19.7) has a PulseAudio backend, and `import sounddevice`
+      # fails without a server to connect to, so the job runs one.
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libportaudio2 pulseaudio
+          pulseaudio --start --exit-idle-time=-1
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
         with:

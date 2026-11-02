@@ -247,8 +247,10 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // deliverChain walks a task's channels in order against the session its
 // conversation is held in, and stops at the first that lands. A failure
 // names every channel tried, for the logs, and is recorded under the first
-// channel's reason. It is final when every channel's failure is, and missed
-// when every channel found the occurrence too late.
+// channel's reason, except a call placed already (rangAlready), which gives
+// already_called. It is final when every channel's failure is, and missed
+// when every channel found the occurrence too late. A call placed for the
+// occurrence whose end the run does not record ends the walk (rangAlready).
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
@@ -275,12 +277,34 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
+		// A call taken with its end never written (a failed give-back or
+		// reason write) counts too: see rangAlready.
+		if rangAlready(err) {
+			// The call decides how the occurrence counts, not a channel before it.
+			reason = scheduling.ReasonRungAlready
+			break
+		}
 	}
 	err := fmt.Errorf("the task could not be delivered (%s)", strings.Join(tried, "; "))
 	if missed {
 		return "", "", &scheduling.Missed{Err: err}
 	}
 	return "", "", &scheduling.Failure{Reason: reason, Final: final, Err: err}
+}
+
+// rangAlready reports whether a channel failed because the occurrence's call was
+// placed already, by an earlier attempt or a worker that stopped, and the run
+// records no reason that call ended under (callEnded). That call may have
+// carried the task out, or been cut off with the user on it, so no later
+// channel says the task again (AI-2021). The same holds when the end could not
+// be written: a call that was not placed whose give-back failed, or any failed
+// reason write after the call was placed (callEnded: not_answered, failed or
+// held), leaves the call taken with no end.
+// A call whose end is recorded, such as not_answered, leaves the next channel
+// to carry the task.
+func rangAlready(err error) bool {
+	var failure *scheduling.Failure
+	return errors.As(err, &failure) && failure.Reason == scheduling.ReasonRungAlready
 }
 
 // deliveryReason is the code a failed attempt is recorded under. Refused for money, it is the

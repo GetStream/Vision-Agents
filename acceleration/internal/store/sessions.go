@@ -792,7 +792,8 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 	for _, response := range responses {
 		exchanges = append(exchanges, Exchange{
 			ResponseID: response.ID, Said: response.Said,
-			Answer: strings.Join(answered[response.ID], "\n\n"),
+			Answer:  strings.Join(answered[response.ID], "\n\n"),
+			Refused: response.Status == ResponseRefused,
 		})
 	}
 	return exchanges, nil
@@ -800,11 +801,11 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 
 // ReplyItems are what the replies a conversation's transcript wrote under these turn ids
 // did, by turn id: the answer and tool_result items of the response each one finished, in
-// the order they happened. Only the customer's own sessions on that conversation are read,
-// so a turn id copied into another transcript finds nothing, and a rewound response is
-// left out. A turn whose answer item names no turn id, as one recorded before they did,
-// finds nothing either.
-func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string][]AgentResponseItem, error) {
+// the order they happened, and whether the response was refused. Only the customer's own
+// sessions on that conversation are read, so a turn id copied into another transcript finds
+// nothing, and a rewound response is left out. A turn whose answer item names no turn id,
+// as one recorded before they did, finds nothing either.
+func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string]Reply, error) {
 	if customerID == "" || conversationID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
@@ -815,6 +816,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 		ResponseID string `bun:"response_id"`
 		TurnID     string `bun:"turn_id"`
 		Ordinal    int    `bun:"ordinal"`
+		Status     string `bun:"status"`
 	}
 	type found struct {
 		answers []answered
@@ -824,7 +826,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (found, error) {
 		var f found
 		err := db.NewSelect().TableExpr("agent_response_items AS ari").
-			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal").
+			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal, r.status").
 			Join("JOIN agent_responses AS r ON r.id = ari.response_id").
 			Join("JOIN agent_sessions AS s ON s.id = r.session_id").
 			Where("s.customer_id = ?", customerID).
@@ -865,23 +867,24 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 			byResponse[item.ResponseID] = append(byResponse[item.ResponseID], item)
 		}
 	}
-	replies := make(map[string][]AgentResponseItem, len(last))
+	replies := make(map[string]Reply, len(last))
 	for responseID, a := range last {
-		replies[a.TurnID] = byResponse[responseID]
+		replies[a.TurnID] = Reply{Items: byResponse[responseID], Refused: a.Status == ResponseRefused}
 	}
 	return replies, nil
 }
 
 // Opening is the first thing said in a customer's conversation, across every session that
-// held it, or empty when none recorded anything said.
-func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (string, error) {
+// held it, or empty when none recorded anything said. Refused says the prompt injection
+// screen refused it.
+func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (Exchange, error) {
 	if customerID == "" || conversationID == "" {
-		return "", stack.Wrap(errors.New("store: a customer and a conversation id are required"))
+		return Exchange{}, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentResponse, error) {
 		var first []AgentResponse
 		err := db.NewSelect().Model(&first).
-			Column("ars.said", "ars.created_at").
+			Column("ars.id", "ars.said", "ars.status", "ars.created_at").
 			Join("JOIN agent_sessions AS s ON s.id = ars.session_id").
 			Where("s.customer_id = ?", customerID).
 			Where("s.conversation_id = ?", conversationID).
@@ -894,13 +897,13 @@ func (s *Store) Opening(ctx context.Context, customerID, conversationID string) 
 		return first, err
 	})
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("store: opening: %w", err))
+		return Exchange{}, stack.Wrap(fmt.Errorf("store: opening: %w", err))
 	}
 	first := merged(lists, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) }, 1)
 	if len(first) == 0 {
-		return "", nil
+		return Exchange{}, nil
 	}
-	return first[0].Said, nil
+	return Exchange{ResponseID: first[0].ID, Said: first[0].Said, Refused: first[0].Status == ResponseRefused}, nil
 }
 
 // RewindResponses takes every response after kept out of the session's conversation.

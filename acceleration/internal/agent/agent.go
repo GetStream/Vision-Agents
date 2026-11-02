@@ -282,6 +282,10 @@ type Agent struct {
 	toolContexts map[string]context.Context
 	// toolTurns is the turn each running call belongs to.
 	toolTurns map[string]string
+	// toolScheduled holds each running call asked for in a turn a scheduled task fired, taken
+	// when the call arrives: the caller can be heard before it runs, and what it hands over is
+	// still that turn's.
+	toolScheduled map[string]bool
 	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
 	toolUpdates map[string]toolUpdate
 	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).
@@ -482,6 +486,15 @@ type Agent struct {
 	// scheduled says that last thing was a turn a scheduled task fired, kept the same way,
 	// so neither it nor the replies that finish it are counted on an end user's day.
 	scheduled bool
+	// scheduledReply is the last native reply begun while scheduled was set, so a tool call
+	// of that reply that arrives after the caller is heard is still the scheduled task's.
+	scheduledReply string
+	// nativeAnswerDue says the caller stopped and no reply has begun since, so the next one
+	// answers their speech, not a scheduled turn typed in between.
+	nativeAnswerDue bool
+	// answerReply is the last native reply that answered the caller's stop, so a tool call of
+	// it is the caller's even when it arrives while a scheduled turn is the last thing.
+	answerReply string
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
@@ -1982,7 +1995,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.generating = true
 	a.toolReply = false
 	a.toolRounds++
-	answers := !a.options.Text && a.toolRounds >= maxToolRounds
+	answers := a.toolRounds >= maxToolRounds
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()
@@ -2410,7 +2423,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		return nil
 	}
 	current := a.harness
-	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx))
+	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
@@ -2421,11 +2434,11 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 
 // chargedLocked marks ctx with who the turn being answered is counted on (llmrouter
 // Session.charged): whoever sent it, and whether a scheduled task fired it.
-func (a *Agent) chargedLocked(ctx context.Context) context.Context {
+func (a *Agent) chargedLocked(ctx context.Context, scheduled bool) context.Context {
 	if !a.sender.IsZero() {
 		ctx = routing.WithCaller(ctx, a.sender)
 	}
-	if a.scheduled {
+	if scheduled {
 		ctx = routing.WithScheduledTurn(ctx)
 	}
 	return ctx
@@ -2635,6 +2648,13 @@ func (a *Agent) handle(event llm.Event) {
 		}
 
 	case llm.ResponseFailed:
+		refused := errors.Is(typed.Err, policy.ErrPromptInjection)
+		if refused {
+			// The reply's skill tags were acted on as it streamed, before the verdict, so the
+			// work they handed over was asked on the refused input. It goes with the turn, a
+			// turn the caller already talked over included.
+			a.harness.CancelTurn(typed.ResponseID, harness.ReasonRefused)
+		}
 		// A reply the agent gave up on is over already, and its stream breaking as it was cut
 		// off is part of the cut. Reported, it would end as failed whatever the conversation
 		// is on, before the interruption ends it as cancelled.
@@ -2642,8 +2662,13 @@ func (a *Agent) handle(event llm.Event) {
 			a.logger.Debug("a reply failed after it was abandoned", "turn", typed.ResponseID, "error", typed.Err)
 			return
 		}
-		if errors.Is(typed.Err, policy.ErrPromptInjection) {
+		if refused {
 			a.refusedReply = typed.ResponseID
+			// A refusal is an outcome of the input, one any caller can bring about at will,
+			// not a failure of the agent: it is reported as one, and logged below error.
+			a.logger.Info("a reply was refused as a prompt injection", "turn", typed.ResponseID, "error", typed.Err)
+			a.emitter.Send(Error{Err: typed.Err, Context: "llm", TurnID: typed.ResponseID})
+			return
 		}
 		a.fail(typed.Err, "llm")
 
@@ -2718,6 +2743,13 @@ func (a *Agent) finish(response llm.Response) {
 	if !a.options.Text {
 		plain = a.messageText(a.directions.Add(tail) + a.directions.Flush())
 	}
+	refused := a.refusedReply == response.ID
+	if refused {
+		// Nothing of a refused reply goes out after the verdict: what the harness, the
+		// stripper and the chunker were still holding of it is dropped with the turn.
+		tail, plain = "", ""
+		a.chunk.Reset()
+	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
 		tail = plain
@@ -2731,7 +2763,6 @@ func (a *Agent) finish(response llm.Response) {
 	if response.Status == llm.StatusFailed {
 		calls = nil
 	}
-	refused := a.refusedReply == response.ID
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -2782,6 +2813,11 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
+	if refused {
+		// What streamed before the verdict, or the apology spoken for the lost reply, is no
+		// answer the agent gave, so it is not reported as one to be recorded.
+		said = ""
+	}
 	a.resetTurn()
 
 	a.mu.Lock()
@@ -2791,7 +2827,7 @@ func (a *Agent) finish(response llm.Response) {
 		// The screen judges only what came after the model last spoke, so a reply recorded
 		// here would leave the refused input behind it, read by every later request and
 		// judged by none.
-		a.history = withheld(a.history)
+		a.history = Withheld(a.history)
 	case said != "" || len(calls) > 0:
 		// A reply that only called a tool is still a turn the model took, and it has to be
 		// recorded with the calls on it: the result sent back answers one of them, and a
@@ -2862,17 +2898,17 @@ func (a *Agent) finish(response llm.Response) {
 	a.followUp()
 }
 
-// withheldInput stands in the history for input the prompt injection screen refused.
-const withheldInput = "[withheld: this read as a prompt injection]"
+// WithheldInput stands in the history for input the prompt injection screen refused.
+const WithheldInput = "[withheld: this read as a prompt injection]"
 
-// withheld is history with what the prompt injection screen judged, the turns and tool
-// results since the model last spoke, replaced by withheldInput. A tool result keeps its
+// Withheld is history with what the prompt injection screen judged, the turns and tool
+// results since the model last spoke, replaced by WithheldInput. A tool result keeps its
 // place, because the call on the history before it still needs an answer.
-func withheld(history []llm.Message) []llm.Message {
+func Withheld(history []llm.Message) []llm.Message {
 	out := slices.Clone(history)
 	for i := len(out) - 1; i >= 0 && out[i].Role != llm.Assistant; i-- {
 		if out[i].Role == llm.User || out[i].Role == llm.ToolResult {
-			out[i].Content, out[i].Parts = withheldInput, nil
+			out[i].Content, out[i].Parts = WithheldInput, nil
 		}
 	}
 	return out

@@ -209,7 +209,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `network: true` or a `network_allow_list` keeps its own.
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
-  the session.
+  the session. Where a later revision has the block, every `run_code` result says to ask the
+  user to reconnect, which takes effect from the next session (`Result.Reconnect`).
 - Google Drive has a block from revision 5 (`GOOGLE_DRIVE_TOKEN`, host `www.googleapis.com`; AI-1958),
   so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
   carries `drive.file`, so code can also create files and change files the app opened. A
@@ -236,7 +237,9 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
   binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that
   binds it says to wait 20 s on a 401 (`Result.Connected`; a run the login finished during says it
-  too). A required binding still refuses the session, and a voice
+  too). A login on a connection whose revision has no `sandbox` block, or another env var or
+  hosts, binds nothing: every run after it says to ask the user to reconnect, which takes effect from the next session (`Result.Reconnect`).
+  A required binding still refuses the session, and a voice
   session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
@@ -283,6 +286,10 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.
+- Known limit (any header, AI-1976, accepted): Daytona substitutes the placeholder in any request
+  header to a granted host, not only `Authorization` (https://www.daytona.io/docs/en/secrets.md,
+  «Substitution scope»; the live suite sends it in `X-Probe`). The proxy broker substitutes only in
+  `Authorization` (`internal/sandbox/egress/AGENTS.md`, step 5). A granted host that echoes that header would hand the token to the sandbox.
 - Known limit (Daytona lag): after the router withdraws a secret (connection deleted or needs a
   reconnect), Daytona keeps substituting it for a while. The withdrawal is an update, which takes
   effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md); a live probe on

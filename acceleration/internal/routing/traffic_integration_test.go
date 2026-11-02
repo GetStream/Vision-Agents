@@ -80,12 +80,14 @@ func (s *RecorderSuite) TestAFailureIsCountedUnderItsOutcomeNeverItsCode() {
 
 	s.recordedAs(LLM, s.prices, vendor,
 		Stat{ErrorCode: ErrorCancelled},
+		Stat{ErrorCode: ErrorRefused},
 		Stat{ErrorCode: ErrorTimeout},
 		Stat{ErrorCode: "rate_limited"},
 		Stat{})
 
 	s.Equal(map[string]float64{
 		"modality=llm,model=m,outcome=cancelled": 1,
+		"modality=llm,model=m,outcome=refused":   1,
 		"modality=llm,model=m,outcome=timeout":   1,
 		"modality=llm,model=m,outcome=error":     2,
 	}, traffic(trafficRequests, "provider", vendor.Provider))
@@ -106,7 +108,7 @@ func (s *RecorderSuite) TestARowWithoutTimingsAddsNoObservation() {
 
 	s.recordedAs(STT, s.prices, vendor, Stat{Success: true, LatencyMs: 120, DurationMs: 900}, Stat{Success: true})
 
-	s.Equal(map[string]float64{"modality=stt count": 1, "modality=stt sum": 0.12},
+	s.Equal(map[string]float64{"modality=stt,model=m count": 1, "modality=stt,model=m sum": 0.12},
 		traffic(trafficFirstOutput, "provider", vendor.Provider), "only the row that has a latency, in seconds")
 	s.Equal(map[string]float64{"modality=stt count": 1, "modality=stt sum": 0.9},
 		traffic(trafficDuration, "provider", vendor.Provider), "only the row that has a duration, in seconds")
@@ -117,15 +119,44 @@ func (s *RecorderSuite) TestTheTimingsAreBucketedFrom25MillisecondsTo60SecondsFi
 
 	s.recordedAs(STT, s.prices, vendor, Stat{Success: true, LatencyMs: 120, DurationMs: 900})
 
-	for _, histogram := range []*prometheus.HistogramVec{trafficFirstOutput, trafficDuration} {
+	for _, series := range []prometheus.Observer{
+		trafficFirstOutput.WithLabelValues(string(STT), vendor.Provider, vendor.Model),
+		trafficDuration.WithLabelValues(string(STT), vendor.Provider),
+	} {
 		var written dto.Metric
-		s.Require().NoError(histogram.WithLabelValues(string(STT), vendor.Provider).(prometheus.Metric).Write(&written))
+		s.Require().NoError(series.(prometheus.Metric).Write(&written))
 		var bounds []float64
 		for _, bucket := range written.GetHistogram().GetBucket() {
 			bounds = append(bounds, bucket.GetUpperBound())
 		}
 		s.Equal([]float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 2, 4, 8, 15, 30, 60}, bounds)
 	}
+}
+
+func (s *RecorderSuite) TestTheFirstOutputIsObservedUnderTheModelOfItsRow() {
+	fast, slow := vendorOfItsOwn(), vendorOfItsOwn()
+	fast.Model = "fast"
+	slow.Provider, slow.Model = fast.Provider, "slow"
+
+	s.recordedAs(STT, s.prices, fast, Stat{Success: true, LatencyMs: 120})
+	s.recordedAs(STT, s.prices, slow, Stat{Success: true, LatencyMs: 900, DurationMs: 1_000})
+
+	s.Equal(map[string]float64{
+		"modality=stt,model=fast count": 1, "modality=stt,model=fast sum": 0.12,
+		"modality=stt,model=slow count": 1, "modality=stt,model=slow sum": 0.9,
+	}, traffic(trafficFirstOutput, "provider", fast.Provider), "one vendor's two models, apart")
+	s.Equal(map[string]float64{"modality=stt count": 1, "modality=stt sum": 1},
+		traffic(trafficDuration, "provider", fast.Provider), "a whole request is still by modality and provider only")
+}
+
+func (s *RecorderSuite) TestACustomersOwnModelsFirstOutputIsObservedUnderCustomNeverItsName() {
+	own := ProviderConfig{Provider: CustomProvider, Model: "traffic-" + uuid.NewString()[:8]}
+	before := traffic(trafficFirstOutput, "provider", CustomProvider)["modality=llm,model=custom count"]
+
+	s.recordedAs(LLM, s.prices, own, Stat{Success: true, LatencyMs: 300, Usage: Usage{InputTokens: 1_000}})
+
+	s.Empty(traffic(trafficFirstOutput, "model", own.Model))
+	s.Equal(before+1, traffic(trafficFirstOutput, "provider", CustomProvider)["modality=llm,model=custom count"])
 }
 
 func (s *RecorderSuite) TestABillableRowCountsItsPriceNotTheVendorsCharge() {

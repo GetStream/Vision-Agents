@@ -83,6 +83,8 @@ type Message struct {
 	ConnectorAuthorizations []ConnectorAuthorization `json:"-"`
 	Saved                   bool                     `json:"saved"`
 	Error                   string                   `json:"persistence_error,omitempty"`
+	// Refused is a reply the prompt injection screen refused (RefusedField).
+	Refused bool `json:"refused,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -382,6 +384,11 @@ func SessionCommandChannel(channelType, id string, custom map[string]any) bool {
 
 const TriggerField = "support_trigger"
 const SessionCommandTrigger = "session_commands"
+
+// RefusedField marks a reply the prompt injection screen refused. It is a field of its own
+// rather than a state, because a client waiting for a reply to settle knows the states it
+// settles in, and a refused reply has failed as far as it is concerned.
+const RefusedField = "refused"
 
 // CustomerField names the customer a channel the router created belongs to.
 const CustomerField = "support_customer_id"
@@ -1009,6 +1016,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
+			msg.Refused = m.Custom[RefusedField] == true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
 				msg.authorName = *m.User.Name
@@ -1080,10 +1088,20 @@ func entries(p Page) []entry {
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
 	// each one twice.
 	replied := false
+	// withheld is whether the message being read was judged with a reply the prompt
+	// injection screen refused: every turn since the last reply a model is handed back, as
+	// agent.Withheld does in the live agent's history.
+	withheld := false
 	for i := len(p.Messages) - 1; i >= 0; i-- {
 		m := p.Messages[i]
 		if m.Role == "assistant" {
 			replied = true
+			switch {
+			case m.Refused:
+				withheld = true
+			case m.State == "completed":
+				withheld = false
+			}
 		}
 		if m.written && !replied {
 			continue
@@ -1095,6 +1113,9 @@ func entries(p Page) []entry {
 			continue
 		}
 		e := entryOf(p, m)
+		if withheld {
+			e.message.Content = agent.WithheldInput
+		}
 		if e.message.Content == "" && e.turn == "" {
 			continue
 		}
@@ -1642,6 +1663,10 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.afterTools()
 		unsaved = true
 	case agent.Error:
+		// Only the screen's refusal names a turn, and only this reply's is about it.
+		if e.TurnID != "" && c.acceptTurn(e.TurnID, false) {
+			refuse(m)
+		}
 		c.finish("failed")
 		return
 	case agent.Interrupted:
@@ -1659,6 +1684,15 @@ func (c *Conversation) Observe(event agent.Event) {
 		m.Saved = false
 	}
 	c.publish(*m)
+}
+
+// refuse marks a reply the prompt injection screen refused. What streamed of the refused
+// round before the verdict is no answer the agent gave, so only the rounds before it stay.
+func refuse(m *Message) {
+	runes := []rune(m.Text)
+	m.Text = strings.TrimSuffix(string(runes[:min(m.AnswerStart, len(runes))]), "\n\n")
+	m.AnswerStart = min(m.AnswerStart, utf8.RuneCountInString(m.Text))
+	m.Refused = true
 }
 
 // acceptTurn retains the original response binding across internal model/tool rounds.
@@ -1874,6 +1908,9 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	runtime := runtimeOf(m)
 	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	if m.Refused {
+		fields[RefusedField] = true
+	}
 	parts := m.Parts
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)

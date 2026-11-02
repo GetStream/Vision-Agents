@@ -475,6 +475,9 @@ type RouterSuite struct {
 	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
 	// the harness. Nil is every vendor the router knows, with no credentials.
 	phoneVendors *phone.Registry
+	// phoneOnChat has the phone service place calls in the suite's Stream app, the chattest,
+	// for a suite to set before it starts the harness. Off, it has no Stream to place them in.
+	phoneOnChat bool
 	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
 	// suite to set before it starts the harness. Off, a session with a number cannot open.
 	sessionTelephony bool
@@ -701,6 +704,7 @@ func (s *RouterSuite) SetupSuite() {
 	}
 	server, err := NewServer(Options{
 		Routers:   s.modalities,
+		Pricer:    s.serverPricer(logger),
 		Prices:    s.prices,
 		Streams:   streams,
 		Relay:     s.relayBus(s.shard, logger),
@@ -1199,6 +1203,17 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
+	// A model whose every request fails with the prompt injection screen's refusal, for a
+	// run whose input the screen refused: the suite routes no screen of its own.
+	reasoning.Register("screened", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)}, nil
+	})
+
+	// A model that recites what it was handed and refuses a request quoting guardedInjection
+	// as the prompt injection screen does, for a conversation past a refused turn.
+	reasoning.Register("guarded", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{recites: true, refusesQuoting: guardedInjection}, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
@@ -1337,6 +1352,44 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // tenth of a second rather than a router's 30, so a change made in a test prices within it.
 const suitePriceReload = 100 * time.Millisecond
 
+// serverPricer is the list the suite's server prices from when the suite prices from no
+// database: the one a server builds from its routers' config, with the stand-in models it
+// leaves unpriced marked as models the deployment runs itself, as a deployment marks its own,
+// so an agent naming one is saved rather than refused for work with no price. Nil for a suite
+// pricing from the database.
+func (s *RouterSuite) serverPricer(logger *slog.Logger) pricing.Pricer {
+	if s.prices != nil {
+		return nil
+	}
+	capabilities := routing.Config{}
+	for modality, router := range s.modalities {
+		capabilities[modality] = router.Config()
+	}
+	knowledgeBase := capabilities[routing.Knowledge]
+	for _, model := range []string{metered.KnowledgeLookup, metered.KnowledgeWrite, metered.KnowledgeStorage} {
+		knowledgeBase.Providers = append(knowledgeBase.Providers, routing.ProviderConfig{
+			Provider: newKnowledgeBase().Provider(), Model: model, Region: pricing.DefaultRegion})
+	}
+	capabilities[routing.Knowledge] = knowledgeBase
+	routed, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	unpriced := routed.Unpriced(routing.Items(capabilities))
+	for modality, config := range capabilities {
+		config.Providers = slices.Clone(config.Providers)
+		for i, provider := range config.Providers {
+			item := routing.ItemOf(modality, provider, nil)
+			config.Providers[i].Local = provider.Local || slices.ContainsFunc(unpriced, func(other pricing.Item) bool {
+				return other.Modality == item.Modality && other.Provider == item.Provider && other.Model == item.Model &&
+					other.Region == item.Region && other.BYOK == item.BYOK
+			})
+		}
+		capabilities[modality] = config
+	}
+	list, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	return list
+}
+
 // databasePrices seeds the suite's price list from the fixtures' price file laid over the
 // embedded vendor list, as a router's first start does with a file of its own (once: every
 // later start finds it seeded and adds only what it lacks), and reads it every
@@ -1347,10 +1400,13 @@ func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
 	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: pricingtest.Entries(s.T()),
 		Source: pricingtest.FileName + ", " + prices.VendorFile, Release: "suite"})
 	s.Require().NoError(err)
-	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
+	reasoned := reasoningConfig()
+	reasoned.Providers = append(reasoned.Providers, s.llmInstances...)
+	local := routing.LocalItems(routing.Config{routing.LLM: reasoned})
+	fallback, err := prices.Embedded(local, "suite", logger)
 	s.Require().NoError(err)
 	return pricing.NewActive(ctx, pricing.ActiveOptions{
-		Source: s.store.PriceSource(), Fallback: fallback, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
+		Source: s.store.PriceSource(), Fallback: fallback, Local: local, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
 	})
 }
 
@@ -1516,8 +1572,13 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 		registry = vendors.Registry(config)
 	}
 
+	var stream *phone.Stream
+	if s.phoneOnChat {
+		stream = phone.NewStreamFromClient(s.chat.Client)
+	}
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  registry,
+		Stream:    stream,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,
@@ -1658,8 +1719,8 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 }
 
 // otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
-// them the way a router going down does.
-func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+// them the way a router going down does. Each of adjust changes the node's options.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger, adjust ...func(*Options)) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1686,7 +1747,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	if workers != nil {
 		everyWorker = s.deploymentWorkers(workers, directory, s.workBus(logger))
 	}
-	server, err := NewServer(Options{
+	options := Options{
 		Routers:           s.modalities,
 		Streams:           s.streams,
 		Sessions:          sessions,
@@ -1709,12 +1770,25 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		// the same database.
 		Phone:  s.router.phone,
 		Logger: logger,
-	})
+	}
+	for _, change := range adjust {
+		change(&options)
+	}
+	server, err := NewServer(options)
 	s.Require().NoError(err)
+	// The node shares the suite's phone service, and the last node made takes its unanswered
+	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
+	s.router.phone.OnUnanswered(s.router.endUnanswered)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
 	return other, server, sessions
+}
+
+// otherNodeServingFrom is otherNodeHolding whose API reads served, rather than the suite's
+// store; nil is a node with no store. Its sessions keep the suite's.
+func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+	return s.otherNodeHolding(workers, keyring, logger, func(o *Options) { o.Store = served })
 }
 
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.

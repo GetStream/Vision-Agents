@@ -192,7 +192,7 @@ public sealed class DispatchTests
             return release.Task;
         });
 
-        await dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal(["0", "1"], router.To("GET", "/v1/dispatch").Select(seen => seen.Query["active"]));
         Assert.Equal("w1", done.Text("work_id"));
@@ -238,7 +238,7 @@ public sealed class DispatchTests
         });
 
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
-        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await closed.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, built);
         Assert.Single(agents.Distinct());
@@ -291,9 +291,9 @@ public sealed class DispatchTests
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
         await stop.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await running.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.True(finished);
         Assert.Equal(0, dispatch.Active);
@@ -307,7 +307,7 @@ public sealed class DispatchTests
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
         dispatch.WaitForCall(_ => Task.CompletedTask);
 
-        await dispatch.RunAsync(new CancellationToken(canceled: true)).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await dispatch.RunAsync(new CancellationToken(canceled: true)).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Empty(router.Requests);
     }
@@ -383,9 +383,9 @@ public sealed class DispatchTests
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
-        await third.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await third.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
         await stop.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await running.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal("worker-3", dispatch.WorkerId);
         Assert.Equal(["stream-support", "stream-support", "stream-support"], hosted.Select(frame => frame.Text("agent_id")));
@@ -407,7 +407,7 @@ public sealed class DispatchTests
         var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client.Agent("stream-support"));
 
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken));
 
         Assert.Contains("stream-support", refused.Message);
         Assert.Contains("hosting no tools is not hosting", refused.Message);
