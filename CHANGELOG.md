@@ -192,9 +192,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
-### Reads waiting on a slow session writer no longer crowd out its rows
+### The session writer keeps its queue for rows
 
-A read that waits for the session writer to catch up, such as `GET /v1/agents/sessions/{id}` or a call's transcript, took a slot in the writer's queue while it waited. Enough of them at once while Postgres was slow filled the queue, and later session rows, turns and items were dropped. Concurrent waits now share the writer's pass and take no slot, so the queue holds only rows. A wait that comes after the router has stopped its session writer returns at once rather than failing.
+Reads that wait for the session writer no longer take room in its queue. A wait after the router stopped its writer returns at once.
 
 ### A response is counted on its user's daily limit when Redis or the policies are slow
 
