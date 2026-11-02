@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -39,6 +40,25 @@ var (
 	routerOwned    = json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"` + routerHook + `","timeout_ms":3000,"failover_config":{"type":"s3","s3_bucket":"mine"}}`)
 )
 
+// point is what a router pointing an app at url does with the app's hooks: the hook at url
+// asked for new messages, switched on, or one added, in one update.
+func (s *HooksSuite) point(url string) (bool, error) {
+	hooks, err := ReadHooks(context.Background(), s.chat.Client)
+	if err != nil {
+		return false, err
+	}
+	enabled, updated, hookType := true, false, "webhook"
+	for index, hook := range hooks {
+		if webhookURL(hook.EventHook) == url {
+			hooks[index].EventTypes, hooks[index].Enabled, updated = []string{"message.new"}, &enabled, true
+		}
+	}
+	if !updated {
+		hooks = append(hooks, Hook{EventHook: getstream.EventHook{HookType: &hookType, WebhookUrl: &url, Enabled: &enabled, EventTypes: []string{"message.new"}}})
+	}
+	return updated, WriteHooks(context.Background(), s.chat.Client, hooks)
+}
+
 func (s *HooksSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.stream = StreamOf(s.chat.Client)
@@ -68,10 +88,10 @@ func (s *HooksSuite) lastUpdate() map[string]json.RawMessage {
 	return fields
 }
 
-func (s *HooksSuite) TestPointingKeepsEveryOtherHookAsStreamSentIt() {
+func (s *HooksSuite) TestWritingKeepsEveryOtherHookAsStreamSentIt() {
 	s.chat.SetEventHooks("test", otherHooks...)
 
-	updated, err := s.stream.PointMessageHook(context.Background(), routerHook)
+	updated, err := s.point(routerHook)
 
 	s.Require().NoError(err)
 	s.False(updated)
@@ -84,20 +104,20 @@ func (s *HooksSuite) TestPointingKeepsEveryOtherHookAsStreamSentIt() {
 	s.True(*hooks[3].Enabled)
 }
 
-func (s *HooksSuite) TestPointingSendsTheHooksAndNoOtherSetting() {
+func (s *HooksSuite) TestWritingSendsTheHooksAndNoOtherSetting() {
 	s.chat.SetEventHooks("test", otherHooks...)
 
-	_, err := s.stream.PointMessageHook(context.Background(), routerHook)
+	_, err := s.point(routerHook)
 
 	s.Require().NoError(err)
 	s.Equal([]string{"event_hooks"}, keys(s.lastUpdate()),
 		"no grants, user_search_disallowed_roles or webhook_events sent as null")
 }
 
-func (s *HooksSuite) TestPointingAgainChangesOnlyWhatTheRouterSets() {
+func (s *HooksSuite) TestChangingAHookChangesOnlyWhatTheRouterSets() {
 	s.chat.SetEventHooks("test", sqsFIFO, routerOwned, pubSub)
 
-	updated, err := s.stream.PointMessageHook(context.Background(), routerHook)
+	updated, err := s.point(routerHook)
 
 	s.Require().NoError(err)
 	s.True(updated)
@@ -141,7 +161,7 @@ func (s *HooksSuite) TestAHooksTimesGoBackAsText() {
 	read := json.RawMessage(`{"id":"h9","hook_type":"webhook","enabled":true,"event_types":["call.session_started"],"webhook_url":"https://other.example/h","created_at":1791485542458572000,"updated_at":1791588958134941000}`)
 	s.chat.SetEventHooks("test", read)
 
-	_, err := s.stream.PointMessageHook(context.Background(), routerHook)
+	_, err := s.point(routerHook)
 
 	s.Require().NoError(err)
 	sent := s.sent()
@@ -153,7 +173,7 @@ func (s *HooksSuite) TestAHooksTimesGoBackAsText() {
 func (s *HooksSuite) TestTheRoutersOwnHookKeepsItsTimesAsText() {
 	s.chat.SetEventHooks("test", json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"`+routerHook+`","created_at":1791485542458572000}`))
 
-	_, err := s.stream.PointMessageHook(context.Background(), routerHook)
+	_, err := s.point(routerHook)
 
 	s.Require().NoError(err)
 	var own map[string]any
