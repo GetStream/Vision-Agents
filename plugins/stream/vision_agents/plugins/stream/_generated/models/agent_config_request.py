@@ -14,6 +14,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.agent_connector_binding import AgentConnectorBinding
@@ -38,6 +39,7 @@ class AgentConfigRequest:
     """
     Attributes:
         name (str): What the config is called, which is unique among the customer's own.
+        calls (AgentCalls | Unset): The tools an agent on a phone call is offered: end the call, press keys, transfer.
         channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
             number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
             that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
@@ -132,6 +134,7 @@ class AgentConfigRequest:
     """
 
     name: str
+    calls: AgentCalls | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
@@ -171,6 +174,10 @@ class AgentConfigRequest:
         from ..models.plugin_with_options import PluginWithOptions
 
         name = self.name
+
+        calls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.calls, Unset):
+            calls = self.calls.to_dict()
 
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
@@ -303,6 +310,8 @@ class AgentConfigRequest:
                 "name": name,
             }
         )
+        if calls is not UNSET:
+            field_dict["calls"] = calls
         if channels is not UNSET:
             field_dict["channels"] = channels
         if connectors is not UNSET:
@@ -374,6 +383,7 @@ class AgentConfigRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_request_tags import AgentConfigRequestTags
         from ..models.agent_connector_binding import AgentConnectorBinding
@@ -391,6 +401,13 @@ class AgentConfigRequest:
 
         d = dict(src_dict)
         name = d.pop("name")
+
+        _calls = d.pop("calls", UNSET)
+        calls: AgentCalls | Unset
+        if isinstance(_calls, Unset):
+            calls = UNSET
+        else:
+            calls = AgentCalls.from_dict(_calls)
 
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
@@ -572,6 +589,7 @@ class AgentConfigRequest:
 
         agent_config_request = cls(
             name=name,
+            calls=calls,
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,

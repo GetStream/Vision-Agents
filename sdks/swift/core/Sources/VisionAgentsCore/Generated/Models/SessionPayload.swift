@@ -21,6 +21,8 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let createdAt: Date
     let custom: [String: RawJSON]?
     let description: String?
+    /// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+    let endReason: SessionEndReason?
     /// The session this one continued from, empty for one opened fresh.
     let forkedFrom: String?
     let id: String
@@ -67,7 +69,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endReason: SessionEndReason? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
@@ -80,6 +82,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.createdAt = createdAt
         self.custom = custom
         self.description = description
+        self.endReason = endReason
         self.forkedFrom = forkedFrom
         self.id = id
         self.incognito = incognito
@@ -120,6 +123,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.createdAt = try container.decode(Date.self, forKey: .createdAt)
         self.custom = try container.decodeIfPresent([String: RawJSON].self, forKey: .custom)
         self.description = try container.decodeIfPresent(String.self, forKey: .description)
+        self.endReason = try container.decodeIfPresent(SessionEndReason.self, forKey: .endReason)
         self.forkedFrom = try container.decodeIfPresent(String.self, forKey: .forkedFrom)
         self.id = try container.decode(String.self, forKey: .id)
         self.incognito = try container.decodeIfPresent(Bool.self, forKey: .incognito)
@@ -160,6 +164,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(custom, forKey: .custom)
         try container.encodeIfPresent(description, forKey: .description)
+        try container.encodeIfPresent(endReason, forKey: .endReason)
         try container.encodeIfPresent(forkedFrom, forKey: .forkedFrom)
         try container.encode(id, forKey: .id)
         try container.encodeIfPresent(incognito, forKey: .incognito)
@@ -202,6 +207,7 @@ extension SessionPayload: Hashable {
         lhs.createdAt == rhs.createdAt &&
         lhs.custom == rhs.custom &&
         lhs.description == rhs.description &&
+        lhs.endReason == rhs.endReason &&
         lhs.forkedFrom == rhs.forkedFrom &&
         lhs.id == rhs.id &&
         lhs.incognito == rhs.incognito &&
@@ -241,6 +247,7 @@ extension SessionPayload: Hashable {
         hasher.combine(createdAt)
         hasher.combine(custom)
         hasher.combine(description)
+        hasher.combine(endReason)
         hasher.combine(forkedFrom)
         hasher.combine(id)
         hasher.combine(incognito)

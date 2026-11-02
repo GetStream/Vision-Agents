@@ -4333,6 +4333,15 @@ export type components = {
                 readonly [key: string]: string;
             };
         };
+        /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. */
+        readonly AgentCalls: {
+            /** @description Lets the agent hang up. Off by default. */
+            readonly end_call?: components["schemas"]["EndCallSettings"];
+            /** @description Lets the agent press keys on the call, such as to get through a menu. On by default. */
+            readonly press?: components["schemas"]["PressSettings"];
+            /** @description Lets the agent transfer the call to a person. On by default. */
+            readonly transfer?: components["schemas"]["TransferSettings"];
+        };
         /** @description What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over. */
         readonly AgentChanges: {
             /** @description The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since. */
@@ -4353,6 +4362,7 @@ export type components = {
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
         readonly AgentConfig: {
+            readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The bindings exactly as they were written. Absent when there are none. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
@@ -4418,6 +4428,7 @@ export type components = {
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
+            readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
@@ -4475,6 +4486,8 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole. */
+            readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
@@ -6465,6 +6478,12 @@ export type components = {
             readonly tokens_per_user_per_day: number;
             readonly tokens_set_by: components["schemas"]["QuotaLevel"];
         };
+        readonly EndCallSettings: {
+            /** @description Offer the tool. Omitted is off. */
+            readonly enabled?: boolean;
+            /** @description When the agent should end the call, in the caller's terms. */
+            readonly when?: string;
+        };
         /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
@@ -7706,6 +7725,10 @@ export type components = {
             /** @description Who is carrying the call, e.g. "telnyx". */
             readonly vendor: string;
         };
+        readonly PressSettings: {
+            /** @description Offer the tool. Omitted is on. */
+            readonly enabled?: boolean;
+        };
         /** @description What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself. */
         readonly Price: {
             /** @description Work done with the customer's own key, which the vendor bills the customer for: priced only by a BYOK entry, and a BYOK entry prices no other work. Left out of an input, false. */
@@ -8648,6 +8671,8 @@ export type components = {
                 readonly [key: string]: unknown;
             };
             readonly description?: string;
+            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped. */
+            readonly end_reason?: components["schemas"]["SessionEndReason"];
             /** @description The session this one continued from, empty for one opened fresh. */
             readonly forked_from?: string;
             readonly id: string;
@@ -8724,6 +8749,11 @@ export type components = {
             /** @description The binding's alias in the agent config. */
             readonly name: string;
         };
+        /**
+         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+         * @enum {string}
+         */
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
@@ -9483,6 +9513,8 @@ export type components = {
         readonly SyncAgentRequest: {
             /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
             readonly base_change?: string;
+            /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole. */
+            readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
@@ -9913,6 +9945,22 @@ export type components = {
             };
             /** @description The human being brought onto the call. */
             readonly to: string;
+        };
+        readonly TransferDestination: {
+            /** @description What the agent calls this destination, such as Sales. */
+            readonly name: string;
+            /** @description The number to transfer to, in E.164 form. */
+            readonly number: string;
+            /** @description Announce the caller to the person answering before connecting them. */
+            readonly warm?: boolean;
+            /** @description When the agent should transfer here, in the caller's terms. */
+            readonly when?: string;
+        };
+        readonly TransferSettings: {
+            /** @description The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces. */
+            readonly destinations?: readonly components["schemas"]["TransferDestination"][] | null;
+            /** @description Offer the tool. Omitted is on. */
+            readonly enabled?: boolean;
         };
         /** @description How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot. */
         readonly TtsOptions: {
