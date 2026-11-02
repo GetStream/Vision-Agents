@@ -169,9 +169,15 @@ func (s *StoreSuite) TestDeletingACampaignKeepsItsCalls() {
 
 func (s *StoreSuite) TestADuplicateOfNotContactedTakesOnlyContactsNeverDialed() {
 	original := s.draftCampaign(newID(), "+15550001", "+15550002")
+	_, err := s.store.UpdateCampaign(s.ctx, original.CustomerID, original.ID, CampaignChanges{
+		CallingHours: json.RawMessage(`{"windows":{"monday":[{"start":"09:00","end":"17:00"}]}}`), FromNumber: ref("+15550177"),
+		DefaultCountry: ref("DE"), Concurrency: ref(7), Tags: map[string]string{"team": "sales"}})
+	s.Require().NoError(err)
+	original, err = s.store.Campaign(s.ctx, original.CustomerID, original.ID)
+	s.Require().NoError(err)
 	s.launch(original, s.base)
 	dialed := s.contactsOf(original)[0]
-	_, err := s.store.DB().NewInsert().Model(&CampaignAttempt{ID: newID(), CampaignID: original.ID, ContactID: dialed.ID, StepID: "step_1", Attempt: 1, Dial: 1, StartedAt: s.base}).Exec(s.ctx)
+	_, err = s.store.DB().NewInsert().Model(&CampaignAttempt{ID: newID(), CampaignID: original.ID, ContactID: dialed.ID, StepID: "step_1", Attempt: 1, Dial: 1, StartedAt: s.base}).Exec(s.ctx)
 	s.Require().NoError(err)
 	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE campaign_contacts SET stage = 'completed', outcome = 'won', converted = true, attempt = 2 WHERE id = ?", dialed.ID)
 	s.Require().NoError(err)
@@ -188,6 +194,11 @@ func (s *StoreSuite) TestADuplicateOfNotContactedTakesOnlyContactsNeverDialed() 
 	s.Equal(Standard, copied.Type)
 	s.JSONEq(string(original.Sequence), string(copied.Sequence))
 	s.Equal("config-1", copied.ConfigID)
+	s.JSONEq(string(original.CallingHours), string(copied.CallingHours))
+	s.Equal("+15550177", copied.FromNumber)
+	s.Equal("DE", copied.DefaultCountry)
+	s.Equal(7, copied.Concurrency)
+	s.Equal(map[string]string{"team": "sales"}, copied.Tags)
 	contacts := s.contactsOf(copied)
 	s.Require().Len(contacts, 1)
 	s.Equal("+15550002", contacts[0].ToNumber)
@@ -242,12 +253,23 @@ func (s *StoreSuite) TestANumberAlreadyMarkedDuplicateByTheMigrationDoesNotBlock
 func (s *StoreSuite) TestACampaignHoldsAtMostAHundredThousandContacts() {
 	campaign := s.draftCampaign(newID())
 	_, err := s.store.DB().ExecContext(s.ctx, `INSERT INTO campaign_contacts (id, campaign_id, to_number)
-		SELECT 'c' || n, ?, '+1' || n FROM generate_series(1, 100000) AS n`, campaign.ID)
+		SELECT 'c' || n, ?, '+1' || n FROM generate_series(1, 99999) AS n`, campaign.ID)
 	s.Require().NoError(err)
 
-	_, _, err = s.store.AddContacts(s.ctx, campaign.ID, []Contact{{CampaignID: campaign.ID, ToNumber: "+19999999999"}})
+	again, duplicates, err := s.store.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+11"}, {ToNumber: "+12"}})
+	s.Require().NoError(err, "numbers already held do not count against the cap")
+	s.Empty(again)
+	s.Equal([]int{0, 1}, duplicates)
 
+	added, _, err := s.store.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+19999999999"}})
+	s.Require().NoError(err, "the hundred thousandth fits")
+	s.Len(added, 1)
+
+	_, _, err = s.store.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+18888888888"}, {ToNumber: "+11"}})
 	s.ErrorIs(err, ErrTooManyContacts)
+	count, err := s.store.DB().NewSelect().Model((*Contact)(nil)).Where("campaign_id = ?", campaign.ID).Count(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(100000, count, "a refused batch stores none of it")
 }
 
 func (s *StoreSuite) TestContactsCannotBeAddedAfterLaunch() {
@@ -431,15 +453,62 @@ func (s *StoreSuite) TestAnotherCustomersCampaignIsInvisible() {
 	s.Error(err)
 	s.NotErrorIs(err, ErrCampaignLocked)
 	s.Error(s.store.DeleteCampaign(s.ctx, other, campaign.ID))
-	_, err = s.store.LaunchCampaign(s.ctx, other, campaign.ID, Launch{StartAt: s.base, Now: s.base})
-	s.Error(err)
+	s.launch(campaign, s.base)
+	s.ErrorContains(s.store.PauseCampaign(s.ctx, other, campaign.ID, ""), "no campaign")
+	s.ErrorContains(s.store.StopCampaign(s.ctx, other, campaign.ID, s.base), "no campaign")
+	s.Require().NoError(s.store.PauseCampaign(s.ctx, campaign.CustomerID, campaign.ID, ""))
+	s.ErrorContains(s.store.ResumeCampaign(s.ctx, other, campaign.ID), "no campaign")
 	_, err = s.store.DuplicateCampaign(s.ctx, other, campaign.ID, "all")
 	s.Error(err)
 	_, _, err = s.store.CampaignContact(s.ctx, newID(), s.contactsOf(campaign)[0].ID)
 	s.Error(err, "a contact is found only through its own campaign")
 	kept, err := s.store.Campaign(s.ctx, campaign.CustomerID, campaign.ID)
 	s.Require().NoError(err)
-	s.Equal(Draft, kept.State)
+	s.Equal(Paused, kept.State)
+}
+
+func (s *StoreSuite) TestAnotherCustomersLaunchFindsNoCampaign() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+
+	_, err := s.store.LaunchCampaign(s.ctx, newID(), campaign.ID, Launch{StartAt: s.base, Now: s.base})
+
+	s.ErrorContains(err, "no campaign")
+	s.NotErrorIs(err, ErrCampaignLocked)
+}
+
+func (s *StoreSuite) TestAnotherCustomersOptOutDoesNotRejectAtLaunch() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	s.Require().NoError(s.store.OptOut(s.ctx, &OptOut{CustomerID: newID(), Recipient: "+15550001", Channel: "voice", Source: "test"}))
+
+	s.launch(campaign, s.base)
+
+	s.Equal(Enrolled, s.contactsOf(campaign)[0].Stage)
+}
+
+func (s *StoreSuite) TestARunningCampaignAcceptsAnUnchangedLockedFieldButNotAChangedOne() {
+	campaign := s.draftCampaign(newID())
+	_, err := s.store.UpdateCampaign(s.ctx, campaign.CustomerID, campaign.ID, CampaignChanges{
+		Tags: map[string]string{"a": "b"}, DefaultCountry: ref("US")})
+	s.Require().NoError(err)
+	s.launch(campaign, s.base)
+
+	updated, err := s.store.UpdateCampaign(s.ctx, campaign.CustomerID, campaign.ID, CampaignChanges{
+		Name: ref("Renamed"), ConfigID: ref("config-1"), DefaultCountry: ref("US"), Tags: map[string]string{"a": "b"},
+		Sequence: json.RawMessage(`{ "steps": [] }`), CallingHours: json.RawMessage(`{"windows":{}}`)})
+	s.Require().NoError(err, "the same values in other spacing are no change")
+	s.Equal("Renamed", updated.Name)
+
+	for label, changes := range map[string]CampaignChanges{
+		"sequence": {Name: ref("Again"), Sequence: json.RawMessage(`{"steps":[1]}`)},
+		"tags":     {Tags: map[string]string{"a": "c"}},
+		"config":   {ConfigID: ref("config-2")},
+	} {
+		_, err := s.store.UpdateCampaign(s.ctx, campaign.CustomerID, campaign.ID, changes)
+		s.ErrorIs(err, ErrCampaignLocked, label)
+	}
+	kept, err := s.store.Campaign(s.ctx, campaign.CustomerID, campaign.ID)
+	s.Require().NoError(err)
+	s.Equal("Renamed", kept.Name, "a refused update changes nothing")
 }
 
 func ref[T any](value T) *T { return &value }

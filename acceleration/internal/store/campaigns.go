@@ -145,41 +145,52 @@ func (s *Store) UpdateCampaign(ctx context.Context, customerID, id string, chang
 	}
 
 	query := s.db.NewUpdate().Model((*Campaign)(nil)).Where("id = ?", id).Where("customer_id = ?", customerID)
-	changed, locked := 0, false
-	set := func(column string, value any, frozen bool) {
-		query = query.Set(column+" = ?", value)
+	changed := 0
+	var same []string
+	var sameArgs []any
+	set := func(column, cast string, value any, frozen bool) {
+		query = query.Set(column+" = ?"+cast, value)
 		changed++
-		locked = locked || frozen
+		if frozen {
+			same = append(same, column+" IS NOT DISTINCT FROM ?"+cast)
+			sameArgs = append(sameArgs, value)
+		}
 	}
 	if changes.Name != nil {
-		set("name", *changes.Name, false)
+		set("name", "", *changes.Name, false)
 	}
 	if changes.FromNumber != nil {
-		set("from_number", *changes.FromNumber, false)
+		set("from_number", "", *changes.FromNumber, false)
 	}
 	if changes.Concurrency != nil {
-		set("concurrency", *changes.Concurrency, false)
+		set("concurrency", "", *changes.Concurrency, false)
 	}
 	if changes.ConfigID != nil {
-		set("config_id", *changes.ConfigID, true)
+		set("config_id", "", *changes.ConfigID, true)
 	}
 	if changes.DefaultCountry != nil {
-		set("default_country", *changes.DefaultCountry, true)
+		set("default_country", "", *changes.DefaultCountry, true)
 	}
 	if changes.Sequence != nil {
-		set("sequence", changes.Sequence, true)
+		set("sequence", "::jsonb", string(changes.Sequence), true)
 	}
 	if changes.CallingHours != nil {
-		set("calling_hours", changes.CallingHours, true)
+		set("calling_hours", "::jsonb", string(changes.CallingHours), true)
 	}
 	if changes.Tags != nil {
-		set("tags", changes.Tags, true)
+		tags, err := json.Marshal(changes.Tags)
+		if err != nil {
+			return Campaign{}, stack.Wrap(fmt.Errorf("store: update campaign tags: %w", err))
+		}
+		set("tags", "::jsonb", string(tags), true)
 	}
 	if changed == 0 {
 		return s.Campaign(ctx, customerID, id)
 	}
-	if locked {
-		query = query.Where("state = ?", Draft)
+	// A launched campaign accepts a locked field only when it says what is already there, so
+	// a form that sends the whole object does not have to leave the rest out.
+	if len(same) > 0 {
+		query = query.Where("(state = ? OR ("+strings.Join(same, " AND ")+"))", append([]any{Draft}, sameArgs...)...)
 	}
 
 	result, err := query.Exec(ctx)
@@ -504,14 +515,6 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 		if err := lockDraft(ctx, tx, campaignID); err != nil {
 			return err
 		}
-		held, err := tx.NewSelect().Model((*Contact)(nil)).Where("campaign_id = ?", campaignID).Count(ctx)
-		if err != nil {
-			return fmt.Errorf("store: count contacts: %w", err)
-		}
-		if held+len(contacts) > MaxCampaignContacts {
-			return ErrTooManyContacts
-		}
-
 		for start := 0; start < len(contacts); start += insertChunk {
 			chunk := contacts[start:min(start+insertChunk, len(contacts))]
 			var inserted []struct {
@@ -530,6 +533,16 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 			for _, row := range inserted {
 				stored[row.ID] = row.Seq
 			}
+		}
+		// Counted after the insert, so a batch of numbers already held does not count against
+		// the cap; the lock on the campaign row keeps the count from moving, and returning
+		// the error rolls the insert back.
+		held, err := tx.NewSelect().Model((*Contact)(nil)).Where("campaign_id = ?", campaignID).Count(ctx)
+		if err != nil {
+			return fmt.Errorf("store: count contacts: %w", err)
+		}
+		if held > MaxCampaignContacts {
+			return ErrTooManyContacts
 		}
 		return nil
 	})
