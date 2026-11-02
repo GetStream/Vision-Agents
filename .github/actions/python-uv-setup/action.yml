@@ -13,16 +13,20 @@ inputs:
     description: Directory to run in
     required: false
     default: "."
+  enable-cache:
+    description: Restore and save uv's download cache; "false" in a job that holds an OIDC token
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
-    - name: Install the latest version of uv
+    - name: Install uv
       id: setup_uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       with:
         python-version: ${{ inputs.python-version }}
-        version: "latest"
-        enable-cache: true
+        version: "0.13.6"
+        enable-cache: ${{ inputs.enable-cache }}
         prune-cache: false
         cache-suffix: ${{ inputs.python-version }}
         cache-dependency-glob: |

@@ -1154,13 +1154,13 @@ func llmFrame(event llm.Event) (frame, bool) {
 			"time_to_first_token_ms": response.TimeToFirstTokenMs,
 		}, true
 	case llm.ResponseFailed:
-		return frame{
+		return withRefusal(frame{
 			"type":    "error",
 			"id":      typed.ResponseID,
 			"error":   typed.Err.Error(),
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
-		}, true
+		}, typed.Err), true
 	default:
 		return nil, false
 	}

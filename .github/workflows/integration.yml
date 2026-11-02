@@ -45,7 +45,9 @@ jobs:
           - internal/agent
           - internal/api
           - internal/appconfig
+          - internal/channelbridge
           - internal/channels
+          - internal/chatinbound
           - internal/concurrency
           - internal/connectors/core
           - internal/connectors/credentialstores/pgsealed
@@ -126,7 +128,6 @@ jobs:
             acceleration/go.sum
             sdks/go/go.sum
             tui/go.sum
-            benchmark/go.sum
 
       - name: Test ${{ matrix.package }}
         run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
@@ -68,7 +69,7 @@ func SharedHolds(t testing.TB) (*Redis, func(*policy.Settings)) {
 	options, err := rueidis.ParseURL("redis://" + listener.Addr().String() + "/" + strconv.Itoa(usagetest.RedisDB))
 	require.NoError(t, err)
 	options.DisableCache = true
-	r.Client, err = rueidis.NewClient(options)
+	r.Client, err = redisready.NewClient(options)
 	require.NoError(t, err)
 	t.Cleanup(r.Client.Close)
 	return r, func(settings *policy.Settings) {

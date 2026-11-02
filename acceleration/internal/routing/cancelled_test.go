@@ -18,6 +18,16 @@ func TestACancelledRequestSaysNothingAboutItsProvider(t *testing.T) {
 	}
 }
 
+func TestARefusedRequestSaysNothingAboutItsProvider(t *testing.T) {
+	refused := store.Request{ErrorCode: ErrorRefused, InputTokens: 10, OutputTokens: 4, CostMicros: 18}
+	if measuresProvider(refused) {
+		t.Fatal("a response the screen refused was counted against its provider")
+	}
+	if usage := liveUsage(refused); !usage.Cancelled || usage.CostMicros != 18 {
+		t.Fatalf("a refused request was counted for its provider, or not spent: %+v", usage)
+	}
+}
+
 func TestACancelledRequestStillAddsWhatItSpentToTheLiveCounters(t *testing.T) {
 	latency := 120.0
 	cancelled := store.Request{

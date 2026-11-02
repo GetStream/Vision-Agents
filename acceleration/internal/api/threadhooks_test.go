@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"time"
 
@@ -17,17 +16,18 @@ import (
 // per poll and held the thread's turn for askTimeout. Here the backend's session on the thread
 // channel was closed under it, so its conversation refuses every follow-up.
 func (s *SlackChannelSuite) TestAMessageTheThreadsSessionRefusesLetsGoOfTheTurnAtOnce() {
+	handOver := s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	held, found := s.manager.ByConversationWhere("agent:"+channel, nil)
 	s.Require().True(found)
 	s.Require().NoError(held.Close())
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	handOver()
 
 	s.Require().Eventually(func() bool {
 		return strings.Contains(s.logged.String(), "could not answer a message in a thread channel")
-	}, settleFor, 10*time.Millisecond, "the hook kept trying a follow-up its session refuses")
+	}, settleFor, 10*time.Millisecond, "the turn kept trying a follow-up its session refuses")
 	s.Require().Eventually(func() bool {
 		thread, err := s.store.ChannelThread(context.Background(), channel)
 		return err == nil && thread.TurnHolder == ""
@@ -52,6 +52,7 @@ func (s *SlackChannelSuite) TestAMessageTheThreadsSessionRefusesLetsGoOfTheTurnA
 func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredAfterIt() {
 	s.config.LLM = "holding/holding-model"
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	handOver := s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.holding.holds()
@@ -62,12 +63,12 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+1 }, settleFor, 10*time.Millisecond,
 		"the backend's reply never reached the model")
 
-	s.Require().Equal(http.StatusOK, s.streamDelivers(channel, 0))
+	handOver()
 	s.Require().Eventually(func() bool {
 		thread, err := s.store.ChannelThread(context.Background(), channel)
 		return err == nil && thread.TurnHolder != ""
-	}, settleFor, 10*time.Millisecond, "the hook never took the thread's turn")
-	// Some polls of the hook's follow-up land on the reply still running.
+	}, settleFor, 10*time.Millisecond, "the turn handed over never took the thread's turn")
+	// Some polls of the turn's follow-up land on the reply still running.
 	time.Sleep(5 * threadTurnPoll)
 	s.Len(s.holding.replies(), asked+1, "the message waits for the running reply")
 
@@ -83,6 +84,7 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsForIt() {
 	s.config.LLM = "holding/holding-model"
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.holdHandOffs()
 	channel := s.messaged("U0000ALICE", "is the build green?", "1759740000.000100", "")
 	held := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	found, ok := s.manager.ByConversationWhere("agent:"+channel, nil)

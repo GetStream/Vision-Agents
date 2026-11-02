@@ -131,10 +131,10 @@ func spokenResults(history []llm.Message) []llm.Message {
 	return history
 }
 
-// maxToolRounds is the reply to a tool result, counted since the caller last spoke, that a
-// voice call makes answer rather than reach for another tool. Progressive tools spend a
-// round describing each tool before running it, so it leaves room for three of them and a
-// query corrected once.
+// maxToolRounds is the reply to a tool result, counted since the caller last spoke, that is
+// made to answer rather than reach for another tool, on a call or in text. Progressive tools
+// spend a round describing each tool before running it, so it leaves room for three of them
+// and a query corrected once.
 const maxToolRounds = 8
 
 // lateResult introduces the result of a call answered with stillRunning. It comes after
@@ -433,6 +433,15 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 		a.toolTurns = map[string]string{}
 	}
 	a.toolTurns[requested.Call.ID] = requested.TurnID
+	if a.toolScheduled == nil {
+		a.toolScheduled = map[string]bool{}
+	}
+	// A call is the scheduled task's when its reply is known to be (scheduledReply), or when
+	// the last thing is a scheduled turn and the call's reply is not known to be the one that
+	// answered the caller (answerReply).
+	known := requested.TurnID != ""
+	a.toolScheduled[requested.Call.ID] = a.scheduled && !(known && requested.TurnID == a.answerReply) ||
+		known && requested.TurnID == a.scheduledReply
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -459,6 +468,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolCancels, requested.Call.ID)
 		delete(a.toolContexts, requested.Call.ID)
 		delete(a.toolTurns, requested.Call.ID)
+		delete(a.toolScheduled, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
@@ -516,7 +526,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	delete(a.toolUpdates, requested.Call.ID)
-	charged := a.chargedLocked(ctx)
+	charged := a.chargedLocked(ctx, a.toolScheduled[requested.Call.ID])
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
@@ -633,8 +643,8 @@ func toolOutcome(cancelled, failed, refused, answered bool) string {
 // what answers next, so talking over it would be talking to nobody. A transfer asked for
 // in a reply to a tool does not either, so a broken one cannot keep the line open by
 // retrying itself. Other tools chain, a lookup leading to the lookup it needed, and are
-// always followed: a result nobody speaks is the answer lost. A voice call that has
-// chained maxToolRounds times is made to answer instead (respondAfterTool).
+// always followed: a result nobody speaks is the answer lost. A reply that has chained
+// maxToolRounds times is made to answer instead (respondAfterTool).
 func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 	switch {
 	case requested.Call.Name == toolPress:

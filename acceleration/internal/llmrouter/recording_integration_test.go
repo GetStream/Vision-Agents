@@ -5,6 +5,7 @@ package llmrouter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -309,6 +310,48 @@ func (s *RecordingSuite) TestACutResponseIsEstimatedWithoutAnAlarm() {
 	s.Positive(row.CostMicros)
 	s.Equal(before+1, s.counted("router_usage_estimated_total", cancelled))
 	s.Equal(alarmed, s.counted("router_usage_estimated_total", missing), "a cut is expected, not an adapter to fix")
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
+func (s *RecordingSuite) TestAResponseTheScreenRefusedMidAnswerIsRecordedAsRefused() {
+	cancelled := item("openai/gpt-6-luna", "reason", "cancelled")
+	before := s.counted("router_usage_estimated_total", cancelled)
+	refusal := errors.New("policy: the input reads as a prompt injection")
+	verdict := make(chan error, 1)
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.LLM, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	owner := routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: "key-a"}}
+	session := newSession(s.stalling(0), s.builtIn("openai/gpt-6-luna"), owner, recorder, nil)
+	session.screen = func(context.Context, routing.Owner, []llm.Message) <-chan error { return verdict }
+	var timing llm.CallTiming
+	params := briefly()
+	params.ID = "r1"
+	params.OnTiming = func(called llm.CallTiming) { timing = called }
+
+	stream, err := session.Create(s.ctx, params)
+	s.Require().NoError(err)
+	for stream.Next() {
+		if _, ok := stream.Current().(llm.OutputTextDelta); ok {
+			break
+		}
+	}
+	// The real provider is mid-answer, and reports the close the refusal causes as a cancel.
+	verdict <- refusal
+	drain(stream)
+	recorder.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Scan(s.ctx))
+	s.Require().Len(rows, 1)
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(routing.ErrorRefused, rows[0].ErrorCode)
+	s.False(rows[0].Success)
+	s.EqualValues(101, rows[0].InputTokens, "the vendor read the whole prompt before the refusal cut it")
+	s.Equal(map[string]string{routing.AttributeUsageEstimated: "true"}, rows[0].Attributes)
+	s.Positive(rows[0].CostMicros, "a refusal is no failure of the vendor's, and it billed what it did")
+	s.Equal(routing.ErrorRefused, timing.ErrorCode, "the model_call a watcher is sent")
+	s.False(timing.Success)
+	s.Equal(before+1, s.counted("router_usage_estimated_total", cancelled), "cut off before its usage, as a cancel is")
 	s.NotContains(s.logs.String(), "level=ERROR")
 }
 

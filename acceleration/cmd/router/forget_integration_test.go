@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	usageservice "github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
@@ -59,7 +60,7 @@ func (s *ForgetUserSuite) SetupSuite() {
 	}
 	s.usageDSN = usagetest.Database(s.T(), "usage_forget")
 	s.counters = usagetest.Redis(s.T())
-	routers, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	routers, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(routers.Close)
 	s.routers = routers

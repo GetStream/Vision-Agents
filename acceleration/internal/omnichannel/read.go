@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -273,6 +274,13 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 		at := message.CreatedAt.Time
 		if at == nil || (card.Until != nil && at.After(*card.Until)) || ((call || fromStart) && at.Before(card.StartedAt)) {
 			continue
+		}
+		if message.Custom[conversation.RefusedField] == true {
+			// What the person said since the agent last spoke is what the prompt injection
+			// screen refused, and a model handed it here would read it unjudged.
+			for i := len(lines) - 1; i >= 0 && lines[i].From == fromPerson; i-- {
+				lines[i].Text = agent.WithheldInput
+			}
 		}
 		from, text, ok := lineOf(message)
 		if !ok {

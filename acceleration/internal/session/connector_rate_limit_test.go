@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // RateLimitSuite is what a session's connector call does after the provider answered 429
@@ -287,7 +288,7 @@ sources:
 // limitedManager is a router of its own whose limiter keeps holds in the shared Redis, with
 // a client of its own, by now (nil is time.Now).
 func (s *RateLimitSuite) limitedManager(now func() time.Time) *Manager {
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{s.address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{s.address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	manager := s.managerWith(fixtureRequestTimeout)

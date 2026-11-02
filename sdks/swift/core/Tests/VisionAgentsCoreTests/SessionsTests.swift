@@ -126,6 +126,59 @@ import Testing
         #expect(body["model_overwrites"] == nil)
     }
 
+    @Test(arguments: ["Asia/Tokyo", "America/Argentina/Buenos_Aires", "UTC", "GMT"])
+    func aSessionIsOpenedInTheDevicesZone(zone: String) async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        _ = try await agents.createSession(SessionOptions(agent: "myagent", deviceZone: zone))
+
+        #expect(try await server.request().body["timezone"] == .string(zone))
+    }
+
+    @Test func theDevicesZoneIsTheSystemsOwn() {
+        #expect(SessionOptions().timezone == SessionOptions.ianaZone(TimeZone.current.identifier))
+        #expect(SessionOptions(agent: "myagent").timezone == SessionOptions().timezone)
+    }
+
+    @Test(arguments: ["GMT+0100", "", "Local"])
+    func aDeviceZoneWithNoIANANameIsNotSent(zone: String) async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        _ = try await agents.createSession(SessionOptions(agent: "myagent", deviceZone: zone))
+
+        #expect(try await server.request().body["timezone"] == nil)
+    }
+
+    // The router is what judges a zone the app names, so even one with no IANA name goes as it is.
+    @Test(arguments: ["Europe/Amsterdam", "GMT+0100"])
+    func theAppsOwnZoneIsSentOverTheDevices(zone: String) async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions(agent: "myagent", deviceZone: "Asia/Tokyo")
+        options.timezone = zone
+
+        _ = try await agents.createSession(options)
+
+        #expect(try await server.request().body["timezone"] == .string(zone))
+    }
+
+    @Test func aSessionToldNoZoneSendsNone() async throws {
+        let server = try SessionServer(answer: .session(status: 201, callID: ""))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions(agent: "myagent", deviceZone: "Asia/Tokyo")
+        options.timezone = nil
+
+        _ = try await agents.createSession(options)
+
+        #expect(try await server.request().body["timezone"] == nil)
+    }
+
     @Test func aForkNamesTheAgentAndWhatItChanges() async throws {
         let server = try SessionServer()
         defer { server.listener.cancel() }

@@ -20,6 +20,13 @@ import (
 // calls onto.
 const defaultCapacity = 4
 
+// maxCapacity is the most work one worker may say it takes at once. The router queues that
+// much for it up front, so an unbounded number is memory the router cannot have. A worker's
+// capacity is the agents its own process runs at once. The whole router holds 512 voice
+// agents on two full nodes (performance_benchmark/findings.md, "What 512 is"), so this leaves
+// one worker process twice that, where the SDKs ask for 4.
+const maxCapacity = 1024
+
 // dispatchCalls hands arriving calls to a worker waiting for one.
 //
 // The direction is the point: the worker connects here and waits, because the agent runs in
@@ -111,6 +118,9 @@ func registrationOf(r *http.Request) (dispatch.Registration, string) {
 		parsed, err := strconv.Atoi(capacity)
 		if err != nil || parsed < 1 {
 			return registration, "capacity has to be a positive number of calls"
+		}
+		if parsed > maxCapacity {
+			return registration, "capacity can be at most " + strconv.Itoa(maxCapacity) + " calls"
 		}
 		registration.Capacity = parsed
 	}

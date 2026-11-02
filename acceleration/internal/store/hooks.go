@@ -149,15 +149,29 @@ const deliveriesPrunedEvery = time.Minute
 
 // FirstDelivery records a hook delivery and reports whether it is the first with that key.
 func (s *Store) FirstDelivery(ctx context.Context, key string) (bool, error) {
+	if err := s.forgetDeliveries(ctx); err != nil {
+		return false, err
+	}
+	return recordDelivery(ctx, s.db, key)
+}
+
+// forgetDeliveries deletes the deliveries older than a day, at most once every
+// deliveriesPrunedEvery.
+func (s *Store) forgetDeliveries(ctx context.Context) error {
 	now := time.Now().UTC()
 	if last := s.deliveriesPruned.Load(); now.UnixNano()-last >= int64(deliveriesPrunedEvery) &&
 		s.deliveriesPruned.CompareAndSwap(last, now.UnixNano()) {
 		if _, err := s.db.ExecContext(ctx, "DELETE FROM hook_deliveries WHERE seen_at < ?", now.Add(-deliveryKeptFor)); err != nil {
-			return false, fmt.Errorf("store: forget hook deliveries: %w", err)
+			return fmt.Errorf("store: forget hook deliveries: %w", err)
 		}
 	}
-	result, err := s.db.ExecContext(ctx,
-		"INSERT INTO hook_deliveries (key, seen_at) VALUES (?, now()) ON CONFLICT (key) DO NOTHING", key)
+	return nil
+}
+
+// recordDelivery is FirstDelivery's record on db, the store's or a transaction's.
+func recordDelivery(ctx context.Context, db bun.IDB, key string) (bool, error) {
+	result, err := db.NewRaw(
+		"INSERT INTO hook_deliveries (key, seen_at) VALUES (?, now()) ON CONFLICT (key) DO NOTHING", key).Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("store: record hook delivery: %w", err)
 	}

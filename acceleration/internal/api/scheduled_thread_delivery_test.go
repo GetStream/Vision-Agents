@@ -22,6 +22,12 @@ import (
 // the Router opens the thread's conversation, the agent answers the task there, and the
 // bridge sends the reply to the person on the line.
 
+// deliveryWait is how long a test waits for a delivery to start its turn or settle its run.
+// The delivery finds or opens the conversation and records the run over Postgres and Redis,
+// which a loaded machine stalls for seconds: settleFor (5 s) failed under 8 s stalls. What never
+// happens still fails, at 30 s, as the occurrence waits (delivered, failedRun) do.
+const deliveryWait = 30 * time.Second
+
 // manualRun is a run of task made by hand, as the worker would hand it over claimed.
 func (s *RouterSuite) manualRun(task store.ScheduledTask) store.ScheduledTaskRun {
 	now := time.Now()
@@ -64,7 +70,7 @@ func (s *RouterSuite) cutOff(on *Server, task store.ScheduledTask, run store.Sch
 		answered <- answer{deliveredTo, err}
 	}()
 	s.Require().Eventually(func() bool { return s.scheduledTurns() > turns },
-		settleFor, 20*time.Millisecond, "the task's turn never started")
+		deliveryWait, 20*time.Millisecond, "the task's turn never started")
 	cut()
 	release()
 	select {
@@ -113,7 +119,7 @@ func (s *RouterSuite) deliveredByTheWorker(task store.ScheduledTask) store.Sched
 		}
 		settled = runs[0]
 		return true
-	}, settleFor, 20*time.Millisecond, "the task's run never settled")
+	}, deliveryWait, 20*time.Millisecond, "the task's run never settled")
 	return settled
 }
 
@@ -197,7 +203,7 @@ func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
 		_, err := s.deliverRun(task, run)
 		done <- err
 	}()
-	s.Require().Eventually(func() bool { return s.scheduledTurns() > 0 }, settleFor, 10*time.Millisecond, "the task's turn never started")
+	s.Require().Eventually(func() bool { return s.scheduledTurns() > 0 }, deliveryWait, 10*time.Millisecond, "the task's turn never started")
 
 	release()
 
@@ -288,7 +294,7 @@ func (s *TelnyxChannelSuite) TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt() {
 	select {
 	case err := <-done:
 		s.Require().NoError(err)
-	case <-time.After(settleFor):
+	case <-time.After(deliveryWait):
 		s.FailNow("the task was not delivered once the turn was free")
 	}
 	s.took(sent + 1)
@@ -520,7 +526,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFina
 	defer release()
 	removed := make(chan error, 1)
 	go func() {
-		for deadline := time.Now().Add(settleFor); s.scheduledTurns() == 0 && time.Now().Before(deadline); {
+		for deadline := time.Now().Add(deliveryWait); s.scheduledTurns() == 0 && time.Now().Before(deadline); {
 			time.Sleep(10 * time.Millisecond)
 		}
 		removed <- s.removeThread(channel)

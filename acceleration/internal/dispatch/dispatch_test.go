@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -90,6 +91,30 @@ func (s *PoolSuite) TestTwoWorkersSplitTheCallsBetweenThem() {
 
 	s.Equal([]string{"call-1", "call-3"}, s.received(first))
 	s.Equal([]string{"call-2", "call-4"}, s.received(second))
+}
+
+func (s *PoolSuite) TestARegistrationThatCannotBeHeldLeavesThePoolUsable() {
+	first, _ := s.waiting("acme", 10)
+	s.Require().Panics(func() { s.waiting("acme", math.MaxInt) }, "no queue that long can be made")
+
+	registered := make(chan *Worker)
+	go func() {
+		second, _ := s.waiting("acme", 10)
+		registered <- second
+	}()
+	var second *Worker
+	select {
+	case second = <-registered:
+	case <-time.After(time.Second):
+		s.FailNow("the pool stayed locked after a registration failed")
+	}
+	for _, id := range []string{"call-1", "call-2"} {
+		_, err := s.pool.Assign("acme", Call{CallID: id})
+		s.Require().NoError(err)
+	}
+
+	s.Equal([]string{"call-1"}, s.received(first))
+	s.Equal([]string{"call-2"}, s.received(second))
 }
 
 func (s *PoolSuite) TestAWorkerThatLeftIsNotOfferedCalls() {

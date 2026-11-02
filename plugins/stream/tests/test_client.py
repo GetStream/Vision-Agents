@@ -570,6 +570,24 @@ class TestSessions:
         body = router.body("POST", "/v1/agents/sessions")
         assert body["return_url"] == "https://app.example/connectors/done"
 
+    async def test_a_timezone_goes_over_as_the_sessions_timezone(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(timezone="Europe/Amsterdam")
+        )
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert body["timezone"] == "Europe/Amsterdam"
+
+    async def test_no_timezone_sends_none(self, api: stream.Client, router: Router):
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        await session.close()
+
+        body = router.body("POST", "/v1/agents/sessions")
+        assert "timezone" not in body
+
     async def test_no_return_url_sends_none(self, api: stream.Client, router: Router):
         session = await api.agent("docs").sessions.create(stream.SessionOptions())
         await session.close()
@@ -1230,7 +1248,7 @@ class TestBackendCredentials:
     def test_a_customer_id_is_the_whole_credential_for_a_router_that_trusts_one(self):
         backend = stream.Backend(url="http://router", customer_id="acme")
 
-        assert backend.headers == {"X-Customer-Id": "acme"}
+        assert backend.headers == {"X-Customer-Id": "acme", "X-Stream-Client": "sdk"}
         assert backend.server_side
         # Stream's own chat and video mean nothing to a router reached this way, so there is
         # no credential to pass on to them.

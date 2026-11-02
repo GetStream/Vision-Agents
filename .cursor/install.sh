@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 # Build-time setup for Cursor cloud agents. Must be idempotent and terminate.
 # Builds read this from main, but agents also run on branches such as accelerate,
-# so it installs their toolchain too: Go, Postgres, Redis and the cgo audio libraries.
+# so it installs their toolchain too: Go, Postgres, Redis and uv.
 set -euo pipefail
 
 GO_VERSION=1.27.1
 PYTHON_VERSION=3.12.11
 
 sudo apt-get update
-# livekit media-sdk is cgo: libopus/libopusfile decode Opus and libsoxr resamples.
 # The Python audio tests need portaudio, and a few Python deps build from source.
-sudo apt-get install -y build-essential postgresql redis-server pkg-config \
-  libopus-dev libopusfile-dev libsoxr-dev libportaudio2
+sudo apt-get install -y build-essential postgresql redis-server pkg-config libportaudio2
 
 export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
 if ! grep -q '/usr/local/go/bin' "$HOME/.bashrc"; then

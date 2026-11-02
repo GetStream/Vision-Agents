@@ -13,7 +13,7 @@ final readonly class SpeechRequest
     public function __construct(
         // What to say. Whole paragraphs rather than the sentence at a time a socket takes.
         public string $text,
-        // A URL the finished job is POSTed to, so a caller does not have to poll.
+        // A URL the finished job is POSTed to, so a caller does not have to poll. It must be a public https URL witho...
         public ?string $callback = null,
         // A stored router config to take the options from. Anything named here as well overrides that one field of it.
         public ?string $configId = null,

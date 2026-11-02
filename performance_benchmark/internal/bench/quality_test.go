@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/benchmark/rtc/audio"
+	"github.com/GetStream/Vision-Agents/performance_benchmark/internal/rtc/audio"
 )
 
 func TestToneSuite(t *testing.T) { suite.Run(t, new(ToneSuite)) }

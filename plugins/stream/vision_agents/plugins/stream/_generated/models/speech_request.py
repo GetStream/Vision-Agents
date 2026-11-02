@@ -22,7 +22,8 @@ class SpeechRequest:
     """
     Attributes:
         text (str): What to say. Whole paragraphs rather than the sentence at a time a socket takes.
-        callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll.
+        callback (str | Unset): A URL the finished job is POSTed to, so a caller does not have to poll. It must be a
+            public https URL without userinfo: a private, loopback or link-local address is refused with a 400.
         config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
             that one field of it.
         inline (bool | Unset): Speak this short text synchronously and return the audio, base64, in the 202 response,

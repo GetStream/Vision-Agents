@@ -181,6 +181,35 @@ func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
 	}
 }
 
+// TestAPageErrorNamesItsLineInTheFile: the line is counted from the top of urls.yaml.
+func TestAPageErrorNamesItsLineInTheFile(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a key nobody knows", "- https://example.com/a\n- url: https://example.com/plans\n  heading: Plans\n", `line 3: "heading"`},
+		{"a key nobody knows after a comment", "# pages\n\n- url: https://example.com/plans\n  # why\n  heading: Plans\n", `line 5: "heading"`},
+		{"a key nobody knows, flow style", "- https://example.com/a\n- {url: https://example.com/plans, heading: Plans}\n", `line 2: "heading"`},
+		{"a key nobody knows, the value on its own line", "- url: https://example.com/plans\n  heading:\n\n    Plans\n", `line 2: "heading"`},
+		{"refresh_hours below 1", "- https://example.com/a\n- url: https://example.com/plans\n  refresh_hours: 0\n", "line 3: refresh_hours is how many hours"},
+		{"refresh_hours below 1, the value on its own line", "- url: https://example.com/plans\n  refresh_hours:\n\n    -2\n", "line 4: refresh_hours is how many hours"},
+		{"a page that is a list", "- https://example.com/a\n\n- [https://example.com/plans]\n", "line 3: a page is a url"},
+		{"a url without a scheme", "- https://example.com/a\n\n- example.com/pricing\n", `line 3: "example.com/pricing" is not an http or https url`},
+		{"a url without a scheme after a null page", "- ~\n- example.com/pricing\n", `line 2: "example.com/pricing" is not an http or https url`},
+		{"an ftp url below the title", "- https://example.com/a\n- title: Plans\n\n  url: ftp://example.com/plans\n", `line 4: "ftp://example.com/plans" is not an http or https url`},
+		{"an ftp url, flow style", "- https://example.com/a\n- {title: Plans,\n   url: ftp://example.com/plans}\n", `line 3: "ftp://example.com/plans" is not an http or https url`},
+		{"a page without a url", "- https://example.com/a\n\n- title: Plans\n  description: What each plan includes.\n", `line 3: "" is not an http or https url`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "jean")
+			write(t, root, "agent.yaml", "name: jean\n")
+			write(t, root, "knowledge/urls.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "urls.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
 func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")
@@ -461,6 +490,56 @@ func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
 	}
 }
 
+// TestASimulationErrorNamesItsLineInTheFile: the line of the key at fault, or of the entry
+// when the key is missing, counted from the top of the simulation's file.
+func TestASimulationErrorNamesItsLineInTheFile(t *testing.T) {
+	valid := "- name: a\n  scenario: Order.\n  assertion: Ordered.\n"
+	cases := []struct{ name, yaml, want string }{
+		{"no name", valid + "\n- scenario: Order.\n  assertion: Ordered.\n", "line 5: a simulation needs a name"},
+		{"an empty name below the other keys", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: \"\"\n", "line 6: a simulation needs a name"},
+		{"no name after a null entry", "- ~\n- scenario: Order.\n  assertion: Ordered.\n", "line 2: a simulation needs a name"},
+		{"no scenario", valid + "- name: b\n  assertion: Ordered.\n", `line 4: simulation "b" needs a scenario`},
+		{"an empty scenario below the other keys", valid + "- name: b\n  assertion: Ordered.\n\n  scenario: \"\"\n", `line 7: simulation "b" needs a scenario`},
+		{"no assertion", valid + "- name: b\n  scenario: Order.\n", `line 4: simulation "b" needs an assertion`},
+		{"an empty assertion below the other keys", valid + "- name: b\n  scenario: Order.\n  # why\n  assertion: \"\"\n", `line 7: simulation "b" needs an assertion`},
+		{"a mode nobody knows", valid + "- name: b\n  scenario: Order.\n  assertion: Ordered.\n  mode: video\n", `line 7: simulation "b" is text or audio, not "video"`},
+		{"a mode nobody knows, flow style", valid + "- {name: b, scenario: Order.,\n   assertion: Ordered., mode: video}\n", `line 5: simulation "b" is text or audio, not "video"`},
+		{"a name the file already has", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: a\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+		{"an alias of an entry the file already has", "- &order\n  name: a\n  scenario: Order.\n  assertion: Ordered.\n\n- *order\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "deli")
+			write(t, root, "agent.yaml", "name: deli\n")
+			write(t, root, "simulations/lunch.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "lunch.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestANullPageOrSimulationIsSkipped: a null entry is passed over, as before lines were named,
+// and a page is read whether it is http or https.
+func TestANullPageOrSimulationIsSkipped(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "knowledge/urls.yaml", "- ~\n- http://example.com/a\n- ~\n- https://example.com/b\n")
+	write(t, root, "simulations/lunch.yaml", "- ~\n- name: a\n  scenario: Order.\n  assertion: Ordered.\n- ~\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatalf("loading gave %v", err)
+	}
+	if len(folder.KnowledgeURLs) != 2 || folder.KnowledgeURLs[0].URL != "http://example.com/a" || folder.KnowledgeURLs[1].URL != "https://example.com/b" {
+		t.Errorf("the pages are %+v", folder.KnowledgeURLs)
+	}
+	if len(folder.Simulations) != 1 || folder.Simulations[0].Name != "a" {
+		t.Errorf("the simulations are %+v", folder.Simulations)
+	}
+}
+
 func TestASimulationKeyNobodyKnowsIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "deli")
 	write(t, root, "agent.yaml", "name: deli\n")
@@ -651,6 +730,32 @@ func TestAConnectorEntryErrorNamesItsLineInTheFile(t *testing.T) {
 			write(t, root, "agent.yaml", c.yaml)
 
 			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestAConnectorEntryRefusedAfterItReadsNamesItsLine: the checks on a decoded entry name the
+// entry's line in agent.yaml, as the ones on its keys do.
+func TestAConnectorEntryRefusedAfterItReadsNamesItsLine(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a null entry", "name: concierge\nconnectors:\n  - linear\n  - ~\n", `line 4: a connector needs a name`},
+		{"a commented-out entry", "name: concierge\nconnectors:\n  - linear\n\n  - # github\n", `line 5: a connector needs a name`},
+		{"an entry without a name", "name: concierge\nconnectors:\n  - linear\n  - connector: github\n", `line 4: a connector needs a name`},
+		{"an empty name", "name: concierge\nconnectors:\n  - linear\n\n  - name: \"\"\n", `line 5: a connector needs a name`},
+		{"an empty tool list", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: []\n", `line 5: connector "github": tools: []`},
+		{"an empty connection", "name: concierge\nconnectors:\n  - linear\n\n  - name: github\n    connection: \"\"\n", `line 6: connector "github": connection must be`},
+		{"an empty tool list, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    connection: work\n\n    # none\n    tools: []\n", `line 8: connector "github": tools: []`},
+		{"an empty connection, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: [issues]\n\n    connection: \"\"\n", `line 7: connector "github": connection must be`},
+		{"connectors that are not a list", "name: concierge\n\nconnectors: linear\n", `line 3: connectors must be a list`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "concierge")
+			write(t, root, "agent.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "agent.yaml") {
 				t.Errorf("want %q, got %v", c.want, err)
 			}
 		})

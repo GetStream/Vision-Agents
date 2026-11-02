@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // ProxyQuotaSuite runs a proxy-mode router that allows one message a day, with every request
@@ -40,7 +41,7 @@ func (s *ProxyQuotaSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR must be set")
 	}
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.redis = client
 	s.limiter, err = quota.New(client, quota.Limits{MessagesPerDay: 1}, nil, slog.New(slog.DiscardHandler))

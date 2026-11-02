@@ -98,16 +98,25 @@ func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	}
 	s.Require().NoError(json.Unmarshal(raw, &page))
 	s.Require().Greater(len(page.Items), 20)
+	seen := map[string]bool{}
 	for _, item := range page.Items {
+		id, _ := item["id"].(string)
+		seen[id] = true
 		if item["id"] == "google_drive" {
 			s.Equal(map[string]any{"env": "GOOGLE_DRIVE_TOKEN", "hosts": []any{"www.googleapis.com"}}, item["sandbox"])
 		} else if item["id"] == "linear_app" {
 			s.Equal(map[string]any{"env": "LINEAR_ACCESS_TOKEN", "hosts": []any{"api.linear.app", "uploads.linear.app"}}, item["sandbox"])
 		} else if item["id"] == "bigquery" {
 			s.Equal(map[string]any{"env": "BIGQUERY_TOKEN", "hosts": []any{"bigquery.googleapis.com"}}, item["sandbox"])
-		} else if item["id"] != "github" {
+		} else if item["id"] == "github" {
+			s.Contains(item, "sandbox", item["id"])
+		} else {
 			s.NotContains(item, "sandbox", item["id"])
 		}
+	}
+	// A connector missing from the list would skip its branch above and pass.
+	for _, id := range []string{"github", "google_drive", "linear_app", "bigquery"} {
+		s.True(seen[id], "%s is in the list", id)
 	}
 }
 
