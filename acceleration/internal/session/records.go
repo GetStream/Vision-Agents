@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"sync"
@@ -368,7 +369,12 @@ func (r *sessionRecorder) write(write recordWrite) {
 		}
 	case write.described != nil:
 		d := write.described
-		if err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom); err != nil {
+		err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom)
+		if errors.Is(err, store.ErrNoSession) {
+			// The conversation is named after it ran, so the customer may have deleted it by
+			// then. Nothing is lost: the title had nothing left to name.
+			r.logger.Debug("dropped the session's title: the session is gone", "session", d.id)
+		} else if err != nil {
 			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
 		}
 	case write.chose != nil:
