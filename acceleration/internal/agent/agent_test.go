@@ -215,8 +215,10 @@ type stubLLM struct {
 	// calls are the tools the first reply asks for. Later replies ask for nothing, so a
 	// model that transferred a caller does not transfer them again.
 	calls []llm.ToolCall
-	// keepCalling asks for them on every reply instead, which is the model that answers
-	// a tool that failed by reaching for it again.
+	// keepCalling asks for them on every reply that offers tools instead, which is the
+	// model that answers a tool that failed by reaching for it again. A reply offered none,
+	// as a reply past maxToolRounds is, has nothing to reach for: calling anyway would
+	// chain turns until Close, and Close waits for every one of them to be written.
 	keepCalling bool
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
@@ -329,7 +331,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		reply = append([]string(nil), s.then...)
 	}
 	var calls []llm.ToolCall
-	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling {
+	if len(s.asked) == max(s.callsOn, 1) || s.keepCalling && len(params.Tools) > 0 {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
@@ -4147,6 +4149,62 @@ func (s *AgentSuite) TestARepeatedCallIsAnsweredFromTheFirstInsteadOfRunAgain() 
 		})
 	}, "the repeated call was not answered from the first")
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
+	// Answered from the first, the repeat is still a tool round: a model that keeps asking
+	// is made to answer once the rounds run out, rather than chaining turns until Close.
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.model.requests(), func(r llm.ResponseParams) bool { return len(r.Tools) == 0 })
+	}, "a model repeating the call was never made to answer")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after it was made to answer")
+}
+
+func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
+	// A written conversation has nobody on hold, but a model that answers every result by
+	// asking for the same call again would still be asked for reply after reply.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.model.requests(), func(r llm.ResponseParams) bool { return len(r.Tools) == 0 })
+	}, "a text reply repeating the call was never made to answer")
+	s.eventually(func() bool {
+		history := s.agent.History()
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the reply made to answer was never kept")
+	requests := s.model.requests()
+	s.Len(requests, maxToolRounds+1, "the model was asked again after it was made to answer")
+	s.Contains(requests[maxToolRounds].Instructions, "answer the caller now")
+	s.Len(s.runner.asked(), 1, "the same call ran twice")
+
+	// The rounds are counted from the user's last message, so the next one starts afresh.
+	_, err = s.agent.RespondTo(s.ctx, "and order thirteen?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2*(maxToolRounds+1) },
+		"the next message was not given its own tool rounds")
+	s.NotEmpty(s.model.requests()[maxToolRounds+2].Tools, "the next message's reply to a tool was made to answer at once")
+}
+
+func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {
+	// Below the cap a reply to a result may chain the lookup it needs next.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+	afterTool := s.model.requests()[1]
+	s.NotEmpty(afterTool.Tools, "a reply after one tool round was offered no tools")
+	s.NotContains(afterTool.Instructions, "answer the caller now")
 }
 
 func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {

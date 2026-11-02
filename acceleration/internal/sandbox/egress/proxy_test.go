@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // ProxySuite runs the attacks A1-A14 a proxy can be put through without a sandbox: its hosts
@@ -99,7 +100,7 @@ func (s *ProxySuite) SetupSuite() {
 	}
 	s.ctx = context.Background()
 	var err error
-	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)
 	s.store = egress.NewStore(s.redis)
@@ -1500,7 +1501,7 @@ func (s *ProxySuite) TestATLSHelloSentWithTheConnectIsKept() {
 
 // TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox: Redis down is 503, not 407.
 func (s *ProxySuite) TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox() {
-	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	closed, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	closed.Close()
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(closed)))
@@ -1512,7 +1513,7 @@ func (s *ProxySuite) TestAGrantsUnreadableIsAnErrorNotARefusalOfTheSandbox() {
 // TestGrantsUnreadableInAnOpenTunnelAreAnError: Redis lost after CONNECT is 503 too, and
 // the host is not reached.
 func (s *ProxySuite) TestGrantsUnreadableInAnOpenTunnelAreAnError() {
-	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
 	s.T().Cleanup(s.proxy.Close)
@@ -1651,12 +1652,15 @@ func (s *ProxySuite) TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTim
 	// Idle past the idle timeout, and short of the keep-alive timeout.
 	time.Sleep(3 * idle)
 
+	// The wait counts from before the request: the proxy arms its keep-alive deadline once it has
+	// answered, and a clock read after the answer starts late on a client scheduled after that,
+	// so it measures less than the proxy waited (AI-2423).
+	asked := time.Now()
 	get()
-	answered := time.Now()
 	_, end := reader.ReadByte()
 
 	s.ErrorIs(end, io.EOF)
-	s.GreaterOrEqual(time.Since(answered), keepAlive)
+	s.GreaterOrEqual(time.Since(asked), keepAlive)
 }
 
 // TestAnEncodedResponseToATokenIsRefused is A5: a host that encodes its echo in a way the
@@ -2130,7 +2134,7 @@ func (s *ProxySuite) TestARequestTheProxyDoesNotServeIsCountedAsDeniedRequest() 
 
 // TestGrantsThatCannotBeReadAreCountedAsAnError: Redis lost before the CONNECT.
 func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
-	closed, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	closed, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	closed.Close()
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(closed)))
@@ -2144,7 +2148,7 @@ func (s *ProxySuite) TestGrantsThatCannotBeReadAreCountedAsAnError() {
 
 // TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError: Redis lost after the CONNECT.
 func (s *ProxySuite) TestGrantsThatCannotBeReadInAnOpenTunnelAreCountedAsAnError() {
-	lost, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
 	s.Require().NoError(err)
 	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
 	s.T().Cleanup(s.proxy.Close)

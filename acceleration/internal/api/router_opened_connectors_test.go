@@ -175,7 +175,8 @@ func (s *RouterOpenedConnectorsSuite) TestAMessageFromANumberNotLinkedYetImplies
 
 	s.Eventually(func() bool { return len(s.meta.to(writer)) == 1 }, settleFor, 50*time.Millisecond)
 	s.Contains(s.meta.to(writer)[0], "code")
-	s.Empty(s.sessionsOf(config.Name, ""), "no conversation opened")
+	s.Never(func() bool { return len(s.sessionsOf(config.Name, "")) > 0 }, time.Second, 50*time.Millisecond,
+		"no conversation opened")
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 

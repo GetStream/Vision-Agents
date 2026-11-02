@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
@@ -323,6 +325,11 @@ func TestCallStatusSuite(t *testing.T) {
 	runSuite(t, new(CallStatusSuite))
 }
 
+// unreachableVendor is where the suite's vendors are pointed: port 1 on this host refuses
+// at once, so a dial that gets past the router's own checks fails here and never reaches a
+// real vendor with the suite's nonsense credentials.
+const unreachableVendor = "http://127.0.0.1:1"
+
 func (s *CallStatusSuite) SetupSuite() {
 	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
@@ -335,12 +342,13 @@ func (s *CallStatusSuite) SetupSuite() {
 	}
 	registry := vendors.Registry(config)
 	registry.Register("twilio", func() (phone.Provider, error) {
-		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t"})
+		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t", BaseURL: unreachableVendor})
 	})
 	registry.Register("telnyx", func() (phone.Provider, error) {
-		return telnyx.New(telnyx.Options{APIKey: "k"})
+		return telnyx.New(telnyx.Options{APIKey: "k", BaseURL: unreachableVendor})
 	})
 	s.phoneVendors = registry
+	s.phoneOnChat = true
 	s.sessionTelephony = true
 	s.logged = &lockedLog{}
 	s.logs = s.logged
@@ -389,6 +397,32 @@ func (s *CallStatusSuite) read(callID string) outcome.Call {
 	call, err := s.router.phone.Outcomes().Read(context.Background(), s.customerID(), callID)
 	s.Require().NoError(err)
 	return call
+}
+
+func (s *CallStatusSuite) TestACallIntoASessionWhoseCallCarriesOtherCustomIsAnInvalidRequest() {
+	// The session's call keeps the custom it was made with, so the client is told what to
+	// change rather than that something went wrong.
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	e164, session := s.utils.number(), s.utils.uuid()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	creator := "agent-1"
+	_, err := s.chat.Client.Video().GetOrCreateCall(ctx, "agent", session, &getstream.GetOrCreateCallRequest{
+		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: map[string]any{"k": "first"}},
+	})
+	s.Require().NoError(err)
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: e164, To: "+15550001111", SessionId: &session, Custom: &map[string]string{"k": "second"},
+	})
+
+	s.Require().Equal(http.StatusBadRequest, status, "%s", payload)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal("invalid_request", answered.Error.Code)
+	s.Contains(answered.Error.Message, "already carries other custom data")
 }
 
 func (s *CallStatusSuite) TestATwilioStatusIsReachedWithoutACustomer() {

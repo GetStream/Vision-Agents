@@ -14,6 +14,8 @@ environment:
 
 dependencies:
   http: ^1.6.0
+  # Marks `AgentSession.camera` as vision_agents_rtc's, not an app's.
+  meta: ^1.16.0
   web_socket: ^1.0.1
 
 dev_dependencies:
