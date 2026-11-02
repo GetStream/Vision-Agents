@@ -248,9 +248,9 @@ func (s *Server) createScheduledTask(ctx context.Context, request *createSchedul
 	}
 	task.NextRunAt = &next
 
-	maxActive := scheduling.MaxActivePerUser
-	if config != nil && config.Scheduling.MaxTasksPerUser > 0 {
-		maxActive = config.Scheduling.MaxTasksPerUser
+	maxActive := store.DefaultMaxActiveTasks
+	if config != nil {
+		maxActive = config.Scheduling.MaxActive()
 	}
 	if err := s.store.CreateScheduledTask(ctx, &task, maxActive); err != nil {
 		switch {
@@ -543,14 +543,14 @@ func (s *Server) resumeScheduledTask(ctx context.Context, request *resumeSchedul
 			}
 			task.State, task.NextRunAt = store.ScheduledTaskCompleted, nil
 		} else {
-			maxActive := scheduling.MaxActivePerUser
+			maxActive := store.DefaultMaxActiveTasks
 			// A deleted config leaves a task nothing to run on; any other failure to read it is not that.
 			config, err := s.store.AgentConfig(ctx, customerID, task.ConfigID)
 			if errors.Is(err, store.ErrNoAgentConfig) {
 				return nil, errUnknownConfig
 			}
-			if err == nil && config.Scheduling.MaxTasksPerUser > 0 {
-				maxActive = config.Scheduling.MaxTasksPerUser
+			if err == nil {
+				maxActive = config.Scheduling.MaxActive()
 			}
 			active, err := s.store.ActiveScheduledTaskCount(ctx, customerID, task.UserID, task.ConfigID)
 			if err != nil {

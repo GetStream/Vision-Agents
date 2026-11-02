@@ -698,6 +698,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
 	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
+	spec.MaxToolRounds = override(spec.MaxToolRounds, request.MaxToolRounds)
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
 

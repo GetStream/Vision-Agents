@@ -19,25 +19,29 @@ import (
 // sandboxGrant adds an opened binding with sandbox set to d's grants, reading the sandbox
 // block of the revision its connection was saved on. A connection saved before the connector
 // had one gives the sandbox nothing, which fails a required binding and is a warning
-// otherwise. The reads come from the connector's latest revision, so a connection pinned to an
-// earlier one gets them without a reconnect: they only narrow what the egress proxy lets
+// otherwise, and, where the latest revision has one, each run says to reconnect it
+// (d.reconnect). The reads come from the connector's latest revision, so a connection pinned
+// to an earlier one gets them without a reconnect: they only narrow what the egress proxy lets
 // through.
 func (m *Manager) sandboxGrant(ctx context.Context, binding store.ConnectorBinding, connection store.ConnectorConnection,
 	manifest core.ResolvedManifest, scheme core.Scheme, d *dispatcher) (string, error) {
 	if !binding.Sandbox {
 		return "", nil
 	}
-	if manifest.Sandbox == nil {
-		if binding.Required {
-			return unavailableSandbox, nil
-		}
-		m.logger.Warn("a connector binding gives the sandbox no access: reconnect to use sandbox access", "connector", binding.Name,
-			"connection", connection.ID, "revision", connection.DefinitionRevision)
-		return "", nil
+	if manifest.Sandbox == nil && binding.Required {
+		return unavailableSandbox, nil
 	}
 	latest, err := m.options.Store.LatestConnectorDefinition(ctx, connection.CustomerID, binding.ConnectorID)
 	if err != nil {
 		return "", err
+	}
+	if manifest.Sandbox == nil {
+		m.logger.Warn("a connector binding gives the sandbox no access: reconnect to use sandbox access", "connector", binding.Name,
+			"connection", connection.ID, "revision", connection.DefinitionRevision)
+		if latest.Manifest.Sandbox != nil {
+			d.reconnect = append(d.reconnect, sandbox.Grant{Binding: binding.Name, Hosts: latest.Manifest.Sandbox.Hosts})
+		}
+		return "", nil
 	}
 	var reads []core.SandboxRead
 	if latest.Manifest.Sandbox != nil {
@@ -100,10 +104,11 @@ func (d *dispatcher) boundLate(_ context.Context, grant sandbox.Grant) (sandbox.
 	return opened, true
 }
 
-// connecting is the session's sandbox while one of its grants is late: each run's result names
-// the late grants whose user has not connected them (Result.Unconnected), as the model reads
-// a tool's result more surely than its description, those connected on a connection that
-// cannot bind them (Result.Reconnect), and, once, those whose token is still on its way
+// connecting is the session's sandbox while one of its grants is late, or a binding opened
+// needs a reconnect (dispatcher.reconnect): each run's result names the late grants whose user
+// has not connected them (Result.Unconnected), as the model reads a tool's result more surely
+// than its description, those connected on a connection that cannot bind them, and the
+// bindings opened on one (Result.Reconnect), and, once, those whose token is still on its way
 // (Result.Connected). In a written session the run also shows the user the consent of each
 // one unconnected (offerConsent), as many models never call list_tools for them.
 type connecting struct {
@@ -172,6 +177,7 @@ func (c *connecting) Run(ctx context.Context, code string, outputs []string) (sa
 			result.Connected = append(result.Connected, grant.Binding)
 		}
 	}
+	result.Reconnect = append(result.Reconnect, c.d.reconnect...)
 	return result, nil
 }
 

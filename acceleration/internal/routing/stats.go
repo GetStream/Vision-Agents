@@ -98,8 +98,11 @@ type Stat struct {
 	// the difference is a part of the bill the adapter missed.
 	VendorTotalTokens int64
 	Success           bool
-	ErrorCode         string
-	ErrorMessage      string
+	// Interrupted is a reply the caller cut off, which served them and so carries no error
+	// code. It is not stored: an estimate for it is counted as a cut, not as usage lost.
+	Interrupted  bool
+	ErrorCode    string
+	ErrorMessage string
 	// Fatal marks a failure that ended the session for a reason the provider gives every
 	// caller, such as an account it refuses. It makes the provider unavailable for one
 	// health window, however much it served before.
@@ -424,7 +427,11 @@ func (r *Recorder) lose(config ProviderConfig, entry Stat, cause error) {
 func (r *Recorder) priced(config ProviderConfig, entry Stat) (store.Request, pricing.Quote) {
 	request := row(r.modality, config, entry)
 	request.UserID = userOnRow(entry.CustomerID, entry.UserID)
-	priced := quote(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
+	pricedBy := quote
+	if entry.CostMicros != 0 {
+		pricedBy = quoteBesideQuoted
+	}
+	priced := pricedBy(r.pricer, r.modality, config, entry.Attributes, request.Quantities())
 	request.CostMicros, request.OutputCostMicros, request.Billable = priced.CostMicros, priced.OutputCostMicros, priced.Billable
 	request.BaseCostMicros, request.PriceVersion, request.SKU = priced.BaseCostMicros, priced.Version, priced.SKU
 	if entry.CostMicros != 0 {

@@ -793,6 +793,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			LanguageHints:      spec.LanguageHints,
 			Keyterms:           spec.Keyterms,
 			MaxTokens:          spec.MaxTokens,
+			MaxToolRounds:      spec.MaxToolRounds,
 			Overwrites:         spec.LLMOverwrites(),
 			Memory:             remembering,
 			Knowledge:          m.options.Knowledge,
@@ -1733,7 +1734,8 @@ func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (s
 		asked.Grants, asked.Broker = connectors.grants, broker
 	}
 	box, err := m.options.Sandboxes.Open(ctx, owner(spec), asked)
-	if err != nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) {
+	if err != nil || connectors == nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) &&
+		len(connectors.reconnect) == 0 {
 		return box, err
 	}
 	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, asks: spec.Text,

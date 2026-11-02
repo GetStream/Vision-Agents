@@ -2,9 +2,28 @@
 
 ## Features
 
+### A session sets how many tool rounds a reply may chain
+
+`max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.
+
+### A Flutter app on a call can show the agent its camera
+
+`VoiceSession.join(camera: true)` or `setCameraEnabled(true)` in `vision_agents_rtc` now lets the agent look through the phone's camera, as the Swift, Kotlin and JS SDKs do. When the agent's `vision` skill asks what the camera shows (`get_video_frames`), the session answers with pictures of the call's own video, taken then, as JPEGs. Nothing is taken until the agent asks. A camera with nothing to show is said as the answer, so the agent asks the person to show it again; with the camera off the session does not answer, leaving the call to a video worker in the backend. Unlike the other SDKs, which keep the last few seconds, the pictures are taken just after the question rather than just before it. `vision_agents_rtc` now depends on `image` (#1449).
+### First output latency by model
+
+`router_first_output_seconds` gains a `model` label, so one provider's models have their own latency. A custom model is labelled `custom`, as in `router_requests_total`. `router_request_seconds` is unchanged (AI-2443).
+
+### The Python SDK sets spend limits, puts users in teams and tags their work
+
+`plugins/stream` gains `api.spend_limits` (create, update, delete, list, grant, revoke, usage and reset), `api.teams` (`set_limit` creates or updates a team's limit in one call, `remove_limit`, `usage`, `grant` and `list`), `api.account` (the balance and Stream's `spend_hard_limit`, and the credit history) and `api.usage.spend`. Amounts are dollars as a `Decimal`, an `int` or a `str`, never a float.
+
+A user is in the team its token names: `api.create_user_token("user-42", team="finance", usage_categories=["project:onboarding"])` for a device, `api.for_user("user-42", team="finance")` for a backend running work for that user, and `stream.Client(team=..., usage_categories=...)` for the client's own work. A team or category the router would refuse raises `ValueError` before anything is signed.
+
+Every request from `plugins/stream` sends `X-Stream-Client: sdk`, as the Go SDK does, so the audit log records its changes as `sdk` rather than `api`.
+
 ### `router replicate --resume` cuts a move over
 
-`router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. A pause or resume here, by the user or the agent, clears the mark. The cut-over is three steps: a last `router replicate --once`; stop the source delivering (never by pausing its tasks before that last `--once`, which clears the marks); then `router replicate --resume --as <app id>`, which reads only this deployment and takes no `--from`. It resumes exactly the marked tasks, each from the next run the source had not delivered, and leaves the ones the user paused alone. A marked task whose agent config is deleted or missing here stays paused and loses the mark; the command prints how many. It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
+`router replicate` marks each scheduled task it imports paused because it was active on the source, and imports a campaign running there as paused and marked too. A change carried later sets the mark again from the source's state, so a task the user paused there stays unmarked. A pause or resume here, by the user or the agent, clears the mark. The cut-over is three steps: a last `router replicate --once`; stop the source delivering (never by pausing its tasks before that last `--once`, which clears the marks); then `router replicate --resume --as <app id>`, which reads only this deployment and takes no `--from`. It resumes exactly the marked tasks, each from its first occurrence after the cut-over, and leaves the ones the user paused alone. A marked task whose agent config is deleted or missing here stays paused and loses the mark; the command prints how many. A user holds at most the config's `max_tasks_per_user` active tasks (25 when unset), as with a resume over the API: where tasks the user made here before the cut-over leave less room than the move brought, the oldest are resumed, the rest stay paused and marked, and the command prints how many; run it again once the user has made room (AI-2407). It lists each marked campaign with `POST /v1/agents/campaigns/{id}/start`: a campaign rings only from the router that started it, so it is started on the destination (AI-2025, AI-2026).
 
 ### An iMessage photo reaches the agent
 
@@ -77,6 +96,14 @@ with Stream's voice glow, captions, and a camera button with a preview of what J
 new conversation's session names `io.getstream.visionagents.androidassistant:/connected` as its
 `return_url`, and the app opens a connector's sign-in in an Auth Tab, though Stream's Android AI
 components have no sign-in card to start one from yet. CI builds it beside the Kotlin SDK.
+
+### Kotlin sessions read their channel as Stream Chat keeps it
+
+`AgentSession.channelState(context, scope)` in the Kotlin SDK watches the conversation's Stream
+Chat channel on the client `chat(context)` opens and answers Stream Chat's
+`StateFlow<ChannelState?>`: its messages, oldest first, kept live by the client and watched again
+after a reconnect while the flow is held. `ChatClient.loadOlderMessages(cid, limit)` pages back
+into it. An incognito session, or a client connected as somebody else, is refused as by `chat`.
 
 ### Kotlin apps manage the user's scheduled tasks
 
@@ -162,6 +189,10 @@ A daily job on every router deletes the runs of scheduled tasks that finished mo
 
 `knowledge.min_chunk` (`ROUTER_KNOWLEDGE_MIN_CHUNK`, 500 by default) is the size in bytes a smaller `chunk_size` is raised to, and `knowledge.max_heading` (`ROUTER_KNOWLEDGE_MAX_HEADING`, 128 by default) is how many bytes of a heading are repeated in each later passage and in its `source`. They apply to `POST /v1/agents/knowledge`, a directory sync and the URL crawler; `cmd/knowledge` takes them as `-min-chunk` and `-max-heading`. A `min_chunk` of 0 is no minimum, and a `max_heading` of 0 repeats no heading (AI-1992). The router does not start with a negative value, or with a `max_heading` not less than a `min_chunk` above 0. It warns at startup when the limits let a document's passages be more than 4 times its size, with how much one 8 MiB ingest request can then write, and when there is no minimum, which bounds nothing (AI-1993).
 
+### A knowledge base can be deleted
+
+`DELETE /v1/agents/knowledge?namespace=<name>` deletes one of the caller's knowledge bases for good: everything turbopuffer holds of it, the documents it was filled with and the pages it was kept filled from, which are no longer read. A base an agent config reads is refused with a 409 `knowledge_base_in_use` naming those agents, and one the caller has nothing in is a 404 `knowledge_base_not_found`, whatever another app has under that name. The delete is one entry in the audit log. It is server-side only. Its name can then be filled again, in any region and account, as a base never written to (AI-1996).
+
 ### GPT-6.1 Terra is `openai/gpt-6.1-terra`
 
 OpenAI's new middle tier can be routed as `openai/gpt-6.1-terra`, in the `high-quality` tier, with images in and `reasoning_effort` from `none` (its default) to `max`. It is $1.00 in and $5.00 out per 1M tokens, half of `gpt-5.6-terra`, with OpenAI's batch, flex, priority and over-272K rates. `openai/gpt-5.6-terra` is still served.
@@ -179,6 +210,76 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
 ## Bug Fixes
+
+### A bought or attached number reaches its agent
+
+Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+
+### A voice reply cut short is billed for what it generated
+
+A speech-to-speech reply the caller hung up on, one cut off by a dropped connection, and one a newer reply took the place of were recorded with no usage, so they cost nothing. On OpenAI Realtime, xAI and Qwen, closing the session mid-reply cancels the reply and waits up to a second for the vendor's count of it, and a reply a newer one took the place of is billed with its own count when it arrives. On Gemini Live an interrupted reply is billed with the usage the server sends when it ends the turn. A reply the vendor never counts is billed on an estimate, marked estimated and counted in `router_usage_estimated_total` with the reason `cancelled`: the input of the last reply the vendor counted in the session, output audio tokens at the session's own rate for the audio it streamed (before any reply is counted, 20 a second for OpenAI and Qwen, 50 for xAI, 25 for Gemini), and its transcript at four characters a token. An xAI reply estimated so also carries the audio it sent to the session's last row, unless a later xAI count already took it in. Qwen-Audio, which never reports usage, is not estimated (AI-1726).
+### A model response cut short is billed for what it generated
+
+A Claude response cut off before its final usage event was recorded with the one output token Anthropic counts as it opens. Its row now keeps Anthropic's prompt count and bills the output at least at what streamed, marked estimated; a deadline that ends one is a timeout, billed the same way, not a provider error. A response that fails after streaming output is billed on an estimate, as a cancelled one is, and counted in `router_usage_estimated_total` with the reason `failed`; one that fails before any output stays unbilled. A response its caller closed and never read to the end writes its row 5 seconds after the close instead of never (AI-1726).
+### A call into a held session with other custom data is refused
+
+A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A session's call that carries no custom of its own, as one `Agent.outbound_call` makes, is given the `custom` sent and places. A call with the same custom as the session's call, or with none, places as before (AI-2471).
+
+### The session writer keeps its queue for rows
+
+Reads that wait for the session writer no longer take room in its queue. A wait after the router stopped its writer returns at once.
+
+### A response is counted on its user's daily limit when Redis or the policies are slow
+
+A finished response's debit waits at most 2 s, as before, but no longer gives up its write when that wait runs out. A response whose policies took that long to read, or whose router stalled past it, went uncounted on its user's day; it is now counted once the write reaches Redis.
+
+### Tool rounds are bounded in text replies
+
+A text conversation now limits the replies to tool results that follow one message, as a voice call does. After eight rounds the model is offered no tools and answers from what the tools returned. A model that kept asking for the same call was asked again on every reply before.
+
+### A call's transcript read right after the call has its conversation's lines
+
+`GET /v1/agents/calls/{id}/transcript` and `/timeline` find the conversation a call wrote into from its session's row, which is written just after the call's. A read in that moment found no row, read the agent's own channel and answered with no lines. It now waits for the row to be written, as reading a session does (AI-2469).
+
+### Unpriced work is refused or alarmed, never silently free
+
+Work with no price is recorded at nothing and reserves no spend. The router now lists every item a deployment bills (`billable.Items`): its routed models and their BYOK twins, knowledge and sandboxes in each region they run in with their twins, phone, texts, 10DLC fees and runtime. It names each unpriced one at start against the price list in force, not the price files alone, and the price list's `unpriced`, a change's preview and `router prices show --unpriced` list the same items. Work priced only per class or per country is no longer listed as unpriced. An agent's sync, or a config create or update, is refused with a 400 naming each item when its work in its region has no price. The usage jobs raise the `unpriced` alert for a row they record with no price, and a number's month the vendor quoted is no longer logged as unpriced (AI-2187).
+
+### A user's own quota holds from the next request on every router
+
+Saving the first policy of its own for one of an app's users dropped the app's cached decision only on the router that saved it, so another router could answer that user's next request with the app's quota. Every router now reads whether an app has users with a policy of their own through the shared configuration cache, which a write clears everywhere (AI-1918).
+
+### A Daytona credential refresh or file download that hangs no longer holds the sandbox
+
+In a Daytona sandbox with connector grants, the credential refresh before each `run_code`, the secrets made when the sandbox is made or made again, the files and setup written into a sandbox that has started, and the read of the state of one that may have stopped are now bounded at 60 seconds (30 for the read), as a file write is. So are the downloads of the files a run hands back, which on a sandbox with its own image waited up to 20 minutes. Before, a call Daytona never answered held the sandbox, and every other run of the session waited on it (AI-2393, AI-2394).
+
+### A report on an older placed call no longer ends the session a newer call rings into
+
+A session can have two calls placed into it. A vendor's report that the older one went unanswered (busy, no answer, failed) ended the session when the router that took the report held it, while the newer call still rang; a router holding it for another already refused. The router now checks the newest call stored for the session wherever the session is held, and ends it only when that call says nobody answered. A router that cannot read the stored call keeps the session, which ends at its start timeout (AI-2440).
+
+### Sandbox code says to reconnect a connection saved before its connector gave code access
+
+A session whose agent config binds a connection with `sandbox: true`, saved on a connector revision that gives the sandbox no access while a later revision does, now gets a `run_code` result that tells the model to ask the user to reconnect it, as a login during the chat does since AI-1980. Before, only the router's log said so, and code calling the provider got a 401 with no hint (AI-2390).
+
+### A video fetched by URL reaches only the public internet
+
+The router refuses a clip URL whose address is in a range that is not publicly reachable, by the same list as connector traffic: "this network" (0.0.0.0/8), IETF protocol assignments (192.0.0.0/24), benchmarking (198.18.0.0/15), reserved (240.0.0.0/4), the documentation ranges, and IPv6 addresses outside 2000::/3 or that carry an IPv4 address (6to4, Teredo, NAT64) (AI-2389).
+
+### A bad knowledge url or simulation in a Go agent folder names its line
+
+`agents.Load` now says which line of `knowledge/urls.yaml` a page that is not an http or https url is on, and which line of a `simulations/*.yaml` file a simulation with no name, scenario or assertion, a mode other than text or audio, or a name already taken is on. The same files are refused as before (AI-2417).
+
+### `router replicate --resume` does not deliver again what the source delivered
+
+The source goes on delivering between the last `router replicate --once` and its stop, and what it delivers then never reaches the copy, so a task's next run there was one the source had already delivered: the cut-over resumed it, and the destination delivered that occurrence a second time. The cut-over now resumes each moved task at its first occurrence after the cut-over, as any resume counts from now; a moved task with no occurrence left is completed, a one-shot with a `missed` run. An occurrence the source held for quiet hours past the cut-over keeps its time and is delivered here when the hold ends. Run `--resume` right after stopping the source: an occurrence due between the two is delivered by neither. Until the last `--once` the source is the truth: a change it makes to a row overwrites what was done to that row on the destination, a delete included, so a config deleted there comes back when the source edits it; once SDKs point at the destination, stop writing at the source (AI-2406, AI-2408).
+
+### A call that may have carried out a scheduled task no longer counts as a failure
+
+A scheduled task's run that ends `already_called` (a call was placed for the occurrence and its end was never recorded, as when the router holding the call stopped) no longer adds to the task's `consecutive_failures`, and the task moves on as after a run that did not fail: a one-shot is `completed`, not `failed`, and a repeat is not failed by five such runs in a row. The run is still `failed` with error `already_called` (AI-2404, AI-2405).
+
+### A .NET tool cancelled while it sends no longer ends the session
+
+In the .NET SDK a tool's `UpdateAsync` or `SayAsync`, or any session send, given a token that was cancelled while the frame was being written, aborted the whole WebSocket (`ClientWebSocket` does that), so a router `tool_cancel` that landed mid-send ended the session with nothing said. A send is now written whole once it starts; a token cancelled meanwhile only stops the caller from waiting for it.
 
 ### A bad connector or knowledge page in a Go agent folder names its line
 
@@ -207,6 +308,10 @@ A task delivered on `phone` and then a text channel (`deliver_to: ["phone", "sms
 ### Work a scheduled turn hands over is counted as the turn after a barge-in
 
 On a speech-to-speech agent, work the model hands over (`delegate_skill`, or the vision skill looking at a tool's picture) in a reply to a scheduled turn is counted as that turn even when the caller starts speaking before the work runs, or before the model finishes asking for it. The same holds on a cascaded agent for the vision skill looking at a tool's picture that comes back after the next turn began. Before, it was counted as an unscheduled turn, on the caller (AI-2001).
+
+### The reply to the caller is not counted as a scheduled turn typed in just before it
+
+On a speech-to-speech agent, the reply the model gives to what the caller just said is the caller's, also when a scheduled turn was typed in between the caller stopping and that reply beginning. Work the model hands over in it is no longer counted as the scheduled turn, also when the model asks for the work before the caller's words are transcribed. On GPT-Live, work handed over in a reply to a scheduled turn is counted as that turn also when the backend asks for it after the caller spoke again, and work handed over in the reply to the caller stays the caller's when the backend asks for it during a scheduled turn. Before, it was counted on the caller (AI-2402, AI-2403).
 
 ### An IP address in a sandbox's allowed domains is refused
 
@@ -315,6 +420,10 @@ Every turn's instructions end with the date and the hour in UTC, and in the user
 ### The greeting is said when somebody joins the call, not when the agent does
 
 An agent's greeting is now said once the first participant other than the agent is in the call, when a session starts and when voice starts on a conversation. Somebody already in the call, such as an inbound caller, is greeted on joining as before. Before, an agent that joined first greeted an empty call: an outbound phone call played the greeting while it rang, and a user who joined after the agent never heard it. A call that cannot say who is in it, and a session in writing, are greeted on joining as before. A greeting that fails once somebody joined is logged and no longer fails the session (AI-2199).
+
+### A page removed while it is read stays out of its knowledge base
+
+The URL crawler wrote a page's passages even when the page was removed while it was read, so an agent went on answering out of a page no list showed. The crawler now looks for the page again before it writes and once it has written, and takes back what it wrote when the page is gone (AI-1996).
 
 ### Go clients keep working with a region
 

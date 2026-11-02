@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -426,7 +427,7 @@ func (s *RealtimeSuite) TestXAIBillsTheGrowthOfItsBillableAudio() {
 
 // TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen: the second reply is
 // superseded by the third before xAI settles it, and its done arrives while the third is
-// open. It settles nothing, and its growth is billed by the third.
+// open. It settles the second with its tokens, and its growth is billed by the third.
 func (s *RealtimeSuite) TestALateDoneForASupersededReplyLeavesItsGrowthToTheReplyOpen() {
 	provider := s.newProvider(XAI)
 	provider.handleMessage(created("resp_1"))
@@ -446,7 +447,7 @@ func (s *RealtimeSuite) TestALateDoneForASupersededReplyLeavesItsGrowthToTheRepl
 			billed = append(billed, complete.Usage.BilledAudioMs)
 		}
 	}
-	s.Equal([]string{"resp_2", "resp_3"}, settled, "the superseded reply settles once, when it is superseded")
+	s.Equal([]string{"resp_2", "resp_3"}, settled, "the superseded reply settles once, by its own done")
 	s.Equal([]int64{0, 7_000}, billed, "the late done's growth is billed by the reply open, with its own")
 }
 
@@ -750,4 +751,102 @@ func (s *RealtimeSuite) TestAnOpenReplyWithNoAudioIsTimedFromTheStop() {
 		}
 	}
 	s.GreaterOrEqual(complete.TimeToFirstByteMs, 40.0, "the open reply is timed from the stop")
+}
+
+// completions is every reply settled so far, in order.
+func (s *RealtimeSuite) completions(provider *STS) []sts.ResponseComplete {
+	var completes []sts.ResponseComplete
+	for _, event := range s.drain(provider) {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	return completes
+}
+
+// reported is a reply OpenAI counted: 100 input tokens, 40 output audio tokens and 6 of text.
+func reported() *usage {
+	return &usage{
+		InputTokens: 100, OutputTokens: 46,
+		InputTokenDetails:  &tokenDetails{AudioTokens: 80, TextTokens: 20},
+		OutputTokenDetails: &tokenDetails{AudioTokens: 40, TextTokens: 6},
+	}
+}
+
+func (s *RealtimeSuite) TestASupersededReplyIsBilledWithItsOwnDone() {
+	provider := s.newProvider(OpenAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(audioDelta("resp_1", 4_800))
+	provider.handleMessage(created("resp_2"))
+	provider.handleMessage(done("resp_1", "cancelled", reported()))
+	provider.handleMessage(done("resp_2", "completed", reported()))
+
+	completes := s.completions(provider)
+	s.Require().Len(completes, 2)
+	s.Equal("resp_1", completes[0].ResponseID)
+	s.True(completes[0].Interrupted, "the reply that took its place cut it off")
+	s.EqualValues(46, completes[0].Usage.OutputTokens, "the vendor's count, not nothing")
+	s.False(completes[0].Usage.Estimated)
+	s.Equal("resp_2", completes[1].ResponseID)
+}
+
+func (s *RealtimeSuite) TestAReplyCutOffByADeadSocketIsEstimatedAtTheSessionsOwnRate() {
+	provider := s.newProvider(OpenAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(audioDelta("resp_1", 4_800)) // 200 ms
+	provider.handleMessage(done("resp_1", "completed", reported()))
+	s.completions(provider)
+
+	provider.handleMessage(created("resp_2"))
+	provider.handleMessage(audioDelta("resp_2", 2_400)) // 100 ms
+	provider.handleMessage(serverEvent{Type: eventTranscriptDelta, ResponseID: "resp_2", Delta: "Hello there"})
+	provider.handleReadError(errors.New("connection reset"))
+
+	completes := s.completions(provider)
+	s.Require().Len(completes, 1)
+	s.Equal(sts.Usage{
+		InputTokens: 100, InputAudioTokens: 80, InputTextTokens: 20,
+		OutputTokens: 23, OutputAudioTokens: 20, OutputTextTokens: 3,
+		Estimated: true,
+	}, completes[0].Usage, "the last reply's input, 40 audio tokens per 200 ms, and 11 bytes of text")
+}
+
+func (s *RealtimeSuite) TestAReplyCutOffBeforeAnyWasCountedIsEstimatedAtTheVendorsRate() {
+	provider := s.newProvider(OpenAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(audioDelta("resp_1", 24_000)) // a second
+	provider.handleReadError(errors.New("connection reset"))
+
+	used := s.settled(provider)
+	s.True(used.Estimated)
+	s.EqualValues(20, used.OutputAudioTokens, "OpenAI's one token per 50 ms")
+	s.Zero(used.InputTokens, "no reply has said what the conversation reads")
+}
+
+func (s *RealtimeSuite) TestSupersededRepliesWithNoDoneAreEstimatedInOrderWhenTheSocketDies() {
+	provider := s.newProvider(OpenAI)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(audioDelta("resp_1", 2_400))
+	provider.handleMessage(created("resp_2"))
+	provider.handleMessage(audioDelta("resp_2", 2_400))
+	provider.handleReadError(errors.New("connection reset"))
+
+	completes := s.completions(provider)
+	s.Require().Len(completes, 2)
+	s.Equal("resp_1", completes[0].ResponseID)
+	s.Equal("resp_2", completes[1].ResponseID)
+	for _, complete := range completes {
+		s.True(complete.Usage.Estimated)
+		s.Positive(complete.Usage.OutputTokens)
+	}
+}
+
+func (s *RealtimeSuite) TestAVendorThatReportsNoUsageIsNotEstimated() {
+	provider, err := New(Options{Vendor: Qwen, Model: qwenAudioPrefix + "turbo", APIKey: "test-key", Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	provider.handleMessage(created("resp_1"))
+	provider.handleMessage(audioDelta("resp_1", 2_400))
+	provider.handleReadError(errors.New("connection reset"))
+
+	s.Equal(sts.Usage{}, s.settled(provider), "Qwen-Audio never counts a reply, so there is nothing to stand in for")
 }

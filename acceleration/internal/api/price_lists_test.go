@@ -257,7 +257,7 @@ func (s *PriceListsSuite) TestAnEntryWithoutARegionFailsValidation() {
 	before := s.changeCount()
 	for _, region := range []any{nil, "", "EU", "us east"} {
 		item := map[string]any{"modality": "llm", "provider": "t1c", "model": "m" + s.token(),
-			"rates": map[string]any{"input_tokens": map[string]any{"usd": 1, "per": 1_000_000}},
+			"rates":  map[string]any{"input_tokens": map[string]any{"usd": 1, "per": 1_000_000}},
 			"prices": map[string]any{"input_tokens": map[string]any{"usd": 1, "per": 1_000_000}}}
 		if region != nil {
 			item["region"] = region

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -34,9 +35,14 @@ func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential 
 // forwardStored is forwardChanged with edit applied to the task before it is stored; the
 // payload then names the edited task's owner but the session the task was made in.
 func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
+	return s.forwardStoredTo(other, other, credential, edit, change)
+}
+
+// forwardStoredTo is forwardStored for a session opened on holding, handed to to.
+func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	config := s.agentWithScheduling(nil)
 	user := s.data.createUser()
-	opened := user.on(other).createSession(CreateSessionRequest{ConfigId: &config})
+	opened := user.on(holding).createSession(CreateSessionRequest{ConfigId: &config})
 	task := store.ScheduledTask{
 		CustomerID: s.customerID(), ConfigID: config, UserID: user.userID, APIKey: s.app.key,
 		CallerKind: "authenticated", SessionID: opened.Id, Title: "Stretch",
@@ -70,7 +76,7 @@ func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential [
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	answer, err := node.NewForwarder(nil, credential).Ask(ctx, other.Listener.Addr().String(), request, body)
+	answer, err := node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
 	return text, answer, err
 }
 
@@ -230,6 +236,39 @@ func (s *ScheduledTasksSuite) TestAPeerNamingNoCustomerIsRefused() {
 	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
 		delete(payload, "customer_id")
 	}))
+}
+
+// A node with no store has no task to check a peer's word against: it is no such task, and
+// nothing is delivered. A node with no store opens no session, so the one the delivery
+// names is held by another node.
+func (s *ScheduledTasksSuite) TestANodeWithNoStoreRefusesAPeersDelivery() {
+	holding, _ := s.otherRouter(nil)
+	logged := &loggedText{}
+	other, _, _ := s.otherNodeServingFrom(nil, nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+
+	s.refusedAsNoTask(s.forwardStoredTo(holding, other, s.suiteCredential(), nil, nil))
+	s.NotContains(logged.String(), "a request panicked", "the refusal went on to read a store there is none of")
+}
+
+// A node that could not read the task says so, so the router that handed it over tries
+// again, and nothing is delivered.
+func (s *ScheduledTasksSuite) TestANodeThatCouldNotReadTheTaskAnswersAnError() {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	logged := &loggedText{}
+	other, _, _ := s.otherNodeServingFrom(closed, nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)))
+
+	text, answer, err := s.forwardDelivery(other, s.suiteCredential())
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusInternalServerError), answer.GetStatus(), "body: %s", answer.GetBody())
+	var answered struct{ Error struct{ Code string } }
+	s.Require().NoError(json.Unmarshal(answer.GetBody(), &answered), "more than the one error was answered: %s", answer.GetBody())
+	s.Equal("internal_error", answered.Error.Code)
+	s.Contains(logged.String(), "could not read a peer's scheduled task")
+	s.Never(func() bool { return s.model().heard(text) }, time.Second, 50*time.Millisecond,
+		"a delivery whose task could not be read reached the session")
 }
 
 func (s *ScheduledTasksSuite) TestAPeerStillOnTheOlderKeyDeliversToARotatedNode() {

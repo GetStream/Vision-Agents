@@ -5028,6 +5028,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("max_tokens")]
         public int? MaxTokens { get; set; } = default!;
 
+        /// <summary>
+        /// The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_tool_rounds")]
+        public int? MaxToolRounds { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("memory")]
         public SessionMemory? Memory { get; set; } = default!;
 
@@ -8436,7 +8442,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set.
+        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;

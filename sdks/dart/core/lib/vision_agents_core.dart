@@ -5,7 +5,7 @@
 library;
 
 export 'src/agent_event.dart';
-export 'src/agent_session.dart';
+export 'src/agent_session.dart' hide CameraHandler, CameraPicture;
 export 'src/backend.dart';
 export 'src/command.dart';
 export 'src/conversation.dart';

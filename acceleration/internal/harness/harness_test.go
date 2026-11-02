@@ -25,7 +25,13 @@ import (
 
 // settleFor is how long a test waits for an expectation to become true. The flow crosses
 // several goroutines, so the alternative to waiting is asserting on a race.
-const settleFor = 3 * time.Second
+//
+// A wait that holds returns at once, so the bound only costs time when the expectation
+// fails. It is set well above the stalls seen in a test process on a loaded machine: three
+// processes of one stress run each went 11 to 12 s between two log lines, at the same
+// moments. At the old 3 s a stall that long ended the wait before the goroutine it waited
+// on ran again, with the expectation true a moment later.
+const settleFor = 30 * time.Second
 
 var errModelDown = errors.New("the model is down")
 

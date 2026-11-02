@@ -644,10 +644,7 @@ func (r *scheduleRunner) zone(ctx context.Context, argument string) (string, err
 }
 
 func (r *scheduleRunner) maxActive() int {
-	if r.spec.Scheduling.MaxTasksPerUser > 0 {
-		return r.spec.Scheduling.MaxTasksPerUser
-	}
-	return scheduling.MaxActivePerUser
+	return r.spec.Scheduling.MaxActive()
 }
 
 // displayZone is where the current time is told from when no task says: the

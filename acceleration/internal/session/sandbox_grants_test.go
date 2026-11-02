@@ -36,6 +36,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // SandboxGrantsSuite is what a session's sandbox gets of its config's sandbox bindings: a
@@ -306,6 +307,108 @@ func (s *SandboxGrantsSuite) TestARequiredBindingSavedBeforeTheSandboxBlockRefus
 	s.ErrorContains(err, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableSandbox))
 }
 
+// proxyBroker has the manager's sessions use the egress proxy broker, on the suites' Redis.
+func (s *SandboxGrantsSuite) proxyBroker() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(redis.Close)
+	s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
+	s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
+		CACert: []byte(proxyCA)}
+}
+
+// TestAConnectionSavedBeforeTheSandboxBlockIsToldToReconnectOnEveryRun: under either broker,
+// old is on revision 1, which gives the sandbox nothing, and revision 2 gives it its hosts, so
+// every run's result tells the model to have the user reconnect old. current, on revision 2,
+// is granted and named by no run.
+func (s *SandboxGrantsSuite) TestAConnectionSavedBeforeTheSandboxBlockIsToldToReconnectOnEveryRun() {
+	for _, broker := range []string{daytona.BrokerName, egress.BrokerName} {
+		s.Run(broker, func() {
+			s.SetupTest()
+			s.daytonaAPI()
+			if broker == egress.BrokerName {
+				s.proxyBroker()
+			}
+			old := s.connection("", "primary")
+			s.sandboxRevision()
+			current := s.connection("", "secondary")
+			box, _ := s.opened(s.config(sandboxed(s.fixed("old", old, "whoami")), sandboxed(s.fixed("current", current, "whoami"))))
+
+			first, err := box.Run(s.ctx, "print(1)", nil)
+			s.Require().NoError(err)
+			second, err := box.Run(s.ctx, "print(1)", nil)
+
+			s.Require().NoError(err)
+			s.Equal([]string{"current"}, bindings(box.(sandbox.Granted).Grants()))
+			s.Equal(sandbox.Result{Reconnect: []sandbox.Grant{{Binding: "old", Hosts: []string{"api.crm.example", "*.crm.example"}}}}, first)
+			s.Equal(first, second, "no run of this session binds it")
+			said, _ := harness.HandBack(s.ctx, nil, first, s.manager.logger)
+			s.Contains(said, "If this code got 401 from api.crm.example, *.crm.example, the user's old connection is on an older "+
+				"version of its connector, which gives code no access: ask the user to reconnect old.")
+		})
+	}
+}
+
+// TestAConnectionOnTheSandboxRevisionIsNotToldToReconnect: its revision gives the sandbox
+// access, so no run names it.
+func (s *SandboxGrantsSuite) TestAConnectionOnTheSandboxRevisionIsNotToldToReconnect() {
+	s.daytonaAPI()
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+
+	result, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{}, result)
+}
+
+// TestABindingWithoutSandboxOnAnOlderRevisionIsNotToldToReconnect: the binding asks the
+// sandbox for nothing, so its connection's revision is no reason to reconnect.
+func (s *SandboxGrantsSuite) TestABindingWithoutSandboxOnAnOlderRevisionIsNotToldToReconnect() {
+	s.daytonaAPI()
+	old := s.connection("", "primary")
+	s.sandboxRevision()
+	current := s.connection("", "secondary")
+	box, _ := s.opened(s.config(s.fixed("old", old, "whoami"), sandboxed(s.fixed("current", current, "whoami"))))
+
+	result, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{}, result)
+}
+
+// TestAConnectorWithNoSandboxBlockIsNotToldToReconnect: no revision of it gives the sandbox
+// access, so a reconnect would not either. The log still says the binding gets none.
+func (s *SandboxGrantsSuite) TestAConnectorWithNoSandboxBlockIsNotToldToReconnect() {
+	s.daytonaAPI()
+	id := s.connection("", "primary")
+	box, _ := s.opened(s.config(sandboxed(s.fixed("crm", id, "whoami"))))
+
+	result, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(sandbox.Result{}, result)
+	s.Contains(s.logs.String(), "a connector binding gives the sandbox no access")
+}
+
+// TestARequiredBindingOnTheSandboxRevisionIsGranted: only a revision without the block
+// refuses a required binding.
+func (s *SandboxGrantsSuite) TestARequiredBindingOnTheSandboxRevisionIsGranted() {
+	s.sandboxRevision()
+	id := s.connection("", "primary")
+
+	d, _, unavailable, err := s.attach(s.spec(s.config(required(sandboxed(s.fixed("crm", id, "whoami")))), "", nil))
+
+	s.Require().NoError(err)
+	s.Empty(unavailable)
+	s.Equal([]string{"crm"}, bindings(d.grants))
+}
+
 // TestABindingOpenedWithoutADriftedToolStillGivesTheSandboxAccess: secret's schema changed
 // since the config granted it, so the binding opens with whoami alone, and its sandbox still
 // gets the connection's grant.
@@ -375,7 +478,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerSendsTheSandboxThroughTheProxy() 
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
-	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)
 	api := s.daytonaAPI()
@@ -886,16 +989,7 @@ func (s *SandboxGrantsSuite) TestALoginOnAnOlderRevisionIsToldToReconnectOnEvery
 			s.SetupTest()
 			s.daytonaAPI()
 			if broker == egress.BrokerName {
-				address := os.Getenv("ROUTER_REDIS_ADDR")
-				if address == "" {
-					s.T().Skip("ROUTER_REDIS_ADDR is not set")
-				}
-				redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
-				s.Require().NoError(err)
-				s.T().Cleanup(redis.Close)
-				s.manager.options.SandboxBroker, s.manager.options.SandboxSecretPrefix = egress.BrokerName, ""
-				s.manager.options.SandboxProxy = egress.BrokerOptions{Store: egress.NewStore(redis), URL: "http://203.0.113.7:8091",
-					CACert: []byte(proxyCA)}
+				s.proxyBroker()
 			}
 			mine := s.pending("alice", "primary")
 			s.sandboxRevision()
@@ -1247,7 +1341,7 @@ func (s *SandboxGrantsSuite) TestTheProxyBrokerBindsALateGrantOnceTheLoginFinish
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
-	redis, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)
 	api := s.daytonaAPI()

@@ -161,6 +161,16 @@ func ReasonOf(err error) string {
 	return ReasonFailed
 }
 
+// countsAsFailure reports whether a run failed under reason counts against the
+// task's failure streak and fails a task with no occurrence left. A run that
+// found its occurrence's call placed with no end recorded (already_called) does
+// not: that call may have carried the task out, or been cut off, and the run
+// cannot tell which (AI-2404). It leaves the streak as it is, as a missed run
+// does, and the task moves on as after one that did not fail.
+func countsAsFailure(reason string) bool {
+	return reason != ReasonRungAlready
+}
+
 // final reports whether a failed attempt is not to be tried again.
 func final(err error) bool {
 	var failure *Failure
@@ -389,10 +399,15 @@ func (s *Scheduler) run(draining context.Context, claim store.ClaimedScheduledTa
 		}
 		s.logger.Warn("a scheduled task failed to deliver",
 			"task", task.ID, "run", claim.Run.ID, "customer", task.CustomerID, "error", failure)
-		failures := task.ConsecutiveFailures + 1
-		next, state := s.after(schedule, claim.Run.ScheduledFor, true, failures)
+		reason := ReasonOf(failure)
+		failed := countsAsFailure(reason)
+		failures := task.ConsecutiveFailures
+		if failed {
+			failures++
+		}
+		next, state := s.after(schedule, claim.Run.ScheduledFor, failed, failures)
 		s.finish(claim, store.ScheduledTaskOutcome{
-			RunState: store.ScheduledTaskRunFailed, Error: ReasonOf(failure),
+			RunState: store.ScheduledTaskRunFailed, Error: reason,
 			NextRunAt: next, State: state, ConsecutiveFailures: failures,
 		})
 	}
@@ -536,16 +551,17 @@ func (s *Scheduler) settledOutcome(claim store.ClaimedScheduledTask, schedule *S
 	outcome := store.ScheduledTaskOutcome{
 		RunState: run.State, DeliveredTo: run.DeliveredTo, SessionID: run.SessionID,
 	}
-	failed := run.State == store.ScheduledTaskRunFailed
+	if run.State == store.ScheduledTaskRunFailed && run.Error != nil {
+		outcome.Error = *run.Error
+	}
+	failed := run.State == store.ScheduledTaskRunFailed && countsAsFailure(outcome.Error)
 	switch {
 	case failed:
 		outcome.ConsecutiveFailures = claim.Task.ConsecutiveFailures + 1
-		if run.Error != nil {
-			outcome.Error = *run.Error
-		}
-	case run.State == store.ScheduledTaskRunMissed:
-		// A missed occurrence leaves the failure streak as it is, as it did
-		// when it was first written missed.
+	case run.State == store.ScheduledTaskRunFailed, run.State == store.ScheduledTaskRunMissed:
+		// A missed occurrence, or one whose call may have carried it out,
+		// leaves the failure streak as it is, as it did when it was first
+		// written.
 		outcome.ConsecutiveFailures = claim.Task.ConsecutiveFailures
 	}
 	outcome.NextRunAt, outcome.State = s.after(schedule, run.ScheduledFor, failed, outcome.ConsecutiveFailures)

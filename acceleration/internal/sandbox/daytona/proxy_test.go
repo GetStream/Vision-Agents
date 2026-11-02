@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // ProxySuite is the sandbox Daytona is asked for when the egress proxy is the broker.
@@ -46,7 +47,7 @@ func (s *ProxySuite) SetupSuite() {
 		s.T().Skip("ROUTER_REDIS_ADDR is not set")
 	}
 	var err error
-	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)
 }
@@ -291,6 +292,68 @@ func (s *ProxySuite) TestABuiltSandboxsWriteIsCutAtTheDefaultTimeout() {
 
 	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
 	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+}
+
+// TestABuiltSandboxsSetupIsCutAtTheDefaultTimeout: the setup holds the gate as a check does, and
+// a built sandbox's timeout is the 20 minutes a build may take, so a setup Daytona never answers
+// is cut at defaultTimeout once the sandbox has started.
+func (s *ProxySuite) TestABuiltSandboxsSetupIsCutAtTheDefaultTimeout() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Empty(s.platform.executed(), "no code ran")
+}
+
+// TestABuiltSandboxsFilesAreCutAtTheDefaultTimeout: the same for the files the setup needs, which
+// are written before it.
+func (s *ProxySuite) TestABuiltSandboxsFilesAreCutAtTheDefaultTimeout() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/files/upload-v2`)
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Empty(s.platform.executed(), "no code ran")
+}
+
+// TestACallerGivingUpDuringABuiltSandboxsSetupEndsTheRun: the setup runs on the caller's
+// context, so a caller that gives up during a hung setup is answered then, not at the check's
+// bound.
+func (s *ProxySuite) TestACallerGivingUpDuringABuiltSandboxsSetupEndsTheRun() {
+	box := s.proxied(sandbox.Config{CPU: 1}, "https://203.0.113.7:8091")
+	box.check = 10 * time.Second // defaultTimeout, longer than the caller waits
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 6*time.Second, "answered when the caller gave up, long before the check's bound")
+	s.Empty(s.platform.executed(), "no code ran")
 }
 
 // TestACallerGivingUpDuringTheCheckEndsTheRun: the check runs on the caller's context, so a

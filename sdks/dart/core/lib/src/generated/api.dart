@@ -460,6 +460,7 @@ final class CreateSessionRequest {
     this.languages,
     this.llm,
     this.maxTokens,
+    this.maxToolRounds,
     this.memory,
     this.minConfidence,
     this.modelOverwrites,
@@ -570,6 +571,10 @@ final class CreateSessionRequest {
       maxTokens: switch (json['max_tokens']) {
         null => null,
         final Object value => _int(value, 'CreateSessionRequest.max_tokens'),
+      },
+      maxToolRounds: switch (json['max_tool_rounds']) {
+        null => null,
+        final Object value => _int(value, 'CreateSessionRequest.max_tool_rounds'),
       },
       memory: switch (json['memory']) {
         null => null,
@@ -682,6 +687,7 @@ final class CreateSessionRequest {
   final List<String>? languages;
   final String? llm;
   final int? maxTokens;
+  final int? maxToolRounds;
   final SessionMemory? memory;
   final double? minConfidence;
   final ModelOverwrites? modelOverwrites;
@@ -725,6 +731,7 @@ final class CreateSessionRequest {
     'languages': ?languages,
     'llm': ?llm,
     'max_tokens': ?maxTokens,
+    'max_tool_rounds': ?maxToolRounds,
     if (memory case final value?) 'memory': value.toJson(),
     'min_confidence': ?minConfidence,
     if (modelOverwrites case final value?) 'model_overwrites': value.toJson(),

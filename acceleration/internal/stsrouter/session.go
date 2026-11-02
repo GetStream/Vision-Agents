@@ -50,6 +50,9 @@ type Session struct {
 	// audio the next reply is billed against, and typed the typed turns sent since.
 	heardMs float64
 	typed   int64
+	// countedGeneration is the latest reply the vendor counted the billed audio of, whose
+	// running total takes in all the audio of the replies before it.
+	countedGeneration int
 	// reportedSeconds is the vendor's last running total of the seconds the session has been
 	// open, and billedSeconds what the session's rows have billed of them.
 	reportedSeconds, billedSeconds int64
@@ -333,13 +336,21 @@ func (s *Session) observe(event sts.Event) bool {
 			// The vendor counts the audio it bills, replies heard over a gap in the caller's
 			// stream included, so its count replaces the caller's audio.
 			audioMs = typed.Usage.BilledAudioMs
+			s.mu.Lock()
+			s.countedGeneration = max(s.countedGeneration, typed.Generation)
+			s.mu.Unlock()
 		case s.provider.Capabilities().BilledAudio:
 			// A reply cut off before the vendor counted it: the vendor's next count includes
 			// what the caller said meanwhile, and if none comes the session's last row bills
-			// it, so it is carried rather than billed here.
+			// it, so it is carried rather than billed here. The vendor bills the audio it sent
+			// too, so a reply estimated for want of a count carries its own speech, unless a
+			// count since, of a later reply, already took it in.
 			audioMs, carried = 0, true
 			s.mu.Lock()
 			s.heardMs += heardMs
+			if typed.Usage.Estimated && typed.Generation > s.countedGeneration {
+				s.heardMs += typed.AudioDurationMs
+			}
 			s.mu.Unlock()
 		}
 		stat := routing.Stat{
@@ -356,9 +367,10 @@ func (s *Session) observe(event sts.Event) bool {
 			Attributes: usageAttributes(typed.Usage),
 			// Time to first byte is what the caller actually waited for; the rest of the
 			// reply arrives while they are already hearing it.
-			LatencyMs: typed.TimeToFirstByteMs,
-			Success:   settled.errorCode == "",
-			ErrorCode: settled.errorCode,
+			LatencyMs:   typed.TimeToFirstByteMs,
+			Success:     settled.errorCode == "",
+			Interrupted: typed.Interrupted,
+			ErrorCode:   settled.errorCode,
 			// A vendor that bills the session's seconds bills them in SessionUsage, so the
 			// reply is kept for its timing and not billed again.
 			Free: s.provider.Capabilities().SessionBilled,
@@ -367,6 +379,11 @@ func (s *Session) observe(event sts.Event) bool {
 		if carried {
 			// Its zero is the router's to give, not a vendor that said nothing.
 			stat.MeasuredByRouter()
+		}
+		if typed.Usage.Estimated {
+			// Cut off before the vendor said what it used: the adapter's count of what it
+			// streamed stands in.
+			stat.Estimated()
 		}
 		s.recorder.Record(s.config, stat)
 

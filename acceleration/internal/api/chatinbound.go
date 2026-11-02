@@ -182,6 +182,19 @@ type queuedChatInbound struct {
 	Body       []byte `json:"body"`
 }
 
+// queuedFrom is a queued delivery's row as one router hands it to another.
+func queuedFrom(delivery store.ChatInbound) queuedChatInbound {
+	return queuedChatInbound{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
+		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
+}
+
+// storedAs reports whether a handed-over delivery names the app, message, customer and
+// deployment flag its row is stored with.
+func (q queuedChatInbound) storedAs(row queuedChatInbound) bool {
+	return q.StreamApp == row.StreamApp && q.MessageID == row.MessageID && q.CustomerID == row.CustomerID &&
+		q.Deployment == row.Deployment
+}
+
 // origin is where the delivery came from, as the endpoint verified it.
 func (q queuedChatInbound) origin() hookOrigin {
 	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey,
@@ -195,8 +208,7 @@ func (q queuedChatInbound) origin() hookOrigin {
 // endpoint already checked it is an addressed new message, first delivered and fresh, so none
 // of that is checked again: a retry ten minutes on would read as stale.
 func (s *Server) AnswerChatInbound(ctx context.Context, delivery store.ChatInbound) error {
-	queued := queuedChatInbound{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
-		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
+	queued := queuedFrom(delivery)
 	var event chatInbound
 	if err := json.Unmarshal(delivery.Body, &event); err != nil {
 		return stack.Wrap(fmt.Errorf("api: read queued chat inbound message: %w", err))
@@ -231,14 +243,40 @@ func (s *Server) handChatInboundToPeer(ctx context.Context, address string, queu
 // answerChatInboundForPeer is the peer hand-off's other end: the message is answered here, off
 // the request, as the webhook's is. Anything not handed over by a peer is answered as no such
 // route, because the payload names its app and customer outright, which is only a peer's to say.
+// Even a peer's word is checked against the delivery's row: a row that is gone, or that another
+// app, message or customer is stored with, is answered as no such delivery and nothing is
+// answered. What is answered is the row's, whatever the payload says.
 func (s *Server) answerChatInboundForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
 		return
 	}
-	var queued queuedChatInbound
+	var handed queuedChatInbound
+	if json.NewDecoder(r.Body).Decode(&handed) != nil {
+		writeError(w, invalidRequest("the queued delivery could not be read"))
+		return
+	}
+	if s.store == nil {
+		writeError(w, notFound("no such queued delivery"))
+		return
+	}
+	// The asker hands over a queued row it holds a lease on, and only answered or given-up rows
+	// are pruned, so a row that is gone was not handed over by a peer.
+	row, err := s.store.ChatInboundBySeq(r.Context(), handed.Seq)
+	switch {
+	case errors.Is(err, store.ErrNoChatInbound), err == nil && !handed.storedAs(queuedFrom(row)):
+		s.logger.Warn("refused a queued chat inbound message a peer handed over that its row does not match",
+			"seq", handed.Seq, "stream_app", handed.StreamApp)
+		writeError(w, notFound("no such queued delivery"))
+		return
+	case err != nil:
+		s.logger.Error("could not read a queued chat inbound message a peer handed over", "seq", handed.Seq, "error", err)
+		writeError(w, internalError())
+		return
+	}
+	queued := queuedFrom(row)
 	var event chatInbound
-	if json.NewDecoder(r.Body).Decode(&queued) != nil || json.Unmarshal(queued.Body, &event) != nil {
+	if json.Unmarshal(queued.Body, &event) != nil {
 		writeError(w, invalidRequest("the queued delivery could not be read"))
 		return
 	}

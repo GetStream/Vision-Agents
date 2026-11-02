@@ -165,8 +165,11 @@ type puller struct {
 	// usage is what the stream has reported so far. message_start carries the prompt and
 	// message_delta the running totals, so each frame only overwrites what it states.
 	usage anthropic.MessageDeltaUsage
-	err   error
-	done  bool
+	// counted is a message_delta read: message_start's output count is about 1, and only a
+	// delta's is what the response generated.
+	counted bool
+	err     error
+	done    bool
 }
 
 // Advance reads one event and records what it carried.
@@ -204,6 +207,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			w.FunctionCall(event.Index, "", "", delta.PartialJSON, "")
 		}
 	case "message_delta":
+		p.counted = true
 		p.record(w, event.Usage)
 		if reason := incomplete(event.Delta.StopReason); reason != "" {
 			w.Incomplete(reason)
@@ -239,6 +243,7 @@ func (p *puller) record(w *llm.ResponseWriter, frame anthropic.MessageDeltaUsage
 		},
 		OutputTokens:        p.usage.OutputTokens,
 		OutputTokensDetails: llm.OutputTokensDetails{ReasoningTokens: p.usage.OutputTokensDetails.ThinkingTokens},
+		OutputUnfinished:    !p.counted,
 	})
 }
 
@@ -254,11 +259,17 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
-	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		p.err = named(err)
-	} else if err != nil {
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
 		// A cancelled stream is barge-in or shutdown, not a provider failure.
 		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = named(err)
 	}
 	p.upstream.Close()
 	p.cancel()

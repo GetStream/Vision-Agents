@@ -1248,7 +1248,7 @@ class TestBackendCredentials:
     def test_a_customer_id_is_the_whole_credential_for_a_router_that_trusts_one(self):
         backend = stream.Backend(url="http://router", customer_id="acme")
 
-        assert backend.headers == {"X-Customer-Id": "acme"}
+        assert backend.headers == {"X-Customer-Id": "acme", "X-Stream-Client": "sdk"}
         assert backend.server_side
         # Stream's own chat and video mean nothing to a router reached this way, so there is
         # no credential to pass on to them.

@@ -296,6 +296,10 @@ type Spec struct {
 	Tools []harness.Tool
 	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
 	ToolTimeoutMs int
+	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
+	// answer rather than reach for another tool. Zero is the agent's default; negative is
+	// no limit.
+	MaxToolRounds int
 
 	// Backchannel murmurs while a participant is still talking, the way a person does.
 	Backchannel bool

@@ -78,6 +78,10 @@ type Config struct {
 	Backchannel bool
 	// MaxTokens is a ceiling on a reply. Zero leaves the backend's default.
 	MaxTokens int
+	// MaxToolRounds is the reply to a tool result, since the user last spoke, that is offered
+	// no more tools and made to answer. Zero leaves the backend's default of 8; negative never
+	// withdraws them.
+	MaxToolRounds int
 	// ToolTimeout is how long the model waits for one of your functions before carrying on
 	// without it. Zero leaves the backend's default.
 	ToolTimeout time.Duration
@@ -528,6 +532,9 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	}
 	if p.config.MaxTokens > 0 {
 		request.MaxTokens = &p.config.MaxTokens
+	}
+	if p.config.MaxToolRounds != 0 {
+		request.MaxToolRounds = &p.config.MaxToolRounds
 	}
 	if p.config.ToolTimeout > 0 {
 		milliseconds := int(p.config.ToolTimeout / time.Millisecond)

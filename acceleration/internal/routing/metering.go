@@ -22,6 +22,9 @@ const (
 	// estimatedTimeout is a response a deadline cut short, ours or its caller's: counted, and
 	// alarming nobody, as a cut does.
 	estimatedTimeout = "timeout"
+	// estimatedFailed is a response the vendor failed after it had produced output, which it
+	// bills and never reports: counted, and alarming nobody beyond the failure itself.
+	estimatedFailed = "failed"
 	// estimatedMissing is work that finished and whose vendor never said what it used: an
 	// adapter to fix.
 	estimatedMissing = "missing"
@@ -44,7 +47,7 @@ var (
 	usageEstimated = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_estimated_total",
-		Help:      "Billable work the vendor never said the usage of, billed on the router's own count: reason cancelled for a response its caller or the prompt injection screen cut short, timeout for one a deadline did, missing for one that finished",
+		Help:      "Billable work the vendor never said the usage of, billed on the router's own count: reason cancelled for a response its caller or the prompt injection screen cut short, timeout for one a deadline did, failed for one the vendor failed after it produced output, missing for one that finished",
 	}, []string{"modality", "provider", "model", "reason"})
 	usageUnpriced = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -107,6 +110,13 @@ func (r *Recorder) watch(config ProviderConfig, entry Stat, request store.Reques
 			reason = estimatedCancelled
 		case ErrorTimeout:
 			reason = estimatedTimeout
+		default:
+			if !request.Success {
+				reason = estimatedFailed
+			}
+		}
+		if entry.Interrupted {
+			reason = estimatedCancelled
 		}
 		usageEstimated.WithLabelValues(item[0], item[1], item[2], reason).Inc()
 		if reason == estimatedMissing && r.estimatedLogged.due(item, usageLogEvery) {

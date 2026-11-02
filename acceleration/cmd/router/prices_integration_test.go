@@ -245,7 +245,11 @@ func (s *PriceSyncSuite) TestSyncWithoutDryRunWritesNothing() {
 }
 
 func (s *PriceSyncSuite) TestShowSaysTheListInForce() {
-	s.ownFile(`{"markup_bps": 1500, "entries": []}`)
+	// Runtime is free, as the chart's prices.json says: vendor.json does not price it.
+	s.ownFile(`{"markup_bps": 1500, "entries": [
+		{"modality": "runtime", "provider": "stream", "model": "text", "region": "us", "free": true},
+		{"modality": "runtime", "provider": "stream", "model": "voice", "region": "us", "free": true},
+		{"modality": "runtime", "provider": "stream", "model": "video", "region": "us", "free": true}]}`)
 	pgStore := s.started()
 	s.startRouter(pgStore)
 	var out bytes.Buffer
@@ -254,8 +258,8 @@ func (s *PriceSyncSuite) TestShowSaysTheListInForce() {
 
 	var shown shownList
 	s.Require().NoError(json.Unmarshal(out.Bytes(), &shown))
-	s.Len(shown.Entries, len(prices.Vendor().Entries))
-	s.Empty(shown.Unpriced, "every model router.yaml routes is priced or local")
+	s.Len(shown.Entries, len(prices.Vendor().Entries)+3)
+	s.Empty(shown.Unpriced, "every model router.yaml routes, its BYOK twins, sandboxes and runtime are priced, free or local")
 	priced := shown.Entries[0]
 	s.NotEmpty(priced.SKU)
 	for meter, rate := range priced.Rates {
@@ -297,7 +301,8 @@ func (s *PriceSyncSuite) TestShowListsWhatIsUnpriced() {
 
 	s.Require().NoError(runPricesShow(s.ctx, []string{"--unpriced"}, s.settings, &out))
 
-	s.Equal("llm/nobody/unpriced (us)\n", out.String())
+	s.Equal("llm/nobody/unpriced (us)\nruntime/stream/text (us)\nruntime/stream/voice (us)\nruntime/stream/video (us)\n", out.String(),
+		"vendor.json prices no runtime, which a deployment's own file marks free")
 }
 
 // changePrice writes a change through the management API's store call: the rate a meter of

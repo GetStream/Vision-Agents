@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
@@ -56,7 +57,7 @@ func (s *OutcomeSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)
 }

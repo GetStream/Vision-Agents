@@ -195,6 +195,9 @@ type Options struct {
 	Keyterms []string
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
+	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
+	// answer rather than reach for another tool. Zero is maxToolRounds; negative is no limit.
+	MaxToolRounds int
 	// Overwrites is what whoever opened the session asked to change about how the model
 	// answers, written over every turn. Only the safe knobs are here -- effort, length,
 	// randomness, verbosity -- because instructions and tools belong to the agent and a
@@ -489,6 +492,12 @@ type Agent struct {
 	// scheduledReply is the last native reply begun while scheduled was set, so a tool call
 	// of that reply that arrives after the caller is heard is still the scheduled task's.
 	scheduledReply string
+	// nativeAnswerDue says the caller stopped and no reply has begun since, so the next one
+	// answers their speech, not a scheduled turn typed in between.
+	nativeAnswerDue bool
+	// answerReply is the last native reply that answered the caller's stop, so a tool call of
+	// it is the caller's even when it arrives while a scheduled turn is the last thing.
+	answerReply string
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
@@ -1989,7 +1998,8 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	a.generating = true
 	a.toolReply = false
 	a.toolRounds++
-	answers := !a.options.Text && a.toolRounds >= maxToolRounds
+	limit := cmp.Or(a.options.MaxToolRounds, maxToolRounds)
+	answers := limit > 0 && a.toolRounds >= limit
 	continues := a.owedTurn
 	a.owedTurn = ""
 	instructions := a.instructions()

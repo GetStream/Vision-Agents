@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -381,6 +382,21 @@ type Purchase struct {
 	Owner   routing.Owner
 }
 
+// ErrCallHook says the app's call hook could not be pointed at this router.
+var ErrCallHook = errors.New("phone: call hook")
+
+// pointCallHook makes the app deliver its call events to this router, when the router knows
+// where it is reachable from.
+func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) error {
+	if s.publicURL == "" {
+		return nil
+	}
+	if _, err := stream.EnsureCallHook(ctx, s.publicURL, app); err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrCallHook, err))
+	}
+	return nil
+}
+
 // Buy buys a number and records that the customer now holds it.
 //
 // The vendor is the side that costs money, so it goes first: a row without a number is a
@@ -398,9 +414,14 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
-	if s.apps != nil {
-		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
-			return store.PhoneNumber{}, stack.Wrap(err)
+	stream, app, err := s.streamFor(ctx, purchase.Owner.CustomerID)
+	if errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+		return store.PhoneNumber{}, stack.Wrap(err)
+	}
+	// An app whose calls could not reach the router would hold a number nobody can call.
+	if err == nil {
+		if err := s.pointCallHook(ctx, stream, app); err != nil {
+			return store.PhoneNumber{}, err
 		}
 	}
 	// Refused before the vendor is paid, since a number in another form would not be recorded.
@@ -704,10 +725,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
 	}
+	attachedHere := held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin
+	if err := s.pointCallHook(ctx, stream, pin); err != nil {
+		if !attachedHere {
+			return Attached{}, err
+		}
+		// A running line is not taken down over a repair that failed: its program is asking
+		// again on every start.
+		s.logger.Error("could not point the call hook of a Stream app", "customer", attachment.CustomerID, "stream_app", pin, "error", err)
+	}
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin {
+	if attachedHere {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}
@@ -883,6 +913,10 @@ type CallRequest struct {
 	Custom map[string]string
 }
 
+// errCustomKept is a call into a session whose call is already there with other custom data:
+// the call keeps the custom it was created with, so the agent in it would not read this one.
+var errCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
+
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
 	// VendorCallID identifies the ringing leg at the vendor, for hanging up or pressing
@@ -980,16 +1014,31 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
+	// The number's rule carries only the number, so on its line a call with custom of its own
+	// is created with it here, before the leg arrives; otherwise the leg creates the call. A
+	// session the caller named may hold its call already, which a get-or-create only loads, so
+	// that call is asked for here too, before anything is made for the leg.
+	if len(request.Custom) > 0 && (shared || request.SessionID != "") {
+		kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
+		if err != nil {
+			return Placed{}, err
+		}
+		// The number is the router's, put there by a leg's rule, and no caller can send it.
+		delete(kept, NumberKey)
+		switch {
+		case maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }):
+		case len(kept) == 0:
+			// A call made without custom, as an agent makes its own call, takes this one.
+			if err := stream.PutCustom(ctx, callType, callID, request.Custom); err != nil {
+				return Placed{}, err
+			}
+		default:
+			return Placed{}, stack.Wrap(errCustomKept)
+		}
+	}
 	var trunkID, routeID string
 	committed := false
 	if shared {
-		// The number's rule carries no custom data, so a call that has some is created with
-		// it here, before the leg arrives; otherwise the leg creates the call.
-		if len(request.Custom) > 0 {
-			if err := stream.CreateCall(ctx, callType, callID, request.Custom); err != nil {
-				return Placed{}, err
-			}
-		}
 		trunkID, routeID = line.TrunkID, line.RouteID
 		outbound.Bridge, outbound.CallID = line.Bridge, callID
 	} else {

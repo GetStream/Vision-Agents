@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -786,7 +787,7 @@ func (s *PolicySuite) cuttableRedis() (*cuttable, rueidis.Client) {
 	options, err := rueidis.ParseURL("redis://" + listener.Addr().String() + "/" + strconv.Itoa(usagetest.RedisDB))
 	s.Require().NoError(err)
 	options.DisableCache = true
-	client, err := rueidis.NewClient(options)
+	client, err := redisready.NewClient(options)
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	return c, client

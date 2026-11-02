@@ -590,10 +590,11 @@ const transcriptSlack = 2 * time.Second
 // transcriptRead is where a call's transcript was written. A call bound to a conversation
 // wrote into that conversation's channel, beside what was typed before and after it, so
 // only the call's own window is read. A call with no session row read its agent's channel
-// before there were session rows, and still does.
+// before there were session rows, and still does. The session's row is written behind the
+// call's, so a call that just ended is read once its writer has caught up.
 func (s *Server) transcriptRead(ctx context.Context, customerID string, call store.Call) chatlog.Read {
 	channel := call.AgentID
-	if stored, err := s.store.StoredSession(ctx, customerID, call.ID); err == nil {
+	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
 		channel = transcriptChannel(stored)
 	}
 	read := chatlog.Read{
