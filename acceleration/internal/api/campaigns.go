@@ -34,7 +34,7 @@ func (s *Server) listCampaigns(ctx context.Context, _ *listCampaignsRequest) (*l
 		return nil, errNoCampaigns
 	}
 
-	stored, err := s.store.CustomerCampaigns(ctx, customerID)
+	stored, err := s.store.QueryCampaigns(ctx, customerID, store.CampaignFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaign
 		return nil, errUnknownCampaign
 	}
 
-	stored, err := s.store.CampaignContacts(ctx, campaign.ID)
+	stored, err := s.store.QueryContacts(ctx, campaign.ID, store.ContactFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -180,10 +180,11 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 		})
 	}
 
-	if err := s.store.AddContacts(ctx, contacts); err != nil {
+	added, _, err := s.store.AddContacts(ctx, campaign.ID, contacts)
+	if err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	return &addCampaignContactsResponse{Body: contactsOf(contacts, nil)}, nil
+	return &addCampaignContactsResponse{Body: contactsOf(added, nil)}, nil
 }
 
 // startCampaign starts ringing. It returns once the campaign is running rather than once

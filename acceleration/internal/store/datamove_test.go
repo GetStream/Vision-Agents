@@ -3129,12 +3129,14 @@ func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes
 	// numbers the destination's sequence has not reached.
 	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('campaign_contacts', 'seq'), 1000)")
 	s.Require().NoError(err)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000001"}}))
+	_, _, err = s.source.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+15550000001"}})
+	s.Require().NoError(err)
 
 	s.move("acme", "acme")
-	s.Require().NoError(s.destination.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000002"}}))
+	_, _, err = s.destination.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+15550000002"}})
+	s.Require().NoError(err)
 
-	contacts, err := s.destination.CampaignContacts(s.ctx, campaign.ID)
+	contacts, err := s.destination.QueryContacts(s.ctx, campaign.ID, ContactFilter{})
 	s.Require().NoError(err)
 	s.Require().Len(contacts, 2)
 	s.Equal("+15550000001", contacts[0].ToNumber, "a contact added here is rung after the ones that moved")
