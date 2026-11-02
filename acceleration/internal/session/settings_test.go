@@ -11,6 +11,36 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
+// SetSettings moves a call onto the models, voice and overwrites it names and leaves the
+// rest of the spec as it was; a session in writing has no speech models to move. The
+// values are those the change was made against.
+func (s *SessionSuite) TestSettingsMoveTheSessionsModelsAndNothingElse() {
+	s.manages()
+	created := s.joins(Spec{Custom: map[string]any{"ticket": "T-1"}})
+	target, voice, thinking, verbosity := "llm-flow", "alloy", "high", "low"
+	temperature, tokens := 0.3, 256
+
+	s.Require().NoError(created.SetSettings(s.ctx, Settings{
+		LLM: &target, STT: &target, TTS: &target, Voice: &voice, Thinking: &thinking,
+		Verbosity: &verbosity, Temperature: &temperature, MaxOutputTokens: &tokens,
+	}))
+
+	spec := created.Spec()
+	s.Equal([]string{"llm-flow", "llm-flow", "llm-flow", "", "alloy"},
+		[]string{spec.LLMTarget, spec.STTTarget, spec.TTSTarget, spec.STSTarget, spec.Voice})
+	s.Equal("high", spec.ModelOverwrites.Thinking)
+	s.Equal("low", spec.ModelOverwrites.Verbosity)
+	s.Equal(0.3, *spec.ModelOverwrites.Temperature)
+	s.Equal(256, *spec.ModelOverwrites.MaxOutputTokens)
+	s.Equal(map[string]any{"ticket": "T-1"}, spec.Custom)
+	s.Equal([]string{"acme", "call-1", "cascade"}, []string{spec.CustomerID, spec.CallID, created.Mode()})
+	asked, used := created.Voice()
+	s.Equal([]string{"alloy", "alloy"}, []string{asked, used})
+
+	err := s.writes(Spec{}).SetSettings(s.ctx, Settings{Voice: &voice})
+	s.ErrorContains(err, "a text session has no voice")
+}
+
 // A label set while SetSettings waits for the reply in flight is kept: SetSettings writes
 // back only the models it moved, not the spec it read before waiting.
 func (s *SessionSuite) TestALabelSetWhileTheModelsMoveIsKept() {
