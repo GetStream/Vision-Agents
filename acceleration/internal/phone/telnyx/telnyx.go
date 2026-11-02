@@ -341,7 +341,9 @@ var finalStatuses = map[string]phone.CallResult{
 // menu on a call it placed.
 //
 // Telnyx's call control sends the tones without disturbing what the leg is already doing,
-// so the agent stays bridged to the call while the menu is answered.
+// so the agent stays bridged to the call while the menu is answered. They play out of the
+// leg named to whoever it reaches, so the leg is the person's, the one placing returned:
+// from the leg its TeXML bridged to Stream they would reach the agent.
 func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) error {
 	if vendorCallID == "" {
 		return stack.Wrap(errors.New("telnyx: pressing digits needs the call to press them on"))
@@ -351,7 +353,11 @@ func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) 
 	}
 
 	path := "/v2/calls/" + url.PathEscape(vendorCallID) + "/actions/send_dtmf"
-	return p.do(ctx, http.MethodPost, path, nil, sendDigits{Digits: digits}, nil)
+	if err := p.do(ctx, http.MethodPost, path, nil, sendDigits{Digits: digits}, nil); err != nil {
+		return err
+	}
+	p.logger.Info("telnyx sent digits", "call_control_id", vendorCallID, "count", len(digits))
+	return nil
 }
 
 // Vendor is the name this provider is recorded under.

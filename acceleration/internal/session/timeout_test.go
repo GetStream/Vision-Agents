@@ -181,7 +181,7 @@ func (s *SessionSuite) TestTimeoutCallsOnAnEndedSessionDoNothing() {
 	created := s.joins(Spec{})
 	ended := make(chan struct{}, 4)
 	created.mu.Lock()
-	created.end = func(TimeoutReason) { ended <- struct{}{} }
+	created.end = func(EndReason) { ended <- struct{}{} }
 	created.mu.Unlock()
 
 	// A leave reported while the session is still closing must not set a new timeout.

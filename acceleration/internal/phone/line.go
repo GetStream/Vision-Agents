@@ -55,6 +55,10 @@ func (l *Line) Transfer(ctx context.Context, to string) error {
 	return err
 }
 
+// Placed reports whether the call was placed from here, which is what gives it a leg to
+// press digits on.
+func (l *Line) Placed() bool { return l.options.VendorCallID != "" }
+
 // SendDigits presses digits on the leg this call was placed over.
 func (l *Line) SendDigits(ctx context.Context, digits string) error {
 	if l.options.VendorCallID == "" {

@@ -1242,6 +1242,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 			ID: store.NewID(), Name: lookupOrder, Arguments: `{"order":"12"}`,
 		}}}, nil
 	})
+	// A model that says goodbye and hangs up on its first turn.
+	reasoning.Register("hanging-up", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Goodbye.", calls: []llm.ToolCall{{ID: store.NewID(), Name: "end_call", Arguments: "{}"}}}, nil
+	})
 	// A model that reaches for a connector's tool on its first turn: echo of the binding
 	// called crm, which says back what it is given.
 	reasoning.Register("connecting", func(routing.Spec) (llmrouter.Provider, error) {
@@ -1449,7 +1453,11 @@ func (s *RouterSuite) sessionManager(
 	}
 	var telephony *phone.Service
 	if s.sessionTelephony {
-		telephony = s.telephony(logger)
+		sealer, err := auth.NewSealer(suiteTrunkKEK)
+		s.Require().NoError(err)
+		// In the suite's Stream apps, as cmd/router's is, so what a session does to its call
+		// reaches the suite's Stream.
+		telephony = s.telephonySealedBy(sealer, phone.AppsOf(s.stream), logger)
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Phone:         telephony,
@@ -1565,12 +1573,12 @@ func (s *RouterSuite) forgetPhoneVendors() {
 func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 	sealer, err := auth.NewSealer(suiteTrunkKEK)
 	s.Require().NoError(err)
-	return s.telephonySealedBy(sealer, logger)
+	return s.telephonySealedBy(sealer, nil, logger)
 }
 
 // telephonySealedBy is telephony with trunk passwords sealed under sealer; nil is a
-// deployment with no keyring.
-func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger) *phone.Service {
+// deployment with no keyring. Lines are made in apps, and nowhere when it is nil.
+func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, logger *slog.Logger) *phone.Service {
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
@@ -1594,6 +1602,7 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 		Gate:      s.gate,
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
+		Apps:      apps,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)

@@ -1,6 +1,9 @@
 package routing
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
@@ -26,10 +29,22 @@ const (
 	tokensOutput      = "output"
 )
 
+// The stages an LLM request's time to first token is split into, in the order it passes them.
+const (
+	StageRouter  = "router"
+	StageConnect = "connect"
+	StageWait    = "wait"
+	StageStream  = "stream"
+)
+
 // trafficBuckets span 25 ms to 60 s: fine steps where voice first output lands (100 to 800 ms),
 // wide ones for the long LLM requests. Each is a series per modality, provider and, for first
 // output, model.
 var trafficBuckets = []float64{0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 2, 4, 8, 15, 30, 60}
+
+// stageBuckets are trafficBuckets with steps down to 1 ms in front: the router's own stage is a
+// few Redis and Postgres round trips, which would all land in trafficBuckets' first, 25 ms.
+var stageBuckets = append([]float64{0.001, 0.0025, 0.005, 0.01}, trafficBuckets...)
 
 var (
 	trafficRequests = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -69,7 +84,33 @@ var (
 		Help:      "How long a whole request took: DurationMs / 1000, for rows that have it",
 		Buckets:   trafficBuckets,
 	}, []string{"modality", "provider"})
+	llmStages = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "llm_stage_seconds",
+		Help:      "Where an LLM request's time to first token went, by stage: router from Session.Create to the provider call, connect from asking the transport for a connection to getting a new one (dial and TLS; a reused one is only counted in router_llm_connections_total), wait from the request written to the response's first byte, stream from that byte to the first token. A stage a request never reached is not observed. The stages do not add up to the time to first token: writing the request, the SDK's own steps and the choice of a key before the connection is asked for, and the backoff before a retry fall in none of them",
+		Buckets:   stageBuckets,
+	}, []string{"provider", "model", "stage"})
+	llmConnections = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "llm_connections_total",
+		Help:      "Connections the LLM requests that got one were sent on, by whether the transport reused a pooled one",
+	}, []string{"provider", "reused"})
 )
+
+// ObserveLLMStage records how long an LLM request spent in one stage before its first token.
+func ObserveLLMStage(config ProviderConfig, stage string, took time.Duration) {
+	model := config.Model
+	if config.Provider == CustomProvider {
+		// The model is a name each customer chose: unbounded as a label.
+		model = CustomProvider
+	}
+	llmStages.WithLabelValues(config.Provider, model, stage).Observe(took.Seconds())
+}
+
+// CountLLMConnection counts the connection an LLM request was sent on.
+func CountLLMConnection(provider string, reused bool) {
+	llmConnections.WithLabelValues(provider, strconv.FormatBool(reused)).Inc()
+}
 
 // countTraffic counts a priced row in the traffic metrics, byok for work on the customer's own
 // key. A quantity of zero adds nothing, so no series is made for what a modality never has.

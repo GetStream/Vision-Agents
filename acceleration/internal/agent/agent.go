@@ -147,6 +147,14 @@ type Options struct {
 	// Telephony is what the agent may do to the call itself. Without it the agent can
 	// only talk, which is what a call that is not on a phone network can do.
 	Telephony Telephony
+	// Destinations, when set, are the only places a transfer may go, asked for by name:
+	// a number the model supplies is never dialled.
+	Destinations []Destination
+	// Ender hangs up the call. Nil means end_call is never offered.
+	Ender Ender
+	// EndCallWhen is the condition end_call's description gives; empty takes
+	// defaultEndCallWhen.
+	EndCallWhen string
 	// ToolRunner carries out the tools that are not the two acting on the phone call,
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
@@ -530,6 +538,8 @@ type Agent struct {
 	nativeListening bool
 	nativeAwaiting  bool
 	nativeCalls     map[string]llm.ToolCall
+	// goodbye is the reply a native model owes after being told end_call ran.
+	goodbye *goodbye
 	// nativeRetries counts replacements across the call; swapping protects it.
 	nativeRetries int
 	// cadence turns evolving transcript revisions into stable candidates without relying
@@ -3468,10 +3478,12 @@ func (a *Agent) followUp() {
 // earned -- so a caller who waited only for the first would talk over the rest.
 func (a *Agent) Busy() bool {
 	a.mu.Lock()
-	// A transfer finishes the call from inside itself, so counting it would have it wait on
-	// its own end.
+	// A transfer or end_call finishes the call from inside itself, so counting it would have
+	// it wait on its own end.
 	working := a.interrupting || a.recoveringVoice != nil || a.generating || a.utterances > 0 ||
-		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool { return !telephonyTool(name) })
+		slices.ContainsFunc(slices.Collect(maps.Values(a.toolsRunning)), func(name string) bool {
+			return !telephonyTool(name) && name != toolEndCall
+		})
 	current := a.harness
 	a.mu.Unlock()
 

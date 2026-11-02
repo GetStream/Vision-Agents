@@ -264,6 +264,64 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 	return "", "", nil, false
 }
 
+// unsourcedTransfer reports the number of a transfer that neither the operator's instructions
+// (told) nor a successful tool gave. Unlike unheardNumber it does not count the caller as a
+// source: anyone can read out a number and be put through to it.
+func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (to string, unsourced bool) {
+	var arguments transferArguments
+	if call.Name != toolTransfer || json.Unmarshal([]byte(call.Arguments), &arguments) != nil || strings.TrimSpace(arguments.To) == "" {
+		return "", false
+	}
+	sources := []string{told}
+	for _, message := range history {
+		if message.Role == llm.ToolResult && !failedResult(message.Content) {
+			sources = append(sources, message.Content)
+		}
+	}
+	wanted := strings.Join(digitGroups(arguments.To), "")
+	for _, source := range sources {
+		for _, run := range writtenNumber.FindAllString(source, -1) {
+			groups := digitGroups(run)
+			spans := numberGroup.FindAllStringIndex(run, -1)
+			// Digits run on from a number unless a mark sets them off: before it only a closing
+			// bracket or a full stop ("1. 555", "+44 (555)" is not one), after it also an opening
+			// bracket, as in "1111 (9am" or "1111. 24/7".
+			before := func(i int) bool {
+				if i == 0 {
+					return true
+				}
+				gap := strings.TrimSpace(run[spans[i-1][1]:spans[i][0]])
+				return gap != "" && strings.Trim(gap, ").") == ""
+			}
+			after := func(i int) bool {
+				return i == len(groups) || strings.ContainsAny(run[spans[i-1][1]:spans[i][0]], "().")
+			}
+			// Digits beside the number, "(9am-5pm)" or "24/7", are not part of it.
+			for start := range groups {
+				for end := start + 1; end <= len(groups); end++ {
+					digits := strings.Join(groups[start:end], "")
+					if digits == wanted && before(start) && after(end) {
+						return "", false
+					}
+					// A US number written without its country code is the same line, unless
+					// digits run on from it unmarked, as a country code or a second number do.
+					if len(digits) == 10 && "1"+digits == wanted &&
+						before(start) && after(end) {
+						return "", false
+					}
+				}
+			}
+		}
+	}
+	return arguments.To, true
+}
+
+// unsourcedTransferResult is what a transfer to a number only the caller gave is answered with.
+func unsourcedTransferResult(to string) string {
+	return fmt.Sprintf(didNotWork+"%q was not given by the operator or a tool, so it is not a number "+
+		"to transfer to. Do not transfer. Tell the caller you cannot put them through to that number.", to)
+}
+
 // digitGroups returns every number written in texts (numberGroup) as its digits alone.
 func digitGroups(texts ...string) []string {
 	var digits []string
@@ -321,6 +379,10 @@ var digitRun = regexp.MustCompile(`\d+`)
 // numberGroup is one number as written, its dashes and brackets included: "512-555-0178".
 // Numbers apart are kept apart, so "2745, last four 6305" holds no 5630.
 var numberGroup = regexp.MustCompile(`\d(?:[\d().-]*\d)?`)
+
+// writtenNumber is a number as people write it, its spaces, dots, dashes and brackets
+// included: "+1 (555) 000-1111". A line break ends it, and so do more than two separators in a row.
+var writtenNumber = regexp.MustCompile(`\d(?:[ ().-]{0,2}\d)*`)
 
 func allDigits(text string) bool {
 	return strings.IndexFunc(text, func(r rune) bool { return !unicode.IsDigit(r) }) < 0

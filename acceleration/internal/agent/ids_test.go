@@ -379,3 +379,47 @@ func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
 	assert.True(t, got, "the word right after the spelling")
 	assert.Equal(t, "jones", spelled)
 }
+
+func TestUnsourcedTransfer(t *testing.T) {
+	call := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+15550001111"}`}
+	for told, accepted := range map[string]bool{
+		"Hand off to +15550001111.":                        true,
+		"Hand off to +1 555 000 1111":                      true,
+		"Hand off to +1 (555) 000-1111.":                   true,
+		"Hand off to +1.555.000.1111":                      true,
+		"Hand off to 1-555-000-1111":                       true,
+		"Hand off to (555) 000-1111":                       true,
+		"1. Sales: +15550001111\n2. Billing: +15550002222": true,
+		"Transfer to +1 555 000 1111 (9am-5pm)":            true,
+		"Sales is +15550001111. 24/7 support":              true,
+		"Billing: (555) 000-1111 (9am-5pm)":                true,
+		"Billing: (555) 000-1111. 24/7":                    true,
+		"Hand off to +15550001112":                         false,
+		"Hand off to +1 555 000 1112":                      false,
+		"Hand off to +155500011112":                        false,
+		"Hand off to (555) 000-1112":                       false,
+		"Hand off to +44 555 000 1111":                     false,
+		"Hand off to 555 000 1111 2222":                    false,
+		"Hand off to +44 (555) 000-1111":                   false,
+		"Hand off to +1 555 000 1111 2222":                 false,
+		"Hand off to 555 000 1111 (ext. 22)":               true,
+		"Hand off to 2. 555-000-1111":                      true,
+	} {
+		_, unsourced := unsourcedTransfer(nil, call, told)
+		assert.Equal(t, accepted, !unsourced, told)
+	}
+	german := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+13012345678"}`}
+	_, unsourced := unsourcedTransfer(nil, german, "Hand off to +49 (30) 1234 5678")
+	assert.True(t, unsourced, "a bracketed area code after another country code")
+}
+
+func TestUnsourcedTransferIgnoresANumberQuotedByAFailedTool(t *testing.T) {
+	call := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+15550001111"}`}
+	for _, content := range []string{
+		didNotWork + "no agent is on duty at +15550001111.",
+		`{"error":"line +15550001111 is busy"}`,
+	} {
+		_, unsourced := unsourcedTransfer([]llm.Message{{Role: llm.ToolResult, Content: content}}, call, "")
+		assert.True(t, unsourced, content)
+	}
+}
