@@ -74,7 +74,7 @@ func (a *Agent) respondNative(ctx context.Context, text string, images []llm.Ima
 	// A typed turn is not transcribed, so it is written into the history here, where a
 	// spoken one is written when the model reports having heard it.
 	a.mu.Lock()
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	a.heardText = text
 	a.lastParticipant = caller
 	a.scheduled = routing.ScheduledTurn(ctx)
@@ -499,7 +499,7 @@ func (a *Agent) heardNative(transcript sts.InputTranscript) {
 		a.mu.Unlock()
 		return
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	a.heardText = text
 	a.lastParticipant = participant
 	a.lastHeardAt = time.Now()

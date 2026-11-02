@@ -2932,7 +2932,7 @@ func (s *AgentSuite) TestAnAnswerReadIsNotOwedAgainByAnInterrupt() {
 	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "and when do you open"))
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next message was never answered")
-	s.NotContains(shown(s.model.requests()[2]), "12.63")
+	s.notOwedAgain(s.model.requests()[2], "somebody reading had the whole reply")
 }
 
 func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAfterIt() {
@@ -2973,7 +2973,17 @@ func (s *AgentSuite) TestAnAnswerHeardInFullIsNotOwedAgainWhenTheCallerSpeaksAft
 	s.says(participant, "and when do you open")
 
 	s.eventually(func() bool { return len(s.model.requests()) >= 3 }, "the caller was never answered")
-	s.NotContains(shown(s.model.requests()[2]), "12.63", "the caller heard the answer before they spoke")
+	s.notOwedAgain(s.model.requests()[2], "the caller heard the answer before they spoke")
+}
+
+// notOwedAgain asserts a request passes on nothing a reply before it already delivered: the
+// answer is in the conversation, and nothing at the end of the request tells it again.
+func (s *AgentSuite) notOwedAgain(request llm.ResponseParams, message string) {
+	told := shown(request)
+	s.NotContains(told, "Your colleague has come back", message)
+	s.NotContains(told, "cut off before the caller heard it", message)
+	s.NotContains(told, "12.63", message)
+	s.False(s.agent.harness.Pending(), message)
 }
 
 func (s *AgentSuite) TestAnAnswerComingBackWaitsForWordsStillBeingRuledOn() {

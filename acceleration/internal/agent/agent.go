@@ -1018,7 +1018,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: text})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -2745,6 +2745,10 @@ func (a *Agent) handle(event llm.Event) {
 			if a.replying == typed.Response.ID {
 				a.resetTurn()
 			}
+			// Nobody heard it, so what it was handed is owed to the next turn.
+			if a.harness != nil {
+				a.harness.Release(typed.Response.ID)
+			}
 			return
 		}
 		a.finish(typed.Response)
@@ -2901,6 +2905,11 @@ func (a *Agent) finish(response llm.Response) {
 		clear(a.telling)
 	}
 	delete(a.telling, response.ID)
+	if !refused {
+		// Kept even when the reply said nothing, such as one that only handed work over: it
+		// still read what it was sent, and kept, that can be answered from on the next turn.
+		a.history = append(a.history, carried...)
+	}
 	switch {
 	case refused:
 		// The screen judges only what came after the model last spoke, so a reply recorded
@@ -2908,7 +2917,6 @@ func (a *Agent) finish(response llm.Response) {
 		// judged by none.
 		a.history = Withheld(a.history)
 	case said != "" || len(calls) > 0:
-		a.history = append(a.history, carried...)
 		// A reply that only called a tool is still a turn the model took, and it has to be
 		// recorded with the calls on it: the result sent back answers one of them, and a
 		// provider refuses a conversation where it answers nothing.
@@ -3304,6 +3312,10 @@ func (a *Agent) applyCompaction(compacted harness.Compacted) {
 	a.compactedAway = append(a.compactedAway, a.history[:len(compacted.Prefix)]...)
 	tail := append([]llm.Message(nil), a.history[len(compacted.Prefix):]...)
 	a.history = append(summarised(compacted.Summary), tail...)
+	// The summary leaves out the notes of what moves on, the hour and that several people
+	// are talking, so they are told again.
+	a.knows = telling{}
+	clear(a.telling)
 	after := len(a.history)
 	a.mu.Unlock()
 
@@ -3901,7 +3913,10 @@ func (a *Agent) RestoreHistory(history []llm.Message) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append([]llm.Message(nil), history...)
-	for _, message := range a.history {
+	for i, message := range a.history {
+		if message.Role == llm.User {
+			a.history[i].Content = harness.Defang(message.Content)
+		}
 		if message.Author != "" {
 			author := stt.Participant{ID: message.Author, UserID: message.Author}
 			a.speakers[personOf(author)] = a.speakerLocked(author)

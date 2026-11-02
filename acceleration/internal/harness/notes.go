@@ -94,13 +94,16 @@ func WithoutNotes(history []llm.Message) []llm.Message {
 	return kept
 }
 
-// Defang makes a caller's words unable to pass for a message the harness wrote: the header
-// a note opens with, or the opening of an envelope. A model sees roles, so this matters
-// where a note cannot go as a system turn and is told on the user's side.
+// Defang makes a caller's words unable to pass for a message the harness wrote: the header a
+// note opens with, an envelope anywhere in them, or the resumption itself. Everything that
+// reads the conversation tells a note from what was said by those markers (IsNote), and a
+// model reads a note on the user's side wherever the provider takes none as a system turn,
+// so every way a caller's words enter the conversation goes through here.
 func Defang(text string) string {
 	text = strings.ReplaceAll(text, noteHeader, "(note)")
-	if strings.HasPrefix(strings.TrimSpace(text), envelopeOpening) {
-		text = "(" + strings.TrimSpace(text) + ")"
+	text = strings.ReplaceAll(text, envelopeOpening, `{"harness (quoted)":`)
+	if text == resumption {
+		text = "(" + text + ")"
 	}
 	return text
 }

@@ -441,7 +441,9 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	if transient != "" {
 		input = append(input, llm.Message{Role: llm.System, Content: noteHeader + "\n" + transient})
 	}
-	h.carried[turn.ID] = carried
+	if len(carried) > 0 {
+		h.carried[turn.ID] = carried
+	}
 	input, previous := h.resume(instructions, input)
 	h.mu.Unlock()
 
@@ -479,7 +481,12 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	h.shape = shape
 	h.mu.Unlock()
 
-	return session.Create(ctx, params)
+	stream, err := session.Create(ctx, params)
+	if err != nil {
+		// A reply that never started read nothing: what it took is owed to the next one.
+		h.Release(turn.ID)
+	}
+	return stream, err
 }
 
 // shapeOf is what a request opens with besides the conversation, as one string to compare.
@@ -500,6 +507,10 @@ func (h *Harness) Release(turnID string) {
 }
 
 func (h *Harness) release(turnID string) {
+	// A reply cut off before it was written keeps nothing of what it was sent: its notes are
+	// owed again, data and all, so carrying them into the conversation as well would send
+	// what came back twice.
+	delete(h.carried, turnID)
 	if h.written.turn == turnID {
 		// The conversation keeps the reply as it was written, so the model would otherwise
 		// read itself as having already said this.
