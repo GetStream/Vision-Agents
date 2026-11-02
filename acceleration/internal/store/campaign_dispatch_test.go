@@ -258,10 +258,9 @@ func (s *StoreSuite) TestSettlingAContactOfAPausedCampaignKeepsItEnrolled() {
 func (s *StoreSuite) TestAnAnsweredDialWaitsToBeClassifiedAndIsClaimedOnce() {
 	campaign := s.runningCampaign(5, "+15550001")
 	claimed := s.claimDue("a", s.base, 10)[0]
-	attempt := CampaignAttempt{CampaignID: campaign.ID, ContactID: claimed.Contact.ID, StepID: "step_1", Attempt: 1, Dial: 1}
+	attempt := CampaignAttempt{CampaignID: campaign.ID, ContactID: claimed.Contact.ID, StepID: "step_1", Attempt: 1, Dial: 1, StartedAt: s.base}
 	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
 	s.NotEmpty(attempt.ID)
-	s.False(attempt.StartedAt.IsZero())
 	classifyAfter := s.base.Add(2 * time.Minute)
 	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "answered", "call-1", "vendor-1", s.base.Add(time.Minute), &classifyAfter))
 	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1, CallID: "call-1"}))
@@ -386,4 +385,103 @@ func (s *StoreSuite) TestACampaignWithACallAwaitingAnOutcomeIsNotComplete() {
 	s.Equal(Running, s.campaignNow(campaign).State)
 	s.Equal(Running, s.campaignNow(waiting).State, "somebody is still to be rung")
 	s.Equal(Running, s.campaignNow(inCall).State, "a call is in progress")
+}
+
+func (s *StoreSuite) TestOneClaimServesEveryCampaignWithContactsDue() {
+	numbers := []string{"+15550001", "+15550002", "+15550003", "+15550004", "+15550005", "+15550006"}
+	first := s.runningCampaign(5, numbers...)
+	second := s.runningCampaign(5, numbers...)
+
+	perCampaign := map[string]int{}
+	for _, one := range s.claimDue("a", s.base, 4) {
+		perCampaign[one.Campaign.ID]++
+	}
+
+	s.Equal(2, perCampaign[first.ID])
+	s.Equal(2, perCampaign[second.ID])
+}
+
+func (s *StoreSuite) TestADialMustSayWhenItStarted() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+
+	err := s.store.StartDial(s.ctx, &CampaignAttempt{CampaignID: campaign.ID, ContactID: contact.ID, StepID: "step_1", Attempt: 1, Dial: 1})
+
+	s.Error(err)
+}
+
+// answered dials a contact, ends the dial as answered with its outcome to read at classifyAfter,
+// and settles the contact to wait for it.
+func (s *StoreSuite) answered(owner string, campaign Campaign, contact Contact, startedAt, classifyAfter time.Time) CampaignAttempt {
+	attempt := CampaignAttempt{CampaignID: campaign.ID, ContactID: contact.ID, StepID: "step_1", Attempt: 1, Dial: 1, StartedAt: startedAt}
+	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
+	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "answered", "call-"+attempt.ID, "", startedAt, &classifyAfter))
+	return attempt
+}
+
+func (s *StoreSuite) TestAContactStoppedMidCallStaysStoppedOnceItsOutcomeIsKnown() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+	s.answered("a", campaign, contact, s.base, s.base.Add(time.Minute))
+	s.Require().NoError(s.store.StopContact(s.ctx, campaign.ID, contact.ID))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	s.Equal("stopped", s.contactByNumber(campaign, "+15550001").Reason, "waiting for the outcome keeps the stop")
+	claimed, err := s.store.ClaimClassifications(s.ctx, "b", s.base.Add(time.Minute), time.Minute, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	next := s.base.Add(time.Hour)
+
+	s.Require().NoError(s.store.SettleContact(s.ctx, "b", contact.ID, Settle{Stage: Enrolled, StepID: "step_2", Attempt: 0, NextAttemptAt: &next, Outcome: "callback"}))
+
+	settled := s.contactByNumber(campaign, "+15550001")
+	s.Equal(ContactStopped, settled.Stage)
+	s.Equal("stopped", settled.Reason)
+	s.Nil(settled.NextAttemptAt)
+}
+
+func (s *StoreSuite) TestOnlyTheLatestAnsweredDialOfAContactIsClassified() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+	classifyAfter := s.base.Add(5 * time.Minute)
+	older := s.answered("a", campaign, contact, s.base, classifyAfter)
+	latest := s.answered("a", campaign, contact, s.base.Add(time.Minute), classifyAfter)
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+
+	claimed, err := s.store.ClaimClassifications(s.ctx, "a", classifyAfter, time.Minute, 10)
+
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Equal(latest.ID, claimed[0].Attempt.ID)
+	s.Require().NoError(s.store.Classified(s.ctx, latest.ID, "success", true))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: ContactCompleted, Attempt: 1, Outcome: "success"}))
+	_, attempts, err := s.store.CampaignContact(s.ctx, campaign.ID, contact.ID)
+	s.Require().NoError(err)
+	for _, attempt := range attempts {
+		if attempt.ID == older.ID {
+			s.NotEqual("pending", attempt.ClassifyState, "settling the contact leaves no dial of it to classify")
+		}
+	}
+	later, err := s.store.ClaimClassifications(s.ctx, "b", classifyAfter.Add(time.Hour), time.Minute, 10)
+	s.Require().NoError(err)
+	s.Empty(later)
+}
+
+func (s *StoreSuite) TestADialWhoseContactAnotherRunnerHoldsIsNotClassified() {
+	campaign := s.runningCampaign(5, "+15550001")
+	contact := s.claimDue("a", s.base, 10)[0].Contact
+	attempt := s.answered("a", campaign, contact, s.base, s.base.Add(time.Minute))
+	s.Require().NoError(s.store.SettleContact(s.ctx, "a", contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1}))
+	held, err := s.store.ClaimClassifications(s.ctx, "a", s.base.Add(time.Minute), 10*time.Minute, 10)
+	s.Require().NoError(err)
+	s.Require().Len(held, 1)
+	_, err = s.store.DB().NewUpdate().Model((*CampaignAttempt)(nil)).Set("classify_after = ?", s.base.Add(time.Minute)).Where("id = ?", attempt.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	taken, err := s.store.ClaimClassifications(s.ctx, "b", s.base.Add(2*time.Minute), time.Minute, 10)
+	s.Require().NoError(err)
+	s.Empty(taken, "a still holds the contact")
+
+	taken, err = s.store.ClaimClassifications(s.ctx, "b", s.base.Add(12*time.Minute), time.Minute, 10)
+	s.Require().NoError(err)
+	s.Len(taken, 1, "a's lease ran out")
 }

@@ -1406,8 +1406,9 @@ type CampaignAttempt struct {
 	Result    string `bun:"result,notnull"`
 	Outcome   string `bun:"outcome,notnull"`
 	Converted bool   `bun:"converted,notnull"`
-	// ClassifyState is empty, pending or done: whether an answered call's outcome is still
-	// to be read from its transcript.
+	// ClassifyState is empty, pending, done or abandoned: whether an answered call's outcome
+	// is still to be read from its transcript. Abandoned is one whose contact settled before
+	// it was read.
 	ClassifyState string     `bun:"classify_state,notnull"`
 	ClassifyAfter *time.Time `bun:"classify_after"`
 	ClassifyTries int        `bun:"classify_tries,notnull"`
