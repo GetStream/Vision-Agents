@@ -30,6 +30,10 @@ func TestVideo(t *testing.T) {
 // SetupSuite records the four second clips the sampling tests read, an mp4 and a webm.
 func (s *VideoSuite) SetupSuite() {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		// CI installs ffmpeg; a skip there would hide that these tests never ran.
+		if os.Getenv("CI") != "" {
+			s.T().Fatal("ffmpeg is not installed, so VideoSuite cannot run")
+		}
 		s.T().Skip("ffmpeg not available to record the clip")
 	}
 	s.clip = s.record("clip.mp4", "-pix_fmt", "yuv420p")

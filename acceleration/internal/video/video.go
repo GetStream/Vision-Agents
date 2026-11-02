@@ -53,9 +53,9 @@ var ErrUnavailable = errors.New("video: this deployment cannot read video (ffmpe
 
 // readOnlyAClip are the input options of every ffprobe and ffmpeg run. ffmpeg picks the
 // format from the bytes, and some formats (an HLS playlist, a concat list) name other
-// files or URLs that it then opens, so a caller could have it read any file or URL the
-// router can reach. The formats are two demuxers, each by all the names `ffmpeg -demuxers`
-// lists for it: mov for MP4, MOV and 3GP, matroska for MKV and WebM
+// files that it then opens, so a caller could have it read any file the router can
+// reach. The formats are two demuxers, each by all the names `ffmpeg -demuxers` lists
+// for it: mov for MP4, MOV and 3GP, matroska for MKV and WebM
 // (https://ffmpeg.org/ffmpeg-formats.html#Format-Options). The one protocol is the local
 // file the clip was written to (https://ffmpeg.org/ffmpeg-protocols.html).
 var readOnlyAClip = []string{"-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm", "-protocol_whitelist", "file"}
