@@ -98,3 +98,17 @@ func (s *AnthropicSuite) TestATrailingSystemTurnLeavesTheCachedPrefixBytesUnchan
 	}
 	s.True(strings.Contains(string(second.Messages[3]), `"system"`))
 }
+
+func (s *AnthropicSuite) TestASystemTurnBeforeAnEmptyAssistantIsToldOnTheUsersSide() {
+	// The empty turn is sent as nothing, which would leave the system message followed by the
+	// caller's: the API refuses that.
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.User, Content: "hello"},
+		{Role: llm.System, Content: "Your colleague has come back."},
+		{Role: llm.Assistant},
+		{Role: llm.User, Content: "are you there?"},
+	}})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"user"}, roles(s.sent()[0].body))
+}

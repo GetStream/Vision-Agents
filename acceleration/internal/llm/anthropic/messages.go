@@ -454,12 +454,22 @@ func systemTurnFits(before []anthropic.MessageParam, after []llm.Message) bool {
 		return false
 	}
 	for _, next := range after {
-		if next.Role == llm.System {
+		// A turn sent as nothing is not there to follow the system message.
+		if next.Role == llm.System || rendersEmpty(next) {
 			continue
 		}
 		return next.Role == llm.Assistant
 	}
 	return true
+}
+
+// rendersEmpty reports whether appendMessage sends nothing for a message, as it does for one
+// with no text, image or tool call: an empty turn is a 400.
+func rendersEmpty(message llm.Message) bool {
+	if message.Role == llm.ToolResult || len(message.ToolCalls) > 0 || message.HasImage() {
+		return false
+	}
+	return messageText(message) == ""
 }
 
 // appendSystem adds a system message, joined to one just before it.

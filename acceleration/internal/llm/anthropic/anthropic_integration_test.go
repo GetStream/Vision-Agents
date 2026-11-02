@@ -20,8 +20,10 @@ type AnthropicIntegrationSuite struct {
 	llmsuite.Suite
 }
 
+// Opus 5.5 is the one that takes a note mid-conversation as a system turn (systemTurnModels);
+// the others take it on the user's side, so between them both ways are run.
 func TestAnthropicIntegrationSuite(t *testing.T) {
-	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5"} {
+	for _, model := range []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"} {
 		t.Run(model, func(t *testing.T) {
 			suite.Run(t, &AnthropicIntegrationSuite{Suite: llmsuite.Suite{
 				New: func() llm.LLM {
