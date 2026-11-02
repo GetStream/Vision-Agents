@@ -13,6 +13,7 @@ backend/main.go      the backend half that stays up: Stream tokens, sending from
                      the agent answers
 a2ui/                how the agent writes interactive UI in A2UI, generated from the app's components
 openui/              the same in OpenUI
+prompts/             what generates a2ui/ and openui/, with the SDK's renderers
 app/                 the phone half: SwiftUI over VisionAgentsCore and StreamChatAI
 ```
 
@@ -51,10 +52,9 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from its `add/generative-ui` branch, because the generative UI it shows
-is not in a released `StreamChatAI` yet, and GenUI and OpenUI, which its renderers of A2UI and
-OpenUI draw with, from their `main` branches. The renderers themselves are the app's own, in
-`app/SwiftAssistant/A2UI` and `app/SwiftAssistant/OpenUI`, for now.
+takes `stream-chat-swift` from its `add/openui-module` branch, because the generative UI it shows
+is not released yet: `StreamChatAI`'s, and its renderers of A2UI and OpenUI, `StreamChatA2UI` and
+`StreamChatOpenUI`.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
@@ -152,21 +152,21 @@ messages in a ```` ```ui:a2ui@1.0 ```` block, or in [OpenUI](https://github.com/
 Lang in an ```` ```openui-lang ```` block. The router keeps that sentence as the message's text,
 which push notifications and the Android app show, and moves the block into the message's
 `custom.ai_ui` with its format, which StreamChatAI's `AIUIHost` shows in place of the text with
-the app's `A2UIRenderer`, on [GenUI](https://github.com/martinmitrevski/GenUI), or its
-`OpenUIRenderer`, on [OpenUI](https://github.com/martinmitrevski/OpenUI).
+`StreamChatA2UI`'s `A2UIRenderer` or `StreamChatOpenUI`'s `OpenUIRenderer`.
 
 The map, the place cards and the calendar are the app's own views (`TripComponents.swift`),
 described once in `app/SwiftAssistant/UIComponents.json`, and both formats place them. They
 load what they show on the phone: the photos from Wikipedia and the calendar from EventKit, which
 the agent never sees. The agent learns them with the format, from `a2ui/instructions.md` or
 `openui/instructions.md`, which the backend adds to what it is told, and which are generated
-from the same file by GenUI's `a2ui-prompt` and OpenUI's `openui-prompt`, with both cloned beside
-this repository:
+from the same file with the renderers' own code, from a clone of `stream-chat-swift` beside this
+repository on the branch the app takes:
 
 ```bash
-swift run --package-path ../../../../GenUI a2ui-prompt a2ui/prompt.json > a2ui/instructions.md
-swift run --package-path ../../../../OpenUI openui-prompt openui/prompt.json > openui/instructions.md
+prompts/generate.sh
 ```
+
+Pass the path of a `stream-chat-swift` checkout when it is elsewhere.
 
 Each `prompt.json` picks the components the agent may use and says when to write UI, and its
 example has to render, or nothing is written. Choose the format again in the settings after

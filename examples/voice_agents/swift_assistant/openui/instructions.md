@@ -14,7 +14,7 @@ Some answers work better as an interactive card than as text: planning a trip, a
 ## Component Signatures
 
 Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
-Props typed `ActionExpression` accept an Action([@steps...]) expression. See the Action section for available steps (@ToAssistant, @OpenUrl).
+Props typed `ActionExpression` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl).
 Props marked `$binding<type>` accept a `$variable` reference for two-way binding.
 
 ### Content
@@ -41,11 +41,9 @@ Series(category: string, values: number[]) — One data series
 ### Charts (1D)
 PieChart(labels: string[], values: number[], variant?: "pie" | "donut", appearance?: "circular" | "semiCircular") — Circular slices; use plucked arrays: PieChart(data.categories, data.values)
 
-### Charts (Scatter)
-
 ### Forms
 Form(name: string, buttons: Buttons, fields?: FormControl[]) — Form container with fields and explicit action buttons
-FormControl(label: string, input: Input | TextArea | Select | DatePicker | Slider | CheckBoxGroup | RadioGroup | Chips | OptionCards, hint?: string) — Field with label, input component, and optional hint text
+FormControl(label: string, input: Select | DatePicker | Slider | CheckBoxGroup | RadioGroup | Chips | OptionCards, hint?: string) — Field with label, input component, and optional hint text
 Label(text: string) — Text label
 Select(name: string, items: SelectItem[], placeholder?: string, rules?: {required?: boolean, email?: boolean, url?: boolean, numeric?: boolean, min?: number, max?: number, minLength?: number, maxLength?: number, pattern?: string}, value?: $binding<string>, size?: "small" | "medium" | "large")
 SelectItem(value: string, label: string) — Option for Select
@@ -58,7 +56,7 @@ RadioItem(label: string, description: string, value: string)
 Chips(name: string, type?: "single" | "multiple", items?: ChipItem[], rules?: {required?: boolean, email?: boolean, url?: boolean, numeric?: boolean, min?: number, max?: number, minLength?: number, maxLength?: number, pattern?: string}, defaultValue?: string | string[]) — A form field of compact selectable chips for choosing one or many short options; the selection is stored under `name`.
 ChipItem(value: string, label: string, icon?: Icon, disabled?: boolean) — A single selectable chip inside a Chips group, with a value, label and optional icon.
 OptionCards(name: string, type?: "single" | "multiple", items?: OptionCard[], rules?: {required?: boolean, email?: boolean, url?: boolean, numeric?: boolean, min?: number, max?: number, minLength?: number, maxLength?: number, pattern?: string}, defaultValue?: string | string[]) — A form field of selectable cards (title, optional subtitle, optional icon or image) laid out in a responsive grid for choosing one or many options; the selection is stored under `name`.
-OptionCard(value: string, title: string, subtitle?: string, topContent?: Icon | Image, disabled?: boolean) — A single selectable card inside an OptionCards group, with a value, title, optional subtitle and an optional Icon or Image on top.
+OptionCard(value: string, title: string, subtitle?: string, topContent?: Icon, disabled?: boolean) — A single selectable card inside an OptionCards group, with a value, title, optional subtitle and an optional Icon or Image on top.
 - Chips: compact single/multiple selection pills. Use ChipItem references for each option.
 - OptionCards: larger selectable cards with title, subtitle and an optional Icon or Image on top. Use OptionCard references for each option.
 - Define EACH FormControl as its own reference — do NOT inline all controls in one array.
@@ -81,12 +79,12 @@ FollowUpItem(text: string) — Clickable follow-up suggestion — when clicked, 
 - Use ListBlock with ListItem references for numbered lists.
 - Use FollowUpBlock with FollowUpItem references at the end of a response to suggest next actions.
 - A ListItem is clickable ONLY when given an action (5th argument); without one it is plain text.
-- Clicking a FollowUpItem, or a ListItem with a continue_conversation action, sends text to the LLM as a user message.
-- Example: list = ListBlock([item1, item2])  item1 = ListItem("Option A", "Details about A", null, null, { type: "continue_conversation", context: "Option A" })
+- Clicking a FollowUpItem, or a ListItem with a @ToAssistant action, sends text to the LLM as a user message.
+- Example: list = ListBlock([item1, item2])  item1 = ListItem("Option A", "Details about A", null, null, @ToAssistant("Option A"))
 
 ### Sections
 SectionBlock(sections: SectionItem[], isFoldable?: boolean) — Collapsible accordion sections. Auto-opens sections as they stream in. Use SectionItem for each section.
-SectionItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | CodeBlock | Image | ImageBlock | ImageGallery | Separator | HorizontalBarChart | RadarChart | PieChart | RadialChart | SingleStackedBarChart | ScatterChart | AreaChart | BarChart | LineChart | Table | TagBlock | Form | Buttons | IconButton | Steps | InlineHeader | EntityList | EditableTable | SnippetCardBlock | OverviewCardBlock | ContextCardBlock | CompositeCardBlock | VisualCardBlock | ListBlock | FollowUpBlock | Tabs | Accordion | PlaceCard | TripMap | CalendarCheck)[]) — Section with a label and collapsible content — used inside SectionBlock
+SectionItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | Separator | PieChart | BarChart | Table | TagBlock | Form | Buttons | Steps | InlineHeader | EntityList | ListBlock | FollowUpBlock | Tabs | Accordion | PlaceCard | TripMap | CalendarCheck)[]) — Section with a label and collapsible content — used inside SectionBlock
 - SectionBlock renders collapsible accordion sections that auto-open as they stream.
 - Each section needs a unique `value` id, a `trigger` label, and a `content` array.
 - Example: sections = SectionBlock([s1, s2])  s1 = SectionItem("intro", "Introduction", [content1])
@@ -94,9 +92,9 @@ SectionItem(value: string, trigger: string, content: (TextContent | MarkDownRend
 
 ### Layout
 Tabs(items: TabItem[]) — Tabbed container
-TabItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | CodeBlock | Image | ImageBlock | ImageGallery | Separator | HorizontalBarChart | RadarChart | PieChart | RadialChart | SingleStackedBarChart | ScatterChart | AreaChart | BarChart | LineChart | Table | TagBlock | Form | Buttons | IconButton | Steps | InlineHeader | EntityList | EditableTable | SnippetCardBlock | OverviewCardBlock | ContextCardBlock | CompositeCardBlock | VisualCardBlock | ListBlock | FollowUpBlock | Accordion | PlaceCard | TripMap | CalendarCheck)[]) — value is unique id, trigger is tab label, content is array of components
+TabItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | Separator | PieChart | BarChart | Table | TagBlock | Form | Buttons | Steps | InlineHeader | EntityList | ListBlock | FollowUpBlock | Accordion | PlaceCard | TripMap | CalendarCheck)[]) — value is unique id, trigger is tab label, content is array of components
 Accordion(items: AccordionItem[]) — Collapsible sections
-AccordionItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | CodeBlock | Image | ImageBlock | ImageGallery | Separator | HorizontalBarChart | RadarChart | PieChart | RadialChart | SingleStackedBarChart | ScatterChart | AreaChart | BarChart | LineChart | Table | TagBlock | Form | Buttons | IconButton | Steps | InlineHeader | EntityList | EditableTable | SnippetCardBlock | OverviewCardBlock | ContextCardBlock | CompositeCardBlock | VisualCardBlock | ListBlock | FollowUpBlock | PlaceCard | TripMap | CalendarCheck)[]) — value is unique id, trigger is section title
+AccordionItem(value: string, trigger: string, content: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | Separator | PieChart | BarChart | Table | TagBlock | Form | Buttons | Steps | InlineHeader | EntityList | ListBlock | FollowUpBlock | PlaceCard | TripMap | CalendarCheck)[]) — value is unique id, trigger is section title
 Steps(items: StepsItem[]) — Step-by-step guide
 StepsItem(title: string, details: string) — title and details text for one step
 - Use Tabs to present alternative views — each TabItem has a value id, trigger label, and content array.
@@ -111,15 +109,6 @@ Tag(text: string, icon?: Icon, size?: "sm" | "md" | "lg", variant?: "neutral" | 
 EntityList(rows?: {left: string, right: string, rightVariant?: "text" | "number"}[], size?: "small" | "default", header?: {left: string, right: string, rightVariant?: "text" | "number"}, footer?: {left: string, right: string, rightVariant?: "text" | "number"}) — Two-column key/value rows (left label, right value). size 'default' supports optional header and footer rows; rightVariant 'number' uses tabular numbers.
 - EntityList is a compact two-column list of { left, right } rows (e.g. name / value). size='default' also supports a header and footer row; size='small' does not.
 
-### Cards
-- Card blocks lay out 2+ items in a responsive grid (or carousel where supported). Every item in a block must have the same structure.
-- SnippetCardItem: small card with lhs (IconText | ImageText) and optional rhs (Text | BoldText) — good for key/value facts.
-- OverviewCardItem: small card with top (IconText | ImageText | Text) and optional bottom MetricIndicatorInline — good for KPIs.
-- ContextCardItem: medium card with a title (string or Tag), body text and optional background image — good for summaries.
-- CompositeCardItem: rich card with header, body array (Text, BoldText, MetricIndicatorInline, IconText, Image, charts, ListBlock, TagBlock, EntityList) and footer (price + Button) — good for products/offers.
-- VisualCardItem: image-first card with a BoldText body and optional Tag.
-- Text / BoldText / IconText / ImageText / ImageTextLarge / MetricIndicator* are the inline building blocks used INSIDE card items; do not place them directly in the root Card.
-
 ### App components
 PlaceCard(title: string, note?: string) — One place of a plan, with its photo and a short summary, which the phone loads from Wikipedia, so it needs no image URL. Use one per sight, beach, monastery, village or day trip. title: The place's exact English Wikipedia article title, such as "Church of St. John at Kaneo". note: One short line about it for this plan, such as "Best at sunset" or "2 hours". Tapping the card asks you about the place.
 TripMap(places: {name: string, latitude: number, longitude: number}[]) — A map of a plan with a pin for each place, drawn on the phone. Use one near the top of every trip plan. places: Every place of the plan, with its coordinates. Tapping a pin asks you about that place.
@@ -128,23 +117,23 @@ CalendarCheck(start: string, end: string) — The person's own calendar for the 
 - A PlaceCard's title must be the place's exact English Wikipedia article title, or its photo won't load.
 
 ### Other
-Card(children: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | CodeBlock | Image | ImageBlock | ImageGallery | Separator | HorizontalBarChart | RadarChart | PieChart | RadialChart | SingleStackedBarChart | ScatterChart | AreaChart | BarChart | LineChart | Table | TagBlock | Form | Buttons | IconButton | Steps | InlineHeader | EntityList | EditableTable | SnippetCardBlock | OverviewCardBlock | ContextCardBlock | CompositeCardBlock | VisualCardBlock | ListBlock | FollowUpBlock | SectionBlock | Tabs | Carousel | PlaceCard | TripMap | CalendarCheck)[], sources?: {url?: string, title: string, sourceName: string}[]) — Vertical container for all content in a chat response. Children stack top to bottom automatically. Optional sources ([{ title, sourceName, url }]) render as a Sources strip at the bottom and back inline [n] citations in TextContent.
+Card(children: (TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | Separator | PieChart | BarChart | Table | TagBlock | Form | Buttons | Steps | InlineHeader | EntityList | ListBlock | FollowUpBlock | SectionBlock | Tabs | PlaceCard | TripMap | CalendarCheck)[], sources?: {url?: string, title: string, sourceName: string}[]) — Vertical container for all content in a chat response. Children stack top to bottom automatically. Optional sources ([{ title, sourceName, url }]) render as a Sources strip at the bottom and back inline [n] citations in TextContent.
 
 ## Action — Button Behavior
 
-Action([@steps...]) wires button clicks to operations. Steps are @-prefixed built-in actions. Steps execute in order.
-Buttons without an explicit Action prop automatically send their label to the assistant (equivalent to Action([@ToAssistant(label)])).
+An action wires a button click to operations. Pass one @-prefixed step bare, e.g. Button("Ask", @ToAssistant("Tell me more")). Put several steps in Action([...]), e.g. Button("Read", Action([@OpenUrl("https://example.com"), @ToAssistant("Summarize this page")])). Steps execute in order.
+Buttons without an action automatically send their label to the assistant (equivalent to @ToAssistant(label)).
 
 Available steps:
-- @ToAssistant("message") — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this")
-- @OpenUrl("https://...") — Navigate to a URL
+- @ToAssistant(message: string, context?: any) — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this"). The optional context is any value (object, array, string, number) passed to the assistant as hidden data, e.g. @ToAssistant("Show details", {orderId: 42})
+- @OpenUrl(url: string) — Navigate to a URL
 
 Example — simple nav:
 ```
-viewBtn = Button("View", Action([@OpenUrl("https://example.com")]))
+viewBtn = Button("View", @OpenUrl("https://example.com"))
 ```
 
-- Action can be assigned to a variable or inlined: Button("Go", onSubmit) and Button("Go", Action([...])) both work
+- An action can be assigned to a variable or inlined: Button("Go", onSubmit) and Button("Go", Action([...])) both work
 
 ## Hoisting & Streaming (CRITICAL)
 
@@ -215,8 +204,8 @@ Before finishing, walk your output and verify:
 - If no image URL is in context, compose without image components — icons, gray ContextCardItems, and charts still make rich layouts.
 - Argument-order trap: Image takes alt FIRST, while ImageBlock, ImageText, and ImageTextLarge take src FIRST — alt text in a src slot ships a broken image.
 - Card blocks (SnippetCardBlock, OverviewCardBlock, ContextCardBlock, CompositeCardBlock, VisualCardBlock) need at least 2 items, all with the same structure; use layout "grid" for primary side-by-side comparison and "carousel" for secondary browsing.
-- The card-block action is BLOCK-LEVEL: one action shared by every card, with the clicked card's details attached automatically — keep continue_conversation context generic (e.g. "Tell me more about this destination"), and never use a block-level open_url since it would send every card to the same URL.
-- Card items have NO per-item action: to give each item its own external link, use CompositeCardItem with footer { button: Button(label, { type: "open_url", url }) } — never claim a card opens a link it cannot.
+- The card-block action is BLOCK-LEVEL: one action shared by every card, with the clicked card's details attached automatically — keep the @ToAssistant message generic (e.g. "Tell me more about this destination"), and never use a block-level @OpenUrl since it would send every card to the same URL.
+- Card items have NO per-item action: to give each item its own external link, use CompositeCardItem with footer { button: Button(label, @OpenUrl(url)) } — never claim a card opens a link it cannot.
 - Text, BoldText, IconText, ImageText, ImageTextLarge and MetricIndicator* are inline building blocks used INSIDE card items — do not place them directly in the root Card.
 - EntityList size "small" is reserved for CompositeCardItem body content (no header/footer); use size "default" elsewhere.
 - Tag variant must be semantically correct (success=positive, danger=negative, warning=cautionary, info=informational, neutral=label); Tag takes an optional Icon second, so use Tag(text, icon, size, variant) when a variant is needed.
@@ -232,8 +221,8 @@ Before finishing, walk your output and verify:
 - Every Form MUST have EXACTLY ONE submit Button with variant "primary" — that button validates the form; other buttons (secondary/tertiary escape hatches like "Just Surprise Me") skip validation, and there is never a reset button.
 - Prefer structured inputs (Select, Chips, OptionCards, DatePicker, Slider) over free-text Input, give every FormControl a clear label (and a hint where it prevents mistakes), and keep each field name unique within the response.
 - Validation rules ({ required: true, email: true, minLength: 8, ... }) are enforced with inline errors — use them for genuinely essential fields, but never require a free-text field where leaving it blank is meaningful.
-- Form inputs work ONLY inside a FormControl within a Form; for tappable suggestion choices OUTSIDE a form, use Buttons of continue_conversation Buttons — never a bare OptionCards or Chips.
-- Only add Buttons for real actions: form submit, open_url with a URL from a tool or the user (never fabricated), or a continue_conversation follow-up — never a button for an app action (open, download, export, edit) you cannot perform.
+- Form inputs work ONLY inside a FormControl within a Form; for tappable suggestion choices OUTSIDE a form, use Buttons whose Button actions are @ToAssistant, never a bare OptionCards or Chips.
+- Only add Buttons for real actions: form submit, @OpenUrl with a URL from a tool or the user (never fabricated), or a @ToAssistant follow-up. Never add a button for an app action (open, download, export, edit) you cannot perform.
 - Every Button label must accurately describe what clicking it does; use "primary" for the main action and "secondary"/"tertiary" only for lower-emphasis supporting actions.
 - Icon: always include the category argument — it enables fallback matching when the exact lucide name is unavailable.
 - Pass sources on Card ONLY when the answer relies on real references you actually have, and cite them inline in TextContent as [1], [2] (1-based index into sources).

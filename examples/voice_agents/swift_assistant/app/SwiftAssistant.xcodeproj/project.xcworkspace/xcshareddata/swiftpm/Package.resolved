@@ -1,31 +1,13 @@
 {
-  "originHash" : "da00ff666c809093bb9a8d3d675aa6e4568e13987889484ca9ca59117a818194",
+  "originHash" : "a804a3ac9b33779d4d8e9598ae2943572e770eb5f0c8e5f8eda544367c031bc4",
   "pins" : [
-    {
-      "identity" : "genui",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/martinmitrevski/GenUI",
-      "state" : {
-        "branch" : "main",
-        "revision" : "abbe6fce9848490021e7ce2dfe5d8a2741ae00e0"
-      }
-    },
-    {
-      "identity" : "openui",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/martinmitrevski/OpenUI",
-      "state" : {
-        "branch" : "main",
-        "revision" : "5979833d5793aabd3df6466f1395125c62a4f87a"
-      }
-    },
     {
       "identity" : "stream-chat-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/GetStream/stream-chat-swift",
       "state" : {
-        "branch" : "add/generative-ui",
-        "revision" : "2ff392f7782a4af312b7c2eb5717ad945ba4ea11"
+        "branch" : "add/openui-module",
+        "revision" : "07a709e62dda96089585823b4f168121817f556a"
       }
     },
     {

@@ -2,7 +2,9 @@ import Foundation
 import Combine
 import Observation
 import StreamChat
+import StreamChatA2UI
 import StreamChatAI
+import StreamChatOpenUI
 import VisionAgentsCore
 
 /// A written conversation as Stream's AI components want it: the channel it is kept in, the
