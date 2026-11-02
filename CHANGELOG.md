@@ -220,6 +220,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A dispatch worker's session answers in the channel the message was written in
+
+A text session that the customer's backend opens under the `agent_id` of a message the router just handed to its dispatch worker now answers in that message's channel. The Go SDK's `Dispatch.Conversation` opens its sessions this way. Before, the session wrote its reply into a new `agent:<session id>` channel, and the person saw nothing. The session writes only its replies: the person's message is already in the channel. A second message while that session runs is answered by the same session, and is not dispatched again. Every other session keeps a channel of its own, as before (AI-2505).
+
 ### A scheduled task handed to another router is billed to its own key
 
 A router that runs a scheduled task for another router, because it holds the task's conversation, now takes the task's conversation, timezone, API key and usage categories from the stored task, and the occurrence's prompt and due time from its stored run, not from what the other router sent. It refuses a hand-off that names a run that is not the task's running run. A text it sends for the task is now recorded under the task's key, user and usage categories, as on the router that claimed the task. Before, it was recorded as `job:channel_notice` with no user (AI-2421).
