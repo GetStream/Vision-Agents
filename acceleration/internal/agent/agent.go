@@ -413,6 +413,12 @@ type Agent struct {
 	// writers is whether speakers counts people who wrote rather than spoke, so the model
 	// is told about several people in writing (severalWriters), not in a call.
 	writers bool
+	// knows is what the reply model has been told, once, of what moves on during a call: the
+	// hour the clock line names, and whether there are several people. A reply that is
+	// told it keeps it in the conversation (harness.Turn.Tell), so it is not said again.
+	knows telling
+	// telling is what each reply in flight was told, until it is written and it counts.
+	telling map[string]telling
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -1263,10 +1269,13 @@ func (a *Agent) History() []llm.Message {
 // history itself. Whether a caller said a value or a tool returned it does not stop being
 // true when the model is handed a summary instead. Before this, an ID a tool returned was
 // refused as made up once the result had been summarised away.
+//
+// The harness's notes and the data ahead of them are left out: what a colleague came back
+// with was not said by the caller, nor returned by a tool the agent ran.
 func (a *Agent) record() []llm.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append(append([]llm.Message(nil), a.compactedAway...), a.history...)
+	return harness.WithoutNotes(append(append([]llm.Message(nil), a.compactedAway...), a.history...))
 }
 
 // told returns the instructions the operator gave the agent, as they stand now.
@@ -1787,8 +1796,13 @@ func (a *Agent) ask(ready candidate) {
 		a.mu.Unlock()
 		return
 	}
-	history := llm.OmitImages(append([]llm.Message(nil), a.history...))
-	instructions := a.instructions()
+	history := llm.OmitImages(harness.WithoutNotes(a.history))
+	// The flow controller is not told the hour: it rules on the words, and its prompt is
+	// cached by its prefix like any other.
+	instructions := a.prompted()
+	if line := severalPeople(len(a.speakers), a.writers); line != "" {
+		instructions += "\n\n" + line
+	}
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
 	// The flow controller must be able to stop that work on a caller's correction.
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
@@ -1998,7 +2012,8 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	answers := a.toolRounds >= maxToolRounds
 	continues := a.owedTurn
 	a.owedTurn = ""
-	instructions := a.instructions()
+	instructions := a.prompted()
+	tell := a.tellLocked(turnID, len(a.speakers))
 	asked := a.asked
 	images := a.turnImages
 	a.mu.Unlock()
@@ -2010,6 +2025,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	return a.generate(harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
+		Tell:         tell,
 		History:      history,
 		Images:       images,
 		AfterTool:    true,
@@ -2064,7 +2080,8 @@ func (a *Agent) respondTurn(
 	// A call opened with a typed instruction ("greet the caller") has nothing to act on
 	// yet, and a model offered tools then logs a summary of the empty call.
 	noTools := !a.options.Text && !a.heardCaller
-	instructions := a.instructions()
+	instructions := a.prompted()
+	tell := a.tellLocked(turnID, len(a.speakers))
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindCaller)
@@ -2074,6 +2091,7 @@ func (a *Agent) respondTurn(
 	turn := harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
+		Tell:         tell,
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
 		Images:       images,
@@ -2114,7 +2132,7 @@ func WithAuthor(ctx context.Context, userID string) context.Context {
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
 // said them once somebody else in the call has had a turn answered too.
 func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
-	turn := llm.Message{Role: llm.User, Content: text}
+	turn := llm.Message{Role: llm.User, Content: harness.Defang(text)}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
 		turn.Speaker = a.speakerLocked(participant).label
@@ -2374,8 +2392,22 @@ func composedKind(purpose string) string {
 func (a *Agent) instructions() string { return a.instructionsFor(len(a.speakers)) }
 
 // instructionsFor is instructions for a conversation of that many people, which a reply
-// written before its turn is counted asks for ahead of the count.
+// written before its turn is counted asks for ahead of the count. It is for what does not go
+// through the harness: a native speech session, a composed line, an aside.
 func (a *Agent) instructionsFor(people int) string {
+	parts := []string{a.prompted()}
+	if line := severalPeople(people, a.writers); line != "" {
+		parts = append(parts, line)
+	}
+	parts = append(parts, clockLine(a.now(), a.zone))
+	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), "\n\n")
+}
+
+// prompted is what the agent is, the same on every turn of the call: what the operator wrote,
+// what it recalled, how it opened the call and how to write for the voice. A reply through
+// the harness is sent this as its instructions and told what moves on (tellLocked) instead,
+// because a provider caches a prompt by its prefix.
+func (a *Agent) prompted() string {
 	parts := make([]string, 0, 4)
 	if a.prompt != "" {
 		parts = append(parts, a.prompt)
@@ -2391,13 +2423,46 @@ func (a *Agent) instructionsFor(people int) string {
 	if a.voicePrompt != "" {
 		parts = append(parts, a.voicePrompt)
 	}
-	if people > 1 && a.writers {
-		parts = append(parts, severalWriters)
-	} else if people > 1 {
-		parts = append(parts, severalSpeakers)
-	}
-	parts = append(parts, clockLine(a.now(), a.zone))
 	return strings.Join(parts, "\n\n")
+}
+
+// severalPeople is what the model is told about a conversation of that many people.
+func severalPeople(people int, writers bool) string {
+	switch {
+	case people > 1 && writers:
+		return severalWriters
+	case people > 1:
+		return severalSpeakers
+	}
+	return ""
+}
+
+// telling is what a reply is told of what moves on during a call.
+type telling struct {
+	hour    time.Time
+	several bool
+}
+
+// tellLocked is what a reply for a conversation of that many people has not been told yet:
+// the clock when the hour has moved on since it last was, and that there are several people
+// when there have come to be. It is told once, with the reply's turn, and kept from then on.
+func (a *Agent) tellLocked(turnID string, people int) string {
+	now := telling{hour: a.now().Truncate(time.Hour), several: people > 1}
+	var lines []string
+	if !now.hour.Equal(a.knows.hour) {
+		lines = append(lines, clockLine(a.now(), a.zone))
+	}
+	if now.several && !a.knows.several {
+		lines = append(lines, severalPeople(people, a.writers))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if a.telling == nil {
+		a.telling = make(map[string]telling)
+	}
+	a.telling[turnID] = now
+	return strings.Join(lines, "\n\n")
 }
 
 // generate asks the harness for a reply and starts draining it.
@@ -2822,6 +2887,20 @@ func (a *Agent) finish(response llm.Response) {
 
 	a.mu.Lock()
 	a.generating = false
+	currentHarness := a.harness
+	// What the reply was sent after the conversation, the notes it delivered and anything it
+	// was told, is what the model read before writing it, so it joins the conversation ahead
+	// of the reply. A provider that kept the reply can then carry on from it next turn rather
+	// than read the conversation again.
+	var carried []llm.Message
+	if currentHarness != nil {
+		carried = currentHarness.Remember(response)
+	}
+	if told, ok := a.telling[response.ID]; ok && len(carried) > 0 && !refused {
+		a.knows = told
+		clear(a.telling)
+	}
+	delete(a.telling, response.ID)
 	switch {
 	case refused:
 		// The screen judges only what came after the model last spoke, so a reply recorded
@@ -2829,6 +2908,7 @@ func (a *Agent) finish(response llm.Response) {
 		// judged by none.
 		a.history = Withheld(a.history)
 	case said != "" || len(calls) > 0:
+		a.history = append(a.history, carried...)
 		// A reply that only called a tool is still a turn the model took, and it has to be
 		// recorded with the calls on it: the result sent back answers one of them, and a
 		// provider refuses a conversation where it answers nothing.
@@ -2841,15 +2921,9 @@ func (a *Agent) finish(response llm.Response) {
 	}
 	exchange := lastExchange(a.history)
 	history := append([]llm.Message(nil), a.history...)
-	currentHarness := a.harness
 	a.mu.Unlock()
 
-	// A provider that kept this reply can be asked to carry on from it next turn rather
-	// than read the conversation again.
-	if currentHarness != nil {
-		currentHarness.Remember(response)
-	}
-	a.learnTerms(said, history)
+	a.learnTerms(said, harness.WithoutNotes(history))
 
 	// Remembering happens off the turn path: extraction takes longer than a turn and the
 	// next thing the participant says must not wait for it.
@@ -3323,7 +3397,8 @@ func (a *Agent) follow() error {
 	participant := a.lastParticipant
 	continues := a.owedTurn
 	a.owedTurn = ""
-	instructions := a.instructions()
+	instructions := a.prompted()
+	tell := a.tellLocked(turnID, len(a.speakers))
 	asked := a.asked
 	a.mu.Unlock()
 
@@ -3335,6 +3410,7 @@ func (a *Agent) follow() error {
 	return a.generate(harness.Turn{
 		ID:           turnID,
 		Instructions: instructions,
+		Tell:         tell,
 		History:      history,
 		Asked:        asked,
 	}, "")
@@ -3775,6 +3851,7 @@ func (a *Agent) fail(err error, context string) {
 // smallest thing worth remembering, and a history not ending in an answered question has
 // no finished exchange to offer.
 func lastExchange(history []llm.Message) []llm.Message {
+	history = harness.WithoutNotes(history)
 	if len(history) < 2 {
 		return nil
 	}
@@ -3805,6 +3882,8 @@ func (a *Agent) Continue(previous *Agent) {
 	// write to a map the new agent reads.
 	speakers := maps.Clone(previous.speakers)
 	opened := previous.opened
+	// What the model was told is in the history taken over, so it is not told again.
+	knows := previous.knows
 	previous.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -3812,6 +3891,7 @@ func (a *Agent) Continue(previous *Agent) {
 	a.compactedAway = compactedAway
 	a.speakers = speakers
 	a.opened = opened
+	a.knows = knows
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

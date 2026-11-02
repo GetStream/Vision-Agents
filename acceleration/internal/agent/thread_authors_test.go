@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -45,13 +46,14 @@ func (s *AgentSuite) TestAThreadReadBackWithTwoAuthorsNamesEachOfThem() {
 
 	asked := s.writes("linq-kanat", "What are our names?")
 
-	s.Equal("be brief\n\n"+severalWriters, withoutClock(asked.Instructions))
+	s.Equal("be brief", asked.Instructions)
+	s.True(knows(asked, severalWriters))
 	s.Equal([]string{
 		"Speaker 1: Hi all, I'm Kanat", "Hi Kanat!",
 		"Speaker 2: I'm Ana. What is your return policy?", "Hi Ana! Thirty days.",
 		"Speaker 1: What are our names?",
-	}, contentsOf(asked.Input))
-	s.Equal("Speaker 1: hi", contentsOf(s.writes("linq-kanat", "hi").Input)[6], "Kanat is still Speaker 1")
+	}, contentsOf(harness.WithoutNotes(asked.Input)))
+	s.Equal("Speaker 1: hi", contentsOf(harness.WithoutNotes(s.writes("linq-kanat", "hi").Input))[6], "Kanat is still Speaker 1")
 	for _, event := range s.reported() {
 		if responding, ok := event.(Responding); ok {
 			s.Equal(stt.Participant{ID: typedCaller}, responding.Participant, "events and tools still see the typed caller")
@@ -69,11 +71,12 @@ func (s *AgentSuite) TestASecondAuthorInAnOpenThreadIsNamedFromTheirFirstTurn() 
 	third := s.writes("slack-alice", "thanks")
 
 	s.Equal("be brief", withoutClock(first.Instructions), "one author so far")
-	s.Equal([]string{"is the build green?"}, contentsOf(first.Input))
-	s.Equal("be brief\n\n"+severalWriters, withoutClock(second.Instructions))
-	s.Equal("Speaker 2: and the deploy?", contentsOf(second.Input)[2])
-	s.Equal("is the build green?", contentsOf(third.Input)[0], "a turn from before the second author stays as it was")
-	s.Equal("Speaker 1: thanks", contentsOf(third.Input)[4])
+	s.Equal([]string{"is the build green?"}, contentsOf(harness.WithoutNotes(first.Input)))
+	s.Equal("be brief", second.Instructions)
+	s.True(knows(second, severalWriters))
+	s.Equal("Speaker 2: and the deploy?", contentsOf(harness.WithoutNotes(second.Input))[2])
+	s.Equal("is the build green?", contentsOf(harness.WithoutNotes(third.Input))[0], "a turn from before the second author stays as it was")
+	s.Equal("Speaker 1: thanks", contentsOf(harness.WithoutNotes(third.Input))[4])
 }
 
 // A typed turn nobody in the thread wrote, such as a scheduled task's or a login's follow-up,
@@ -88,7 +91,7 @@ func (s *AgentSuite) TestATypedTurnWithoutAnAuthorInAThreadIsNotNamed() {
 	asked := s.writes("", "It is noon.")
 
 	s.Equal("be brief", withoutClock(asked.Instructions))
-	s.Equal("It is noon.", contentsOf(asked.Input)[2])
+	s.Equal("It is noon.", contentsOf(harness.WithoutNotes(asked.Input))[2])
 }
 
 // A typed turn nobody wrote in a thread two people wrote in keeps them named, and the note
@@ -104,9 +107,10 @@ func (s *AgentSuite) TestATypedTurnWithoutAnAuthorAfterTwoAuthorsKeepsThemNamed(
 
 	asked := s.writes("", "It is noon.")
 
-	s.Equal("be brief\n\n"+severalWriters, withoutClock(asked.Instructions))
+	s.Equal("be brief", asked.Instructions)
+	s.True(knows(asked, severalWriters))
 	s.Equal([]string{"Speaker 1: remind us at noon", "Will do.", "Speaker 2: me too", "Both of you, then.", "It is noon."},
-		contentsOf(asked.Input))
+		contentsOf(harness.WithoutNotes(asked.Input)))
 }
 
 // The control: a 1:1 chat on a thread channel and a session in writing that names no author
@@ -123,8 +127,8 @@ func (s *AgentSuite) TestOnePersonInWritingReachesTheModelAsAtBase() {
 		asked := s.writes(author, "What is my name?")
 
 		s.Equal("be brief", withoutClock(asked.Instructions), author)
-		sent := make([]llm.Message, 0, len(asked.Input))
-		for _, message := range asked.Input {
+		sent := make([]llm.Message, 0, len(harness.WithoutNotes(asked.Input)))
+		for _, message := range harness.WithoutNotes(asked.Input) {
 			// No provider reads Author (llm.Message).
 			message.Author = ""
 			sent = append(sent, message)

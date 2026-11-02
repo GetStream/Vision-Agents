@@ -227,7 +227,7 @@ func (s *HarnessSuite) TestAnAnswerAfterCodeThatFailedIsNotPassedOffAsSuccess() 
 	s.Equal(Done, settled.State)
 	s.ErrorContains(settled.Err, errNoSandbox.Error())
 	s.respond("turn-2", "")
-	s.Contains(s.fast.requests()[1].Instructions, "do not claim anything that code was meant to produce")
+	s.Contains(shown(s.fast.requests()[1]), "do not claim anything that code was meant to produce")
 }
 
 func (s *HarnessSuite) TestCodeThatWorksOnASecondTryIsAnAnswer() {

@@ -1,10 +1,13 @@
 package session
 
 import (
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -17,7 +20,8 @@ func (s *SessionSuite) replyTo(text string) (llm.ResponseParams, bool) {
 	defer s.othersMu.Unlock()
 	for _, model := range s.others {
 		for _, request := range model.requests() {
-			if request.Input[len(request.Input)-1].Content == text {
+			said := harness.WithoutNotes(request.Input)
+			if len(said) > 0 && said[len(said)-1].Content == text {
 				return request, true
 			}
 		}
@@ -53,9 +57,11 @@ func (s *SessionSuite) TestThePeopleHeardInACallAreStillLabelledOnceVoiceStops()
 		asked, ok = s.replyTo("and now?")
 		return ok
 	}, settleFor, 10*time.Millisecond, "the typed turn was never asked")
-	s.Contains(asked.Instructions, "Several people are talking in this call.")
+	s.True(slices.ContainsFunc(asked.Input, func(message llm.Message) bool {
+		return harness.IsNote(message) && strings.Contains(message.Content, "Several people are talking in this call.")
+	}), "the model was told there are several people, and it stays told")
 	var heard []string
-	for _, message := range asked.Input {
+	for _, message := range harness.WithoutNotes(asked.Input) {
 		heard = append(heard, message.Content)
 	}
 	s.Equal([]string{"hello", "Hello.", "Bob: hi there", "Hello.", "and now?"}, heard)

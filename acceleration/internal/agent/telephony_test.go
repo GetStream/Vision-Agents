@@ -188,7 +188,7 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 			return true
 		}
 		requests := s.model.requests()
-		return len(requests) > 1 && strings.Contains(requests[1].Instructions, "move_visit") &&
+		return len(requests) > 1 && strings.Contains(shown(requests[1]), "move_visit") &&
 			s.model.script(requests[1].ID) != nil
 	}, "neither a malformed call nor a corrective response was observed")
 	state, rejected := book.state()
@@ -199,12 +199,12 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	requests := s.model.requests()
 	s.Require().GreaterOrEqual(len(requests), 2)
 	correction := requests[1]
-	s.Contains(correction.Instructions, "move_visit")
-	s.Contains(correction.Instructions, "visit_id")
-	s.Contains(correction.Instructions, "new_day")
-	s.Contains(correction.Instructions, "new_slot")
-	s.Contains(correction.Instructions, "not run")
-	s.Contains(correction.Input, llm.Message{Role: llm.User, Content: callerText})
+	s.Contains(shown(correction), "move_visit")
+	s.Contains(shown(correction), "visit_id")
+	s.Contains(shown(correction), "new_day")
+	s.Contains(shown(correction), "new_slot")
+	s.Contains(shown(correction), "not run")
+	s.Contains(harness.WithoutNotes(correction.Input), llm.Message{Role: llm.User, Content: callerText})
 	s.Require().Len(correction.Tools, 1)
 	s.Equal("move_visit", correction.Tools[0].Name)
 	s.Equal([]any{"visit_id", "new_day", "new_slot"}, correction.Tools[0].Parameters["required"])
@@ -233,8 +233,8 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	}, "the tool result did not trigger a final response")
 	requests = s.model.requests()
 	final := requests[2]
-	s.Equal(1, countOfMessages(final.Input, llm.User), "the successful reply should need no second caller turn")
-	s.True(slices.ContainsFunc(final.Input, func(message llm.Message) bool {
+	s.Equal(1, countOfMessages(harness.WithoutNotes(final.Input), llm.User), "the successful reply should need no second caller turn")
+	s.True(slices.ContainsFunc(harness.WithoutNotes(final.Input), func(message llm.Message) bool {
 		return message.Role == llm.ToolResult && message.ToolCallID == "reschedule-correct" &&
 			strings.Contains(message.Content, "now Wednesday afternoon")
 	}), "the final response must receive the actual tool result")
@@ -349,12 +349,12 @@ func (s *AgentSuite) TestAToolsPictureReachesTheVisionSkillWithItsCallAnswered()
 	asked := s.subagent.requests()[0]
 	s.True(asked.HasImage(), "the vision task was not shown the picture")
 	answered := map[string]bool{}
-	for _, message := range asked.Input {
+	for _, message := range harness.WithoutNotes(asked.Input) {
 		if message.Role == llm.ToolResult {
 			answered[message.ToolCallID] = true
 		}
 	}
-	for _, message := range asked.Input {
+	for _, message := range harness.WithoutNotes(asked.Input) {
 		for _, call := range message.ToolCalls {
 			s.True(answered[call.ID], "the vision task was handed %s with no result", call.ID)
 		}
@@ -678,7 +678,7 @@ func (s *AgentSuite) TestAVoiceModelIsToldToSumUpWhatAToolFoundRatherThanReadItO
 
 	s.eventually(func() bool { return s.spokenText("Felice a Testaccio is the one") }, "the result was never said")
 	s.model.mu.Lock()
-	input := s.model.asked[len(s.model.asked)-1].Input
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	read := input[slices.IndexFunc(input, func(m llm.Message) bool { return m.Role == llm.ToolResult })]
 	s.True(strings.HasSuffix(read.Content, spokenResult))
@@ -702,7 +702,7 @@ func (s *AgentSuite) TestAWrittenConversationIsGivenWhatAToolFoundAsItIs() {
 
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the result was never answered")
 	s.model.mu.Lock()
-	input := s.model.asked[len(s.model.asked)-1].Input
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Equal("1. Felice a Testaccio https://example.com/felice", input[len(input)-1].Content)
 }
@@ -749,9 +749,9 @@ func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() 
 		"the caller was left in silence while the tool ran")
 	composed := s.model.composeRequests()
 	s.Require().Len(composed, 1)
-	s.Equal(fmt.Sprintf(composeNote, holdPurpose), composed[0].Input[len(composed[0].Input)-1].Content,
+	s.Equal(fmt.Sprintf(composeNote, holdPurpose), harness.WithoutNotes(composed[0].Input)[len(harness.WithoutNotes(composed[0].Input))-1].Content,
 		"the model writes the line for what the caller asked, not a stock phrase")
-	s.Empty(unanswered(composed[0].Input[:len(composed[0].Input)-1]),
+	s.Empty(unanswered(harness.WithoutNotes(composed[0].Input)[:len(harness.WithoutNotes(composed[0].Input))-1]),
 		"a provider refuses a request replaying the running call without a result")
 
 	release()
@@ -1014,7 +1014,7 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
 
 	s.model.mu.Lock()
-	next := s.model.asked[len(s.model.asked)-1].Input
+	next := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Empty(unanswered(next), "the next turn replayed a call without its result")
 	s.Equal(llm.User, next[len(next)-1].Role)
@@ -1161,9 +1161,9 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 	asked := append([]llm.ResponseParams(nil), s.model.asked...)
 	s.model.mu.Unlock()
 	for i, request := range asked {
-		s.Empty(unanswered(request.Input), "request %d replayed a call without its result", i)
+		s.Empty(unanswered(harness.WithoutNotes(request.Input)), "request %d replayed a call without its result", i)
 	}
-	last := asked[2].Input
+	last := harness.WithoutNotes(asked[2].Input)
 	s.Equal(llm.ToolResult, last[len(last)-2].Role)
 	s.Equal("call-2", last[len(last)-2].ToolCallID)
 	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"},
@@ -1202,7 +1202,7 @@ func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
 	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
 
 	s.model.mu.Lock()
-	last := s.model.asked[len(s.model.asked)-1].Input
+	last := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
 
@@ -1634,8 +1634,8 @@ func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the result at the cap was never spoken")
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
-	s.Empty(capped.Tools, "the capped reply has nothing to reach for")
-	s.Contains(capped.Instructions, "answer the caller now")
+	s.Equal("none", capped.ToolChoice, "the capped reply has nothing to reach for")
+	s.Contains(shown(capped), "answer the caller now")
 }
 
 func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
@@ -1663,8 +1663,8 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the deferred result was never spoken")
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
-	s.Empty(capped.Tools, "deferring a reply must not bypass the tool limit")
-	s.Contains(capped.Instructions, "answer the caller now")
+	s.Equal("none", capped.ToolChoice, "deferring a reply must not bypass the tool limit")
+	s.Contains(shown(capped), "answer the caller now")
 }
 
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
@@ -1684,7 +1684,7 @@ func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt
 	s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
 
 	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
-	input := s.model.requests()[0].Input
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
 	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
 	s.Equal("What time tomorrow?", input[len(input)-1].Content)
 	model := s.model
@@ -1710,7 +1710,7 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 	s.Require().True(s.agent.adoptSpeculation(ready, ""))
 
 	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
-	input := s.model.requests()[0].Input
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
 	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
 	s.Equal("What time tomorrow?", input[len(input)-1].Content)
 	model := s.model

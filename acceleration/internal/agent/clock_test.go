@@ -66,11 +66,10 @@ func (s *AgentSuite) TestATurnIsToldTheDateAndHourInUTCWhenTheUsersZoneIsNotKnow
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the turn never reached the model")
-	told := s.model.requests()[0].Instructions
-	s.True(strings.HasPrefix(told, "be brief\n\n"), told)
-	s.True(strings.HasSuffix(told, "\n\nToday is Wednesday, 28 October 2026 in UTC, between 14:00 and 15:00 UTC. "+
+	s.Equal("be brief", s.model.requests()[0].Instructions, "the hour moves on, so it is told rather than in the prompt")
+	s.Contains(shown(s.model.requests()[0]), "Today is Wednesday, 28 October 2026 in UTC, between 14:00 and 15:00 UTC. "+
 		"The user's timezone is not known: take a time of day they give in their own local time, "+
-		"and ask for their zone only when they bring up another one or a tool needs it."), told)
+		"and ask for their zone only when they bring up another one or a tool needs it.")
 }
 
 func (s *AgentSuite) TestATurnIsToldTheUsersDayInTheirZone() {
@@ -82,9 +81,8 @@ func (s *AgentSuite) TestATurnIsToldTheUsersDayInTheirZone() {
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the turn never reached the model")
-	s.True(strings.HasSuffix(s.model.requests()[0].Instructions, "\n\nToday is Wednesday, 28 October 2026 "+
-		"for the user (Europe/Rome), between 15:00 and 16:00 there, between 14:00 and 15:00 UTC."),
-		s.model.requests()[0].Instructions)
+	s.Contains(shown(s.model.requests()[0]), "Today is Wednesday, 28 October 2026 "+
+		"for the user (Europe/Rome), between 15:00 and 16:00 there, between 14:00 and 15:00 UTC.")
 }
 
 func (s *AgentSuite) TestTheClockMovesOnBetweenTheTurnsOfOneSession() {
@@ -101,7 +99,7 @@ func (s *AgentSuite) TestTheClockMovesOnBetweenTheTurnsOfOneSession() {
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn never reached the model")
-	s.Contains(s.model.requests()[1].Instructions,
+	s.Contains(shown(s.model.requests()[1]),
 		"Today is Thursday, 29 October 2026 for the user (Europe/Rome), between 09:00 and 10:00 there")
 }
 
@@ -114,4 +112,23 @@ func (s *AgentSuite) TestAnAgentForAZoneNobodyKnowsIsRefused() {
 	})
 
 	s.ErrorContains(err, `"Nowhere/Special" is not a timezone I know`)
+}
+
+func (s *AgentSuite) TestTheClockIsToldOnceAnHourAndThePromptStaysTheSame() {
+	s.joinText()
+	s.agent.now = func() time.Time { return time.Date(2026, 10, 28, 14, 5, 0, 0, time.UTC) }
+	for i, said := range []string{"hello", "and again"} {
+		_, err := s.agent.RespondTo(s.ctx, said, nil, options.LLM{})
+		s.Require().NoError(err)
+		s.eventually(func() bool { return len(s.model.requests()) == i+1 && !s.agent.Busy() }, "a turn never finished")
+	}
+	s.agent.now = func() time.Time { return time.Date(2026, 10, 28, 15, 1, 0, 0, time.UTC) }
+	_, err := s.agent.RespondTo(s.ctx, "and now?", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the third turn never reached the model")
+
+	requests := s.model.requests()
+	s.Equal(requests[0].Instructions, requests[2].Instructions, "the prompt every turn shares does not move with the clock")
+	s.NotContains(shown(requests[1]), "Today is", "the hour was already told and is still true")
+	s.Contains(shown(requests[2]), "between 15:00 and 16:00 UTC")
 }

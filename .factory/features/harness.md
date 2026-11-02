@@ -92,8 +92,8 @@ hear about it.
 
 ## Answers arrive as a turn nobody asked for
 
-When work lands, the harness folds it into the next prompt as something the fast model is told
-to pass on in its own words, and the agent starts a turn on its own. The caller was told an
+When work lands, the harness puts it after the conversation in the next turn, as something the
+fast model is told to pass on in its own words, and the agent starts a turn on its own. The caller was told an
 answer was coming, so they should not have to ask again. Two details:
 
 - **It waits for the agent to stop talking.** An answer arriving mid-sentence would have the
@@ -104,6 +104,29 @@ answer was coming, so they should not have to ask again. Two details:
 
 Failures are told to the caller too — "I could not find out" — because after promising an answer,
 silence is the one option that is not available.
+
+## The prompt every turn shares
+
+The system prompt a reply is sent is the same on every turn of a call: the agent's prompt, the
+skills, the tools and how to deliver what comes back. A provider caches a prompt by its prefix,
+so anything that changed there would cost it the whole conversation after it, and a provider
+that keeps its replies could not carry on from the last one. What changes from turn to turn
+goes after the conversation instead:
+
+- **What work came back with** goes as data: a `{"harness": …}` JSON envelope on the user's
+  side, never in the harness's own words, because a colleague's answer, a failed tool's error
+  or what was seen on the caller's camera can repeat whatever its source said.
+- **A note** in the harness's own fixed words says what to do with it. It opens with
+  `[Note from the system running this call]` and goes as a system turn where the provider
+  takes one there (OpenAI's developer message; Claude after a user turn), and on the user's
+  side where it does not. A caller's words that look like either are defanged.
+- **The hour and a second person joining** are told once, as notes, when they change.
+
+These are kept in the conversation once the reply that read them is written (`Remember`), so
+every request opens with the one before it. What is true of one reply alone — answer now, the
+colleague is still working, the caller was not heard clearly — goes after them and is not
+kept. A colleague, memory and the flow controller read the conversation without any of it
+(`WithoutNotes`).
 
 ## Somewhere to run code, on the far side of the handover
 
@@ -122,7 +145,9 @@ Large histories remain verbatim while prefix caching is effective. Once a comple
 least 2,048 input tokens and less than half cached, the thinking session privately summarizes the
 old prefix while recent turns stay verbatim. When that is worth doing is decided in `converse`
 with every other judgement — see [the voice agent](voice-agent.md) — and done here. The result is applied only if that prefix still
-matches, so late maintenance cannot erase newer conversation. It emits `Compacted`, not
+matches, so late maintenance cannot erase newer conversation. A request that opened differently
+from the one before it — other tools, tool choice or effort — lost the cache to that, not to a
+long history, and is no reason to compact. It emits `Compacted`, not
 `Settled`, and never creates a caller-facing follow-up.
 
 ## Not done

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"slices"
 	"strings"
 	"sync"
@@ -234,7 +235,7 @@ func (s *AgentSuite) TestARefusalCanBeAskedAbout() {
 		"the second turn never went out")
 
 	var spoken []string
-	for _, message := range s.model.requests()[1].Input {
+	for _, message := range harness.WithoutNotes(s.model.requests()[1].Input) {
 		spoken = append(spoken, message.Content)
 	}
 	s.Contains(spoken, theRefusal)

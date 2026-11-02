@@ -2070,7 +2070,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 // handed is what a model request handed the model, one "role: content" line per message.
 func handed(request llm.ResponseParams) []string {
 	lines := make([]string, 0, len(request.Input))
-	for _, message := range request.Input {
+	for _, message := range harness.WithoutNotes(request.Input) {
 		lines = append(lines, string(message.Role)+": "+message.Content)
 	}
 	return lines

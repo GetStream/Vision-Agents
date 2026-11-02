@@ -498,9 +498,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
-	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call, a.connected()); repeated {
+	} else if earlier, repeated := answeredSinceCaller(harness.WithoutNotes(a.History()), requested.Call, a.connected()); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
-	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
+	} else if refused, again := refusedBefore(harness.WithoutNotes(a.History()), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
@@ -532,7 +532,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	// call is still open in the history it is handed, which a provider refuses to replay.
 	// With no worker, as in a chat, a model that sees images is shown them itself.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) && !a.looksItself() {
-		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
+		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(harness.WithoutNotes(a.History())))
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}
