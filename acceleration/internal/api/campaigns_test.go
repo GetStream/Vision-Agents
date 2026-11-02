@@ -286,6 +286,20 @@ func (s *CampaignsSuite) TestLaunchingLaterSchedulesIt() {
 	s.Nil(launched.StartedAt, "nobody has been rung yet")
 }
 
+func (s *CampaignsSuite) TestResumingBeforeTheStartTimeReturnsToScheduled() {
+	created := s.ready()
+	at := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true, "start_at": at}, nil))
+	_, err := s.store.DB().ExecContext(context.Background(), "UPDATE campaigns SET state = 'paused' WHERE id = ?", created.Id)
+	s.Require().NoError(err)
+
+	resumed := s.move(created.Id, "resume")
+
+	s.Equal(CampaignStateScheduled, resumed.State)
+	s.Nil(resumed.StartedAt)
+}
+
 func (s *CampaignsSuite) TestALaunchedCampaignRefusesAChangeToItsSequence() {
 	created := s.launch(s.ready())
 	sequence := created.Sequence

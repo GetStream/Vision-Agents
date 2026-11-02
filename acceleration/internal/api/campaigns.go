@@ -758,9 +758,10 @@ func (s *Server) registerCampaigns(api huma.API) {
 		Path:        "/v1/agents/campaigns/{id}/resume",
 		Summary:     "Ring people again",
 		Description: "A paused campaign only. It carries on from whoever is left, and clears paused_reason. " +
+			"A campaign whose start time has not come goes back to scheduled rather than running. " +
 			"An organization that may not pay for calls is refused as a call would be.\n" + serverSideOnly,
 		Responses: map[string]*huma.Response{
-			"200": {Description: "The campaign is running"},
+			"200": {Description: "The campaign is running, or scheduled when its start time has not come"},
 		},
 		Errors: append(failures, http.StatusPaymentRequired, http.StatusConflict, http.StatusTooManyRequests, http.StatusServiceUnavailable),
 	}, s.resumeCampaign)
