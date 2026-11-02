@@ -651,9 +651,10 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // that one returns the id of the response it recorded. clientID names the install the
 // command came from, which a client tool called while answering is addressed to. images
 // are photos sent with it, shown on the person's message and to the model with this reply
-// alone. asked is what the caller wants changed about this reply alone.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
-	photos, err := s.photos(ctx, id, images)
+// alone. asked is what the caller wants changed about this reply alone. notes are voice
+// notes sent with it, shown on the person's message; text already holds what they said.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+	photos, err := s.photos(ctx, id, images, notes)
 	if err != nil {
 		return persistent.CommandReceipt{}, "", err
 	}
@@ -696,26 +697,40 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	return receipt, s.openTurn(turnID, text), nil
 }
 
-// photos uploads what a person sent with a command to their conversation before the command
-// takes commandMu: an upload takes as long as the network does, and a stop waits on that
-// lock. A caller the conversation is not theirs uploads nothing into it, and a retry of a
-// command it already took (a client resending after a lost answer) uploads nothing again.
-func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart) ([]persistent.Photo, error) {
-	if len(images) == 0 || s.persisted == nil {
+// photos uploads what a person sent with a command, photos and voice notes, to their
+// conversation before the command takes commandMu: an upload takes as long as the network
+// does, and a stop waits on that lock. A caller the conversation is not theirs uploads nothing
+// into it, and a retry of a command it already took (a client resending after a lost answer)
+// uploads nothing again.
+func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart, notes []persistent.VoiceNote) ([]persistent.Photo, error) {
+	if len(images)+len(notes) == 0 || s.persisted == nil {
 		return nil, nil
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return nil, err
 	}
 	if _, err := s.persisted.Command(id); err == nil {
-		photos := make([]persistent.Photo, 0, len(images))
+		photos := make([]persistent.Photo, 0, len(images)+len(notes))
 		for _, image := range images {
 			photos = append(photos, persistent.Photo{Sent: image})
+		}
+		for _, note := range notes {
+			photos = append(photos, note.Sent())
 		}
 		return photos, nil
 	}
 	photos, err := s.persisted.PublishPhotos(ctx, images)
-	return photos, stack.Wrap(err)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	for _, note := range notes {
+		published, err := s.persisted.PublishVoiceNote(ctx, note)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		photos = append(photos, published)
+	}
+	return photos, nil
 }
 
 // chose keeps connectionID as the session's selection for the connector binding called name,

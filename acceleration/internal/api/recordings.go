@@ -44,6 +44,13 @@ const recordingDeadline = 45 * time.Minute
 // callbackTimeout bounds telling a caller their job is done.
 const callbackTimeout = 30 * time.Second
 
+// maxInlineAudio bounds the audio transcribed while its caller waits: a recording sent
+// inline, or a voice note sent with a question.
+const maxInlineAudio = 8 << 20
+
+// inlineDeadline bounds work done while its caller waits.
+const inlineDeadline = 90 * time.Second
+
 // transcribeRecording accepts a recording and transcribes it off the live path.
 func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRecordingRequest) (*transcribeRecordingResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
@@ -71,27 +78,7 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 	if err := held.Validate(); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
-	if held.Target == "" {
-		held.Target = recordedTarget(held.Languages)
-	}
-
-	source := stt.Recording{
-		URL:         value(request.Body.Source.Url),
-		Audio:       value(request.Body.Source.Audio),
-		Languages:   held.Languages,
-		Diarize:     truthy(held.Diarize) || held.MaxSpeakers != nil,
-		MaxSpeakers: count(held.MaxSpeakers),
-		Words:       truthy(held.Words) || subtitled(held.Output),
-		Format:      truthy(held.Format),
-		Redact:      truthy(held.Redact),
-		Summary:     truthy(held.Summary),
-		Entities:    truthy(held.Entities),
-		Keyterms:    held.Keyterms,
-		Channels:    count(held.Channels),
-
-		ProfanityFilter: truthy(held.ProfanityFilter),
-		FillerWords:     held.Mode == options.ModeVerbatim,
-	}
+	held, source := recordingOf(held, value(request.Body.Source.Url), value(request.Body.Source.Audio))
 	if err := source.Validate(); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
@@ -113,10 +100,10 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 		Tags:       tags,
 	}
 	if truthy(request.Body.Inline) {
-		if job.Callback != "" || len(source.Audio) > 8*1024*1024 || source.URL != "" {
+		if job.Callback != "" || len(source.Audio) > maxInlineAudio || source.URL != "" {
 			return nil, invalidRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")
 		}
-		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, inlineDeadline)
 		defer cancel()
 		transcript, provider, failure := s.streams.Transcriptions.Transcribe(ctx, sttrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Source: source})
 		if answer, refused := moneyError(failure); refused {
@@ -146,6 +133,31 @@ func (s *Server) transcribeRecording(ctx context.Context, request *transcribeRec
 	})
 
 	return &transcribeRecordingResponse{Body: transcriptionOf(job)}, nil
+}
+
+// recordingOf is a recording as held asks for it to be transcribed, from url or audio, and
+// held with its target defaulted to the batch model for its languages.
+func recordingOf(held options.STT, url string, audio []byte) (options.STT, stt.Recording) {
+	if held.Target == "" {
+		held.Target = recordedTarget(held.Languages)
+	}
+	return held, stt.Recording{
+		URL:         url,
+		Audio:       audio,
+		Languages:   held.Languages,
+		Diarize:     truthy(held.Diarize) || held.MaxSpeakers != nil,
+		MaxSpeakers: count(held.MaxSpeakers),
+		Words:       truthy(held.Words) || subtitled(held.Output),
+		Format:      truthy(held.Format),
+		Redact:      truthy(held.Redact),
+		Summary:     truthy(held.Summary),
+		Entities:    truthy(held.Entities),
+		Keyterms:    held.Keyterms,
+		Channels:    count(held.Channels),
+
+		ProfanityFilter: truthy(held.ProfanityFilter),
+		FillerWords:     held.Mode == options.ModeVerbatim,
+	}
 }
 
 // getTranscription returns one transcription job, and its transcript once it has one.
@@ -223,7 +235,7 @@ func (s *Server) recordSpeech(ctx context.Context, request *recordSpeechRequest)
 		if job.Callback != "" || utf8.RuneCountInString(job.Text) > 16000 {
 			return nil, invalidRequest("inline speech requires at most 16000 characters and no callback")
 		}
-		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, inlineDeadline)
 		defer cancel()
 		audio, provider, failure := s.streams.Speech.Record(ctx, recording)
 		if answer, refused := moneyError(failure); refused {

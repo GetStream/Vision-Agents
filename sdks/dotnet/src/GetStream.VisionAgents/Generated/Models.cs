@@ -1483,6 +1483,27 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AudioSource
+    {
+
+        /// <summary>
+        /// Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, and a data URI rides in a request body of at most 1 MiB. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
+        public string Url { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// One field that moved, with what it held before and holds now, each in the shape the resource itself is read in.
     /// </summary>
@@ -4797,6 +4818,12 @@ namespace GetStream.VisionAgents.Models
     public partial class CreateResponseRequest
     {
 
+        /// <summary>
+        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("audio")]
+        public AudioSource? Audio { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
@@ -4813,13 +4840,13 @@ namespace GetStream.VisionAgents.Models
         public string? ReasoningEffort { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
         /// <summary>
-        /// What to answer, as though it had been said.
+        /// What to answer, as though it had been said. Empty when audio carries the question.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;

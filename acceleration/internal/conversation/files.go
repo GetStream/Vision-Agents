@@ -26,10 +26,22 @@ func (c *Conversation) Publish(ctx context.Context, file sandbox.File) (sandbox.
 
 // Photo is one a person sent with a question: as sent, which a retry of the question is
 // matched on, and where it was uploaded, which their message shows. A retry uploads
-// nothing, so Uploaded is empty on one.
+// nothing, so Uploaded is empty on one. A voice note is carried as one too
+// (PublishVoiceNote), its audio in Sent.
 type Photo struct {
 	Sent     llm.ImagePart
 	Uploaded sandbox.Attachment
+}
+
+// VoiceNote is the audio of one a person sent with a question.
+type VoiceNote struct {
+	MIME  string
+	Audio []byte
+}
+
+// Sent is the voice note as a retry of its question is matched on.
+func (n VoiceNote) Sent() Photo {
+	return Photo{Sent: llm.ImagePart{MIME: n.MIME, Data: n.Audio}}
 }
 
 // PublishPhotos uploads the photos a person sent with a question to the conversation's
@@ -52,6 +64,19 @@ func (c *Conversation) PublishPhotos(ctx context.Context, images []llm.ImagePart
 		photos = append(photos, Photo{Sent: image, Uploaded: uploaded})
 	}
 	return photos, nil
+}
+
+// PublishVoiceNote uploads the voice note a person sent with a question to the
+// conversation's channel, as them, for their message to show beside its transcript.
+func (c *Conversation) PublishVoiceNote(ctx context.Context, note VoiceNote) (Photo, error) {
+	file := sandbox.File{Name: "voice-note." + strings.TrimPrefix(note.MIME, "audio/"), MIME: note.MIME, Data: note.Audio}
+	uploaded, err := c.upload(ctx, file, c.userAuthor())
+	if err != nil {
+		return Photo{}, err
+	}
+	published := note.Sent()
+	published.Uploaded = uploaded
+	return published, nil
 }
 
 // upload stores a file on the conversation's channel as uploader.

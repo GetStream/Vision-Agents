@@ -3565,6 +3565,12 @@ type AttachedNumber struct {
 	TrunkId string `json:"trunk_id"`
 }
 
+// AudioSource defines model for AudioSource.
+type AudioSource struct {
+	// Url Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, and a data URI rides in a request body of at most 1 MiB. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	Url string `json:"url"`
+}
+
 // AuditAction created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
 type AuditAction string
 
@@ -4973,6 +4979,7 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
+	Audio  *AudioSource   `json:"audio,omitempty"`
 	Images *[]ImageSource `json:"images,omitempty"`
 
 	// MaxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -4981,10 +4988,10 @@ type CreateResponseRequest struct {
 	// ReasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id.
 	RequestId *string `json:"request_id,omitempty"`
 
-	// Text What to answer, as though it had been said.
+	// Text What to answer, as though it had been said. Empty when audio carries the question.
 	Text string `json:"text"`
 
 	// Videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
@@ -12724,6 +12731,7 @@ type ClientInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12734,6 +12742,7 @@ type ClientInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -17376,6 +17385,7 @@ func (c *Client) ListResponses(ctx context.Context, id string, params *ListRespo
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17396,6 +17406,7 @@ func (c *Client) CreateResponseWithBody(ctx context.Context, id string, contentT
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -34346,6 +34357,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34356,6 +34368,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -64309,6 +64322,7 @@ func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id 
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -64325,6 +64339,7 @@ func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Con
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
