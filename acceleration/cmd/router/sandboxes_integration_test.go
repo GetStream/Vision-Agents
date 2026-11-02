@@ -97,7 +97,7 @@ func (s *UsageCommandsSuite) meteredBy(deployment, id, app, session string, at t
 func (s *UsageCommandsSuite) session(id, app string, closed time.Time) {
 	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{ID: id, CustomerID: app}))
 	if !closed.IsZero() {
-		s.Require().NoError(s.store.CloseSession(s.ctx, id, closed))
+		s.Require().NoError(s.store.CloseSession(s.ctx, id, closed, ""))
 	}
 }
 

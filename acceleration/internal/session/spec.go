@@ -69,6 +69,9 @@ type Spec struct {
 	// creates, unless the caller named a call of its own. Empty while the conversation is
 	// held in writing.
 	CallID string
+	// ownCall is whether CallID is the agent:<ID> call joining created rather than one the
+	// caller named, which makes it the session's to end for everybody.
+	ownCall bool
 	// Text holds the conversation in writing: no call is joined, nothing is transcribed
 	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
 	// text session has the same skills, knowledge and tools a call would have had. Starting
@@ -250,6 +253,8 @@ type Spec struct {
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
+	// Calls is the agent config's choice of which call tools the agent is offered.
+	Calls store.AgentCalls
 	// Timezone is the end user's IANA zone for this session, from the session
 	// request. Empty resolves at tool time (the user's stored zone, then the
 	// config's default). The manager fills it in from the store when it can, so
@@ -396,6 +401,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
+		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
@@ -461,7 +467,7 @@ func (s *Spec) Normalize() error {
 	// A voice session given no call to join holds its own, named after the session, which
 	// joining creates.
 	if !s.Text && s.CallID == "" {
-		s.CallID, s.CallType = s.ID, defaultCallType
+		s.CallID, s.CallType, s.ownCall = s.ID, defaultCallType, true
 	}
 	// A speech-to-speech model is what the conversation speaks with once voice is started,
 	// so a session held in writing keeps it rather than running it.
@@ -603,6 +609,9 @@ type Call struct {
 // agent:<ID>.
 func (s Spec) Holding(call Call) Spec {
 	s.heldCall = call
+	if call.ID != "" {
+		s.ownCall = false
+	}
 	return s
 }
 
@@ -613,8 +622,9 @@ func (s Spec) Voiced() Spec {
 		return s
 	}
 	s.Text = false
-	s.CallID, s.CallType = s.ID, defaultCallType
-	if s.heldCall.ID != "" {
+	if s.heldCall.ID == "" {
+		s.CallID, s.CallType, s.ownCall = s.ID, defaultCallType, true
+	} else {
 		s.CallID, s.CallType = s.heldCall.ID, s.heldCall.Type
 	}
 	s.heldCall = Call{}

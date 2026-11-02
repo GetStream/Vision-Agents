@@ -26,6 +26,7 @@ package io.getstream.visionagents.android.core.generated
 import io.getstream.visionagents.android.core.generated.CallUsage
 import io.getstream.visionagents.android.core.generated.ModelOverwrites
 import io.getstream.visionagents.android.core.generated.SessionCallOutcome
+import io.getstream.visionagents.android.core.generated.SessionEndReason
 import io.getstream.visionagents.android.core.generated.SessionModality
 import io.getstream.visionagents.android.core.generated.SessionMode
 import io.getstream.visionagents.android.core.generated.SessionState
@@ -59,6 +60,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param conversationId The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session.
  * @param custom 
  * @param description 
+ * @param endReason 
  * @param forkedFrom The session this one continued from, empty for one opened fresh.
  * @param incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
  * @param instructions What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it.
@@ -138,6 +140,9 @@ internal data class Session (
 
     @SerialName(value = "description")
     val description: kotlin.String? = null,
+
+    @Contextual @SerialName(value = "end_reason")
+    val endReason: SessionEndReason? = null,
 
     /* The session this one continued from, empty for one opened fresh. */
     @SerialName(value = "forked_from")

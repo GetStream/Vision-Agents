@@ -40,9 +40,10 @@ type recordWrite struct {
 	// model is offered.
 	session *store.AgentSession
 	tools   []store.ToolDefinition
-	// closed is the session that ended, and closedAt when.
-	closed   string
-	closedAt time.Time
+	// closed is the session that ended, closedAt when and endReason why.
+	closed    string
+	closedAt  time.Time
+	endReason string
 	// response is a turn that began, nil otherwise.
 	response *store.AgentResponse
 	// finished is the response that ended, with how it ended.
@@ -91,7 +92,7 @@ type recorder interface {
 type sessionRecords interface {
 	recorder
 	Opened(row store.AgentSession, tools []store.ToolDefinition)
-	Closed(id string, at time.Time)
+	Closed(id string, at time.Time, reason EndReason)
 	Close()
 }
 
@@ -139,8 +140,8 @@ func (r *sessionRecorder) Opened(row store.AgentSession, tools []store.ToolDefin
 }
 
 // Closed queues the time a session ended.
-func (r *sessionRecorder) Closed(id string, at time.Time) {
-	r.queueWrite(recordWrite{closed: id, closedAt: at})
+func (r *sessionRecorder) Closed(id string, at time.Time, reason EndReason) {
+	r.queueWrite(recordWrite{closed: id, closedAt: at, endReason: string(reason)})
 }
 
 // described is what a session was renamed to.
@@ -354,7 +355,7 @@ func (r *sessionRecorder) write(write recordWrite) {
 			r.logger.Error("could not record the session's tools", "error", err)
 		}
 	case write.closed != "":
-		if err := r.store.CloseSession(ctx, write.closed, write.closedAt); err != nil {
+		if err := r.store.CloseSession(ctx, write.closed, write.closedAt, write.endReason); err != nil {
 			r.logger.Error("could not record the session ending", "error", err)
 		}
 	case write.response != nil:

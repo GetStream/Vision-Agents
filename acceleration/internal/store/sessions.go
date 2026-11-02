@@ -93,6 +93,7 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
 		Set("closed_at = NULL").
+		Set("end_reason = ''").
 		Set("updated_at = EXCLUDED.updated_at").
 		// A session reopened from its row is opened without the memory it had, and what it
 		// remembered before is still in the store, so once true it stays true. Not known
@@ -162,9 +163,10 @@ func (s *Store) SessionTools(ctx context.Context, sessionID string) ([]ToolDefin
 	return stored.Tools, nil
 }
 
-// CloseSession records that a session ended. One that already ended keeps the first time: a
-// session is left once, and a second close is the same leaving reported again.
-func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error {
+// CloseSession records that a session ended, and why: empty when nothing said. One that
+// already ended keeps the first time and reason: a session is left once, and a second close
+// is the same leaving reported again.
+func (s *Store) CloseSession(ctx context.Context, id string, at time.Time, reason string) error {
 	if id == "" {
 		return errors.New("store: a session id is required")
 	}
@@ -176,6 +178,7 @@ func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error
 		Set("closed_at = ?", at).
 		Set("updated_at = ?", at).
 		Set("state = ?", SessionClosed).
+		Set("end_reason = ?", reason).
 		Where("id = ?", id).
 		Where("closed_at IS NULL").
 		Exec(ctx)
