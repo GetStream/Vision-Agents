@@ -496,6 +496,28 @@ func (s *RunnerSuite) TestARefusalOfMoneyOnTheSecondDialStillPausesTheCampaign()
 	s.Equal(2, contact.Attempt, "the first dial rang them, so the attempt is used")
 }
 
+func (s *RunnerSuite) TestACampaignWhoseConfigIsGonePausesWithoutUsingAnAttempt() {
+	// The phone dialer reads the config before it touches the phone, so it needs none here.
+	runner, err := New(Options{
+		Store: s.store, Dialer: NewPhoneDialer(nil, nil, s.store, slog.New(slog.DiscardHandler)),
+		Transcripts: s.transcripts, Classifier: s.classifier, Owner: "router-p", Now: s.clock.now, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	campaign := s.launched(s.single(), 2, "UTC", "+15550000001", "+15550000002")
+
+	s.tick(runner)
+
+	paused := s.campaignNow(campaign)
+	s.Equal(store.Paused, paused.State, "every other contact would fail the same way")
+	s.Equal("config_missing", paused.PausedReason)
+	for _, number := range []string{"+15550000001", "+15550000002"} {
+		contact, _ := s.contact(campaign, number)
+		s.Equal(store.Enrolled, contact.Stage, number)
+		s.Equal(0, contact.Attempt, number)
+	}
+}
+
 func (s *RunnerSuite) TestTheLastContactCompletesTheCampaign() {
 	s.dialer.answer("+15550000001")
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")

@@ -108,6 +108,9 @@ func afterOutcome(step Step, contact store.Contact, outcomeID string) store.Sett
 
 // resultOf maps the error of a dial. It looks through wrapping.
 func resultOf(err error) Dialed {
+	if errors.Is(err, phone.ErrNotPlaced) {
+		return Dialed{Result: Canceled}
+	}
 	if code := pausing(err); code != "" {
 		return Dialed{Result: Paused, Reason: code}
 	}

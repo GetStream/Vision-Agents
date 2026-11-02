@@ -35,7 +35,7 @@ type CampaignTotal struct {
 }
 
 // A dial is an attempt that placed a call: answered, unanswered, or still happening (empty
-// result). Deferred, paused, refused, invalid_number and abandoned attempts placed none.
+// result). Deferred, paused, refused, invalid_number, canceled and abandoned attempts placed none.
 
 // CampaignAnalytics counts a campaign's contacts and dials. Days run oldest first and hold
 // only the days with a dial.

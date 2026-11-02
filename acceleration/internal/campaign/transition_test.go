@@ -1,6 +1,7 @@
 package campaign
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -276,4 +277,16 @@ func (s *TransitionSuite) TestASecondDialCancelledStillUsesTheAttempt() {
 	settle, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: Canceled}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(2, settle.Attempt)
+}
+
+func (s *TransitionSuite) TestACallCancelledBeforeItWasSentIsCanceled() {
+	err := fmt.Errorf("%w: %w", phone.ErrNotPlaced, context.Canceled)
+
+	s.Equal(Canceled, resultOf(err).Result)
+}
+
+func (s *TransitionSuite) TestACallCancelledWhileTheVendorWasDialingIsUnanswered() {
+	// The vendor may have taken the call and be ringing the person: going back unused would
+	// ring them again.
+	s.Equal(Unanswered, resultOf(fmt.Errorf("phone: dial: %w", context.Canceled)).Result)
 }

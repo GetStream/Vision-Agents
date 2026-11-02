@@ -13,8 +13,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// reasonConfigMissing fails a contact whose agent config was deleted: no call could be placed
-// with it.
+// reasonConfigMissing pauses a campaign whose agent config was deleted: no call of it could be
+// placed, so its contacts wait unrung for the campaign to be given another.
 const reasonConfigMissing = "config_missing"
 
 // phoneDialer rings a contact through the phone service and puts the campaign's agent in the
@@ -36,7 +36,7 @@ func NewPhoneDialer(phone *phone.Service, sessions *session.Manager, store *stor
 func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	config, err := d.store.AgentConfig(ctx, dial.Campaign.CustomerID, cmp.Or(dial.Step.ConfigID, dial.Campaign.ConfigID))
 	if errors.Is(err, store.ErrNoAgentConfig) {
-		return Dialed{Result: Refused, Reason: reasonConfigMissing}, nil
+		return Dialed{Result: Paused, Reason: reasonConfigMissing}, nil
 	}
 	if err != nil {
 		return Dialed{}, err
@@ -45,9 +45,6 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	request := placing(dial.Campaign, dial.Contact)
 	request.SessionID = dial.SessionID
 	placed, err := d.phone.Call(ctx, request)
-	if err != nil && ctx.Err() != nil {
-		return Dialed{Result: Canceled}, nil
-	}
 	if err != nil {
 		dialed := resultOf(err)
 		if dialed.Result == Unanswered {
