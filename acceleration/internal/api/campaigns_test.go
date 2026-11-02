@@ -426,7 +426,7 @@ func (s *CampaignsSuite) TestAContactNotYetRungHasNoOutcome() {
 	contacts := s.contacts(created.Id)
 
 	s.Require().Len(contacts, 1)
-	s.Equal(ContactStatePending, contacts[0].State)
+	s.Equal(ContactStageEnrolled, contacts[0].Stage)
 	s.Nil(contacts[0].Outcome)
 }
 
@@ -580,8 +580,8 @@ func (s *CampaignsSuite) add(campaignID string, contacts ...map[string]any) {
 
 // contacts is who a campaign holds, and what became of them.
 func (s *CampaignsSuite) contacts(campaignID string) []Contact {
-	var listed []Contact
+	var listed ContactPage
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID+"/contacts", nil, &listed))
-	return listed
+	return listed.Items
 }

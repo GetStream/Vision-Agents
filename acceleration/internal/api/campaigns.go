@@ -13,7 +13,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -659,119 +658,6 @@ func (s *Server) getCampaignAnalytics(ctx context.Context, request *campaignRequ
 	return &campaignAnalyticsResponse{Body: rendered}, nil
 }
 
-// listCampaignContacts returns who a campaign is ringing and how far it has got.
-func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaignContactsRequest) (*listCampaignContactsResponse, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
-		return nil, errMissingCustomer
-	}
-	if s.store == nil {
-		return nil, errNoCampaigns
-	}
-
-	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
-	if err != nil {
-		return nil, errUnknownCampaign
-	}
-
-	stored, err := s.store.QueryContacts(ctx, campaign.ID, store.ContactFilter{})
-	if err != nil {
-		return nil, err
-	}
-	var calls map[string]outcome.Call
-	if s.phone != nil {
-		callIDs := make([]string, 0, len(stored))
-		for _, contact := range stored {
-			if contact.CallID != "" {
-				callIDs = append(callIDs, contact.CallID)
-			}
-		}
-		calls, err = s.phone.Outcomes().ReadMany(ctx, customerID, callIDs)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &listCampaignContactsResponse{Body: contactsOf(stored, calls)}, nil
-}
-
-// addCampaignContacts adds people to ring.
-func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignContactsRequest) (*addCampaignContactsResponse, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
-		return nil, errMissingCustomer
-	}
-	if s.store == nil {
-		return nil, errNoCampaigns
-	}
-	if request.Body == nil || len(request.Body.Contacts) == 0 {
-		return nil, invalidRequest("there is nobody to add")
-	}
-
-	campaign, err := s.store.Campaign(ctx, customerID, request.Id)
-	if err != nil {
-		return nil, errUnknownCampaign
-	}
-
-	contacts := make([]store.Contact, 0, len(request.Body.Contacts))
-	for _, wanted := range request.Body.Contacts {
-		if strings.TrimSpace(wanted.ToNumber) == "" {
-			return nil, invalidRequest("a contact needs a number to ring")
-		}
-		contacts = append(contacts, store.Contact{
-			CampaignID:   campaign.ID,
-			ToNumber:     strings.TrimSpace(wanted.ToNumber),
-			Instructions: value(wanted.Instructions),
-		})
-	}
-
-	added, _, err := s.store.AddContacts(ctx, campaign.ID, contacts)
-	if err != nil {
-		return nil, invalidRequest(err.Error())
-	}
-	return &addCampaignContactsResponse{Body: contactsOf(added, nil)}, nil
-}
-
-// legacyContactState keeps the contacts on the wire as they were until their API is
-// rewritten for the dialer's stages.
-func legacyContactState(stage string) ContactState {
-	switch stage {
-	case store.Enrolled, store.ContactStopped:
-		return ContactStatePending
-	case store.InProgress, store.AwaitingOutcome:
-		return ContactStateCalling
-	case store.ContactCompleted:
-		return ContactStateDone
-	case store.Rejected:
-		return ContactStateFailed
-	}
-	return ContactState(stage)
-}
-
-// contactsOf renders contacts for the wire, with how each one's call ended from calls, by
-// call id.
-func contactsOf(contacts []store.Contact, calls map[string]outcome.Call) []Contact {
-	rendered := make([]Contact, 0, len(contacts))
-	for _, contact := range contacts {
-		var decided *CallOutcome
-		if call, ok := calls[contact.CallID]; ok && call.Outcome != "" {
-			shown := CallOutcome(call.Outcome)
-			decided = &shown
-		}
-		rendered = append(rendered, Contact{
-			Id:           contact.ID,
-			ToNumber:     contact.ToNumber,
-			Instructions: optional(contact.Instructions),
-			State:        legacyContactState(contact.Stage),
-			Attempts:     contact.Attempt,
-			CallId:       optional(contact.CallID),
-			VendorCallId: optional(contact.VendorCallID),
-			Error:        optional(contact.Reason),
-			Outcome:      decided,
-		})
-	}
-	return rendered
-}
-
 // serverSideOnly closes the description of every campaign operation.
 const serverSideOnly = "Server-side only: it needs a server-side token, so it cannot be reached from an end user's device."
 
@@ -913,29 +799,6 @@ func (s *Server) registerCampaigns(api huma.API) {
 		},
 		Errors: failures,
 	}, s.getCampaignAnalytics)
-	huma.Register(api, huma.Operation{
-		OperationID: "listCampaignContacts",
-		Method:      http.MethodGet,
-		Path:        "/v1/agents/campaigns/{id}/contacts",
-		Summary:     "Who a campaign is ringing, and how far it has got",
-		Responses: map[string]*huma.Response{
-			"200": {Description: "The contacts, in the order they are rung"},
-		},
-		Errors: failures,
-	}, s.listCampaignContacts)
-	huma.Register(api, huma.Operation{
-		OperationID: "addCampaignContacts",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/campaigns/{id}/contacts",
-		Summary:     "Add people to ring",
-		Description: "Contacts are added to a draft rather than replaced. Each may carry instructions of " +
-			"their own, which the agent is told along with whatever its config already says.\n" + serverSideOnly,
-		DefaultStatus: http.StatusCreated,
-		Responses: map[string]*huma.Response{
-			"201": {Description: "The contacts, in the order they are rung"},
-		},
-		Errors: failures,
-	}, s.addCampaignContacts)
 }
 
 type listCampaignsRequest struct {
@@ -1005,23 +868,6 @@ type CampaignDialDay struct {
 	Date     string `json:"date" format:"date" doc:"YYYY-MM-DD, in UTC."`
 	Dials    int    `json:"dials"`
 	Answered int    `json:"answered"`
-}
-
-type listCampaignContactsRequest struct {
-	Id string `path:"id" doc:"The resource, as returned when it was created."`
-}
-
-type listCampaignContactsResponse struct {
-	Body []Contact `nullable:"false"`
-}
-
-type addCampaignContactsRequest struct {
-	Id   string           `path:"id" doc:"The resource, as returned when it was created."`
-	Body *ContactsRequest `required:"true"`
-}
-
-type addCampaignContactsResponse struct {
-	Body []Contact `nullable:"false"`
 }
 
 // Campaign is a list of people to ring with one agent, and how.
@@ -1183,69 +1029,4 @@ type CampaignPage struct {
 	Items      []Campaign `json:"items" nullable:"false"`
 	HasMore    bool       `json:"has_more"`
 	NextCursor *string    `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page. Absent on the last."`
-}
-
-// Contact is the Contact schema.
-type Contact struct {
-	Attempts     int          `json:"attempts"`
-	CallId       *string      `json:"call_id,omitempty" doc:"The call this contact became, which is what the call paths take."`
-	Error        *string      `json:"error,omitempty" doc:"Why they could not be rung, when they could not be."`
-	Id           string       `json:"id"`
-	Instructions *string      `json:"instructions,omitempty"`
-	Outcome      *CallOutcome `json:"outcome,omitempty" doc:"How the call to them ended, once it has. The state still says only whether they were rung."`
-	State        ContactState `json:"state" enum:"pending,calling,done,failed"`
-	ToNumber     string       `json:"to_number"`
-	VendorCallId *string      `json:"vendor_call_id,omitempty"`
-}
-
-func (*Contact) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Properties["attempts"].Format = ""
-	return schema
-}
-
-// ContactState is the ContactState schema.
-type ContactState string
-
-// Defines values for ContactState.
-const (
-	ContactStateCalling ContactState = "calling"
-	ContactStateDone    ContactState = "done"
-	ContactStateFailed  ContactState = "failed"
-	ContactStatePending ContactState = "pending"
-)
-
-// Valid indicates whether the value is a known member of the ContactState enum.
-func (e ContactState) Valid() bool {
-	switch e {
-	case ContactStateCalling:
-		return true
-	case ContactStateDone:
-		return true
-	case ContactStateFailed:
-		return true
-	case ContactStatePending:
-		return true
-	default:
-		return false
-	}
-}
-
-// ContactsRequest is the ContactsRequest schema.
-type ContactsRequest struct {
-	Contacts []struct {
-		Instructions *string `json:"instructions,omitempty" doc:"What to say to this person, added to whatever the config already says."`
-		ToNumber     string  `json:"to_number"`
-	} `json:"contacts" nullable:"false"`
-}
-
-// TransformSchema keeps a contact inline, as the spec has always described it: Huma would
-// otherwise name the anonymous item after nothing but its being one.
-func (*ContactsRequest) TransformSchema(registry huma.Registry, schema *huma.Schema) *huma.Schema {
-	contacts := schema.Properties["contacts"]
-	if contacts.Items.Ref != "" {
-		name := strings.TrimPrefix(contacts.Items.Ref, "#/components/schemas/")
-		contacts.Items = registry.Map()[name]
-		delete(registry.Map(), name)
-	}
-	return schema
 }

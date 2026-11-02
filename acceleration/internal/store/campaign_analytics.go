@@ -133,3 +133,26 @@ FROM campaign_contacts cc WHERE cc.campaign_id IN (?) GROUP BY cc.campaign_id`, 
 	}
 	return totals, nil
 }
+
+// AttemptsMade counts, per contact, the attempts with at least one dial that placed a call. A
+// contact with none is left out.
+func (s *Store) AttemptsMade(ctx context.Context, contactIDs []string) (map[string]int, error) {
+	made := map[string]int{}
+	if len(contactIDs) == 0 {
+		return made, nil
+	}
+	var rows []struct {
+		ContactID string
+		Made      int
+	}
+	err := s.db.NewRaw(`SELECT contact_id, count(DISTINCT (step_id, attempt)) AS made
+FROM campaign_attempts WHERE contact_id IN (?) AND result IN ('answered', 'unanswered', '')
+GROUP BY contact_id`, bun.In(contactIDs)).Scan(ctx, &rows)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: count attempts made: %w", err))
+	}
+	for _, row := range rows {
+		made[row.ContactID] = row.Made
+	}
+	return made, nil
+}

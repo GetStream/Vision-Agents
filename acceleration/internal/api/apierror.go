@@ -85,6 +85,7 @@ const (
 	codeAgentConfigNotFound     = "agent_config_not_found"
 	codeCallNotFound            = "call_not_found"
 	codeCampaignNotFound        = "campaign_not_found"
+	codeContactNotFound         = "contact_not_found"
 	codeCampaignLocked          = "campaign_locked"
 	codeCampaignNotReady        = "campaign_not_ready"
 	codeConsentRequired         = "consent_required"

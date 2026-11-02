@@ -21,6 +21,9 @@ var ErrCampaignLocked = errors.New("store: the campaign is in a state that does 
 // ErrTooManyContacts is a campaign that would hold more than MaxCampaignContacts.
 var ErrTooManyContacts = errors.New("store: a campaign holds at most 100000 contacts")
 
+// ErrNoCampaignContact is a contact the campaign does not hold.
+var ErrNoCampaignContact = errors.New("store: the campaign holds no such contact")
+
 // MaxCampaignContacts is how many contacts one campaign may hold.
 const MaxCampaignContacts = 100_000
 
@@ -690,7 +693,7 @@ func nullable(text string) any {
 }
 
 func unknownContact(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no contact %s", id))
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNoCampaignContact, id))
 }
 
 func unknownCampaign(id string) error {
