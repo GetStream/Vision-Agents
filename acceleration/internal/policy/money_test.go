@@ -1196,7 +1196,9 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 	db.DB().AddQueryHook(reads)
 	// Policies cached in Redis, as a router has them, so the admissions reach their first read
 	// of money together rather than as each read of its policies lands.
-	configs, err := appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
+	configs, err := redisready.Retry(os.Getenv("ROUTER_REDIS_ADDR"), func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	// The loops read nothing on their own, and an admission waits for its read as long as the

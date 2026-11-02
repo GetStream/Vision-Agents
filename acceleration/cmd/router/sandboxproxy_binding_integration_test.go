@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // SandboxProxyBindingSuite is the proxy as the router builds it (newSandboxProxy), over a
@@ -72,7 +73,7 @@ func (s *SandboxProxyBindingSuite) SetupSuite() {
 	schemes := map[string]core.Scheme{bearer.Name: bearer.New()}
 	connections, err := resolver.New(resolver.Config{Store: db, Credentials: credentials, Schemes: schemes})
 	s.Require().NoError(err)
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.T().Cleanup(redis.Close)
 

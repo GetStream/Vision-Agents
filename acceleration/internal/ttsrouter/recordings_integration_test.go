@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 )
@@ -50,7 +51,7 @@ func (s *RecordingStatsSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Migrate(s.ctx))
 	s.store = pgStore
 
-	liveClient, err := live.New(live.Options{Address: address})
+	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.live = liveClient
 }
