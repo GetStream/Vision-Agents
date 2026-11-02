@@ -938,8 +938,7 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 //   - a sandbox that may reach the network.
 //
 // Only a binding's require_approval asks a person before a call is sent; the others ask
-// nobody. It reads the config as it is about to be stored. router plugins migrate asks it
-// of a binding it adds (pluginmigrate.Options.Complaint).
+// nobody. It reads the config as it is about to be stored.
 func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
@@ -1071,8 +1070,7 @@ func holdsPattern(binding store.ConnectorBinding, pattern string) bool {
 //
 // A binding to the plugin's own connector may be called what the plugin is: the session drops
 // a plugin entry whose connector a binding names (session.Spec.withoutBoundPlugins), so only
-// the binding offers the name. That is the binding router plugins migrate writes beside the
-// entry it keeps (internal/pluginmigrate), and the config stays editable (AI-994 F42).
+// the binding offers the name, and a config with both stays editable (AI-994 F42).
 func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
 	for _, binding := range config.Connectors {
 		if binding.ConnectorID != binding.Name && namesPluginEntry(config.Plugins, binding.Name) {

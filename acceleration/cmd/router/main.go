@@ -174,7 +174,6 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
-  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
   prices                read and check the price list (router prices for its commands)
   usage replay          write the usage rows a log says were lost, once each (--from path)
   usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
@@ -260,8 +259,6 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
-	case "plugins":
-		return runPlugins(args, settings, logger)
 	case "prices":
 		return runPrices(args, settings, logger)
 	case "usage":
