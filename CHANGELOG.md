@@ -194,7 +194,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### A model response cut short is billed for what it generated
 
-A Claude response cut off before its final usage event was recorded with the one output token Anthropic counts as it opens. Its row now keeps Anthropic's prompt count and bills the output at least at what streamed, marked estimated; a deadline that ends one is a timeout, billed the same way, not a provider error. A response that fails after streaming output is billed on an estimate, as a cancelled one is; one that fails before any output stays unbilled. A response its caller closed and never read to the end writes its row 5 seconds after the close instead of never (AI-1726).
+A Claude response cut off before its final usage event was recorded with the one output token Anthropic counts as it opens. Its row now keeps Anthropic's prompt count and bills the output at least at what streamed, marked estimated; a deadline that ends one is a timeout, billed the same way, not a provider error. A response that fails after streaming output is billed on an estimate, as a cancelled one is, and counted in `router_usage_estimated_total` with the reason `failed`; one that fails before any output stays unbilled. A response its caller closed and never read to the end writes its row 5 seconds after the close instead of never (AI-1726).
 
 ### Unpriced work is refused or alarmed, never silently free
 
