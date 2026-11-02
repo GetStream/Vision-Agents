@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A model response cut short is billed for what it generated
+
+A Claude response cut off before its final usage event was recorded with the one output token Anthropic counts as it opens. Its row now keeps Anthropic's prompt count and bills the output at least at what streamed, marked estimated; a deadline that ends one is a timeout, billed the same way, not a provider error. A response that fails after streaming output is billed on an estimate, as a cancelled one is, and counted in `router_usage_estimated_total` with the reason `failed`; one that fails before any output stays unbilled. A response its caller closed and never read to the end writes its row 5 seconds after the close instead of never (AI-1726).
+
 ### Unpriced work is refused or alarmed, never silently free
 
 Work with no price is recorded at nothing and reserves no spend. The router now lists every item a deployment bills (`billable.Items`): its routed models and their BYOK twins, knowledge and sandboxes in each region they run in with their twins, phone, texts, 10DLC fees and runtime. It names each unpriced one at start against the price list in force, not the price files alone, and the price list's `unpriced`, a change's preview and `router prices show --unpriced` list the same items. Work priced only per class or per country is no longer listed as unpriced. An agent's sync, or a config create or update, is refused with a 400 naming each item when its work in its region has no price. The usage jobs raise the `unpriced` alert for a row they record with no price, and a number's month the vendor quoted is no longer logged as unpriced (AI-2187).

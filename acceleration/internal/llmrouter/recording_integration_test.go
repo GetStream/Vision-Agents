@@ -185,16 +185,28 @@ func (s *RecordingSuite) TestAResponseTheProvidersOwnLimitCutShortIsBilledOnTheE
 	s.requireBilledOnTheEstimate(row, told, err, before)
 }
 
-func (s *RecordingSuite) TestAResponseTheVendorFailedIsNotBilled() {
+func (s *RecordingSuite) TestAResponseTheVendorFailedAfterItsOutputIsBilledOnTheEstimate() {
+	before := s.counted("router_usage_estimated_total", item("openai/gpt-6-luna", "reason", "failed"))
 	row, _ := s.recordedFor("openai/gpt-6-luna", briefly(), llm.Response{
 		Status:     llm.StatusFailed,
 		OutputText: "Paris is",
 	})
 
 	s.Equal("provider_error", row.ErrorCode)
+	s.EqualValues(101, row.InputTokens, "the vendor read the prompt before it failed")
+	s.Positive(row.CostMicros, "and bills what it generated")
+	s.Equal(map[string]string{routing.AttributeUsageEstimated: "true"}, row.Attributes)
+	s.Equal(before+1, s.counted("router_usage_estimated_total", item("openai/gpt-6-luna", "reason", "failed")))
+	s.NotContains(s.logs.String(), "billable work recorded an estimate", "the failure is no adapter losing usage")
+}
+
+func (s *RecordingSuite) TestAResponseTheVendorFailedBeforeAnyOutputIsNotBilled() {
+	row, _ := s.recordedFor("openai/gpt-6-luna", briefly(), llm.Response{Status: llm.StatusFailed})
+
+	s.Equal("provider_error", row.ErrorCode)
 	s.Zero(row.InputTokens)
 	s.Zero(row.CostMicros)
-	s.Empty(row.Attributes, "a vendor is not taken to bill its own failure")
+	s.Empty(row.Attributes)
 }
 
 // TestCacheWritesAndServiceTierReachTheRow uses the first turn of a cached conversation as
