@@ -79,6 +79,7 @@ func (s *SessionSuite) TestALabelSetWhileTheModelsMoveIsKept() {
 // lock.
 func (s *SessionSuite) TestTheSpecIsReadWhileItChanges() {
 	s.manages()
+	s.manager.records = &heldRecorder{}
 	logs := make(chan store.AgentLog, 4096)
 	s.manager.logs = &logRecorder{queue: logs, store: &store.Store{}}
 	created := s.joins(Spec{})
@@ -103,6 +104,7 @@ func (s *SessionSuite) TestTheSpecIsReadWhileItChanges() {
 		func() { created.Mode() },
 		func() { _, gone := created.Watch(); gone() },
 		func() { created.placed(ToolCall{ID: "unknown"}) },
+		func() { _ = created.Rewind(s.ctx, &recordedTurns{}, "unknown") },
 		func() {
 			title := "renamed"
 			created.Describe(s.ctx, Labels{Title: &title})

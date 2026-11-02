@@ -992,3 +992,24 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartLeavesOneCancel
 	message, _ := custom["support_message"].(map[string]any)
 	s.Equal("cancelled", message["state"], "%v", stored[0])
 }
+
+// A call that starts on a speech-to-speech model and moves onto the cascade keeps the flow
+// controller SetSettings picked for it: a later voice restart builds its agent from the spec.
+func (s *EpisodeReadingSuite) TestACallMovedOffASpeechToSpeechModelKeepsTheFlowController() {
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100177")
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", CallID: call,
+		STSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	s.Require().True(created.Spec().Native(), "the call starts native")
+	s.Empty(created.Spec().ControllerTarget)
+
+	none, cascade := "", "en-low-latency"
+	s.Require().NoError(created.SetSettings(s.ctx, Settings{STS: &none, LLM: &cascade, STT: &cascade, TTS: &cascade}))
+
+	s.False(created.Spec().Native())
+	s.Equal("llm-flow", created.Spec().ControllerTarget)
+}
