@@ -58,7 +58,7 @@ func (s *MessageHooksSuite) TestOnlyTheBackendOfTheChannelsCustomerOpensItsChann
 	asked := CreateSessionRequest{AgentId: &handed.AgentID, Llm: pointerTo("en-low-latency")}
 
 	for name, opener := range map[string]*testClient{
-		"end user": s.client,
+		"end user":                  s.client,
 		"backend acting for a user": s.serverClient.actingFor(s.client),
 	} {
 		opened := opener.createSession(asked)
