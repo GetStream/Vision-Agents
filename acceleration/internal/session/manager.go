@@ -1940,7 +1940,7 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // the one handed out.
 func (m *Manager) handedOut(spec Spec, stream streamapp.Bound) (string, bool) {
 	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
-		spec.AgentID == "" || spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
+		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
 		return "", false
 	}
 	cid := streamapp.AgentChannelType + ":" + spec.AgentID

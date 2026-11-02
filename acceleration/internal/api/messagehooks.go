@@ -237,7 +237,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		if running {
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
-			if spec := found.Spec(); spec.Dispatched && spec.ConversationID == chatlog.ChannelType+":"+event.ChannelID {
+			if found.Spec().Dispatched {
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}

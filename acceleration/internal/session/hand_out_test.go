@@ -67,14 +67,17 @@ func (s *HandOutSuite) TestAnyOtherSessionKeepsAChannelOfItsOwn() {
 		"a fork":                 func(spec *Spec) { spec.Recall = &Recall{} },
 		"an end user":            func(spec *Spec) { spec.CallerKind = auth.KindAuthenticated },
 		"acting for a user":      func(spec *Spec) { spec.Caller = routing.Caller{UserID: "sam"} },
-		"only an app pin":        func(spec *Spec) { spec.CustomerID, spec.AgentID = "customer-3", "channel-3" },
 	} {
 		asked := worker()
 		spec(&asked)
 		_, handed := s.manager.handedOut(asked, deploymentApp)
 		s.False(handed, name)
 	}
-	_, handed := s.manager.handedOut(worker(), ownApp)
+	pinned := worker()
+	pinned.CustomerID, pinned.AgentID = "customer-3", "channel-3"
+	_, handed := s.manager.handedOut(pinned, ownApp)
+	s.False(handed, "a call's app pin, in its app, is no hand-out")
+	_, handed = s.manager.handedOut(worker(), ownApp)
 	s.False(handed, "a deployment hand-out, to a session in the customer's own app")
 	_, handed = s.manager.handedOut(worker(), streamapp.Bound{})
 	s.False(handed, "a session with no Stream app")

@@ -86,8 +86,10 @@ func (s *DispatchedChannelSuite) TestAStampedChannelIsPlacedByItsStampsAlone() {
 }
 
 // A channel with nothing written in it is not the one a message came from, such as one of
-// that name the session's app never had, which reading it would make.
+// that name in another app than the message was written in.
 func (s *DispatchedChannelSuite) TestAChannelNothingWasWrittenInIsRefused() {
+	s.created(nil)
+
 	_, _, _, err := s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid)
 
 	s.Require().Error(err)
