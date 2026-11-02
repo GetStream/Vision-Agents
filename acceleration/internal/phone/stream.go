@@ -204,10 +204,9 @@ func (s *Stream) UpdateTrunk(ctx context.Context, id string, trunk Trunk) error 
 	return nil
 }
 
-// CreateCall creates a call ahead of anyone joining, with custom data on it. A call that is
-// already there is only loaded and keeps its own custom, so it answers whether it made the
-// call and the custom the call has.
-func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom map[string]string) (bool, map[string]any, error) {
+// CreateCall creates a call ahead of anyone joining, with custom data on it, and answers the
+// custom the call has: a call that is already there is only loaded and keeps its own.
+func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom map[string]string) (map[string]any, error) {
 	data := make(map[string]any, len(custom))
 	for key, value := range custom {
 		data[key] = value
@@ -217,9 +216,9 @@ func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom
 		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: data},
 	})
 	if err != nil {
-		return false, nil, stack.Wrap(fmt.Errorf("phone: create call: %w", err))
+		return nil, stack.Wrap(fmt.Errorf("phone: create call: %w", err))
 	}
-	return response.Data.Created, response.Data.Call.Custom, nil
+	return response.Data.Call.Custom, nil
 }
 
 func routeRequest(route Route) *getstream.CreateSIPInboundRoutingRuleRequest {

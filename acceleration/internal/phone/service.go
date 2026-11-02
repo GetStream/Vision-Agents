@@ -884,9 +884,9 @@ type CallRequest struct {
 	Custom map[string]string
 }
 
-// ErrCustomKept is a call into a session whose call is already there with other custom data:
+// errCustomKept is a call into a session whose call is already there with other custom data:
 // the call keeps the custom it was created with, so the agent in it would not read this one.
-var ErrCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
+var errCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
 
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
@@ -990,12 +990,12 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	// caller named may hold its call already, which a get-or-create only loads, so that call
 	// is asked for here too, before anything is made for the leg.
 	if len(request.Custom) > 0 && (shared || request.SessionID != "") {
-		created, kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
+		kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
 		if err != nil {
 			return Placed{}, err
 		}
-		if !created && !maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }) {
-			return Placed{}, stack.Wrap(ErrCustomKept)
+		if !maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }) {
+			return Placed{}, stack.Wrap(errCustomKept)
 		}
 	}
 	var trunkID, routeID string

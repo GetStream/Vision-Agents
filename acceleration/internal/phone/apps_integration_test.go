@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/uptrace/bun"
@@ -1398,6 +1400,153 @@ func (s *AppsSuite) TestACallsCustomIsOnItsStreamCall() {
 	data, ok := made["data"].(map[string]any)
 	s.Require().True(ok, "the call was created with data")
 	s.Equal(map[string]any{"lead": "42"}, data["custom"])
+}
+
+// dialInto places a call from the suite's number into the session, carrying the custom.
+func (s *AppsSuite) dialInto(sessionID, to string, custom map[string]string) error {
+	_, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: to, SessionID: sessionID, Custom: custom,
+	})
+	return err
+}
+
+// heldWith puts the session's call in the customer's app with the custom given, as a leg
+// arriving on a routing rule has Stream make it.
+func (s *AppsSuite) heldWith(sessionID string, custom map[string]any) {
+	creator := "a-leg"
+	_, err := s.own.Client.Video().GetOrCreateCall(s.ctx, defaultCallType, sessionID, &getstream.GetOrCreateCallRequest{
+		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: custom},
+	})
+	s.Require().NoError(err)
+}
+
+// newRule is the one rule the app holds that it did not hold before.
+func (s *AppsSuite) newRule(before []string) map[string]any {
+	added := slices.DeleteFunc(s.own.Rules(), func(id string) bool { return slices.Contains(before, id) })
+	s.Require().Len(added, 1)
+	return s.own.Rule(added[0])
+}
+
+func (s *AppsSuite) TestADialIntoAHeldSessionWithOtherCustomIsRefusedBeforeItRings() {
+	s.ownApp()
+	s.sealed()
+	session := uuid.NewString()
+	s.Require().NoError(s.dialInto(session, "+15550001111", map[string]string{"k": "first"}))
+	s.vendor.dialed = Outbound{}
+
+	err := s.dialInto(session, "+15550002222", map[string]string{"k": "second"})
+
+	s.ErrorIs(err, errCustomKept)
+	s.Empty(s.vendor.dialed.To, "no leg rings")
+	data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
+	s.Equal(map[string]any{"k": "first"}, data["custom"])
+}
+
+func (s *AppsSuite) TestADialOnItsOwnTrunkIntoAHeldSessionWithOtherCustomMakesNoTrunk() {
+	s.ownApp()
+	session := uuid.NewString()
+	s.heldWith(session, map[string]any{"k": "first"})
+	trunks, rules := s.own.Trunks(), s.own.Rules()
+
+	err := s.dialInto(session, "+15550002222", map[string]string{"k": "second"})
+
+	s.ErrorIs(err, errCustomKept)
+	s.Empty(s.vendor.dialed.To, "no leg rings")
+	s.Equal(trunks, s.own.Trunks(), "no trunk is made for a leg that will not ring")
+	s.Equal(rules, s.own.Rules())
+}
+
+func (s *AppsSuite) TestADialIntoAHeldSessionPlacesOnlyWhenItsCustomIsTheCalls() {
+	s.ownApp()
+	s.sealed()
+	sent := map[string]string{"k": "1"}
+	for name, edge := range map[string]struct {
+		kept    map[string]any
+		refused bool
+	}{
+		"the same":             {map[string]any{"k": "1"}, false},
+		"a number, not a text": {map[string]any{"k": 1}, true},
+		"null":                 {map[string]any{"k": nil}, true},
+		"another value":        {map[string]any{"k": "2"}, true},
+		"another key":          {map[string]any{"K": "1"}, true},
+		"a key more":           {map[string]any{"k": "1", "extra": "x"}, true},
+		"a key fewer":          {map[string]any{"other": "x"}, true},
+		"none":                 {nil, true},
+	} {
+		s.Run(name, func() {
+			session := uuid.NewString()
+			s.heldWith(session, edge.kept)
+			s.vendor.dialed = Outbound{}
+
+			err := s.dialInto(session, "+15550001111", sent)
+
+			if edge.refused {
+				s.ErrorIs(err, errCustomKept)
+				s.Empty(s.vendor.dialed.To)
+				return
+			}
+			s.Require().NoError(err)
+			s.Equal("+15550001111", s.vendor.dialed.To)
+		})
+	}
+}
+
+func (s *AppsSuite) TestADialWithCustomIntoASessionInProgressIsRefused() {
+	// A session's call that is in progress is already there, whatever made it.
+	s.ownApp()
+	s.sealed()
+	session := uuid.NewString()
+	s.own.PutCall(defaultCallType, session, "agent-1")
+
+	err := s.dialInto(session, "+15550001111", map[string]string{"k": "v"})
+
+	s.ErrorIs(err, errCustomKept)
+	s.Empty(s.vendor.dialed.To)
+}
+
+func (s *AppsSuite) TestADialIntoAHeldSessionWithTheSameCustomOrNonePlaces() {
+	for _, line := range []struct {
+		name   string
+		shared bool
+	}{{"shared line", true}, {"its own trunk", false}} {
+		s.Run(line.name, func() {
+			s.SetupTest()
+			s.ownApp()
+			if line.shared {
+				s.sealed()
+			}
+			session := uuid.NewString()
+			s.Require().NoError(s.dialInto(session, "+15550001111", map[string]string{"k": "v"}))
+
+			s.Require().NoError(s.dialInto(session, "+15550002222", map[string]string{"k": "v"}))
+			s.Equal("+15550002222", s.vendor.dialed.To)
+			s.Require().NoError(s.dialInto(session, "+15550003333", nil))
+			s.Equal("+15550003333", s.vendor.dialed.To)
+		})
+	}
+}
+
+func (s *AppsSuite) TestADialOnItsOwnTrunkCarriesItsCustomOnItsRule() {
+	for name, session := range map[string]string{"a session chosen": "", "a session named": uuid.NewString()} {
+		s.Run(name, func() {
+			s.SetupTest()
+			s.ownApp()
+			rules := s.own.Rules()
+
+			placed, err := s.service.Call(s.ctx, CallRequest{
+				Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15550001111",
+				SessionID: session, Custom: map[string]string{"k": "v"},
+			})
+
+			s.Require().NoError(err)
+			s.Equal("+15550001111", s.vendor.dialed.To)
+			custom := s.newRule(rules)["call_configs"].(map[string]any)["custom_data"].(map[string]any)
+			s.Equal(map[string]any{"k": "v"}, custom)
+			if session == "" {
+				s.Nil(s.own.Call(placed.CallType, placed.CallID), "the leg makes the call of a session nobody named")
+			}
+		})
+	}
 }
 
 func (s *AppsSuite) TestTheVendorIsGivenTheSessionAsTheCallID() {
