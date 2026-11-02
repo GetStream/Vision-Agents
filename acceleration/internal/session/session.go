@@ -201,6 +201,13 @@ type Session struct {
 	// session can be reached.
 	transcribedInto string
 
+	// movingMu serializes what moves the session onto other models or another agent:
+	// SetSettings and voice starting or stopping (swap). Either one runs whole, so a settings
+	// change lands on the agent that holds the session once the swap is done, and a swap
+	// builds its agent from the settings a change left. It is taken before commandMu and
+	// never under it: SetSettings waits on the reply in flight without commandMu, which an
+	// interrupt of that reply needs.
+	movingMu sync.Mutex
 	// Serializes persistent command acceptance/start with command-targeted interruption.
 	commandMu sync.Mutex
 	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
@@ -1055,6 +1062,8 @@ var ErrCardedToNative = errors.New("session: a session that started with episode
 // cascade and a speech-to-speech model. The agent config it started from is untouched,
 // and nothing changes when it fails.
 func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
+	s.movingMu.Lock()
+	defer s.movingMu.Unlock()
 	s.labelMu.Lock()
 	next := s.spec
 	s.labelMu.Unlock()
@@ -1150,6 +1159,8 @@ func (s *Session) StopVoice(ctx context.Context) error {
 // one that held it. The new agent is joined before anything changes, so a call that cannot
 // be joined leaves the session as it was.
 func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
+	s.movingMu.Lock()
+	defer s.movingMu.Unlock()
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if s.State() == Ended {
