@@ -92,9 +92,9 @@ func scheduledPeerWindow() time.Duration {
 var errScheduledNotHere = errors.New("the session is not running on this node")
 
 // scheduledDelivery is one occurrence's follow-up as the node holding the
-// conversation needs it, which is also what a peer is handed: everything is
-// in it, because the peer is not asked to trust its own copy of the task,
-// which it reads only to check whose the task is.
+// conversation needs it, which is also what a peer is handed. The peer takes
+// only the occurrence from it (its run, prompt and due time): what the task's
+// row holds it reads from the row (taskDelivery).
 type scheduledDelivery struct {
 	CustomerID     string   `json:"customer_id"`
 	TaskID         string   `json:"task_id"`
@@ -174,23 +174,7 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 	if held := claimed.Run.PostponedUntil; held != nil {
 		due = *held
 	}
-	delivery := scheduledDelivery{
-		CustomerID:      task.CustomerID,
-		TaskID:          task.ID,
-		RunID:           claimed.Run.ID,
-		SessionID:       task.SessionID,
-		ConversationID:  task.ConversationID,
-		ConfigID:        task.ConfigID,
-		UserID:          task.UserID,
-		CallerKind:      task.CallerKind,
-		APIKey:          task.APIKey,
-		UsageCategories: task.UsageCategories,
-		Timezone:        task.Timezone,
-		CommandID:       conversation.ReadBackPrefix + claimed.Run.ID,
-		Text:            scheduledPrompt(s.withOccurrence(ctx, claimed), time.Now()),
-		Channels:        task.Channels,
-		Due:             due,
-	}
+	delivery := taskDelivery(task, claimed.Run.ID, scheduledPrompt(s.withOccurrence(ctx, claimed), time.Now()), due)
 	ctx = routing.WithAttribution(routing.WithScheduledTurn(ctx), delivery.attribution())
 	if s.sessions == nil {
 		return "", "", errors.New("this router runs no sessions")
@@ -217,6 +201,29 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		}
 	}
 	return s.deliverChainReopened(ctx, delivery)
+}
+
+// taskDelivery is the delivery of task's occurrence on run runID: what the
+// task's row holds, the prompt text the occurrence is sent as, and when it
+// came due.
+func taskDelivery(task store.ScheduledTask, runID, text string, due time.Time) scheduledDelivery {
+	return scheduledDelivery{
+		CustomerID:      task.CustomerID,
+		TaskID:          task.ID,
+		RunID:           runID,
+		SessionID:       task.SessionID,
+		ConversationID:  task.ConversationID,
+		ConfigID:        task.ConfigID,
+		UserID:          task.UserID,
+		CallerKind:      task.CallerKind,
+		APIKey:          task.APIKey,
+		UsageCategories: task.UsageCategories,
+		Timezone:        task.Timezone,
+		CommandID:       conversation.ReadBackPrefix + runID,
+		Text:            text,
+		Channels:        task.Channels,
+		Due:             due,
+	}
 }
 
 // quietHold is when a task's quiet hours end, when now is inside them. A
@@ -779,9 +786,12 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 		writeError(w, internalError())
 		return
 	}
-	// What the task carries is the row's, whatever the payload says.
-	delivery.ConfigID, delivery.Channels = task.ConfigID, task.Channels
-	ctx := routing.WithScheduledTurn(r.Context())
+	// What the task's row holds is the row's, whatever the payload says: a payload naming
+	// another conversation, zone, key or categories would ring into that conversation and
+	// bill that key. Only the occurrence is the asker's word, and its work is the task's,
+	// as the asker attributes it.
+	delivery = taskDelivery(task, delivery.RunID, delivery.Text, delivery.Due)
+	ctx := routing.WithAttribution(routing.WithScheduledTurn(r.Context()), delivery.attribution())
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {
 	case errors.Is(err, errScheduledNotHere):

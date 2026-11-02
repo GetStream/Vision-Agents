@@ -167,11 +167,10 @@ func (s *ScheduledTasksSuite) TestAPeerNamingChannelsTheStoredTaskLacksDeliversI
 	}))
 }
 
-func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
-	other, _ := s.otherRouter(nil)
-	writer := s.writerNumber()
-
-	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+// textedTask has a task stored for delivery by text to writer, on an agent with an SMS line
+// whose user writes from writer.
+func (s *ScheduledTasksSuite) textedTask(writer string) func(*store.ScheduledTask) {
+	return func(task *store.ScheduledTask) {
 		number := s.lineNumber()
 		s.seedSMSLine(number)
 		config := s.agentWithScheduling(func(r *AgentConfigRequest) {
@@ -182,12 +181,60 @@ func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByTex
 		}))
 		task.ConfigID = config
 		task.Channels = []string{"sms"}
-	}, nil)
+	}
+}
+
+// textsRecordedFor waits for the texts recorded as sent for user and answers them.
+func (s *ScheduledTasksSuite) textsRecordedFor(user string) []store.Request {
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ? AND user_id = ? AND provider = ?", s.customerID(), user, "telnyx").
+			Scan(s.T().Context())
+		return err == nil && len(rows) > 0
+	}, 10*time.Second, 50*time.Millisecond, "no text was recorded for the task's user")
+	return rows
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), s.textedTask(writer), nil)
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
 	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
 	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 }, 10*time.Second, 50*time.Millisecond,
 		"the stored task's text never went out")
+}
+
+// The peer reads the task's row to check whose it is, so it takes what the row holds from
+// there too: a payload naming another key or other categories cannot bill the task's texts
+// to them.
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherKeyAndCategoriesTextsUnderTheStoredOnes() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+	var stored store.ScheduledTask
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		s.textedTask(writer)(task)
+		task.UsageCategories = []string{"project:reminders"}
+		stored = *task
+	}, func(payload map[string]any) {
+		payload["api_key"] = "forged-key"
+		payload["usage_categories"] = []string{"forged"}
+		payload["conversation_id"] = s.utils.uuid()
+		payload["timezone"] = "Pacific/Kiritimati"
+	})
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
+	for _, row := range s.textsRecordedFor(stored.UserID) {
+		s.Equal(s.app.key, row.APIKey, "the text was billed to the payload's key")
+		s.Equal([]string{"project:reminders"}, row.UsageCategories)
+	}
 }
 
 func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
