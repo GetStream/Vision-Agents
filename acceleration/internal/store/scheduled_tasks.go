@@ -67,6 +67,10 @@ const maxScheduledTaskRunAttempts = 3
 // package cannot import.
 const scheduledTaskRunWorkersLost = "delivery_failed"
 
+// scheduledTaskRunPaused is the reason the cut-over of a move settles the source's run of an
+// occurrence it skips under: scheduling.ReasonPaused, which this package cannot import.
+const scheduledTaskRunPaused = "task_paused"
+
 // scheduledTaskRunRungAlready is the reason a run failed at
 // maxScheduledTaskRunAttempts is recorded under when a call was placed for it
 // and no end recorded: scheduling.ReasonRungAlready, which leaves the run out

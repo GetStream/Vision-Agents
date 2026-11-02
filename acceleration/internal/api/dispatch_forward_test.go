@@ -64,6 +64,20 @@ func (s *ForwardedDispatchSuite) TestARunningSessionsTextReachesAWorkerOnAnother
 	s.NotEmpty(workerID)
 }
 
+func (s *ForwardedDispatchSuite) TestThePhotosSentWithAMessageReachAWorkerOnAnotherNode() {
+	worker := s.waitsOnTheOtherNode()
+
+	_, err := s.elsewhere.AssignMessage(context.Background(), s.customerID(), dispatch.Message{
+		ChannelID: "chat-1", Text: "what does this light mean?",
+		Images: []dispatch.Image{{URL: "https://cdn.example/panel.jpg", MIME: "image/jpeg"}},
+	})
+	s.Require().NoError(err)
+
+	message := s.await(worker, "message")
+	s.Equal([]any{map[string]any{"url": "https://cdn.example/panel.jpg", "mime_type": "image/jpeg"}},
+		message["images"])
+}
+
 func (s *ForwardedDispatchSuite) TestARunningSessionsTextWithNoWorkerAnywhereSaysSo() {
 	_, err := s.elsewhere.AssignMessage(context.Background(), s.customerID(),
 		dispatch.Message{SessionID: "session-1", Text: "where is my order?"})

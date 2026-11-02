@@ -103,6 +103,9 @@ type Message struct {
 	Custom map[string]string
 	// Text is what was written.
 	Text string
+	// Images are the photos sent with it, as the URLs the channel keeps them at, which the
+	// worker fetches itself.
+	Images []Image
 	// MessageID is the message in the channel, so a worker can reply in its thread or
 	// react to it rather than only after it.
 	MessageID string
@@ -111,6 +114,13 @@ type Message struct {
 	UserName string
 	// At is when it was written.
 	At time.Time
+}
+
+// Image is a photo sent with a message.
+type Image struct {
+	URL string
+	// MIME is its type when the channel said, and empty when it did not.
+	MIME string
 }
 
 // Load is what a worker last said about itself.

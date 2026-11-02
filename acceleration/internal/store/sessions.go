@@ -1212,8 +1212,11 @@ func jsonbOf[V any](values map[string]V) string {
 	return string(encoded)
 }
 
+// ErrNoSession is a session that is not there: never saved, or deleted since.
+var ErrNoSession = errors.New("store: there is no session")
+
 func unknownStoredSession(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no session %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoSession, id))
 }
 
 func notAGuest(id, customerID string) error {
