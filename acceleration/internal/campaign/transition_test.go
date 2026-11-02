@@ -29,11 +29,11 @@ func (s *TransitionSuite) SetupTest() {
 	s.hours = DefaultCallingHours()
 }
 
+// 2026-11-02 is a Monday.
 func (s *TransitionSuite) at(day, hour, minute int) time.Time {
 	return time.Date(2026, time.November, day, hour, minute, 0, 0, s.chicago)
 }
 
-// 2026-11-02 is a Monday.
 func (s *TransitionSuite) sequence(double bool) Sequence {
 	seq := DefaultSequence("cfg")
 	seq.DoubleDial = double
@@ -72,7 +72,7 @@ func (s *TransitionSuite) TestWithoutDoubleDialTheFirstUnansweredDialSchedulesTh
 func (s *TransitionSuite) TestTheNextAttemptLandsInsideCallingHours() {
 	started := s.at(2, 17, 0)
 	seq := s.sequence(false)
-	seq.Steps[0].Attempts = []Attempt{{0}, {180}}
+	seq.Steps[0].Attempts = []Attempt{{DelayMinutes: 0}, {DelayMinutes: 180}}
 	settle, _ := afterDial(seq, s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Unanswered}, started, started)
 	s.Require().NotNil(settle.NextAttemptAt)
 	s.True(s.at(3, 9, 0).Equal(*settle.NextAttemptAt), settle.NextAttemptAt.String())
@@ -109,7 +109,7 @@ func (s *TransitionSuite) TestSilenceIsUnansweredWithoutADoubleDial() {
 }
 
 func (s *TransitionSuite) TestDoNotCallEndsUnsuccessfully() {
-	settle := afterOutcome(s.sequence(true).First(), OutcomeDoNotCall)
+	settle := afterOutcome(s.sequence(true).First(), s.contact(2), OutcomeDoNotCall)
 	s.Equal(store.ContactCompleted, settle.Stage)
 	s.Equal(OutcomeDoNotCall, settle.Outcome)
 	s.False(settle.Converted)
@@ -117,18 +117,20 @@ func (s *TransitionSuite) TestDoNotCallEndsUnsuccessfully() {
 
 func (s *TransitionSuite) TestAnOutcomeEndsAsItsRouteSays() {
 	step := s.sequence(true).First()
-	won := afterOutcome(step, OutcomeSuccess)
+	won := afterOutcome(step, s.contact(3), OutcomeSuccess)
+	s.Equal(3, won.Attempt)
 	s.Equal(store.ContactCompleted, won.Stage)
 	s.Equal(OutcomeSuccess, won.Outcome)
 	s.True(won.Converted)
-	lost := afterOutcome(step, OutcomeNotInterested)
+	lost := afterOutcome(step, s.contact(0), OutcomeNotInterested)
+	s.Equal(1, lost.Attempt)
 	s.False(lost.Converted)
 }
 
 func (s *TransitionSuite) TestAnOutcomeNobodyDefinedFollowsOther() {
 	step := s.sequence(true).First()
 	step.Other = Route{Next: Next{End: EndSuccessful}}
-	settle := afterOutcome(step, "made_up_by_the_model")
+	settle := afterOutcome(step, s.contact(1), "made_up_by_the_model")
 	s.Equal(store.ContactCompleted, settle.Stage)
 	s.Equal(OutcomeOther, settle.Outcome)
 	s.True(settle.Converted)
@@ -229,4 +231,33 @@ func (s *TransitionSuite) TestAContactWithNoOpeningFailsInsteadOfGettingNoTime()
 	s.Equal(store.Failed, settle.Stage)
 	s.Equal("no_calling_hours", settle.Reason)
 	s.Nil(settle.NextAttemptAt)
+}
+
+func (s *TransitionSuite) TestARefusalOnTheSecondDialStillUsesTheAttempt() {
+	now := s.at(2, 14, 0)
+	for _, err := range []error{dlc.NewRefusal("concurrent"), dlc.NewRefusal("per_day"), dlc.NewRefusal("country"), stack.Wrap(phone.ErrSuspended)} {
+		dialed := resultOf(err)
+		settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, dialed, now, now)
+		s.False(again, dialed.Reason)
+		s.Equal(store.Enrolled, settle.Stage, dialed.Reason)
+		s.Equal(2, settle.Attempt, dialed.Reason)
+		s.True(s.at(5, 14, 0).Equal(*settle.NextAttemptAt), dialed.Reason)
+	}
+	last, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(4), 2, resultOf(dlc.NewRefusal("concurrent")), now, now)
+	s.Equal(store.ContactCompleted, last.Stage)
+	s.Equal(OutcomeNoResponse, last.Outcome)
+}
+
+func (s *TransitionSuite) TestAnInvalidNumberOnTheSecondDialStillFails() {
+	settle, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: InvalidNumber}, s.at(2, 10, 0), s.at(2, 10, 0))
+	s.Equal(store.Failed, settle.Stage)
+}
+
+func (s *TransitionSuite) TestAnUnknownResultFails() {
+	for _, r := range []Result{"", "mystery"} {
+		settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: r}, s.at(2, 10, 0), s.at(2, 10, 0))
+		s.False(again)
+		s.Equal(store.Failed, settle.Stage)
+		s.Equal("unknown_result", settle.Reason)
+	}
 }

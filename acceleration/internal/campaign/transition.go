@@ -24,6 +24,7 @@ const (
 	reasonInvalidNumber = "invalid_number"
 	reasonRefused       = "refused"
 	reasonNoHours       = "no_calling_hours"
+	reasonUnknownResult = "unknown_result"
 	codeConcurrent      = "concurrent"
 	concurrentRetry     = 5 * time.Minute
 )
@@ -42,6 +43,10 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 	step := sequence.First()
 	attempt := max(contact.Attempt, 1)
 	settle = store.Settle{StepID: step.ID, Attempt: contact.Attempt, CallID: dialed.CallID, VendorCallID: dialed.VendorCallID}
+	if dial == 2 && (dialed.Result == Deferred || dialed.Result == Paused || dialed.Result == Refused) {
+		// Dial 1 already rang the person, so the attempt is used whatever stopped dial 2.
+		return unanswered(step, hours, zone, contact, started, settle), false
+	}
 	switch dialed.Result {
 	case Answered:
 		settle.Stage = store.AwaitingOutcome
@@ -67,6 +72,9 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 	case InvalidNumber:
 		settle.Stage = store.Failed
 		settle.Reason = reasonInvalidNumber
+	default:
+		settle.Stage = store.Failed
+		settle.Reason = reasonUnknownResult
 	}
 	return settle, false
 }
@@ -80,7 +88,7 @@ func afterSilence(sequence Sequence, hours CallingHours, zone *time.Location, co
 
 // afterOutcome ends a contact the way the step's route for the outcome says. An id the step
 // does not define follows the route for other answers.
-func afterOutcome(step Step, outcomeID string) store.Settle {
+func afterOutcome(step Step, contact store.Contact, outcomeID string) store.Settle {
 	next := step.Other.Next
 	if outcome, ok := step.Find(outcomeID); ok {
 		next = outcome.Next
@@ -90,6 +98,7 @@ func afterOutcome(step Step, outcomeID string) store.Settle {
 	return store.Settle{
 		Stage:     store.ContactCompleted,
 		StepID:    step.ID,
+		Attempt:   max(contact.Attempt, 1),
 		Outcome:   outcomeID,
 		Converted: next.End == EndSuccessful,
 	}
