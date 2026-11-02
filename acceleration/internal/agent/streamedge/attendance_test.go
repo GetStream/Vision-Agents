@@ -19,6 +19,16 @@ func (s *StreamEdgeSuite) attending() *Edge {
 	return edge
 }
 
+// published is the SFU saying a track of the person's is out, with the participant when
+// named. Video, because subscribing to audio needs a call joined.
+func published(named bool) *sfu_events.TrackPublished {
+	track := &sfu_events.TrackPublished{UserId: person.UserId, SessionId: person.SessionId, Type: sfu_models.TrackType_TRACK_TYPE_VIDEO}
+	if named {
+		track.Participant = person
+	}
+	return track
+}
+
 // reported is every arrival and departure the edge has reported so far.
 func (s *StreamEdgeSuite) reported(edge *Edge) []agent.Attendance {
 	var reported []agent.Attendance
@@ -36,21 +46,20 @@ func (s *StreamEdgeSuite) TestSomebodyTheSFUOnlyAnnouncesByTheirTrackArrives() {
 	// The SFU may leave a join unannounced and name the participant on their track instead.
 	edge := s.attending()
 
-	edge.publishedBy(&sfu_events.TrackPublished{
-		UserId: person.UserId, SessionId: person.SessionId, Type: sfu_models.TrackType_TRACK_TYPE_AUDIO, Participant: person,
-	})
+	edge.trackPublished(s.ctx, published(true))
 
 	reported := s.reported(edge)
 	s.Require().Len(reported, 1)
 	s.True(reported[0].Joined)
 	s.Equal("person-1", reported[0].Participant.ID)
 	s.Equal("sip-+15125550123", reported[0].Participant.UserID)
+	s.Equal("+15125550123", reported[0].Participant.Name)
 }
 
 func (s *StreamEdgeSuite) TestATrackWithoutTheParticipantStillNamesWhoArrived() {
 	edge := s.attending()
 
-	edge.publishedBy(&sfu_events.TrackPublished{UserId: person.UserId, SessionId: person.SessionId, Type: sfu_models.TrackType_TRACK_TYPE_AUDIO})
+	edge.trackPublished(s.ctx, published(false))
 
 	reported := s.reported(edge)
 	s.Require().Len(reported, 1)
@@ -62,10 +71,26 @@ func (s *StreamEdgeSuite) TestSomebodyAnnouncedAndPublishingArrivesOnce() {
 	edge := s.attending()
 
 	edge.report(person, true)
-	edge.publishedBy(&sfu_events.TrackPublished{UserId: person.UserId, SessionId: person.SessionId, Participant: person})
-	edge.publishedBy(&sfu_events.TrackPublished{UserId: person.UserId, SessionId: person.SessionId, Type: sfu_models.TrackType_TRACK_TYPE_VIDEO})
+	edge.trackPublished(s.ctx, published(true))
+	edge.trackPublished(s.ctx, published(false))
 
 	s.Len(s.reported(edge), 1)
+}
+
+func (s *StreamEdgeSuite) TestANameLearnedAfterTheTrackIsReported() {
+	// Somebody first known only by an unnamed track is reported again once a join names them,
+	// so whoever reads the arrivals gets their name.
+	edge := s.attending()
+
+	edge.trackPublished(s.ctx, published(false))
+	edge.report(person, true)
+	edge.report(person, true)
+
+	reported := s.reported(edge)
+	s.Require().Len(reported, 2)
+	s.Empty(reported[0].Participant.Name)
+	s.Equal("+15125550123", reported[1].Participant.Name)
+	s.True(reported[1].Joined)
 }
 
 func (s *StreamEdgeSuite) TestSomebodyWhoLeftAndPublishesAgainArrivesAgain() {
@@ -73,7 +98,7 @@ func (s *StreamEdgeSuite) TestSomebodyWhoLeftAndPublishesAgainArrivesAgain() {
 
 	edge.report(person, true)
 	edge.report(person, false)
-	edge.publishedBy(&sfu_events.TrackPublished{UserId: person.UserId, SessionId: person.SessionId, Participant: person})
+	edge.trackPublished(s.ctx, published(true))
 
 	reported := s.reported(edge)
 	s.Require().Len(reported, 3)
@@ -83,7 +108,7 @@ func (s *StreamEdgeSuite) TestSomebodyWhoLeftAndPublishesAgainArrivesAgain() {
 func (s *StreamEdgeSuite) TestTheAgentsOwnTrackIsNobodyArriving() {
 	edge := s.attending()
 
-	edge.publishedBy(&sfu_events.TrackPublished{UserId: "agent", SessionId: "agent-1"})
+	edge.trackPublished(s.ctx, &sfu_events.TrackPublished{UserId: "agent", SessionId: "agent-1", Type: sfu_models.TrackType_TRACK_TYPE_VIDEO})
 
 	s.Empty(s.reported(edge))
 }
