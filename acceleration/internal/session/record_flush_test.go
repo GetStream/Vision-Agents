@@ -120,13 +120,15 @@ func (s *RecordFlushSuite) TestFlushesWaitingForTheSameWritesShareOneEntry() {
 		s.Equal(first, waiting.wait(5))
 	}
 	second := waiting.wait(6)
-	s.Len(waiting, 2, "each Flush waiting for the same writes took an entry of its own")
+	third := waiting.wait(7)
+	s.Len(waiting, 3, "each Flush waiting for the same writes took an entry of its own")
 
-	waiting.release(5)
-	s.True(isClosed(first), "a Flush whose writes are all taken was not told")
-	s.False(isClosed(second), "a Flush was told before its writes were all taken")
 	waiting.release(6)
+	s.True(isClosed(first), "a Flush whose writes are all taken was not told")
 	s.True(isClosed(second), "a Flush whose writes are all taken was not told")
+	s.False(isClosed(third), "a Flush was told before its writes were all taken")
+	waiting.release(7)
+	s.True(isClosed(third), "a Flush whose writes are all taken was not told")
 	s.Empty(waiting)
 }
 
