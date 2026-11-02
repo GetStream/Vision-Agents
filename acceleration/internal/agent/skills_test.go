@@ -316,7 +316,7 @@ func (s *AgentSuite) TestTheSameCodeRunsAgainOnceTheUserConnectedWhatItNeeded() 
 
 // TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded: its result tells the
 // model to run it again once the user connected github; until then the same code gets the
-// same 401, and a text conversation has no cap on tool rounds to stop the model asking.
+// same 401, which the model keeps asking for until the tool rounds run out.
 func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded() {
 	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}}}
 	s.joinText()
