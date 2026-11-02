@@ -219,6 +219,33 @@ func (s *RecordFlushSuite) TestAFlushGivesUpWhenItsCallerDoes() {
 	s.Less(time.Since(start), recordWriteTimeout/2, "the Flush waited for the writer rather than its caller")
 }
 
+func (s *RecordFlushSuite) TestAFlushTheWriterTookInGivesUpWhenItsCallerDoes() {
+	releaseFirst := s.holdWriter()
+	second, _ := s.heldRow()
+	s.records.Opened(second, nil)
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	flushed := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		flushed <- s.records.Flush(ctx)
+	}()
+	<-started
+	releaseFirst()
+	// The writer takes the Flush in before the second held row, and stalls on that row.
+	s.Require().Eventually(func() bool { return len(s.records.queue) == 0 }, settleFor, 5*time.Millisecond,
+		"the writer never took the second held row")
+
+	cancel()
+	select {
+	case err := <-flushed:
+		s.ErrorIs(err, context.Canceled)
+	case <-time.After(recordWriteTimeout / 2):
+		s.Fail("the Flush waited for the writer rather than its caller")
+	}
+}
+
 // holdWriter stalls the writer on a session row another transaction is inserting, until the
 // returned release rolls that transaction back. The writer gives up on its own after
 // recordWriteTimeout, so a test releases well before that.
