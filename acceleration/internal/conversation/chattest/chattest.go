@@ -416,7 +416,7 @@ func (s *Server) LiftRateLimit(suffix string) {
 	delete(s.db.limited, suffix)
 }
 
-// Fail answers every request of method whose path ends in suffix with a 500, as Stream does
+// Fail answers every request of method whose path ends in suffix with a 500
 // for a call it could not update. Other methods on that path are served.
 func (s *Server) Fail(method, suffix string) {
 	s.db.mu.Lock()
