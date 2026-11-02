@@ -735,12 +735,20 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call
 		// keeps the body it was created with. A call put in session is already there. Only
 		// the get-or-create path is matched: a POST below it, mark_ended, creates nothing.
+		// It answers whether it made the call and the custom the call has.
 		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
 		_, inSession := db.calls[cid]
-		if _, exists := db.made[cid]; !exists && !inSession {
+		_, exists := db.made[cid]
+		if !exists && !inSession {
 			db.made[cid] = body
 		}
-		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1]}
+		data, _ := db.made[cid]["data"].(map[string]any)
+		custom, ok := data["custom"].(map[string]any)
+		if !ok {
+			custom = map[string]any{}
+		}
+		result["created"] = !exists && !inSession
+		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {
 			refuse(w, "your application reached the maximum number of SIP trunks (25)")

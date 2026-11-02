@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -883,6 +884,10 @@ type CallRequest struct {
 	Custom map[string]string
 }
 
+// ErrCustomKept is a call into a session whose call is already there with other custom data:
+// the call keeps the custom it was created with, so the agent in it would not read this one.
+var ErrCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
+
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
 	// VendorCallID identifies the ringing leg at the vendor, for hanging up or pressing
@@ -980,16 +985,22 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
+	// The number's rule carries no custom data, so on its line a call that has some is created
+	// with it here, before the leg arrives; otherwise the leg creates the call. A session the
+	// caller named may hold its call already, which a get-or-create only loads, so that call
+	// is asked for here too, before anything is made for the leg.
+	if len(request.Custom) > 0 && (shared || request.SessionID != "") {
+		created, kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
+		if err != nil {
+			return Placed{}, err
+		}
+		if !created && !maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }) {
+			return Placed{}, stack.Wrap(ErrCustomKept)
+		}
+	}
 	var trunkID, routeID string
 	committed := false
 	if shared {
-		// The number's rule carries no custom data, so a call that has some is created with
-		// it here, before the leg arrives; otherwise the leg creates the call.
-		if len(request.Custom) > 0 {
-			if err := stream.CreateCall(ctx, callType, callID, request.Custom); err != nil {
-				return Placed{}, err
-			}
-		}
 		trunkID, routeID = line.TrunkID, line.RouteID
 		outbound.Bridge, outbound.CallID = line.Bridge, callID
 	} else {
