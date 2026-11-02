@@ -811,6 +811,7 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 		Where("customer_id = ?", customerID).
 		Where("(task_id, scheduled_for) IN (SELECT * FROM unnest(?::text[], ?::timestamptz[]))",
 			pgdialect.Array(ids), pgdialect.Array(due)).
+		Where("trigger = ?", ScheduledTaskTriggerSchedule).
 		Where("state = ?", ScheduledTaskRunRunning).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("store: settle the source's runs of moved tasks' skipped occurrences: %w", err)

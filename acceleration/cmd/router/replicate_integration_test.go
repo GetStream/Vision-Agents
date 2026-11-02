@@ -312,10 +312,21 @@ func (s *ReplicateResumeSuite) runOf(id string) store.ScheduledTaskRun {
 // across while the task's next run had not moved yet. Nothing here finishes that run, so the
 // cut-over settles it as the occurrence a paused task slept through here.
 func (s *ReplicateResumeSuite) TestResumeSettlesTheRunOfAnOccurrenceTheSourceStartedBeforeTheLastCatchUp() {
-	for name, rrule := range map[string]string{"daily": "FREQ=DAILY", "one-shot": ""} {
-		s.Run(name, func() {
+	for _, c := range []struct {
+		name, rrule string
+		started     time.Duration // how long before its next run the task started
+		state       string
+		nextAfter   time.Duration // its next run after the cut-over, from the occurrence skipped
+	}{
+		// A later occurrence than its start, so the run is on the next run and not on the start.
+		{"daily", "FREQ=DAILY", 48 * time.Hour, store.ScheduledTaskActive, 24 * time.Hour},
+		{"one-shot", "", 0, store.ScheduledTaskCompleted, 0},
+	} {
+		s.Run(c.name, func() {
 			s.SetupTest()
-			due := s.overdue("st-source", rrule, store.ScheduledTaskActive)
+			due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+			start := due.Add(-c.started)
+			s.importedTask(store.ScheduledTask{ID: "st-source", RRule: c.rrule, StartLocal: start, NextRunAt: &due}, store.ScheduledTaskActive)
 			s.sourceRun("run-source", "acme", "st-source", store.ScheduledTaskTriggerSchedule, store.ScheduledTaskRunRunning, due)
 			var before time.Time
 			s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT now()").Scan(&before))
@@ -334,9 +345,14 @@ func (s *ReplicateResumeSuite) TestResumeSettlesTheRunOfAnOccurrenceTheSourceSta
 			s.False(run.FinishedAt.Before(before))
 			s.Equal(1, run.Attempts, "the source's claim stays on record")
 			s.Empty(s.claimed())
+			task := s.task("st-source")
+			s.Equal(c.state, task.State)
+			if c.nextAfter > 0 {
+				s.Require().NotNil(task.NextRunAt)
+				s.Equal(due.Add(c.nextAfter), task.NextRunAt.UTC(), "it goes on after the occurrence skipped")
+			}
 		})
 	}
-	s.Equal(store.ScheduledTaskCompleted, s.task("st-source").State)
 }
 
 // Only the source's run of the occurrence the cut-over skips is settled: a run by hand in
@@ -348,6 +364,8 @@ func (s *ReplicateResumeSuite) TestResumeSettlesNoOtherRun() {
 	s.Require().NoError(err)
 	due := s.overdue("st-daily", "FREQ=DAILY", store.ScheduledTaskActive)
 	s.sourceRun("run-by-hand", "acme", "st-daily", store.ScheduledTaskTriggerManual, store.ScheduledTaskRunRunning, due.Add(-time.Hour))
+	// Asked for at the very instant of the occurrence, so only its trigger tells it from the scheduled run.
+	s.sourceRun("run-by-hand-then", "acme", "st-daily", store.ScheduledTaskTriggerManual, store.ScheduledTaskRunRunning, due)
 	delivered := s.overdue("st-delivered", "", store.ScheduledTaskActive)
 	s.sourceRun("run-delivered", "acme", "st-delivered", store.ScheduledTaskTriggerSchedule, store.ScheduledTaskRunDelivered, delivered)
 	// Held past the cut-over, so the worker here takes it over.
@@ -367,11 +385,12 @@ VALUES ('run-held', 'st-held', 'acme', ?, 'running', ?, ?, 1)`, held, held, time
 	s.cutOver()
 
 	for id, want := range map[string]string{
-		"run-by-hand":   store.ScheduledTaskRunRunning,
-		"run-ahead":     store.ScheduledTaskRunRunning,
-		"run-delivered": store.ScheduledTaskRunDelivered,
-		"run-held":      store.ScheduledTaskRunRunning,
-		"run-other":     store.ScheduledTaskRunRunning,
+		"run-by-hand":      store.ScheduledTaskRunRunning,
+		"run-by-hand-then": store.ScheduledTaskRunRunning,
+		"run-ahead":        store.ScheduledTaskRunRunning,
+		"run-delivered":    store.ScheduledTaskRunDelivered,
+		"run-held":         store.ScheduledTaskRunRunning,
+		"run-other":        store.ScheduledTaskRunRunning,
 	} {
 		run := s.runOf(id)
 		s.Equal(want, run.State, id)
