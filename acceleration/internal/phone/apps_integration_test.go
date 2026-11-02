@@ -1456,6 +1456,21 @@ func (s *AppsSuite) TestADialOnItsOwnTrunkIntoAHeldSessionWithOtherCustomMakesNo
 	s.Equal(rules, s.own.Rules())
 }
 
+func (s *AppsSuite) TestADialWhoseHeldCallCannotBeReadMakesNoTrunk() {
+	// Without the call's answer the dial cannot tell whether its custom would be kept.
+	s.ownApp()
+	session := uuid.NewString()
+	s.own.RateLimit("/video/call/" + defaultCallType + "/" + session)
+	trunks := s.own.Trunks()
+
+	err := s.dialInto(session, "+15550001111", map[string]string{"k": "v"})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, errCustomKept, "the client is told the read failed, not that its custom differs")
+	s.Empty(s.vendor.dialed.To, "no leg rings")
+	s.Equal(trunks, s.own.Trunks())
+}
+
 func (s *AppsSuite) TestADialIntoAHeldSessionPlacesOnlyWhenItsCustomIsTheCalls() {
 	s.ownApp()
 	s.sealed()

@@ -192,6 +192,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A call into a held session with other custom data is refused
+
+A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A call with the same custom as the session's call, or with none, places as before (AI-2471).
+
 ### A response is counted on its user's daily limit when Redis or the policies are slow
 
 A finished response's debit waits at most 2 s, as before, but no longer gives up its write when that wait runs out. A response whose policies took that long to read, or whose router stalled past it, went uncounted on its user's day; it is now counted once the write reaches Redis.
