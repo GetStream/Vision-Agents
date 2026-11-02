@@ -199,14 +199,14 @@ func (st Step) validate() error {
 			return fmt.Errorf("the outcome id %q is used twice", o.ID)
 		}
 		seen[o.ID] = true
-		if err := o.Next.validate(fmt.Sprintf("The outcome %q", o.ID)); err != nil {
+		if err := o.Next.validate(fmt.Sprintf("the outcome %q", o.ID)); err != nil {
 			return err
 		}
 	}
-	if err := st.Other.Next.validate("The route for other answers"); err != nil {
+	if err := st.Other.Next.validate("the route for other answers"); err != nil {
 		return err
 	}
-	if err := st.NoResponse.Next.validate("The no response route"); err != nil {
+	if err := st.NoResponse.Next.validate("the no response route"); err != nil {
 		return err
 	}
 	if st.NoResponse.Next.End != EndUnsuccessful {
