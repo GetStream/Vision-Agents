@@ -308,6 +308,10 @@ The source goes on delivering between the last `router replicate --once` and its
 
 A scheduled task's run that ends `already_called` (a call was placed for the occurrence and its end was never recorded, as when the router holding the call stopped) no longer adds to the task's `consecutive_failures`, and the task moves on as after a run that did not fail: a one-shot is `completed`, not `failed`, and a repeat is not failed by five such runs in a row. The run is still `failed` with error `already_called` (AI-2404, AI-2405).
 
+### An occurrence failed at the attempt cap after its call keeps how the call went
+
+An occurrence whose workers were lost three times is failed without another delivery. Before, it was always failed `delivery_failed`, which counted toward the five failures in a row, even when one of those workers had placed the call. Now a run with a placed call keeps the reason that call ended under, such as `not_answered`. When no reason was recorded, the run is failed `already_called` and does not count, as after any other attempt that finds the call placed (AI-2426).
+
 ### A .NET tool cancelled while it sends no longer ends the session
 
 In the .NET SDK a tool's `UpdateAsync` or `SayAsync`, or any session send, given a token that was cancelled while the frame was being written, aborted the whole WebSocket (`ClientWebSocket` does that), so a router `tool_cancel` that landed mid-send ended the session with nothing said. A send is now written whole once it starts; a token cancelled meanwhile only stops the caller from waiting for it.

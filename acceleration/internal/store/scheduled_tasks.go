@@ -62,9 +62,16 @@ const scheduledTaskStaleRun = 10 * time.Minute
 const maxScheduledTaskRunAttempts = 3
 
 // scheduledTaskRunWorkersLost is the reason a run failed at
-// maxScheduledTaskRunAttempts is recorded under: scheduling.ReasonFailed, one
-// of the codes a device is shown, which this package cannot import.
+// maxScheduledTaskRunAttempts with no call placed is recorded under:
+// scheduling.ReasonFailed, one of the codes a device is shown, which this
+// package cannot import.
 const scheduledTaskRunWorkersLost = "delivery_failed"
+
+// scheduledTaskRunRungAlready is the reason a run failed at
+// maxScheduledTaskRunAttempts is recorded under when a call was placed for it
+// and no end recorded: scheduling.ReasonRungAlready, which leaves the run out
+// of the task's failure streak.
+const scheduledTaskRunRungAlready = "already_called"
 
 // ScheduledTask is something the agent agreed to do for one end user at a
 // wall-clock time in that user's zone, once or on a repeat.
@@ -606,7 +613,7 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 					}
 					continue
 				case run.Attempts >= maxScheduledTaskRunAttempts:
-					failure := scheduledTaskRunWorkersLost
+					failure := capFailure(run)
 					if _, err := tx.NewUpdate().Model((*ScheduledTaskRun)(nil)).
 						Set("state = ?", ScheduledTaskRunFailed).
 						Set("error = ?", failure).
@@ -686,6 +693,21 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 		return nil, stack.Wrap(err)
 	}
 	return claimed, nil
+}
+
+// capFailure is the reason a run failed at maxScheduledTaskRunAttempts is
+// recorded under. A run with a call placed for it says what the attempt
+// after it would have (deliverByPhone): the reason the call ended under, or
+// already_called when none was recorded, that call having maybe carried the
+// task out (AI-2404). Any other run failed under delivery_failed.
+func capFailure(run ScheduledTaskRun) string {
+	if run.SessionID == "" {
+		return scheduledTaskRunWorkersLost
+	}
+	if run.Error != nil && *run.Error != "" {
+		return *run.Error
+	}
+	return scheduledTaskRunRungAlready
 }
 
 // heldRun reports whether a running run is a held one whose hold has ended:
