@@ -27,6 +27,7 @@ var errUnknownContact = APIError{
 const (
 	defaultContactPage = 50
 	maxVariableLength  = 1000
+	maxVariables       = 50
 )
 
 // contactPosition is the last contact of a page.
@@ -126,6 +127,9 @@ func contactFrom(input ContactInput, country string) (store.Contact, RefusedReas
 	number, err := phonenumbers.Parse(input.ToNumber, country)
 	if err != nil || !phonenumbers.IsPossibleNumber(number) {
 		return store.Contact{}, RefusedReasonInvalidNumber
+	}
+	if len(input.Variables) > maxVariables {
+		return store.Contact{}, RefusedReasonInvalidVariable
 	}
 	for name, text := range input.Variables {
 		// A value is put into the agent's prompt, where a line of its own reads as an instruction.
@@ -245,6 +249,11 @@ func (s *Server) contactsOf(ctx context.Context, current store.Campaign, contact
 		if contact.Stage == store.AwaitingOutcome {
 			stage = ContactStageInProgress
 		}
+		// A claim leaves the time the contact was due, which is past once a call is under way.
+		var nextAttempt *time.Time
+		if contact.Stage == store.Enrolled {
+			nextAttempt = contact.NextAttemptAt
+		}
 		variables := contact.Variables
 		if variables == nil {
 			variables = map[string]string{}
@@ -258,7 +267,7 @@ func (s *Server) contactsOf(ctx context.Context, current store.Campaign, contact
 			Stage:         stage,
 			AttemptsMade:  made[contact.ID],
 			AttemptsTotal: total,
-			NextAttemptAt: contact.NextAttemptAt,
+			NextAttemptAt: nextAttempt,
 			Outcome:       optional(contact.Outcome),
 			Converted:     contact.Converted,
 			Reason:        optional(contact.Reason),
@@ -444,9 +453,9 @@ type AddContactsRequest struct {
 // ContactInput is one person to ring.
 type ContactInput struct {
 	ToNumber     string            `json:"to_number" doc:"With or without a country code."`
-	Variables    map[string]string `json:"variables,omitempty" doc:"Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; values are up to 1,000 characters on one line."`
+	Variables    map[string]string `json:"variables,omitempty" doc:"Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line."`
 	TimeZone     *string           `json:"time_zone,omitempty" doc:"An IANA zone, which a campaign reading its hours where each contact is goes by before the number's."`
-	Instructions *string           `json:"instructions,omitempty" doc:"What to say to this person, added to whatever the config already says."`
+	Instructions *string           `json:"instructions,omitempty" maxLength:"2000" doc:"What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400."`
 }
 
 // AddContactsResponse is how many people were added, and which were not.
@@ -485,7 +494,7 @@ const (
 func (RefusedReason) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "RefusedReason", "Why a contact was not added: invalid_number is a number "+
 		"that cannot be read, duplicate one the campaign already holds or the request repeats, "+
-		"invalid_variable a variable with a bad name or a value too long or over more than one line, "+
+		"invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, "+
 		"invalid_time_zone a time zone that is not an IANA one.",
 		string(RefusedReasonInvalidNumber), string(RefusedReasonDuplicate),
 		string(RefusedReasonInvalidVariable), string(RefusedReasonInvalidTimeZone))

@@ -4,10 +4,14 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -71,6 +75,73 @@ func (s *CampaignContactsSuite) TestANumberTheCampaignAlreadyHoldsIsADuplicate()
 
 	s.Equal(1, added.Added)
 	s.Equal([]RefusedContact{{Index: 1, ToNumber: "415-555-0104", Reason: RefusedReasonDuplicate}}, added.Refused)
+}
+
+func (s *CampaignContactsSuite) TestADuplicateIsReportedAtItsPlaceInTheRequest() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550181"}}})
+
+	added := s.add(created.Id, map[string]any{"contacts": []map[string]any{
+		{"to_number": "nope"}, {"to_number": "+14155550182"}, {"to_number": "(415) 555-0181"}, {"to_number": "nor this"},
+	}})
+
+	s.Equal(1, added.Added)
+	s.Equal([]RefusedContact{
+		{Index: 0, ToNumber: "nope", Reason: RefusedReasonInvalidNumber},
+		{Index: 2, ToNumber: "(415) 555-0181", Reason: RefusedReasonDuplicate},
+		{Index: 3, ToNumber: "nor this", Reason: RefusedReasonInvalidNumber},
+	}, added.Refused)
+}
+
+func (s *CampaignContactsSuite) TestAContactWithTooManyVariablesIsRefused() {
+	created := s.draft(nil)
+	many := map[string]string{}
+	for i := range 51 {
+		many[fmt.Sprintf("v%d", i)] = "x"
+	}
+	enough := map[string]string{}
+	for i := range 50 {
+		enough[fmt.Sprintf("v%d", i)] = "x"
+	}
+
+	added := s.add(created.Id, map[string]any{"contacts": []map[string]any{
+		{"to_number": "+14155550183", "variables": many}, {"to_number": "+14155550184", "variables": enough},
+	}})
+
+	s.Equal([]RefusedContact{{Index: 0, ToNumber: "+14155550183", Reason: RefusedReasonInvalidVariable}}, added.Refused)
+}
+
+func (s *CampaignContactsSuite) TestInstructionsOverTwoThousandCharactersAreRefused() {
+	created := s.draft(nil)
+
+	status := s.serverClient.do(http.MethodPost, s.contactsPath(created.Id), map[string]any{"contacts": []map[string]any{
+		{"to_number": "+14155550185", "instructions": strings.Repeat("a", 2001)},
+	}}, nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Empty(s.list(created.Id, "").Items)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{
+		{"to_number": "+14155550185", "instructions": strings.Repeat("a", 2000)},
+	}})
+}
+
+func (s *CampaignContactsSuite) TestOnlyAContactWaitingToBeRungShowsWhenItIsNext() {
+	// A claim moves a contact to in progress and leaves the time it was due, which is past.
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550186"}, {"to_number": "+14155550187"}}})
+	listed := s.list(created.Id, "").Items
+	due := time.Now().UTC().Add(-time.Hour)
+	_, err := s.store.DB().NewUpdate().Model((*store.Contact)(nil)).
+		Set("next_attempt_at = ?", due).Where("id IN (?)", bun.In([]string{listed[0].Id, listed[1].Id})).Exec(context.Background())
+	s.Require().NoError(err)
+	_, err = s.store.DB().NewUpdate().Model((*store.Contact)(nil)).
+		Set("stage = ?", store.InProgress).Where("id = ?", listed[1].Id).Exec(context.Background())
+	s.Require().NoError(err)
+
+	after := s.list(created.Id, "").Items
+
+	s.Require().NotNil(after[0].NextAttemptAt, "enrolled")
+	s.Nil(after[1].NextAttemptAt, "in progress")
 }
 
 func (s *CampaignContactsSuite) TestAnUnparsableNumberIsRefusedAndTheRestAdded() {
