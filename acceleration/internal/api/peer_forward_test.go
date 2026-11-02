@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -325,6 +326,8 @@ func (s *ScheduledTasksSuite) TestAPeerNamingAnotherTasksRunIsRefusedAndLeavesTh
 }
 
 // A call's grace counts from when the run came due, not from the due time the payload names.
+// The asker hands it over, so the peer has the whole window to ring and the run's lateness
+// alone makes it missed.
 func (s *ScheduledTasksSuite) TestAPeerHandedALaterDueMissesACallTheRunIsTooLateFor() {
 	s.placingCalls()
 	other, peer := s.otherRouter(nil)
@@ -335,12 +338,14 @@ func (s *ScheduledTasksSuite) TestAPeerHandedALaterDueMissesACallTheRunIsTooLate
 	delivery := s.deliveryOf(task, run.ID)
 	delivery.Due = time.Now()
 
-	answer, err := s.handOff(other, s.suiteCredential(), delivery)
+	_, handed, err := s.router.handDeliveryToPeer(context.Background(), delivery)
 
-	s.Require().NoError(err)
-	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
-	s.Contains(string(answer.GetBody()), `"missed":true`)
-	s.Empty(s.runsOf(task)[0].SessionID, "a call was placed past its grace")
+	s.True(handed, "the peer took the occurrence")
+	var missed *scheduling.Missed
+	s.ErrorAs(err, &missed, "the peer counted the grace from the payload's due time")
+	stored := s.runsOf(task)[0]
+	s.Empty(stored.SessionID, "a call was placed past its grace")
+	s.Nil(stored.Error, "a call was placed past its grace and ended")
 }
 
 func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
