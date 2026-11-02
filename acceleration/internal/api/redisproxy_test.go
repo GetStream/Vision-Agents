@@ -14,6 +14,7 @@ import (
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/require"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
@@ -63,7 +64,7 @@ func newRedisProxy(t *testing.T) (*redisProxy, rueidis.Client) {
 	options, err := rueidis.ParseURL("redis://" + listener.Addr().String() + "/" + strconv.Itoa(usagetest.RedisDB))
 	require.NoError(t, err)
 	options.DisableCache = true
-	client, err := rueidis.NewClient(options)
+	client, err := redisready.NewClient(options)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	return p, client

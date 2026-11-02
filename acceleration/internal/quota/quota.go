@@ -37,8 +37,9 @@ var tracer = tracing.Tracer("quota")
 // be confused with the same date a year later.
 const retention = 48 * time.Hour
 
-// writeTimeout bounds a debit, because it is taken on the goroutine draining a response and
-// a slow Redis should cost that goroutine a moment rather than the rest of the answer.
+// writeTimeout bounds how long a debit holds its caller, because it is taken on the goroutine
+// draining a response and a slow Redis should cost that goroutine a moment rather than the
+// rest of the answer. It bounds the wait, not the write: see Debit.
 const writeTimeout = 2 * time.Second
 
 const (
@@ -267,6 +268,13 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 // It reports nothing, because it is called once a response has already been generated and
 // there is no longer a decision left for the answer to inform. A debit that does not land
 // is logged and the caller keeps the tokens.
+//
+// It waits for the write at most writeTimeout, counted from the call, and leaves a write
+// still going then to finish on its own. A write held to that deadline would never be sent
+// once the limits took the whole of it to read, or once this process stalled past it, and
+// the response would go uncounted. The write is bounded by the Redis client's own
+// ConnWriteTimeout instead (rueidis gives up on a connection that answers nothing for that
+// long, 10 s unless set), and ends with the client.
 func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.Caller, tokens int64) {
 	if l == nil || !countable(customerID, caller) {
 		return
@@ -299,11 +307,19 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 		)
 	}
 
-	for _, response := range l.redis.DoMulti(ctx, commands...) {
-		if err := response.Error(); err != nil {
-			l.logger.Error("could not record what a caller spent", "error", err)
-			return
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		for _, response := range l.redis.DoMulti(context.WithoutCancel(ctx), commands...) {
+			if err := response.Error(); err != nil {
+				l.logger.Error("could not record what a caller spent", "error", err)
+				return
+			}
 		}
+	}()
+	select {
+	case <-written:
+	case <-ctx.Done():
 	}
 }
 
