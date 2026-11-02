@@ -60,10 +60,9 @@ export type Guest = Schemas["GuestUser"];
  * `refresh_secret` they were last handed, which the router answers with the same guest, a fresh
  * token and the next secret. The secret works once, so whatever comes back replaces what was
  * remembered; one already spent is answered with a new guest, since a guest id is no proof of
- * anything. Name and custom go along, kept by a returning guest and given to a new one. A
- * remembered guest with no secret, or no `expires_at`, is handed back as it is: its token is
- * not verified here, which would mean shipping the key, and one that has expired fails on the
- * next request with a 401, as a stale session of any kind does.
+ * anything. Name and custom go along, kept by a returning guest and given to a new one. An
+ * expired guest with no secret is minted afresh. One with no `expires_at` is handed back as it
+ * is: its token is not verified here, which would mean shipping the key.
  */
 export async function guestUser(
   client: Client,
@@ -71,10 +70,12 @@ export async function guestUser(
   store: GuestStore | undefined = browserStore(),
 ): Promise<Guest> {
   const held = options.fresh ? undefined : read(store);
-  const comingBack = held?.refresh_secret && expired(held) ? held : undefined;
-  if (held && !comingBack) {
+  if (held && !expired(held)) {
     return held;
   }
+  // An expired guest with no secret, remembered from before there were any, cannot prove who
+  // they are; their token no longer works, so they start again as a new guest.
+  const comingBack = held?.refresh_secret ? held : undefined;
 
   const minted = await client.post("/v1/agents/guests", {
     body: {

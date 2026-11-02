@@ -850,10 +850,22 @@ describe("guest users", () => {
     assert.equal(JSON.parse(store.value ?? "{}").refresh_secret, "secret-9");
   });
 
-  it("hands back a remembered guest with no refresh secret as it is, expired or not", async () => {
+  it("mints a new guest for an expired one with no refresh secret, naming no id", async () => {
     const store = memory();
     store.write(
       JSON.stringify({ id: "guest-7", token: "expired-token", expires_at: "2020-01-01T00:00:00Z" }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-1");
+    assert.deepEqual(router.last.body, {}, "an id it cannot prove is not sent");
+  });
+
+  it("hands back a remembered guest whose token has not expired without asking", async () => {
+    const store = memory();
+    store.write(
+      JSON.stringify({ id: "guest-7", token: "live-token", expires_at: "2999-01-01T00:00:00Z" }),
     );
 
     const guest = await api.guestUser({}, store);
