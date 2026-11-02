@@ -69,7 +69,9 @@ func (t *stageTrace) observe(config routing.ProviderConfig) stamps {
 	if !passed.reused {
 		routing.ObserveLLMStage(config, routing.StageConnect, passed.gotConn.Sub(passed.getConn))
 	}
-	if !passed.wrote.IsZero() && !passed.firstByte.IsZero() {
+	// A provider can answer, a 413 say, before the request is all written; that answer waited on
+	// nothing.
+	if !passed.wrote.IsZero() && passed.firstByte.After(passed.wrote) {
 		routing.ObserveLLMStage(config, routing.StageWait, passed.firstByte.Sub(passed.wrote))
 	}
 	return passed

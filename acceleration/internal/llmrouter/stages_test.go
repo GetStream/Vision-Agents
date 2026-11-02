@@ -261,10 +261,16 @@ func (s *StagesSuite) TestARetryThatGotNoHeadersHasNoWaitFromTheTryBefore() {
 func (s *StagesSuite) TestARequestAnsweredBeforeItWasWrittenHasNoWait() {
 	// A provider may answer, a 413 say, while the request is still being written; the write
 	// then fails, or ends after the answer was read. The hooks run as the transport calls them.
-	for name, written := range map[string]func(*httptrace.ClientTrace){
-		"still writing": func(*httptrace.ClientTrace) {},
+	for name, answered := range map[string]func(*httptrace.ClientTrace){
+		"still writing": func(trace *httptrace.ClientTrace) { trace.GotFirstResponseByte() },
 		"write failed": func(trace *httptrace.ClientTrace) {
 			trace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("broken pipe")})
+			trace.GotFirstResponseByte()
+		},
+		"written after the answer": func(trace *httptrace.ClientTrace) {
+			trace.GotFirstResponseByte()
+			time.Sleep(time.Millisecond)
+			trace.WroteRequest(httptrace.WroteRequestInfo{})
 		},
 	} {
 		config := s.config()
@@ -272,8 +278,7 @@ func (s *StagesSuite) TestARequestAnsweredBeforeItWasWrittenHasNoWait() {
 		trace := httptrace.ContextClientTrace(ctx)
 		trace.GetConn("provider:443")
 		trace.GotConn(httptrace.GotConnInfo{})
-		written(trace)
-		trace.GotFirstResponseByte()
+		answered(trace)
 
 		stages.observe(config)
 
