@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -446,10 +448,10 @@ func (s *ForgetUserSuite) TestADryRunChangesNothing() {
 	s.Empty(entries)
 }
 
-// holdSecondDial puts a TCP forwarder in front of the routers' Redis that holds the second
-// connection accepted past rueidis' 5 s dial timeout. The first is redisready's PING, so the
-// second is the command's one dial.
-func (s *ForgetUserSuite) holdSecondDial() {
+// holdFirstDial puts a TCP forwarder in front of the routers' Redis that holds the first
+// connection which does not open with redisready's PING past rueidis' 5 s dial timeout, the
+// command's dial, and forwards every other.
+func (s *ForgetUserSuite) holdFirstDial() {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	done := make(chan struct{})
@@ -458,15 +460,21 @@ func (s *ForgetUserSuite) holdSecondDial() {
 		listener.Close()
 	})
 	target := s.settings.Redis.Addr
+	var held atomic.Bool
 	go func() {
-		for accepted := 1; ; accepted++ {
+		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			go func(held bool) {
+			go func() {
 				defer conn.Close()
-				if held {
+				opening := bufio.NewReader(conn)
+				first, err := opening.Peek(4)
+				if err != nil {
+					return
+				}
+				if string(first) != "PING" && held.CompareAndSwap(false, true) {
 					select {
 					case <-time.After(6 * time.Second):
 					case <-done:
@@ -478,9 +486,9 @@ func (s *ForgetUserSuite) holdSecondDial() {
 					return
 				}
 				defer upstream.Close()
-				go io.Copy(upstream, conn)
+				go io.Copy(upstream, opening)
 				io.Copy(conn, upstream)
-			}(accepted == 2)
+			}()
 		}
 	}()
 	s.settings.Redis.Addr = listener.Addr().String()
@@ -491,7 +499,7 @@ func (s *ForgetUserSuite) TestARunWhoseRedisDialStallsIsRunAgain() {
 	s.recorded(1, s.app, person, 100)
 	routers, _ := s.userKeys(s.app, person)
 	s.Require().NotEmpty(routers)
-	s.holdSecondDial()
+	s.holdFirstDial()
 
 	out := s.forget(s.app, person, "--dry-run")
 
