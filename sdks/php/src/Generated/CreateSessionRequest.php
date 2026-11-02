@@ -85,7 +85,7 @@ final readonly class CreateSessionRequest
         public ?array $tools = null,
         // Omit it and the config decides, or en-low-latency when there is no config.
         public ?string $tts = null,
-        // Who the agent joins the call as.
+        // The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its...
         public ?string $userId = null,
         public ?string $userName = null,
         public ?SessionVideo $video = null,

@@ -136,7 +136,8 @@ type Deps struct {
 	// session acts in the customer's own app: an app with several keys can then tell which
 	// one to check with. Empty sends none.
 	APIKey string
-	// HTTPClient calls a webhook. Nil builds one with the check timeout.
+	// HTTPClient calls a webhook. Nil is egress.NewClient with the check timeout, which
+	// dials public addresses alone; tests pass one that reaches their local server.
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 }
@@ -241,8 +242,10 @@ func (p Policy) Validate() error {
 		if p.URL == "" {
 			return stack.Wrap(errors.New("guardrail: a webhook guardrail needs a url to ask"))
 		}
-		if !strings.HasPrefix(p.URL, "https://") && !strings.HasPrefix(p.URL, "http://") {
-			return stack.Wrap(fmt.Errorf("guardrail: %q is not a url a webhook can be posted to", p.URL))
+		// The webhook is posted only over https (egress.NewClient), so a plain http url
+		// would fail every check.
+		if !strings.HasPrefix(p.URL, "https://") {
+			return stack.Wrap(fmt.Errorf("guardrail: %q is not an https url a webhook can be posted to", p.URL))
 		}
 	default:
 		return stack.Wrap(fmt.Errorf("guardrail: %q is not a way of checking a turn", p.Kind))

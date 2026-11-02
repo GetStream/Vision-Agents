@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -427,7 +428,7 @@ type deliveries struct {
 	failure error
 }
 
-func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage, _ func()) (bool, error) {
+func (d *deliveries) Deliver(_ context.Context, _ store.ConnectorOAuthClient, messages []core.InboundMessage, _ *eventforward.Event) (bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.failure != nil {

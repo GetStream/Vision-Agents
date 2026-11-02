@@ -130,14 +130,19 @@ func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Sto
 		Source: pgStore.PriceSource(), Fallback: fallback, Interval: time.Hour, Logger: logger,
 	})
 	host, _ := os.Hostname()
+	shard := cmp.Or(settings.Shard, routing.Unsharded)
+	source := routing.Source(shard, host)
 	writer := routing.NewWriter(routing.WriterOptions{
-		Store: pgStore, Logger: logger, Gate: policies, Usage: usageClient,
-		Source: routing.Source(cmp.Or(settings.Shard, routing.Unsharded), host),
+		Store: pgStore, Logger: logger, Gate: policies, Usage: usageClient, Source: source,
 	})
+	// A row the job records with no price raises unpriced as a router's does, in the check the
+	// loop makes as it stops.
+	stopAlerts := startMeteringAlerts(ctx, source, shard, logger)
 	return routing.NewRecorderOn(modality, writer, active, logger), func() {
 		drained, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageDrainTimeout)
 		defer cancel()
 		writer.Close(drained)
+		stopAlerts()
 		stopReading()
 		policies.Close()
 		configs.Close()

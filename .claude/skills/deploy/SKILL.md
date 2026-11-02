@@ -86,6 +86,22 @@ builds this checkout and swaps it in, in 11-20 s warm.
   every call held, nothing answered 5xx, and devrun logged `pid N (sha) drained in ...,
   exit 0` for each old router once its last call ended.
 
+## Staging sandbox proxy
+
+Staging runs the router with `broker: proxy`: code in a sandbox reaches a connector's API through
+the router's egress proxy (`acceleration/internal/sandbox/egress/AGENTS.md`), not through Daytona
+Secrets. The proxy has been live since AI-2035.
+
+- The public URL (it holds the proxy port), the LoadBalancer's reserved address and `broker: proxy` are
+  `router.sandboxProxy` in GetStream/chat `infra/shards/us-east1-acceleration/accelerate-staging.yaml`
+  on branch `thierry/accelerate-gke`, not master.
+  The accelerate chart (`infra/charts/accelerate`, same branch) renders the Service from them.
+- The CA certificate and key are two secrets, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT` and
+  `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`. They reach the pods through `accelerate-secrets`. The values
+  file names the CA's expiry.
+- The CA must be rotated before it expires. The steps are in Linear AI-2069.
+- This repo is public. Read addresses and secret paths in the values file, and do not copy them here.
+
 ## Production
 
 Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own
@@ -125,7 +141,19 @@ and check that the pods start and open an existing connection. To roll back, res
 - Migrations run on start. Additive is fine; anything else wants a plan first.
 - Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
   router ignores `require_approval` on connector bindings, so their write tools run without
-  the person's approval.
+  the person's approval. This floor holds in every environment.
+- Staging has a second, higher floor: never roll back below `accelerate-v0.6.191` (#1433). Since 2026-10-29
+  staging devrun holds the sandbox proxy port :8091 and passes it to the router as fd 4
+  (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat #19810, #19840). A router older than v0.6.191 ignores that socket and retries :8091
+  until it exits: the API serves, the sandbox proxy does not. To go below it, in this order:
+  1. Set `router.overlapDeploy.holdSandboxProxy: false`.
+  2. Run `rocky accelerate up --region us-east1-acceleration --env staging`.
+  3. Wait for the rollout.
+  4. Roll back.
+
+  The steps are in GetStream/chat `infra/docs/accelerate_overlap_deploy.md`, paragraph "Revert" under
+  "The sandbox proxy socket". If the only target is older than v0.6.135, stop and ask.
+  A router older than v0.6.191 already stuck behind devrun's socket needs only steps 1 to 3 (set false, `rocky accelerate up`, wait); the new pods start without it.
 - The version is deliberately not in the pod spec. The fetch initContainer's log says which binary a pod started on; after a fastdeploy, ask `--status` instead.
 - A model with no key in that environment drops to the next candidate, and when a strict term like `diarize` leaves none the STT socket just closes on the caller. Check the key before reading that as a bug.
 - Verify from outside: `examples/routers/stt_realtime_example -hosted` streams a file through the hosted router and prints which model answered.

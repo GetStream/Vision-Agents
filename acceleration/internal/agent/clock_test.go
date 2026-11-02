@@ -34,7 +34,8 @@ func (s *ClockSuite) zone(name string) *time.Location {
 
 func (s *ClockSuite) TestWithoutTheUsersZoneTheLineIsInUTCAndSaysTheZoneIsUnknown() {
 	s.Equal("Today is Wednesday, 28 October 2026 in UTC, between 14:00 and 15:00 UTC. "+
-		"The user's timezone is not known: ask for it when a time of day depends on it.",
+		"The user's timezone is not known: take a time of day they give in their own local time, "+
+		"and ask for their zone only when they bring up another one or a tool needs it.",
 		clockLine(time.Date(2026, 10, 28, 14, 42, 0, 0, time.UTC), nil))
 }
 
@@ -68,7 +69,8 @@ func (s *AgentSuite) TestATurnIsToldTheDateAndHourInUTCWhenTheUsersZoneIsNotKnow
 	told := s.model.requests()[0].Instructions
 	s.True(strings.HasPrefix(told, "be brief\n\n"), told)
 	s.True(strings.HasSuffix(told, "\n\nToday is Wednesday, 28 October 2026 in UTC, between 14:00 and 15:00 UTC. "+
-		"The user's timezone is not known: ask for it when a time of day depends on it."), told)
+		"The user's timezone is not known: take a time of day they give in their own local time, "+
+		"and ask for their zone only when they bring up another one or a tool needs it."), told)
 }
 
 func (s *AgentSuite) TestATurnIsToldTheUsersDayInTheirZone() {

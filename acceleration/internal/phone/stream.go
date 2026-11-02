@@ -204,18 +204,33 @@ func (s *Stream) UpdateTrunk(ctx context.Context, id string, trunk Trunk) error 
 	return nil
 }
 
-// CreateCall creates a call ahead of anyone joining, with custom data on it.
-func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom map[string]string) error {
+// CreateCall creates a call ahead of anyone joining, with custom data on it, and answers the
+// custom the call has: a call that is already there is only loaded and keeps its own.
+func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom map[string]string) (map[string]any, error) {
 	data := make(map[string]any, len(custom))
 	for key, value := range custom {
 		data[key] = value
 	}
 	creator := callCreator
-	_, err := s.client.Video().GetOrCreateCall(ctx, callType, callID, &getstream.GetOrCreateCallRequest{
+	response, err := s.client.Video().GetOrCreateCall(ctx, callType, callID, &getstream.GetOrCreateCallRequest{
 		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: data},
 	})
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("phone: create call: %w", err))
+		return nil, stack.Wrap(fmt.Errorf("phone: create call: %w", err))
+	}
+	return response.Data.Call.Custom, nil
+}
+
+// PutCustom puts custom data on a call that is already there. Stream merges it into the
+// call's own, so a key the call has and this leaves out, such as the number, is kept.
+func (s *Stream) PutCustom(ctx context.Context, callType, callID string, custom map[string]string) error {
+	data := make(map[string]any, len(custom))
+	for key, value := range custom {
+		data[key] = value
+	}
+	_, err := s.client.Video().UpdateCall(ctx, callType, callID, &getstream.UpdateCallRequest{Custom: data})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("phone: put custom on the call: %w", err))
 	}
 	return nil
 }

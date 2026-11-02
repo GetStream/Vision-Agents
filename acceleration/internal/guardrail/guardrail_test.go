@@ -101,6 +101,15 @@ func (s *PolicySuite) TestAUrlOnAPolicyThatCallsNothingIsRefused() {
 	s.ErrorContains(err, "ignored")
 }
 
+func (s *PolicySuite) TestAWebhookUrlMustBeHTTPS() {
+	// The webhook is posted only over https, so any other url would fail every check.
+	for _, url := range []string{"http://example.test/check", "ftp://example.test/check", "example.test/check", "HTTP://example.test/check"} {
+		_, err := Parse("---\ntype: webhook\nurl: " + url + "\n---\n")
+
+		s.ErrorContains(err, "not an https url", url)
+	}
+}
+
 func (s *PolicySuite) TestAWebhookNeedsNoPolicyProseBecauseTheServerHoldsThePolicy() {
 	policy, err := Parse("---\ntype: webhook\nurl: https://example.test/check\n---\n")
 	s.Require().NoError(err)

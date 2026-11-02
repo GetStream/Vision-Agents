@@ -255,6 +255,7 @@ func TestProviderAppMessageHookDeploymentSuite(t *testing.T) {
 }
 
 func (s *ProviderAppMessageHookDeploymentSuite) SetupSuite() {
+	s.database = "message_hook_deployment"
 	s.deployment = true
 	s.start(true, providerAppPublicURL)
 }

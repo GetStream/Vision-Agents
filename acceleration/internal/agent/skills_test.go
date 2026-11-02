@@ -316,7 +316,7 @@ func (s *AgentSuite) TestTheSameCodeRunsAgainOnceTheUserConnectedWhatItNeeded() 
 
 // TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded: its result tells the
 // model to run it again once the user connected github; until then the same code gets the
-// same 401, and a text conversation has no cap on tool rounds to stop the model asking.
+// same 401, which the model keeps asking for until the tool rounds run out.
 func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhatItNeeded() {
 	s.box = &codeBox{result: sandbox.Result{Output: "status: 401\n", Unconnected: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}}}
 	s.joinText()
@@ -324,6 +324,21 @@ func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhileTheUserHasNotConnectedWhat
 	s.repeatsRunCode(1)
 
 	s.Contains(s.answeredFrom(), "the user has not connected it")
+}
+
+// TestTheSameCodeIsNotRunAgainWhenItsConnectionNeedsAReconnect: github counts as connected,
+// but on a connection that cannot bind its grant, so the same code would get the same 401.
+func (s *AgentSuite) TestTheSameCodeIsNotRunAgainWhenItsConnectionNeedsAReconnect() {
+	s.box = &codeBox{
+		result:    sandbox.Result{Output: "status: 401\n", Reconnect: []sandbox.Grant{{Binding: "github", Hosts: []string{"api.github.com"}}}},
+		then:      []sandbox.Result{{Output: "status: 200\n"}},
+		connected: []string{"github"},
+	}
+	s.joinText()
+
+	s.repeatsRunCode(1)
+
+	s.Contains(s.answeredFrom(), "ask the user to reconnect github")
 }
 
 // TestTheSameCodeIsNotRunAgainWhenTheUserConnectedAnotherBinding: every run names each late

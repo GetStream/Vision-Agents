@@ -7,7 +7,10 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/getsentry/sentry-go"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -129,6 +132,42 @@ func (s *UsageCommandsSuite) TestABaseInACustomersOwnAccountIsSampledOnTheirKeyA
 	s.True(strings.HasSuffix(rows[0].SKU, "-us-byok"), rows[0].SKU)
 	s.Zero(rows[0].BaseCostMicros, "turbopuffer bills the customer")
 	s.Equal(pricing.Quantities{pricing.Requests: 1, pricing.ByteHours: 1_000_000}, rows[0].Quantities())
+}
+
+func (s *UsageCommandsSuite) TestAStorageRowWithNoPriceAlertsAsTheJobStops() {
+	var mu sync.Mutex
+	var fingerprints []string
+	client, err := sentry.NewClient(sentry.ClientOptions{BeforeSend: func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		mu.Lock()
+		defer mu.Unlock()
+		fingerprints = append(fingerprints, event.Fingerprint...)
+		return nil
+	}})
+	s.Require().NoError(err)
+	hub := sentry.CurrentHub()
+	previous := hub.Client()
+	hub.BindClient(client)
+	s.T().Cleanup(func() { hub.BindClient(previous) })
+	s.deploymentApps("app-1")
+	server := turbopuffertest.Start(s.T())
+	server.Holds(knowledge.Scoped("app-1", "docs"), 1_000_000)
+	_, err = s.store.ClaimKnowledgePlace(s.ctx, "app-1", "docs", store.KnowledgePlace{Region: pricing.RegionEU})
+	s.Require().NoError(err)
+	logger := slog.New(slog.DiscardHandler)
+	backend, err := turbopuffer.New(turbopuffer.Options{APIKey: "test-key", BaseURL: server.URL, Logger: logger})
+	s.Require().NoError(err)
+	recorder, stop, err := jobRecorder(s.ctx, s.settings, s.store, routing.Knowledge, logger)
+	s.Require().NoError(err)
+
+	err = recordStorage(s.ctx, metered.NewRegionalKnowledge(map[string]knowledge.Backend{pricing.RegionEU: backend}, recorder, nil, s.store),
+		s.store, storageHour, logger, &bytes.Buffer{})
+	stop()
+
+	s.Require().NoError(err, "the row is written, at nothing")
+	s.Require().Len(s.requests(), 1)
+	mu.Lock()
+	defer mu.Unlock()
+	s.Contains(fingerprints, "usage_unpriced:knowledge/turbopuffer/storage/eu/false", "vendor.json prices no eu storage")
 }
 
 func (s *UsageCommandsSuite) TestAKnowledgeBaseThatCannotBeReadIsAMissedHour() {

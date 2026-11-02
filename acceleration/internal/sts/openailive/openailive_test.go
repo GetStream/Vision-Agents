@@ -443,6 +443,118 @@ func (s *OpenAILiveSuite) TestAFinishedBackendFunctionCallIsAToolCall() {
 	s.Equal("{}", events[1].(sts.ToolCall).Arguments, "a call with no arguments still carries an object")
 }
 
+// delegated is a session.delegation.created frame for the delegation d1.
+const delegated = `{"type":"session.delegation.created","offset_ms":900,"delegation":{"id":"d1","type":"responses","target":"responses"}}`
+
+// backendCall is the backend asking for a tool as part of a delegation.
+func backendCall(delegation, callID string) string {
+	return `{"type":"response.event","delegation_id":"` + delegation + `","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"` + callID + `","name":"get_weather","arguments":"{}"}}}`
+}
+
+func startedReplies(events []sts.Event) []string {
+	var found []string
+	for _, event := range events {
+		if typed, ok := event.(sts.ResponseStarted); ok {
+			found = append(found, typed.ResponseID)
+		}
+	}
+	return found
+}
+
+func toolCalls(events []sts.Event) []sts.ToolCall {
+	var found []sts.ToolCall
+	for _, event := range events {
+		if typed, ok := event.(sts.ToolCall); ok {
+			found = append(found, typed)
+		}
+	}
+	return found
+}
+
+func (s *OpenAILiveSuite) TestWorkHandedOverMidReplyIsCalledForInThatReplyAfterItEnds() {
+	// The backend answers on its own time: its call comes after the reply settled and the
+	// caller spoke again, and is still the reply's that handed the work over.
+	provider := s.newProvider()
+	provider.handleMessage(s.frame(spoke(240)))
+	provider.handleMessage(s.frame(delegated))
+	first := s.settled(provider)
+	s.Require().Len(startedReplies(first), 1, "the work was handed over in the reply in flight")
+	provider.handleMessage(s.frame(heard("and for eight?")))
+	provider.handleMessage(s.frame(spoke(240)))
+	provider.handleMessage(s.frame(backendCall("d1", "call_1")))
+
+	events := s.drain(provider)
+	s.Require().Len(startedReplies(events), 1)
+	calls := toolCalls(events)
+	s.Require().Len(calls, 1)
+	s.Equal(startedReplies(first)[0], calls[0].ResponseID, "not the reply answering the caller")
+}
+
+func (s *OpenAILiveSuite) TestWorkHandedOverBeforeTheModelSpeaksOpensItsReply() {
+	provider := s.newProvider()
+	provider.handleMessage(s.frame(heard("book a table")))
+	provider.handleMessage(s.frame(delegated))
+	first := s.settled(provider)
+	s.Require().Len(startedReplies(first), 1, "handing work over begins a reply, as a function call does on Gemini")
+	var kinds []string
+	for _, event := range first {
+		kinds = append(kinds, fmt.Sprintf("%T", event))
+	}
+	s.Equal([]string{"sts.SpeechStarted", "sts.InputTranscript", "sts.InputTranscript", "sts.SpeechStopped", "sts.ResponseStarted", "sts.ResponseComplete"}, kinds,
+		"the caller's turn is over once the model takes its own")
+	s.Len(completes(first), 1, "a reply nothing was said in still settles")
+	provider.handleMessage(s.frame(spoke(240)))
+	provider.handleMessage(s.frame(backendCall("d1", "call_1")))
+
+	calls := toolCalls(s.drain(provider))
+	s.Require().Len(calls, 1)
+	s.Equal(startedReplies(first)[0], calls[0].ResponseID)
+}
+
+func (s *OpenAILiveSuite) TestACallOfWorkHandedOverUnseenTakesTheReplyInFlight() {
+	provider := s.newProvider()
+	provider.handleMessage(s.frame(delegated))
+	s.settled(provider)
+	provider.handleMessage(s.frame(spoke(240)))
+	provider.handleMessage(s.frame(backendCall("d2", "call_1")))
+
+	events := s.drain(provider)
+	calls := toolCalls(events)
+	s.Require().Len(calls, 1)
+	s.Equal(startedReplies(events), []string{calls[0].ResponseID}, "d2 was never seen being made")
+}
+
+func (s *OpenAILiveSuite) TestWorkHandedOverInTheRestOfACutOffReplyOpensNoReply() {
+	provider := s.newProvider()
+	provider.handleMessage(s.frame(spoke(240)))
+	s.Require().NoError(provider.Interrupt(0))
+	s.drain(provider)
+	provider.handleMessage(s.frame(delegated))
+	provider.handleMessage(s.frame(backendCall("d1", "call_1")))
+
+	events := s.drain(provider)
+	s.Empty(startedReplies(events), "what is left of a cut-off reply is dropped")
+	calls := toolCalls(events)
+	s.Require().Len(calls, 1)
+	s.Empty(calls[0].ResponseID, "no reply is in flight")
+}
+
+func (s *OpenAILiveSuite) TestADelegationWithNoIDOpensNoReply() {
+	for _, delegation := range []string{
+		``,
+		`,"delegation":null`,
+		`,"delegation":{}`,
+		`,"delegation":{"id":""}`,
+		`,"delegation":{"id":7}`,
+		`,"delegation":"d1"`,
+		`,"delegation":{"id":"d1","id":7}`,
+	} {
+		provider := s.newProvider()
+		provider.handleMessage(s.frame(`{"type":"session.delegation.created"` + delegation + `}`))
+		s.Empty(s.drain(provider), delegation)
+	}
+}
+
 func (s *OpenAILiveSuite) TestFailuresAreReportedWithoutEndingTheSession() {
 	provider := s.newProvider()
 

@@ -2410,6 +2410,19 @@ impl Client {
         )
         .await
     }
+    /// Receive a message Stream Chat delivers
+    ///
+    /// `POST /v1/chat/internal/messages` (`receiveChatDelivery`).
+    pub async fn receive_chat_delivery(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/chat/internal/messages",
+            None::<&()>,
+            None::<&()>,
+            "receiveChatDelivery",
+        )
+        .await
+    }
     /// Ask a classifier typed questions about a piece of text
     ///
     /// `POST /v1/classify` (`classify`).
@@ -2948,6 +2961,19 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "liftTelephonySuspension",
+        )
+        .await
+    }
+    /// Aggregate request rows into a rollup table
+    ///
+    /// `POST /v1/ops/stats/rollup` (`runRollup`).
+    pub async fn run_rollup(&self, body: &types::RollupRequest) -> Result<types::RollupResult> {
+        self.send(
+            Method::POST,
+            "/v1/ops/stats/rollup",
+            None::<&()>,
+            Some(body),
+            "runRollup",
         )
         .await
     }
@@ -3921,19 +3947,6 @@ impl Client {
             Some(query),
             None::<&()>,
             "getAgentStats",
-        )
-        .await
-    }
-    /// Aggregate request rows into a rollup table
-    ///
-    /// `POST /v1/stats/rollup` (`runRollup`).
-    pub async fn run_rollup(&self, body: &types::RollupRequest) -> Result<types::RollupResult> {
-        self.send(
-            Method::POST,
-            "/v1/stats/rollup",
-            None::<&()>,
-            Some(body),
-            "runRollup",
         )
         .await
     }

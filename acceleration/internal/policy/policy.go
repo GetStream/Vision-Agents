@@ -230,11 +230,9 @@ type decision struct {
 	// where it sets none.
 	balanceWarning *int64
 	// appQuota and organizationQuota are the daily limits per end user the app's and the
-	// organization's policies set, nil where they set none. users is an app some of whose
-	// users have a policy of their own, so a user of an app with none costs no lookup.
+	// organization's policies set, nil where they set none.
 	appQuota          *store.Quota
 	organizationQuota *store.Quota
-	users             bool
 	// unread is a decision made without the policies, which could not be read.
 	unread error
 	// read is when the policies were read, used when Admit last answered with it, and
@@ -317,8 +315,10 @@ func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Ad
 // set of the user's own policy, the app's, the organization's and defaults. A limit of zero
 // is no cap. A policy that could not be read leaves the level below it in place.
 //
-// It answers from the app's decision in memory. Only a user of an app some of whose users
-// have a policy of their own is looked up, through appconfig.
+// The app's and the organization's numbers come from the app's decision in memory. Whether
+// any of the app's users has a policy of their own is read through appconfig, not the
+// decision, which another router's write does not drop: the next request after one is saved
+// is held to it. Only a user of such an app is looked up.
 func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
 	held := quota.Default(defaults)
 	if e == nil || customerID == "" {
@@ -327,11 +327,16 @@ func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, default
 	decided := e.decide(ctx, customerID)
 	held = layered(held, decided.organizationQuota, quota.Setter{Level: quota.LevelOrganization, ID: decided.organization})
 	held = layered(held, decided.appQuota, quota.Setter{Level: quota.LevelApp, ID: customerID})
-	if !decided.users || userID == "" {
+	if userID == "" {
 		return held
 	}
 	reading, cancel := context.WithTimeout(ctx, joinTimeout)
 	defer cancel()
+	// An app whose users cannot be told apart is taken to have some with a policy, so each is
+	// looked up, and one that fails holds them to the app's quota.
+	if some, err := e.config.HasUserPolicies(reading, customerID); err == nil && !some {
+		return held
+	}
 	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
 	if err != nil {
 		if e.userQuotaLogs.due(customerID, time.Minute) {
@@ -736,14 +741,6 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		toolOutput:     organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
 	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
-	// An app whose users cannot be told apart is taken to have some with a policy, so each is
-	// looked up, and one that fails holds them to the app's quota. The decision itself stands:
-	// it is what RequiresOwnStreamApp fails closed on.
-	users, err := e.config.HasUserPolicies(ctx, appID)
-	if err != nil {
-		users = true
-	}
-	decided.users = users
 	return decided, nil
 }
 

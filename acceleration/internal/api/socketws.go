@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -18,7 +19,8 @@ import (
 // socketStart is the first frame on a session socket.
 type socketStart struct {
 	Type string `json:"type"`
-	// SampleRate is the rate of the PCM16 mono audio carried both ways. Zero means 16 kHz.
+	// SampleRate is the rate of the PCM16 mono audio carried both ways, from
+	// socketedge.MinSampleRate to socketedge.MaxSampleRate. Zero means 16 kHz.
 	SampleRate int `json:"sample_rate"`
 	// Session is what POST /v1/agents/sessions takes. call_id may be left out: there is no
 	// call to join, so one is made up for the records.
@@ -28,6 +30,10 @@ type socketStart struct {
 // errSocketCall refuses a call named in a socket session's start frame: the socket carries
 // the audio, so the session joins no Stream call.
 var errSocketCall = invalidRequest("a socket session carries its own audio and joins no Stream call, so it takes no call")
+
+// errSocketSampleRate refuses a start frame's sample_rate that the socket does not carry.
+var errSocketSampleRate = invalidRequest(fmt.Sprintf(
+	"sample_rate must be from %d to %d, or left out for 16000", socketedge.MinSampleRate, socketedge.MaxSampleRate))
 
 // errSocketVoiceEnded refuses voice on a socket session whose voice was stopped: the socket
 // was its call, and stopping voice hung that call up.
@@ -115,17 +121,22 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
-	if failure != nil {
-		refuse(failure.Error())
-		return
-	}
-	edge := socketedge.New(socketedge.Options{
+	edge, err := socketedge.New(socketedge.Options{
 		SampleRate: start.SampleRate,
 		Caller:     stt.Participant{ID: "caller", Name: "Caller"},
 		Send:       func(pcm []byte) error { return write(websocket.BinaryMessage, pcm) },
 		Cleared:    func() { _ = writeFrame(frame{"type": "cleared"}) },
 	})
+	if err != nil {
+		refuseWith(errSocketSampleRate)
+		return
+	}
+
+	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
+	if failure != nil {
+		refuse(failure.Error())
+		return
+	}
 	spec := specOf(start.Session, customerID, config)
 	// A socket session carries audio, so voice is started on it whatever the frame says.
 	spec.Text = false
@@ -151,11 +162,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	rate := start.SampleRate
-	if rate <= 0 {
-		rate = stt.SampleRate
-	}
-	if err := writeFrame(frame{"type": "session", "session": sessionOf(ctx, created), "sample_rate": rate}); err != nil {
+	if err := writeFrame(frame{"type": "session", "session": sessionOf(ctx, created), "sample_rate": edge.SampleRate()}); err != nil {
 		return
 	}
 

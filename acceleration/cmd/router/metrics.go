@@ -23,7 +23,7 @@ func serveMetrics(addr string, logger *slog.Logger) (stop, handOver func()) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{EnableOpenMetrics: true}))
-	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
 	logger.Info("serving metrics", "address", addr, "setting", "metrics_addr")
 	go func() {
 		// A router taking over finds the address held until the one before it starts

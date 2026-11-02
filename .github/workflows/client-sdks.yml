@@ -43,7 +43,7 @@ jobs:
       dart: ${{ steps.filter.outputs.dart }}
       swift: ${{ steps.filter.outputs.swift }}
     steps:
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         if: github.event_name == 'pull_request'
         with:
@@ -80,7 +80,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
       # The runner carries an Android SDK, but not necessarily compileSdk 37.
       - name: Android platform 37
@@ -100,7 +100,9 @@ jobs:
         working-directory: examples/voice_agents/android_assistant
         run: ./gradlew :app:assembleDebug
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.6"
 
       - name: Generated models match the spec
         run: |
@@ -115,7 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
           sdk: stable
 
@@ -145,11 +147,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: '27.0'
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.13.6"
 
       # The client is generated with Stream's generator, which lives in the chat repository
       # and is not checked out here, so this checks only that every operation it calls is
