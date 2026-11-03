@@ -1,5 +1,4 @@
 import Foundation
-import StreamChatOpenUI
 
 // Writes the system prompt for OpenUI's chat library and the app's own components. `generate.sh`
 // runs it:

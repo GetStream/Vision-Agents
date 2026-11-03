@@ -5,8 +5,8 @@
 #     prompts/generate.sh [stream-chat-swift checkout]
 #
 # The checkout defaults to one beside this repository. Only the formats' own code is built, for
-# this Mac: the StreamChatAI renderers around it need UIKit. The A2UI generator is built into the
-# same module as A2UI's code, as the prompt builder it uses isn't public.
+# this Mac: the StreamChatAI renderers around it need UIKit. Each generator is built into the same
+# module as its format's code, as the prompt builders they use aren't public.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -21,12 +21,13 @@ done
 
 package="${TMPDIR:-/tmp}/swift-assistant-prompts"
 mkdir -p "$package/Sources"
-rm -rf "$package/Sources/StreamChatA2UI" "$package/Sources/a2ui-prompt"
-mkdir -p "$package/Sources/a2ui-prompt"
+rm -rf "$package/Sources/StreamChatA2UI" "$package/Sources/a2ui-prompt" "$package/Sources/StreamChatOpenUI" "$package/Sources/openui-prompt"
+for format in a2ui openui; do
+  mkdir -p "$package/Sources/$format-prompt"
+  ln -sfn "$here/$format-prompt/main.swift" "$package/Sources/$format-prompt/main.swift"
+done
 ln -sfn "$sdk/Sources/StreamChatA2UI" "$package/Sources/a2ui-prompt/StreamChatA2UI"
-ln -sfn "$here/a2ui-prompt/main.swift" "$package/Sources/a2ui-prompt/main.swift"
-ln -sfn "$sdk/Sources/StreamChatOpenUI" "$package/Sources/StreamChatOpenUI"
-ln -sfn "$here/openui-prompt" "$package/Sources/openui-prompt"
+ln -sfn "$sdk/Sources/StreamChatOpenUI" "$package/Sources/openui-prompt/StreamChatOpenUI"
 cat > "$package/Package.swift" <<'SWIFT'
 // swift-tools-version:6.0
 import PackageDescription
@@ -36,9 +37,12 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     targets: [
-        .target(name: "StreamChatOpenUI", exclude: ["GenerativeUI", "Info.plist"], resources: [.process("Resources")]),
         .executableTarget(name: "a2ui-prompt", exclude: ["StreamChatA2UI/AIUI", "StreamChatA2UI/Info.plist"]),
-        .executableTarget(name: "openui-prompt", dependencies: ["StreamChatOpenUI"])
+        .executableTarget(
+            name: "openui-prompt",
+            exclude: ["StreamChatOpenUI/GenerativeUI", "StreamChatOpenUI/Info.plist"],
+            resources: [.process("StreamChatOpenUI/Resources")]
+        )
     ]
 )
 SWIFT
