@@ -92,8 +92,11 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
 - **A run taken over keeps its id, so its command id.** A stale run is reclaimed under the same
   row. `maxScheduledTaskRunAttempts` (3) counts claims: the first, the take-up after a
   quiet-hours hold, and one after a lost worker. A third claim fails the run with
-  `delivery_failed`. `TestStoreSuite/TestAStaleRunIsReclaimedUnderTheSameRun`,
-  `TestStoreSuite/TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCap`.
+  `delivery_failed` when no call was placed for it; when one was, the run records what the call
+  left. `TestStoreSuite/TestAStaleRunIsReclaimedUnderTheSameRun`,
+  `TestStoreSuite/TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCap`,
+  `TestStoreSuite/TestTheAttemptCapRecordsWhatThePlacedCallLeft`,
+  `TestSchedulerSuite/TestACappedOccurrence*` (two tests).
 - **An occurrence holds a slot 20 min at most** (`occurrenceBudget`), and running out is
   `timed_out`. `TestSchedulerSuite/TestAnOccurrenceThatOutlastsItsBudgetFails`,
   `TestSchedulerSuite/TestAnOccurrenceThatOutlastsItsBudgetIsTimedOutEvenWhenDeliveryAnswersWithACodedFailure`.

@@ -21,6 +21,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
+// CustomPrefix starts the id of every custom definition and of no built-in (store.CustomPrefix
+// is this constant, where the rule is enforced). The oauth2_code scheme reads it to tell a
+// custom definition from a built-in.
+const CustomPrefix = "custom_"
+
 // Manifest is one connector's definition as data: what a scheme, a tool source and the resolver
 // read instead of switching on a connector id. ParseManifest is how one is read, and
 // Resolve turns it into the ResolvedManifest of one connection.
@@ -230,9 +235,9 @@ func (p ScopePolicy) Meets(scopes []string, scope string) bool {
 // RefreshPolicy is what the OAuth scheme reads to decide when and how to refresh.
 type RefreshPolicy struct {
 	// Rotating means each refresh returns a new refresh token and retires the old one. Nil
-	// is a manifest that does not say, which a reader that depends on it treats as unknown
-	// (router plugins migrate does). A pointer, so an explicit false is kept: a nil and a
-	// true marshal as a bool did, so a stored manifest reads back unchanged.
+	// is a manifest that does not say, which a reader that depends on it treats as unknown.
+	// A pointer, so an explicit false is kept: a nil and a true marshal as a bool did, so a
+	// stored manifest reads back unchanged.
 	Rotating *bool `yaml:"rotating,omitempty" json:"rotating,omitempty"`
 	// Margin is how long before expiry a token is refreshed.
 	Margin Duration `yaml:"margin,omitempty" json:"margin,omitzero"`

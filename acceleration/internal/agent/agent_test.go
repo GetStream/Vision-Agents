@@ -2685,6 +2685,80 @@ func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
 	s.ErrorIs(err, ErrCannotSeeImages)
 }
 
+// A written aside shows its photos to a model that accepts images, with its words.
+func (s *AgentSuite) TestAWrittenAsideShowsItsPhotosToAModelThatAcceptsImages() {
+	s.sees = true
+	s.joinText()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	s.True(s.agent.SeesImagesInWriting())
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", photo)
+	s.Require().NoError(err)
+
+	asked := lastFromCaller(harness.WithoutNotes(s.model.requests()[0].Input))
+	s.Equal([]llm.ContentPart{{Text: "is this fan broken?"}, {Image: &photo}}, asked.Parts)
+}
+
+// A photo written alone is asked about as imagesAlone: the model is not handed an empty
+// question.
+func (s *AgentSuite) TestAPhotoWrittenAloneIsAskedAboutAsImagesAlone() {
+	s.sees = true
+	s.joinText()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	for asked, text := range []string{"", " "} {
+		_, err := s.agent.Ask(s.ctx, text, photo)
+		s.Require().NoError(err, "text %q", text)
+
+		turn := lastFromCaller(harness.WithoutNotes(s.model.requests()[asked].Input))
+		s.Equal([]llm.ContentPart{{Text: imagesAlone}, {Image: &photo}}, turn.Parts, "text %q", text)
+	}
+}
+
+// A written aside's photo is seen with that question alone: the next one, and the history
+// it is kept in, carry its words only.
+func (s *AgentSuite) TestAWrittenAsidesPhotoIsNotShownAgain() {
+	s.sees = true
+	s.joinText()
+
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}})
+	s.Require().NoError(err)
+	_, err = s.agent.Ask(s.ctx, "and now?")
+	s.Require().NoError(err)
+
+	input := harness.WithoutNotes(s.model.requests()[1].Input)
+	s.False(llm.HasImage(input), "a photo is seen with the question it came with alone")
+	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?"})
+	s.False(llm.HasImage(s.agent.History()))
+}
+
+// An aside runs no vision skill, so an agent whose skill alone sees does not see in writing,
+// and its photos are refused before the model is asked.
+func (s *AgentSuite) TestAWrittenAsideOfAnAgentWithOnlyAVisionSkillDoesNotSeePhotos() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages(), "a turn's photos reach the skill")
+	s.False(s.agent.SeesImagesInWriting())
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}})
+	s.ErrorIs(err, ErrCannotSeeImages)
+	s.Empty(s.model.requests())
+	s.Empty(harness.WithoutNotes(s.agent.History()), "a refused question is not kept")
+}
+
+// An image that is neither bytes nor an HTTP(S) URL is refused before the model is asked.
+func (s *AgentSuite) TestAWrittenAsideRefusesAnImageItCannotSend() {
+	s.sees = true
+	s.joinText()
+
+	_, err := s.agent.Ask(s.ctx, "what is this?", llm.ImagePart{URL: "file:///etc/passwd"})
+	s.Require().Error(err)
+	s.Empty(s.model.requests())
+}
+
 // lastFromCaller is the caller's latest message in a request's input.
 func lastFromCaller(input []llm.Message) llm.Message {
 	for i := len(input) - 1; i >= 0; i-- {

@@ -15,7 +15,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -383,6 +382,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			return unavailableOpenFailed, nil
 		}
 		d.toolsets = append(d.toolsets, toolset)
+		offered := false
 		for _, tool := range toolset.Tools() {
 			name, found := strings.CutPrefix(tool.Name, binding.Name+mcp.Separator)
 			if _, taken := d.routes[tool.Name]; taken || !found {
@@ -392,6 +392,13 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection), maxInFlight: manifest.RateLimit.MaxConcurrentCalls}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+			offered = true
+		}
+		// A built-in's tools are described well enough to use without, as a catalog plugin's
+		// are, and a server whose tools the model is not offered has nothing to advise on.
+		if offered && strings.HasPrefix(binding.ConnectorID, store.CustomPrefix) {
+			d.instructions = append(d.instructions, serverSaid{name: binding.Name,
+				tools: binding.Name + mcp.Separator + "*", text: toolset.Instructions()})
 		}
 	}
 	var changed []string
@@ -500,7 +507,7 @@ func toolLeftOutWhy(alias, tool string, pinned bool) string {
 const patternToolCap = 128
 
 // patternGrants lists the connection's tools, keeps those binding.ToolPatterns names
-// (plugins.Offered), and pins each unpinned match at the
+// (core.Offered), and pins each unpinned match at the
 // digest listed now. A match already pinned at another digest is left out: the schema moved,
 // and a reconnect pins again. More than patternToolCap matches keeps the first that many by
 // name and warns once. It says why the binding cannot be used when the provider cannot list
@@ -531,7 +538,7 @@ func (m *Manager) patternGrants(ctx context.Context, binding store.ConnectorBind
 	}
 	var matched []string
 	for name := range listed {
-		if plugins.Offered(patterns, name) {
+		if core.Offered(patterns, name) {
 			matched = append(matched, name)
 		}
 	}

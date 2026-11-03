@@ -190,7 +190,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
-	text, images := s.threadPhotos(turn, found, thread, event)
+	text, images := s.messagePhotos(turn, found.SeesImages(), event)
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, text, images)
@@ -208,17 +208,17 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	}
 }
 
-// threadPhotos is what a thread's message tells the model: its text, and the photos sent
-// with it, read into bytes (fetchImages). A photo the model is not handed, as the agent has
-// nothing that looks at one (RespondTo would refuse the turn with ErrCannotSeeImages) or it
-// could not be fetched, is dropped and the turn is told of it, so the reply says so rather
-// than the person hearing nothing.
-func (s *Server) threadPhotos(ctx context.Context, found *session.Session, thread store.ChannelThread, event messageEvent) (string, []llm.ImagePart) {
+// messagePhotos is what a message tells the model: its text, and the photos sent with it,
+// read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
+// nothing that looks at one (the turn would be refused with ErrCannotSeeImages) or it could
+// not be fetched, is dropped and the turn is told of it, so the reply says so rather than the
+// person hearing nothing.
+func (s *Server) messagePhotos(ctx context.Context, sees bool, event messageEvent) (string, []llm.ImagePart) {
 	text, sent := event.Message.Text, event.photos()
 	if len(sent) == 0 {
 		return text, nil
 	}
-	if !found.SeesImages() {
+	if !sees {
 		return withPhotoNote(text, nil, unseenPhoto, unseenPhotoWithText), nil
 	}
 	if fetchImages(ctx, s.imageHTTP, sent) == nil {
@@ -235,7 +235,7 @@ func (s *Server) threadPhotos(ctx context.Context, found *session.Session, threa
 		if parsed, err := url.Parse(photo.URL); err == nil {
 			host = parsed.Host
 		}
-		s.logger.Warn("could not fetch a photo of a message in a thread channel", "channel", thread.ChannelID, "photo", index, "host", host)
+		s.logger.Warn("could not fetch a photo of a message", "channel", event.ChannelID, "photo", index, "host", host)
 	}
 	return withPhotoNote(text, images, unfetchedPhoto, unfetchedPhotoWithMore), images
 }

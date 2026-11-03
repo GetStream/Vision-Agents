@@ -55,7 +55,7 @@ inbound worker (every router)                 off the request
     per delivery
   a Stream Chat 4xx other than 429 (refusedForGood): failed at once, as above
   store.PruneChannelInbound once an hour: done rows after a day, failed after 30
-Stream Chat -> message.new -> api.receiveMessageEvent
+Stream Chat -> message.new -> api.receiveMessageEvent (the hook route, served one more release as a way back: the router points no message hook; Chat delivery reaches the same routing through chat_inbound)
   bridged true: nothing, the worker hands it over
   any other message without source (somebody writing in the app) -> api.answerThread
   claim (thread channel, turn, Stream message id)
