@@ -217,14 +217,17 @@ func (s *ResponsesAskedSuite) TestARetryOfAVideoQuestionDoesNotSampleItsVideosAg
 		}
 		return count
 	}
-	s.Require().Equal(http.StatusAccepted, s.client.do(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
-		Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip)}}}, nil))
+	frames := 2
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
+		Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), MaxFrames: &frames}}})
+	s.Require().Equal(http.StatusAccepted, status, string(body))
 	s.Require().Eventually(func() bool { return asked() == 1 }, settleFor, 10*time.Millisecond, "the model was never asked")
 
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
+		Videos: &[]VideoSource{{Url: "data:video/mp4;base64,bm90IGEgY2xpcA=="}}})
+	s.Require().Equal(http.StatusAccepted, status, "a video that is not a clip would be refused if it were sampled: %s", body)
 	var retried AgentResponse
-	status := s.client.do(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
-		Videos: &[]VideoSource{{Url: "data:video/mp4;base64,bm90IGEgY2xpcA=="}}}, &retried)
-	s.Equal(http.StatusAccepted, status, "a video that is not a clip would be refused if it were sampled")
+	s.Require().NoError(json.Unmarshal(body, &retried))
 	s.Empty(retried.Id, "a retry starts no second turn")
 	s.Never(func() bool { return asked() > 1 }, 200*time.Millisecond, 10*time.Millisecond, "the model is asked once")
 }
@@ -244,7 +247,7 @@ func (s *ResponsesAskedSuite) TestAPersonalConversationsVideoQuestionIsRefusedBe
 	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: "What is this?",
 		Videos: &[]VideoSource{broken, broken, broken}})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(string(body), "at most 2 videos")
+	s.Contains(string(body), "expected array length <= 2 (body.videos)")
 	tooMany := 33
 	status, _ = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: "What is this?",
 		Videos: &[]VideoSource{{Url: broken.Url, MaxFrames: &tooMany}}})
