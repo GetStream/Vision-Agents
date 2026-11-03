@@ -1951,7 +1951,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
 	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
-	extra = append(extra, fileAttachments(m.Files)...)
+	extra = append(extra, fileAttachments(m.Files, m.Role == "user")...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
@@ -1967,7 +1967,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			custom["ai_generated"] = true
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
+			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})

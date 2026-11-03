@@ -142,15 +142,19 @@ func MergeFiles(existing, additions []sandbox.Attachment) []sandbox.Attachment {
 
 // fileAttachments are files as Chat shows them: an image inline, anything else as a
 // download.
-func fileAttachments(files []sandbox.Attachment) []map[string]any {
+func fileAttachments(files []sandbox.Attachment, person bool) []map[string]any {
 	attachments := make([]map[string]any, 0, len(files))
 	for _, file := range files {
 		attachment := map[string]any{"title": file.Name, "mime_type": file.MIME, "file_size": file.Size}
-		if strings.HasPrefix(file.MIME, "image/") {
+		switch {
+		case strings.HasPrefix(file.MIME, "image/"):
 			attachment["type"] = "image"
 			attachment["image_url"] = file.URL
 			attachment["fallback"] = file.Name
-		} else {
+		case voiceRecording(file, person):
+			attachment["type"] = voiceRecordingType
+			attachment["asset_url"] = file.URL
+		default:
 			attachment["type"] = "file"
 			attachment["asset_url"] = file.URL
 		}
@@ -161,18 +165,31 @@ func fileAttachments(files []sandbox.Attachment) []map[string]any {
 
 // chatFileAttachments are files as a new message carries them, the way fileAttachments are
 // for a partial update: Chat reads a new message's custom attachment fields from "custom".
-func chatFileAttachments(files []sandbox.Attachment) []getstream.Attachment {
+func chatFileAttachments(files []sandbox.Attachment, person bool) []getstream.Attachment {
 	attachments := make([]getstream.Attachment, 0, len(files))
 	for _, file := range files {
 		attachment := getstream.Attachment{Title: &file.Name, Custom: map[string]any{"mime_type": file.MIME, "file_size": file.Size}}
-		if strings.HasPrefix(file.MIME, "image/") {
+		switch {
+		case strings.HasPrefix(file.MIME, "image/"):
 			attachment.Type, attachment.ImageUrl, attachment.Fallback = getstream.PtrTo("image"), &file.URL, &file.Name
-		} else {
+		case voiceRecording(file, person):
+			attachment.Type, attachment.AssetUrl = getstream.PtrTo(voiceRecordingType), &file.URL
+		default:
 			attachment.Type, attachment.AssetUrl = getstream.PtrTo("file"), &file.URL
 		}
 		attachments = append(attachments, attachment)
 	}
 	return attachments
+}
+
+// voiceRecordingType is the attachment type Stream Chat's SDKs play as a voice recording
+// rather than offer as a download (stream-chat-js isVoiceRecordingAttachment).
+const voiceRecordingType = "voiceRecording"
+
+// voiceRecording is whether file is a voice note: audio on a person's message, which only
+// carries what they sent. Audio the agent made is a file like any other.
+func voiceRecording(file sandbox.Attachment, person bool) bool {
+	return person && strings.HasPrefix(file.MIME, "audio/")
 }
 
 // filesFromAttachments reads back the files fileAttachments wrote.
@@ -186,7 +203,7 @@ func filesFromAttachments(attachments []getstream.Attachment) []sandbox.Attachme
 		switch {
 		case *attachment.Type == "image" && attachment.ImageUrl != nil:
 			file.URL = *attachment.ImageUrl
-		case *attachment.Type == "file" && attachment.AssetUrl != nil:
+		case (*attachment.Type == "file" || *attachment.Type == voiceRecordingType) && attachment.AssetUrl != nil:
 			file.URL = *attachment.AssetUrl
 		default:
 			continue

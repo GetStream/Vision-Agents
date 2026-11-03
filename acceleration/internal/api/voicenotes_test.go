@@ -108,7 +108,7 @@ func (s *VoiceNotesSuite) TestTheVoiceNoteIsShownOnThePersonsMessageWithWhatItSa
 	}, settleFor, 10*time.Millisecond, "the person's message was never written")
 	s.Equal(said, message["text"], "the message carries what was said")
 	attachments, _ := json.Marshal(message["attachments"])
-	s.Contains(string(attachments), `"type":"file"`, "the voice note is shown as a file")
+	s.Contains(string(attachments), `"type":"voiceRecording"`, "the voice note is played where it is shown")
 	s.Contains(string(attachments), `"title":"voice-note.wave"`)
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the voice note is uploaded once")
