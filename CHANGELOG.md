@@ -262,6 +262,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A voice note's transcription is billed to its session and agent
+
+The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id and the session's attribution, as the records of the model work that answers it do. Before, it named neither the session nor the agent (AI-2555).
+
+### Photos, voice notes and video clips are fetched under the router's own User-Agent
+
+The router fetches a photo, a voice note or a video clip sent by URL with the User-Agent `vision-agents (https://github.com/GetStream/Vision-Agents)`. Before, it sent Go's `Go-http-client/1.1`, which some hosts, Wikimedia among them, answer with 403, so the photo never reached the model (AI-2546).
+
 ### Tool rounds are bound even when a model calls a tool it was not offered
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
