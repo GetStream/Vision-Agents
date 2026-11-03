@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Chat } from "stream-chat-react";
 
-import type { Tools } from "@stream-io/calypso";
+import { Session, type Tools } from "@stream-io/calypso";
 import { VoiceSession } from "@stream-io/calypso/video";
 
 import { AgentChat, PAGE_SIZE } from "./agentChat";
@@ -89,10 +89,26 @@ function Assistant_() {
   }, [screen]);
 
   useEffect(() => {
-    // The router titles a conversation as it goes, so the list is read again each time it is
-    // shown, and when a new conversation gets its session.
+    // A page put away whole by the browser and brought back by Back left its conversation as it
+    // went, so it opens it again rather than showing one whose session is closed.
+    const reopen = (event: PageTransitionEvent) => {
+      if (event.persisted) latest.current.open(latest.current.selected);
+    };
+    window.addEventListener("pageshow", reopen);
+    return () => window.removeEventListener("pageshow", reopen);
+  }, []);
+
+  useEffect(() => {
+    // The router titles a conversation as it goes, so the list is read again each time it is shown.
     if (isListShown) void conversations.reload();
-  }, [conversations, isListShown, selected]);
+  }, [conversations, isListShown]);
+
+  // And when the conversation open is not in it: a new one that just got its session, or one
+  // opened from a link.
+  const isListed = selected === undefined || items.some((each) => each.id === selected);
+  useEffect(() => {
+    if (isListShown && !isListed) void conversations.reload();
+  }, [conversations, isListShown, isListed]);
 
   useEffect(() => {
     // And once each reply is written, which is when a new conversation has its title.
@@ -122,21 +138,28 @@ function Assistant_() {
     setMenuOpen(false);
   };
 
-  /** Opens a conversation, or a new one, as a page of its own that Back returns from. */
-  const show = (session: SessionRow | undefined) => {
+  /**
+   * Opens a conversation, or a new one, as a page of its own that Back returns from, or in place
+   * of the current page when that one is gone.
+   */
+  const show = (session: SessionRow | undefined, how: "push" | "replace" = "push") => {
     open(session?.id);
-    putConversationInUrl(session?.id, "push");
+    putConversationInUrl(session?.id, how);
   };
+
+  // What the window's listeners act on, kept current without subscribing them again each render.
+  const latest = useRef({ open, selected });
+  latest.current = { open, selected };
 
   useEffect(() => {
     // Back and Forward go between the conversations opened, as between pages.
     const followUrl = () => {
       const sessionId = conversationInUrl();
-      if (sessionId !== selected) open(sessionId);
+      if (sessionId !== latest.current.selected) latest.current.open(sessionId);
     };
     window.addEventListener("popstate", followUrl);
     return () => window.removeEventListener("popstate", followUrl);
-  });
+  }, []);
 
   const title = items.find((each) => each.id === selected);
 
@@ -150,7 +173,8 @@ function Assistant_() {
       onClose={() => (isWide ? setCollapsed(true) : setMenuOpen(false))}
       onDelete={(session) => {
         void conversations.delete(session.id);
-        if (session.id === selected) show(undefined);
+        // Back must not lead to a conversation that is gone.
+        if (session.id === selected) show(undefined, "replace");
       }}
       onNew={() => show(undefined)}
       onOpen={(session) => show(session)}
@@ -210,21 +234,38 @@ function Assistant_() {
  * model with sign-ins coming back here, with the page's tools; delete one; and join its call.
  */
 function screenDeps(tools: Tools): ChatScreenDeps {
+  // A conversation being opened is read from the router once, by whichever of carrying it on and
+  // reading its messages asks first, and forgotten once it is open.
+  const reading = new Map<string, Promise<SessionRow>>();
+  const read = (sessionId: string) => {
+    let row = reading.get(sessionId);
+    if (!row) {
+      row = sessions().get(sessionId);
+      reading.set(sessionId, row);
+    }
+    return row;
+  };
   return {
     open: async (sessionId) => {
-      const session = sessionId
-        ? await sessions().resume(sessionId, { tools })
-        : await agents.agent(Assistant.agentName).sessions.create({
-            llm: Assistant.chatModel,
-            returnUrl: Assistant.returnUrl,
-            tools,
-          });
-      return AgentChat.open(session);
+      if (!sessionId) {
+        const session = await agents.agent(Assistant.agentName).sessions.create({
+          llm: Assistant.chatModel,
+          returnUrl: Assistant.returnUrl,
+          tools,
+        });
+        return AgentChat.open(session);
+      }
+      try {
+        // What `sessions.resume` does, with the row the messages may already have read.
+        return await AgentChat.open(await Session.watching(agents, await read(sessionId), { tools }));
+      } finally {
+        reading.delete(sessionId);
+      }
     },
     history: async (sessionId, conversationId) => {
       // The channel the session writes to, read as the page's user, who is a member of it. A
       // conversation opened from a link has only its id, so its session says which channel.
-      const channelId = conversationId ?? (await sessions().get(sessionId)).conversation_id;
+      const channelId = conversationId ?? (await read(sessionId)).conversation_id;
       if (!channelId) return [];
       const [type = "agent", ...rest] = channelId.split(":");
       const channel = chatClient.channel(type, rest.join(":"));
