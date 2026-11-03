@@ -124,7 +124,8 @@ export interface BackendOptions {
    * users it is acting for; the sessions it opens then belong to that user, so the user's
    * own device can reach them afterwards. With `token` it is already in the token and
    * this is ignored. With `customerId` it is sent as `user_id` in the query, which a router
-   * with nothing in front of it reads the same way.
+   * with nothing in front of it reads the same way: the app's backend acting for that user.
+   * A page names its user with `setUser` instead, and is then that user.
    */
   userId?: string;
   /**
@@ -334,7 +335,18 @@ export class Backend {
    * before a call rather than reading a 403 afterwards.
    */
   get serverSide(): boolean {
-    return Boolean(this.apiSecret) || this.byCustomer;
+    return Boolean(this.apiSecret) || (this.byCustomer && !this.isPage);
+  }
+
+  /**
+   * Whether this is a page reaching a router by customer id: `setUser` named its user and
+   * handed over their token. Such a router takes a caller that says nothing for the app's
+   * backend, which reaches every user's sessions, so a page says `stream-auth-type=jwt` and is
+   * read as the end user it is. The token itself is for Stream's clients; this router is not
+   * shown it.
+   */
+  private get isPage(): boolean {
+    return this.byCustomer && Boolean(this.token);
   }
 
   /**
@@ -430,6 +442,9 @@ export class Backend {
       if (this.userId) {
         url.searchParams.set("user_id", this.userId);
       }
+      if (this.isPage) {
+        url.searchParams.set("stream-auth-type", "jwt");
+      }
     }
     return url.toString();
   }
@@ -449,10 +464,14 @@ export class Backend {
    *
    * A router reached by customer id is told the end user as `user_id`: a header would do on
    * a server, but a page cannot send one the router's CORS does not admit, and the query is
-   * read the same way.
+   * read the same way. A page says `stream-auth-type=jwt` there too, for the reason `isPage`
+   * gives.
    */
   query(): Record<string, string> {
-    return this.byCustomer && this.userId ? { user_id: this.userId } : {};
+    if (!this.byCustomer || !this.userId) {
+      return {};
+    }
+    return this.isPage ? { user_id: this.userId, "stream-auth-type": "jwt" } : { user_id: this.userId };
   }
 
   /** Sends one request. Exposed so the client and the sockets share one fetch. */

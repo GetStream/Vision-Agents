@@ -21,6 +21,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | Credential | Who it is | Reaches |
 | --- | --- | --- |
 | `customerId` | A router with nothing in front of it, which is a laptop | everything |
+| `customerId` + `setUser` | A page on that laptop | the conversations that user owns |
 | `apiKey` + `apiSecret` | A process you run | everything |
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
@@ -54,6 +55,10 @@ A router running locally with nothing in front of it is reached by customer id:
 ```ts
 const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
 ```
+
+A page there names its user with `setUser`, and is then that user rather than the app's
+backend: it lists only their conversations, and `serverSide` is false. A server that passes
+`userId` instead stays the backend, acting for that user.
 
 It is a switch rather than an extra header or two because the two spellings contradict each
 other: a router reached directly needs `Stream-Auth-Type: server` before it admits a
