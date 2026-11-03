@@ -50,7 +50,7 @@ func run(ctx context.Context) error {
 		}
 		// Nothing is waited for. The answer is written into the channel by the backend as
 		// it is generated, so the person who wrote is already reading it.
-		return conversation.Respond(message.Text)
+		return conversation.Respond(message.Text, message.Images...)
 	})
 
 	log.Println("waiting for messages; write in an agent channel to start one")

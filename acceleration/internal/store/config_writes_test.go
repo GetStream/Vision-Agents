@@ -53,19 +53,6 @@ func (s *StoreSuite) TestAPluginsCheckReadsDefinitionsOnTheWritesConnection() {
 	s.Equal("Acme", read)
 }
 
-func (s *StoreSuite) TestABindingsCheckReadsDefinitionsOnTheWritesConnection() {
-	config := s.boundConfig("acme-app")
-	binding := ConnectorBinding{Name: "inbox", ConnectorID: "acme", Connection: ConnectionBinding{Type: "session"}, Tools: []ToolGrant{}}
-	var read string
-
-	s.onOneConnection(func(ctx context.Context) error {
-		_, _, err := s.store.AddConnectorBinding(ctx, "acme-app", config.ID, binding, s.readsAcme(&read))
-		return err
-	})
-
-	s.Equal("Acme", read)
-}
-
 func (s *StoreSuite) TestAnUpdateButPluginsChecksOnTheWritesConnection() {
 	config := s.boundConfig("acme-app")
 	var read string

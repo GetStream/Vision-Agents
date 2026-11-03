@@ -861,14 +861,14 @@ func (s *Session) WaitsOnCommand(id string) bool {
 	return bound
 }
 
-// Ask answers a piece of text in writing, without speaking any of it, and writes the answer
-// into the conversation.
+// Ask answers a piece of text in writing, and any images sent with it, without speaking any
+// of it, and writes the answer into the conversation.
 //
 // The answer is stored here rather than by the caller because the transcript is the
 // session's: a caller holding a session has no channel to write to, and an answer that only
 // went back over HTTP would be missing from the conversation it belongs to.
-func (s *Session) Ask(ctx context.Context, text string) (string, error) {
-	answer, err := s.current().Ask(ctx, text)
+func (s *Session) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
+	answer, err := s.current().Ask(ctx, text, images...)
 	if err != nil {
 		return "", err
 	}
@@ -1015,6 +1015,9 @@ func (s *Session) Busy() bool { return s.current().Busy() }
 
 // SeesImages reports whether the agent has something that looks at a turn's images.
 func (s *Session) SeesImages() bool { return s.current().SeesImages() }
+
+// SeesImagesInWriting reports whether Ask hands the agent's model images.
+func (s *Session) SeesImagesInWriting() bool { return s.current().SeesImagesInWriting() }
 
 // settleGap is how long the agent stays quiet, with nothing left to do, before a headless
 // conversation is taken as finished.

@@ -939,7 +939,8 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
 }
 
-// imagesAlone is what the vision skill is asked about images sent with no text.
+// imagesAlone is what the vision skill, or the model asked in writing (Ask), is asked about
+// images sent with no text.
 const imagesAlone = "The caller sent these images without a message. Describe what they show."
 
 // SeesImages reports whether a turn's images reach something that looks at them: a vision
@@ -950,6 +951,15 @@ func (a *Agent) SeesImages() bool {
 	current, model := a.harness, a.llm
 	a.mu.Unlock()
 	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
+}
+
+// SeesImagesInWriting reports whether Ask hands images to the model: only a conversation
+// model that accepts images takes them, as an aside runs no vision skill.
+func (a *Agent) SeesImagesInWriting() bool {
+	a.mu.Lock()
+	model := a.llm
+	a.mu.Unlock()
+	return model != nil && model.Capabilities().Accepts(llm.ModalityImage)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1016,9 +1026,21 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 // The exchange is kept, so what was asked in writing can be referred to out loud. No tools
 // are offered: a written aside must not press a keypad or transfer a call that the person
 // writing cannot see.
-func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
-	if strings.TrimSpace(text) == "" {
+//
+// Images go to the conversation model with this question alone, and only one that accepts
+// images takes them: an aside has no vision skill to hand them to (SeesImagesInWriting).
+// Images sent with no text are asked about as imagesAlone.
+func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
+	if strings.TrimSpace(text) == "" && len(images) == 0 {
 		return "", errors.New("agent: there is nothing to answer")
+	}
+	if strings.TrimSpace(text) == "" {
+		text = imagesAlone
+	}
+	for _, image := range images {
+		if err := image.Validate(); err != nil {
+			return "", err
+		}
 	}
 	// A native agent has no text model to ask on the side: everything it says, it says
 	// out loud, on the call.
@@ -1031,11 +1053,18 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
+	if len(images) > 0 && !a.llm.Capabilities().Accepts(llm.ModalityImage) {
+		a.mu.Unlock()
+		return "", stack.Wrap(ErrCannotSeeImages)
+	}
 	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
 	}
+	// On this question alone: the history keeps its words, as a turn's images are kept only
+	// for its reply (keepTurnLocked).
+	history = harness.WithImages(history, images)
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()

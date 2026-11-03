@@ -656,7 +656,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
 	tools = append(tools, pluginTools...)
 	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	if mcp != nil || len(unconnected) > 0 {

@@ -695,7 +695,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits expired before what they read was known to count it",
 			append(who(key), "micros", unwritten, "pending_ttl", ttl)...)
 	}
-	if waiting > 0 && m.waiting.due(key, logEvery) {
+	if waiting > 0 && m.waiting.Due(key, logEvery) {
 		logger.Warn("usage held against an "+noun(key)+" is past its pending_ttl with no read of its balance to count it, so it is kept",
 			append(who(key), "holds", waiting, "micros", waited, "last_failed_read", acct.balanceFailed)...)
 	}
@@ -712,7 +712,7 @@ func (m *money) release(key string, acct *account, now time.Time) {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits is let go after "+(acklessAges*ttl).String()+
 			" with the usage service acking none of its rows", append(who(key), "micros", aged, "last_ack", acct.lastAck)...)
 	}
-	if unacked > 0 && m.waiting.due(key+"\x00acks", logEvery) {
+	if unacked > 0 && m.waiting.Due(key+"\x00acks", logEvery) {
 		logger.Warn("usage held against an "+noun(key)+"'s spend limits is past its pending_ttl while the usage service acks none of its rows, so it is kept",
 			append(who(key), "micros", unacked, "last_ack", acct.lastAck)...)
 	}

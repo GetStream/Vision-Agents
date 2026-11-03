@@ -3,11 +3,14 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
@@ -60,6 +63,11 @@ func (s *MCPLoginSuite) SetupSuite() {
 	mux.HandleFunc("POST /as/token", func(w http.ResponseWriter, r *http.Request) {
 		if r.FormValue("code") != "the-code" || r.FormValue("code_verifier") == "" {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		// The client it registered is public, so a secret is one it was never meant to see.
+		if r.FormValue("client_secret") != "" {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "crm-token", "expires_in": 3600})
@@ -170,6 +178,27 @@ func (s *MCPLoginSuite) TestTheAppLogsIntoAServerNamedByURLAsItDoesIntoAPlugin()
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
 	s.Nil(read.Plugins, "the config names the server under mcp_servers already")
+}
+
+// A server named by URL registers whatever client id it likes, the deployment's own for a
+// plugin of the server's name included. Its login still finishes as a public client's, with no
+// secret sent to the token endpoint it named.
+func (s *MCPLoginSuite) TestTheAppsLoginToAServerNamedByURLNeverSendsTheDeploymentsSecret() {
+	name := "crm_" + strings.ToLower(rand.Text())
+	prefix := strings.ToUpper(name) + "_MCP_"
+	s.Require().NoError(os.Setenv(prefix+"CLIENT_ID", "registered-8.8.8.8"))
+	s.Require().NoError(os.Setenv(prefix+"CLIENT_SECRET", "deployment-secret"))
+	s.T().Cleanup(func() {
+		_ = os.Unsetenv(prefix + "CLIENT_ID")
+		_ = os.Unsetenv(prefix + "CLIENT_SECRET")
+	})
+	created := s.create([]map[string]any{{"name": name, "url": crmURL}})
+
+	authorize := s.authorize(created.Id, name)
+	s.Require().Equal("registered-8.8.8.8", authorize.Query().Get("client_id"))
+
+	s.Equal(http.StatusFound, s.callback(authorize.Query().Get("state")), "the token endpoint got no secret")
+	s.Equal([]PluginConnection{{PluginId: name, Name: name, Status: PluginConnectionStatusConnected}}, s.logins(created.Id))
 }
 
 func (s *MCPLoginSuite) TestTheAppsLoginToAServerNamedByURLCanBeDropped() {
