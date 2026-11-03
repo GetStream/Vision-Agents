@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -621,6 +622,132 @@ func (s *OAuth2CodeSuite) TestDiscoveryWithNoUsableDocumentNamesEachFailure() {
 	s.Contains(err.Error(), "HTTP 500")
 }
 
+// TestACustomConnectorWithoutScopesAsksForItsServersScopesSupported (AI-2526): MCP
+// 2025-11-25 «Scope Selection Strategy» asks for every scope in the protected resource
+// metadata's scopes_supported, and a token response without scope grants what was asked for
+// (RFC 6749 section 5.1), so the connection records those scopes.
+func (s *OAuth2CodeSuite) TestACustomConnectorWithoutScopesAsksForItsServersScopesSupported() {
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"issues:read", "issues:write"}}, nil)
+	resolved := s.custom(srv.URL+"/mcp", "")
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	query := s.query(out.AuthorizeURL)
+	s.Equal("issues:read issues:write", query.Get("scope"))
+
+	_, account, err := scheme.Complete(s.ctx, core.CompleteInput{Ref: s.ref, Manifest: resolved, State: out.State, Query: url.Values{"state": {query.Get("state")}, "code": {"code-1"}}})
+	s.Require().NoError(err)
+	s.Equal([]string{"issues:read", "issues:write"}, account.Scopes, "the token response names no scope, so the scopes asked for")
+}
+
+// TestACustomConnectorAsksForNoScopeUnlessScopesSupportedIsAListOfStrings: RFC 9728
+// section 2 makes scopes_supported a JSON array of strings. MCP omits scope when it is
+// undefined; any other shape is read as undefined and the document is still used, as it was
+// before scopes_supported was read.
+func (s *OAuth2CodeSuite) TestACustomConnectorAsksForNoScopeUnlessScopesSupportedIsAListOfStrings() {
+	for name, tc := range map[string]struct {
+		document map[string]any
+		scope    []string
+	}{
+		"absent":        {document: map[string]any{}},
+		"null":          {document: map[string]any{"scopes_supported": nil}},
+		"empty":         {document: map[string]any{"scopes_supported": []string{}}},
+		"a string":      {document: map[string]any{"scopes_supported": "issues:read"}},
+		"numbers":       {document: map[string]any{"scopes_supported": []int{1, 2}}},
+		"an object":     {document: map[string]any{"scopes_supported": map[string]any{"issues:read": true}}},
+		"mixed":         {document: map[string]any{"scopes_supported": []any{"issues:read", 1}}},
+		"empty string":  {document: map[string]any{"scopes_supported": []string{"issues:read", ""}}},
+		"space":         {document: map[string]any{"scopes_supported": []string{"issues:read", "a b"}}},
+		"control char":  {document: map[string]any{"scopes_supported": []string{"issues:read", "c\u0000d"}}},
+		"newline":       {document: map[string]any{"scopes_supported": []string{"issues:read", "e\nf"}}},
+		"delete char":   {document: map[string]any{"scopes_supported": []string{"issues:read", "g\u007fh"}}},
+		"a quote":       {document: map[string]any{"scopes_supported": []string{"issues:read", "a\"b"}}},
+		"a backslash":   {document: map[string]any{"scopes_supported": []string{"issues:read", "a\\b"}}},
+		"non-ASCII":     {document: map[string]any{"scopes_supported": []string{"issues:read", "é"}}},
+		"over the cap":  {document: map[string]any{"scopes_supported": manyScopes(101)}},
+		"at the cap":    {document: map[string]any{"scopes_supported": manyScopes(100)}, scope: []string{strings.Join(manyScopes(100), " ")}},
+		"a list of one": {document: map[string]any{"scopes_supported": []string{"issues:read"}}, scope: []string{"issues:read"}},
+	} {
+		s.Run(name, func() {
+			srv := s.mcpServer(tc.document, nil)
+			scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+			out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.custom(srv.URL+"/mcp", ""), RedirectURI: fakeprovider.RedirectURI})
+			s.Require().NoError(err)
+			s.Equal(tc.scope, s.query(out.AuthorizeURL)["scope"])
+		})
+	}
+}
+
+// manyScopes is n distinct valid scope names.
+func manyScopes(n int) []string {
+	scopes := make([]string, n)
+	for i := range scopes {
+		scopes[i] = "scope" + strconv.Itoa(i)
+	}
+	return scopes
+}
+
+func (s *OAuth2CodeSuite) TestACustomConnectorsOwnScopesWinOverScopesSupported() {
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"issues:read", "issues:write"}}, nil)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: s.custom(srv.URL+"/mcp", "[issues:read]"), RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.Equal([]string{"issues:read"}, s.query(out.AuthorizeURL)["scope"])
+}
+
+// TestABuiltInWithoutScopesAsksForNoneWhateverItsServerSupports is the control: Sentry's
+// manifest lists no scopes and its server is found through RFC 9728, whose document lists
+// scopes_supported (providers/sentry.yaml). The authorize URL has no scope, as on c4d53f3e9.
+func (s *OAuth2CodeSuite) TestABuiltInWithoutScopesAsksForNoneWhateverItsServerSupports() {
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"org:read", "project:write"}}, nil)
+	resolved := s.resolve("../../providers/sentry.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + "/mcp"}
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientOperator}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{Clients: operatorClient})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	query := s.query(out.AuthorizeURL)
+	s.Equal(srv.URL+"/mcp", query.Get("resource"), "found through the protected resource metadata")
+	s.NotContains(query, "scope")
+}
+
+// TestABuiltInRegistersWithoutScopesWhateverItsServerSupports is the control for the
+// registration: Sentry ships registration [dcr] with no scopes, so the registration body and
+// the authorize URL carry no scope although its server lists scopes_supported.
+func (s *OAuth2CodeSuite) TestABuiltInRegistersWithoutScopesWhateverItsServerSupports() {
+	sent := make(chan map[string]any, 1)
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"org:read", "project:write"}}, sent)
+	resolved := s.resolve("../../providers/sentry.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + "/mcp"}
+	s.Require().Equal([]core.ClientRegistrationMethod{core.ClientDCR}, resolved.Client.Registration)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.NotContains(<-sent, "scope")
+	s.NotContains(s.query(out.AuthorizeURL), "scope")
+}
+
+// TestARegistrationForACustomConnectorAsksForTheScopesSupported: the registration asks for
+// the scopes the authorize request asks for, as TestARegistrationAsksForTheScopesTheAuthorizeRequestAsksFor
+// shows for a manifest's own.
+func (s *OAuth2CodeSuite) TestARegistrationForACustomConnectorAsksForTheScopesSupported() {
+	sent := make(chan map[string]any, 1)
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"issues:read", "issues:write"}}, sent)
+	resolved := s.custom(srv.URL+"/mcp", "")
+	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientDCR}
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.Equal("issues:read issues:write", (<-sent)["scope"])
+	s.Equal("issues:read issues:write", s.query(out.AuthorizeURL).Get("scope"))
+}
+
 // resolve is a manifest file resolved for oauth2_code.
 func (s *OAuth2CodeSuite) resolve(path string, inputs map[string]string) core.ResolvedManifest {
 	raw, err := os.ReadFile(path)
@@ -792,6 +919,50 @@ func (s *OAuth2CodeSuite) registering(srv *httptest.Server) core.ResolvedManifes
 	resolved := s.discovering(map[string]string{"issuer": srv.URL})
 	resolved.Client.Registration = []core.ClientRegistrationMethod{core.ClientDCR}
 	return resolved
+}
+
+// custom is a custom definition for the MCP server at mcp, the way a customer writes one:
+// the endpoint, the operator's client, and the scopes list given (none when empty).
+func (s *OAuth2CodeSuite) custom(mcp, scopes string) core.ResolvedManifest {
+	yaml := "id: custom_tracker\nrevision: 1\nname: Tracker\nendpoints:\n  mcp: " + mcp +
+		"\nschemes: [oauth2_code]\nclient:\n  registration: [operator]\nsources:\n  - kind: mcp\n    endpoint: mcp\n"
+	if scopes != "" {
+		yaml += "scopes:\n  list: " + scopes + "\n"
+	}
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	resolved, err := manifest.Resolve(oauth2code.Name, nil, nil)
+	s.Require().NoError(err)
+	return resolved
+}
+
+// mcpServer is an MCP server's metadata for its endpoint at /mcp: protected resource metadata
+// with resource members added, and authorization server metadata with a token endpoint
+// that grants without naming a scope and a registration endpoint that sends what it was sent
+// to registered.
+func (s *OAuth2CodeSuite) mcpServer(resource map[string]any, registered chan<- map[string]any) *httptest.Server {
+	return s.metadataServer(func(base string) map[string]any {
+		resource["resource"] = base + "/mcp"
+		resource["authorization_servers"] = []string{base}
+		metadata := asMetadata(base, base+"/authorize")
+		metadata["registration_endpoint"] = base + "/register"
+		return map[string]any{
+			"/.well-known/oauth-protected-resource/mcp": resource,
+			"/.well-known/oauth-authorization-server":   metadata,
+			"/token": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"access_token":"access-1","token_type":"Bearer"}`)
+			}),
+			"/register": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var sent map[string]any
+				s.NoError(json.NewDecoder(r.Body).Decode(&sent))
+				registered <- sent
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"client_id":"registered-client","token_endpoint_auth_method":"none"}`)
+			}),
+		}
+	})
 }
 
 // discovering is the Linear manifest pointed at endpoints, with the operator's client.

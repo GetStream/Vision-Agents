@@ -226,6 +226,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A custom MCP connector without scopes asks for the scopes its server lists
+
+A new consent for a custom (`custom_`) `oauth2_code` connector whose definition lists no scopes now asks for every scope in its MCP server's protected resource metadata (`scopes_supported`), as the MCP authorization spec says and as a URL-named `mcp_servers` login already did. A server that lists none still gets no `scope`. The client the router registers for it asks for the same scopes. Built-in connectors and existing connections are unchanged (AI-2526).
+
 ### A user whose own quota cannot be read is still counted
 
 When a user's own quota could not be read, what they spent was not counted at all if no app or organization limit was set, so the customer's own limit for that user lost the usage. A response is now counted in the user's bucket all the same, and a warning is logged for it, at most once a minute per customer. The request itself is still admitted, as before (AI-2483).

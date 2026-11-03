@@ -21,6 +21,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
+// CustomPrefix starts the id of every custom definition and of no built-in (store.CustomPrefix
+// is this constant, where the rule is enforced). The oauth2_code scheme reads it to tell a
+// custom definition from a built-in.
+const CustomPrefix = "custom_"
+
 // Manifest is one connector's definition as data: what a scheme, a tool source and the resolver
 // read instead of switching on a connector id. ParseManifest is how one is read, and
 // Resolve turns it into the ResolvedManifest of one connection.
