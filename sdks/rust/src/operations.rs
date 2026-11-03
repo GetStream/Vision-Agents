@@ -1177,6 +1177,19 @@ impl Client {
         )
         .await
     }
+    /// Delete a knowledge base
+    ///
+    /// `DELETE /v1/agents/knowledge` (`deleteKnowledge`).
+    pub async fn delete_knowledge(&self, query: &DeleteKnowledgeQuery) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            "/v1/agents/knowledge",
+            Some(query),
+            None::<&()>,
+            "deleteKnowledge",
+        )
+        .await
+    }
     /// The documents a knowledge base was filled with
     ///
     /// `GET /v1/agents/knowledge/documents` (`listKnowledgeDocuments`).
@@ -4311,6 +4324,13 @@ pub struct GetConversationMessagesQuery {
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
+}
+/// The query string `deleteKnowledge` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DeleteKnowledgeQuery {
+    /// The knowledge base, as it was named when it was filled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 /// The query string `listKnowledgeDocuments` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

@@ -568,7 +568,17 @@ const SCALARS = new Set([
   "search",
   "sandbox",
 ]);
-const LISTS = new Set(["plugins", "keyterms"]);
+const LISTS = new Set(["keyterms"]);
+
+// What each key connectors replaced is refused with, since a file that names one is asking
+// for tools it would no longer get.
+const REPLACED = new Map([
+  ["plugins", "plugins were replaced by connectors, so name the provider under connectors"],
+  [
+    "mcp_servers",
+    "a server named by URL is now a custom connector, so create one for its URL and name it under connectors",
+  ],
+]);
 
 /**
  * Reads agent.yaml: what the agent is called, and what it runs on.
@@ -590,7 +600,7 @@ const LISTS = new Set(["plugins", "keyterms"]);
  *   mode: variation
  * ```
  *
- * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for two lists
+ * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for one list
  * and five small mappings, and a YAML library would land in every browser bundle. A key
  * nobody knows is refused rather than dropped, since a misspelled `llm` that goes quietly is
  * a config running on a model the file does not name.
@@ -633,7 +643,13 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       const items = inline ? flowList(inline, key, where) : nested.map((item) => listItem(item, key, where));
       const named = items.filter((item) => item);
       if (named.length > 0) {
-        declared[key as "plugins" | "keyterms"] = named;
+        declared[key as "keyterms"] = named;
+      }
+    } else if (REPLACED.has(key)) {
+      // An empty or null key declares nothing, and nothing was ever sent for it.
+      const listed = scalar(inline) !== undefined && !/^\[\s*\]$/.test(inline);
+      if (listed || nested.some((one) => !one.startsWith("#"))) {
+        throw new ConfigurationError(`${where}: ${key} is no longer read: ${REPLACED.get(key)}`);
       }
     } else if (key === "tags") {
       declared.tags = mapping(nested, inline, key, where);
@@ -645,11 +661,6 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.greeting = greeting(mapping(nested, inline, key, where), where);
     } else if (key === "connectors") {
       declared.connectors = connectors(indented, inline, where);
-    } else if (key === "mcp_servers") {
-      const servers = mcpServers(indented, inline, where);
-      if (servers) {
-        declared.mcpServers = servers;
-      }
     } else if (key === "channels") {
       const lines = channels(indented, inline, where);
       if (lines) {
@@ -662,19 +673,6 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
-      );
-    }
-  }
-  // The model is offered each as <name>__<tool>, so one name would be two tools.
-  for (const connector of declared.connectors ?? []) {
-    if (declared.mcpServers?.some((server) => server.name === connector.name)) {
-      throw new ConfigurationError(
-        `${where}: ${JSON.stringify(connector.name)} is named under both connectors and mcp_servers`,
-      );
-    }
-    if (declared.plugins?.includes(connector.name)) {
-      throw new ConfigurationError(
-        `${where}: ${JSON.stringify(connector.name)} is named under both connectors and plugins`,
       );
     }
   }
@@ -776,86 +774,6 @@ function listed(
     item.keys.set(entry[1] as string, value);
   }
   return items;
-}
-
-const MCP_SERVER_KEYS = new Set(["name", "url", "tools", "scopes", "user"]);
-
-/**
- * Reads `mcp_servers:`, MCP servers outside the catalog, each a mapping:
- *
- * ```yaml
- * mcp_servers:
- *   - name: crm
- *     url: https://crm.example.com/mcp
- *     tools: [list_*]
- *     scopes: [read]
- *     user: true
- * ```
- *
- * Undefined when the key says nothing. tools and scopes are kept only when they list
- * something and user only when true, which is what the sync sends.
- */
-function mcpServers(
-  lines: string[],
-  inline: string,
-  where: string,
-): Schemas["McpServer"][] | undefined {
-  if (scalar(inline) !== undefined) {
-    if (/^\[\s*\]$/.test(inline)) {
-      return [];
-    }
-    throw new ConfigurationError(`${where}: mcp_servers should be a list of mappings`);
-  }
-  if (!lines.some((line) => line.trim() && !line.trim().startsWith("#"))) {
-    return undefined;
-  }
-
-  return listed(lines, "mcp_servers", "mcp server", where).map((item) => {
-    if (item.alias !== undefined) {
-      throw new ConfigurationError(`${where}: an mcp server is a mapping with a name and a url`);
-    }
-    for (const key of item.keys.keys()) {
-      if (!MCP_SERVER_KEYS.has(key)) {
-        throw new ConfigurationError(
-          `${where}: ${JSON.stringify(key)} is not something an mcp server says; name, url, tools, scopes and user are`,
-        );
-      }
-    }
-    const one = (key: string): string => {
-      const written = item.keys.get(key);
-      if (written?.nested.length) {
-        throw new ConfigurationError(`${where}: an mcp server's ${key} is one value, not a list`);
-      }
-      return (written && scalar(written.inline)) ?? "";
-    };
-    const many = (key: string): string[] => {
-      const written = item.keys.get(key);
-      if (!written || (written.nested.length === 0 && scalar(written.inline) === undefined)) {
-        return [];
-      }
-      const items = written.nested.length
-        ? written.nested.map((line) => listItem(line, key, where))
-        : flowList(written.inline, key, where);
-      return items.filter((one) => one);
-    };
-
-    const name = one("name");
-    const user = one("user");
-    if (user && user !== "true" && user !== "false") {
-      throw new ConfigurationError(
-        `${where}: mcp server ${JSON.stringify(name)}: user must be true or false`,
-      );
-    }
-    const tools = many("tools");
-    const scopes = many("scopes");
-    return {
-      name,
-      url: one("url"),
-      ...(tools.length > 0 ? { tools } : {}),
-      ...(scopes.length > 0 ? { scopes } : {}),
-      ...(user === "true" ? { user: true } : {}),
-    };
-  });
 }
 
 const CHANNEL_LINES = new Set(["whatsapp", "sms", "imessage"]);

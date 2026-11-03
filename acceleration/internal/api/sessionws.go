@@ -520,7 +520,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 			}
 			return true
 		}
-		if _, err := found.Respond(routing.WithCaller(context.Background(), sender), command.Text, images, options.LLM{}); err != nil {
+		if _, err := found.Respond(routing.WithCaller(context.Background(), sender), command.Text, images, options.LLM{}, images...); err != nil {
 			found.Report(err, "llm")
 		}
 

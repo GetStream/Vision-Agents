@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -280,24 +281,9 @@ func fetchImages(ctx context.Context, client *http.Client, images []llm.ImagePar
 
 // fetchImage is the image at source, and what kind of image its bytes say it is.
 func fetchImage(ctx context.Context, client *http.Client, source string) ([]byte, string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	data, _, err := fetchAtMost(ctx, client, source, maxRunImageBytes)
 	if err != nil {
 		return nil, "", err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("fetching it answered %s", response.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxRunImageBytes+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) > maxRunImageBytes {
-		return nil, "", fmt.Errorf("it is over %d MB", maxRunImageBytes>>20)
 	}
 	// The bytes, not the Content-Type, since a CDN may label an error page or anything else.
 	switch mime := http.DetectContentType(data); mime {
@@ -306,6 +292,32 @@ func fetchImage(ctx context.Context, client *http.Client, source string) ([]byte
 	default:
 		return nil, "", fmt.Errorf("it is %s, not a JPEG, PNG, WebP or GIF", mime)
 	}
+}
+
+// fetchAtMost is the body at source and the type it was labelled with, refused past limit
+// bytes.
+func fetchAtMost(ctx context.Context, client *http.Client, source string, limit int) ([]byte, string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	request.Header.Set("User-Agent", egress.UserAgent)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("fetching it answered %s", response.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > limit {
+		return nil, "", fmt.Errorf("it is over %d MB", limit>>20)
+	}
+	return data, response.Header.Get("Content-Type"), nil
 }
 
 // runInput is the input as the agent is told it. The input is whatever the caller is judging,

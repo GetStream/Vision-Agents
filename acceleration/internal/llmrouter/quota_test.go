@@ -4,6 +4,7 @@ package llmrouter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -94,6 +95,32 @@ func (s *LLMQuotaSuite) answer(provider *stubLLM, stream *llm.Stream, n int, inp
 	drain(stream)
 }
 
+// spentFor is how long a debit may take to be counted once the limiter has stopped waiting
+// for it: the Redis client gives up on a write that long after sending it.
+const spentFor = 15 * time.Second
+
+// slowWrites is a Redis whose writes take a while to land, as a loaded one's can.
+type slowWrites struct {
+	rueidis.Client
+	by time.Duration
+}
+
+func (r slowWrites) DoMulti(ctx context.Context, commands ...rueidis.Completed) []rueidis.RedisResult {
+	if len(commands) > 0 && commands[0].Commands()[0] == "HINCRBY" {
+		time.Sleep(r.by)
+	}
+	return r.Client.DoMulti(ctx, commands...)
+}
+
+// spent waits until the session refuses the turn turn asks for, which is once what it
+// answered has been counted. The limiter stops waiting for a debit after two seconds, so
+// when this process stalls the debit goes on after the answer has ended.
+func (s *LLMQuotaSuite) spent(session *Session, turn context.Context) {
+	s.Require().Eventually(func() bool {
+		return errors.Is(session.allow(turn), quota.ErrExhausted)
+	}, spentFor, 10*time.Millisecond, "what the session answered was never counted")
+}
+
 func (s *LLMQuotaSuite) TestASocketStopsBeingAnsweredOnceTheDayIsSpent() {
 	// The hole an admission check alone leaves open: one socket, many turns.
 	session, provider := s.session(2, 0, s.caller)
@@ -105,6 +132,7 @@ func (s *LLMQuotaSuite) TestASocketStopsBeingAnsweredOnceTheDayIsSpent() {
 		s.Require().NoError(err, "turn %d was within the allowance", turn)
 		s.answer(provider, stream, turn, 10, 5)
 	}
+	s.spent(session, s.ctx)
 
 	_, err := session.Create(s.ctx, llm.ResponseParams{ID: "c3", Input: prompt()})
 
@@ -118,10 +146,28 @@ func (s *LLMQuotaSuite) TestWhatAResponseCostIsCountedOnceItHasSettled() {
 	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
 	s.Require().NoError(err)
 	s.answer(provider, stream, 0, 90, 20)
+	s.spent(session, s.ctx)
 
 	_, err = session.Create(s.ctx, llm.ResponseParams{ID: "c2", Input: prompt()})
 
 	s.ErrorIs(err, quota.ErrExhausted)
+}
+
+func (s *LLMQuotaSuite) TestAResponseIsCountedBeforeItsStreamEnds() {
+	// The next turn is admitted against the day as it stands when this one ends, so a debit
+	// left to land after the stream lets a caller who is quick enough in over the limit.
+	const landing = 300 * time.Millisecond
+	session, provider := s.session(1, 0, s.caller)
+	limiter, err := quota.New(slowWrites{s.redis, landing}, quota.Limits{MessagesPerDay: 1}, nil, slog.Default())
+	s.Require().NoError(err)
+	session.quota = limiter
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+
+	start := time.Now()
+	s.answer(provider, stream, 0, 10, 5)
+
+	s.GreaterOrEqual(time.Since(start), landing, "the stream ended before its debit had landed")
 }
 
 func (s *LLMQuotaSuite) TestABackendIsNotLimited() {
@@ -143,6 +189,7 @@ func (s *LLMQuotaSuite) TestARefusedTurnAsksTheProviderForNothing() {
 	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
 	s.Require().NoError(err)
 	s.answer(provider, stream, 0, 10, 5)
+	s.spent(session, s.ctx)
 
 	_, err = session.Create(s.ctx, llm.ResponseParams{ID: "c2", Input: prompt()})
 
@@ -181,6 +228,7 @@ func (s *LLMQuotaSuite) TestAScheduledTurnIsTheCustomersSpend() {
 	stream, err = session.Create(s.ctx, llm.ResponseParams{ID: "u1", Input: prompt()})
 	s.Require().NoError(err, "the scheduled turn spent none of the user's day")
 	s.answer(provider, stream, 1, 10, 5)
+	s.spent(session, s.ctx)
 
 	_, err = session.Create(s.ctx, llm.ResponseParams{ID: "u2", Input: prompt()})
 	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's own turn spent the day")
@@ -205,6 +253,7 @@ func (s *LLMQuotaSuite) TestAMockAnswerIsNeitherCheckedNorCounted() {
 	stream, err := counted.Create(s.ctx, llm.ResponseParams{ID: "real", Input: prompt()})
 	s.Require().NoError(err, "the mock answers were not charged to the user's day")
 	s.answer(counter, stream, 0, 1_000, 1_000)
+	s.spent(counted, s.ctx)
 
 	_, err = counted.Create(s.ctx, llm.ResponseParams{ID: "over", Input: prompt()})
 	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's day is spent")
@@ -223,6 +272,7 @@ func (s *LLMQuotaSuite) TestAUsersOwnTurnInASessionABackendOpenedForThemIsCounte
 	stream, err := session.Create(sentByUser, llm.ResponseParams{ID: "user", Input: prompt()})
 	s.Require().NoError(err)
 	s.answer(provider, stream, 0, 10, 5)
+	s.spent(session, sentByUser)
 
 	_, err = session.Create(sentByUser, llm.ResponseParams{ID: "over", Input: prompt()})
 	s.Require().ErrorIs(err, quota.ErrExhausted, "the user's next turn is refused")
@@ -251,6 +301,7 @@ func (s *LLMQuotaSuite) TestAUserOpenedSessionIsCountedOnWhoeverOpenedIt() {
 	}
 
 	sameAddress, _ := s.session(2, 0, opener)
+	s.spent(sameAddress, s.ctx)
 	_, err := sameAddress.Create(s.ctx, llm.ResponseParams{ID: "address", Input: prompt()})
 	s.ErrorIs(err, quota.ErrExhausted, "both turns were counted on the address the session was opened from")
 }

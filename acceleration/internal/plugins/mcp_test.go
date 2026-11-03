@@ -109,11 +109,6 @@ func (s *MCPSuite) TestOnlyTheToolsAnAgentAllowsAreOffered() {
 	s.False(called, "a tool left out never reaches the server")
 }
 
-func (s *MCPSuite) TestAToolPatternThatCannotBeReadIsRefused() {
-	s.ErrorContains(CheckToolPatterns([]string{"read_[*"}), "read_[*")
-	s.NoError(CheckToolPatterns([]string{"read_*", "search_files"}))
-}
-
 func (s *MCPSuite) TestAServerOpenedWithoutALoginKeepsWhatItSaidAtInitialize() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.Empty(r.Header.Get("Authorization"))

@@ -382,6 +382,21 @@ type Purchase struct {
 	Owner   routing.Owner
 }
 
+// ErrCallHook says the app's call hook could not be pointed at this router.
+var ErrCallHook = errors.New("phone: call hook")
+
+// pointCallHook makes the app deliver its call events to this router, when the router knows
+// where it is reachable from.
+func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) error {
+	if s.publicURL == "" {
+		return nil
+	}
+	if _, err := stream.EnsureCallHook(ctx, s.publicURL, app); err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrCallHook, err))
+	}
+	return nil
+}
+
 // Buy buys a number and records that the customer now holds it.
 //
 // The vendor is the side that costs money, so it goes first: a row without a number is a
@@ -399,9 +414,14 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
-	if s.apps != nil {
-		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
-			return store.PhoneNumber{}, stack.Wrap(err)
+	stream, app, err := s.streamFor(ctx, purchase.Owner.CustomerID)
+	if errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+		return store.PhoneNumber{}, stack.Wrap(err)
+	}
+	// An app whose calls could not reach the router would hold a number nobody can call.
+	if err == nil {
+		if err := s.pointCallHook(ctx, stream, app); err != nil {
+			return store.PhoneNumber{}, err
 		}
 	}
 	// Refused before the vendor is paid, since a number in another form would not be recorded.
@@ -416,6 +436,12 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	// Some vendors say what a number costs when it is offered and not when it is bought, so
 	// the offer is read first, while the number is still for sale.
 	quoted := s.quote(ctx, provider, purchase)
+	// The first month is paid out of credit booked now, so a number is never bought on credit
+	// that does not cover it.
+	booked, err := s.bookFirstMonth(ctx, purchase, quoted)
+	if err != nil {
+		return store.PhoneNumber{}, err
+	}
 	// A failed purchase is a row of its own; a bought number is billed by its months, the
 	// first of them below.
 	buying := routing.Meter{
@@ -429,6 +455,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return provider.BuyNumber(ctx, Order{E164: purchase.E164, Country: purchase.Country})
 	})
 	if err != nil {
+		booked.Release()
 		return store.PhoneNumber{}, err
 	}
 	if bought.MonthlyCostMicros == 0 {
@@ -450,6 +477,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	}
 	// The month it was bought in is charged at once, whether or not the row below is kept.
 	s.billMonth(held, purchase.Owner, held.PurchasedAt)
+	booked.Charged()
 	if s.store == nil {
 		return held, nil
 	}
@@ -705,10 +733,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
 	}
+	attachedHere := held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin
+	if err := s.pointCallHook(ctx, stream, pin); err != nil {
+		if !attachedHere {
+			return Attached{}, err
+		}
+		// A running line is not taken down over a repair that failed: its program is asking
+		// again on every start.
+		s.logger.Error("could not point the call hook of a Stream app", "customer", attachment.CustomerID, "stream_app", pin, "error", err)
+	}
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin {
+	if attachedHere {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}
@@ -999,7 +1036,9 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		switch {
 		case maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }):
 		case len(kept) == 0:
-			// A call made without custom, as an agent makes its own call, takes this one.
+			// A call made without custom, as an agent makes its own call, takes this one. A dial
+			// that fails after this keeps it on the call: Stream's update-call sets a key to null
+			// but cannot remove it, so there is no putting it back.
 			if err := stream.PutCustom(ctx, callType, callID, request.Custom); err != nil {
 				return Placed{}, err
 			}

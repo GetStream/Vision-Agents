@@ -1877,8 +1877,10 @@ revives the leg the end left unanswered, billed once. A leg ends when its phone 
 `phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
 leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
 long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
-The call hook has to deliver the participant events: run `go run ./cmd/phone hooks -url <router
-url>` again once. Until then a placed call that ends unanswered with no participant event
+The call hook has to deliver the participant events. With `ROUTER_PUBLIC_URL` set, the router points
+the app's call hook itself when a number is bought or attached. For a router that predates that, or
+an app whose hook lacks the participant events, run `go run ./cmd/phone hooks -url <router url>`
+once. Until the hook delivers them a placed call that ends unanswered with no participant event
 delivered logs `call hook does not deliver participant events; re-run cmd/phone hooks` at ERROR,
 once an hour per app. Placing a call is a free `dial` row, for its latency and failures. A number is
 billed every month it is held, on the day it was bought, at the price its vendor quoted (or the

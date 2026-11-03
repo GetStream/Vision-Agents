@@ -36,6 +36,8 @@ final readonly class Session
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
         public ?string $description = null,
+        // Why the session ended. Absent while it is running, and for a session that ended before this was kept or by...
+        public SessionEndReason|string|null $endReason = null,
         // The session this one continued from, empty for one opened fresh.
         public ?string $forkedFrom = null,
         // Nothing about this session was recorded. It is reported so a caller can see that what they asked for is wha...
@@ -96,6 +98,7 @@ final readonly class Session
             conversationId: array_key_exists('conversation_id', $data) && $data['conversation_id'] !== null ? Json::string($data, 'conversation_id') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            endReason: array_key_exists('end_reason', $data) && $data['end_reason'] !== null ? Json::enum($data, 'end_reason', SessionEndReason::class) : null,
             forkedFrom: array_key_exists('forked_from', $data) && $data['forked_from'] !== null ? Json::string($data, 'forked_from') : null,
             incognito: array_key_exists('incognito', $data) && $data['incognito'] !== null ? Json::bool($data, 'incognito') : null,
             instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
@@ -158,6 +161,9 @@ final readonly class Session
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->endReason !== null) {
+            $out['end_reason'] = Json::enumValue($this->endReason);
         }
         if ($this->forkedFrom !== null) {
             $out['forked_from'] = $this->forkedFrom;

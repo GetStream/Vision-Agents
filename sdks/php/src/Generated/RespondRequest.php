@@ -11,7 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class RespondRequest
 {
     public function __construct(
+        // What to answer, as though it had been said. May be empty when audio carries the question.
         public string $text,
+        // A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after te...
+        public ?AudioSource $audio = null,
         // The install the command came from. It is written on the person's message as client_id, and a client tool ca...
         public ?string $clientId = null,
         // Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persis...
@@ -26,6 +29,7 @@ final readonly class RespondRequest
     {
         return new self(
             text: Json::string($data, 'text'),
+            audio: array_key_exists('audio', $data) && $data['audio'] !== null ? AudioSource::fromArray(Json::object($data, 'audio')) : null,
             clientId: array_key_exists('client_id', $data) && $data['client_id'] !== null ? Json::string($data, 'client_id') : null,
             requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
         );
@@ -40,6 +44,9 @@ final readonly class RespondRequest
     {
         $out = [];
         $out['text'] = $this->text;
+        if ($this->audio !== null) {
+            $out['audio'] = $this->audio->toArray();
+        }
         if ($this->clientId !== null) {
             $out['client_id'] = $this->clientId;
         }

@@ -57,7 +57,9 @@ func (s *PolicySuite) startUsage() {
 func (s *PolicySuite) usage() *usagetest.Service { return s.service }
 
 // front is the usage service as an enforcer reaches it: the real one, through a proxy the test
-// can take down, which counts the standings calls made through it.
+// can take down, which counts the standings calls made through it. It counts them as its client
+// makes them (RoundTrip), not as they reach the proxy, so a count is final once its callers have
+// returned: the request of a call one gave up on can reach the proxy after.
 type front struct {
 	server *httptest.Server
 	down   atomic.Bool
@@ -83,16 +85,27 @@ func (s *PolicySuite) front(service *usagetest.Service) *front {
 			// The connection drops, as it does when the service is gone.
 			panic(http.ErrAbortHandler)
 		}
-		switch r.URL.Path {
-		case usage.PathStandings:
-			f.standings.Add(1)
-		case usage.PathWindows:
-			f.windows.Add(1)
-		}
 		proxy.ServeHTTP(w, r)
 	}))
 	s.T().Cleanup(f.server.Close)
 	return f
+}
+
+// client is a usage client for service through the front, which counts the calls it makes.
+func (f *front) client(s *PolicySuite, service *usagetest.Service) *usage.Client {
+	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token, HTTP: &http.Client{Transport: f}})
+	s.Require().NoError(err)
+	return client
+}
+
+func (f *front) RoundTrip(r *http.Request) (*http.Response, error) {
+	switch r.URL.Path {
+	case usage.PathStandings:
+		f.standings.Add(1)
+	case usage.PathWindows:
+		f.windows.Add(1)
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 // logs is a log buffer safe to read while the enforcer writes to it.
@@ -131,8 +144,7 @@ func (s *PolicySuite) billed(change ...func(*Settings)) *reading {
 func (s *PolicySuite) billedOn(configs *appconfig.Store, change ...func(*Settings)) *reading {
 	service := s.usage()
 	f := s.front(service)
-	client, err := usage.NewClient(usage.ClientOptions{URL: f.server.URL, Token: service.Token})
-	s.Require().NoError(err)
+	client := f.client(s, service)
 	written := &logs{}
 	logger := slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	enforcer := s.newEnforcer(configs, logger, append([]func(*Settings){func(settings *Settings) { settings.Usage = client }}, change...)...)
@@ -467,7 +479,8 @@ func (s *PolicySuite) TestOneCallReadsEveryOrganization() {
 		}
 		return true
 	}, 10*time.Second, 20*time.Millisecond)
-	// The test makes the next pass itself, so the loop's own cannot be counted with it.
+	// The test makes the next pass itself, so the loop's own cannot be counted with it: stop
+	// waits for the loop's passes, which counted their calls as they made them.
 	enforcer.money.stop()
 	before := enforcer.front.standings.Load()
 
@@ -814,8 +827,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	s.Require().NoError(err)
 	front := s.front(service)
 	windows := &front.windows
-	client, err := usage.NewClient(usage.ClientOptions{URL: front.server.URL, Token: service.Token})
-	s.Require().NoError(err)
+	client := front.client(s, service)
 	enforcer := s.newEnforcer(configs, nil, func(settings *Settings) {
 		settings.Usage, settings.Counters, settings.Fresh, settings.MaxStale = client, counters, time.Hour, 2*time.Hour
 		settings.FirstRead = readTimeout
@@ -830,7 +842,7 @@ func (s *PolicySuite) TestCountersThatFailAreReadThroughTheService() {
 	service.Spend(s.T(), s.org, 1_000_000, func(event *usage.Event) { event.AppID = s.app })
 
 	s.spendRefused(enforcer, s.app, ErrBudgetSpent)
-	s.Greater(windows.Load(), before, "the service answered for the counters")
+	s.Greater(windows.Load(), before, "the service was asked for the counters")
 	enforcer.money.mu.Lock()
 	failed := enforcer.money.accounts[s.org].countersFailed
 	enforcer.money.mu.Unlock()
@@ -1196,7 +1208,9 @@ func (s *PolicySuite) TestAColdStartReadsItsFirstAccountsInBatches() {
 	db.DB().AddQueryHook(reads)
 	// Policies cached in Redis, as a router has them, so the admissions reach their first read
 	// of money together rather than as each read of its policies lands.
-	configs, err := appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
+	configs, err := redisready.Retry(os.Getenv("ROUTER_REDIS_ADDR"), func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: db, Address: os.Getenv("ROUTER_REDIS_ADDR")})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	// The loops read nothing on their own, and an admission waits for its read as long as the

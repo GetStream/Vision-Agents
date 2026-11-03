@@ -15,8 +15,7 @@
 # The same call with a bearer the shop was not issued also answered 200 and that tool.
 # Revision 1 asked for oauth2_code. [storefront] says those catalog tools are not on this
 # server any more, and [faqs] says what remains needs no credential, so a login cannot
-# bring them back. A plugin grant is oauth2_code and does not move onto this revision
-# (internal/pluginmigrate resolves oauth2_code and skips when it is not a scheme).
+# bring them back.
 id: shopify
 # A new revision for any change to what this file says; see AGENTS.md.
 # 2 drops the login. /api/mcp needs none, and revision 1 is marked broken.

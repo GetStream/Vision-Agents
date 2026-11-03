@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -366,7 +367,7 @@ func (s *AgentSuite) TestASessionMovesOntoASpeechToSpeechModelAndBackWithoutLeav
 	s.hears(w, alice, "are you still there", 2)
 	requests := w.model("stub").turns()
 	s.Require().Len(requests, 1)
-	s.Equal("my name is Ada", requests[0].Input[0].Content, "the cascade picks the conversation back up")
+	s.Equal("my name is Ada", harness.WithoutNotes(requests[0].Input)[0].Content, "the cascade picks the conversation back up")
 	s.Equal(2, countOf[ModelsChanged](s.reported()))
 	s.edge.mu.Lock()
 	defer s.edge.mu.Unlock()

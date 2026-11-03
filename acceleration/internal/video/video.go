@@ -51,6 +51,15 @@ const (
 // ErrUnavailable is what a deployment without ffmpeg says, rather than failing halfway.
 var ErrUnavailable = errors.New("video: this deployment cannot read video (ffmpeg is not installed)")
 
+// readOnlyAClip are the input options of every ffprobe and ffmpeg run. ffmpeg picks the
+// format from the bytes, and some formats (an HLS playlist, a concat list) name other
+// files that it then opens, so a caller could have it read any file the router can
+// reach. The formats are two demuxers, each by all the names `ffmpeg -demuxers` lists
+// for it: mov for MP4, MOV and 3GP, matroska for MKV and WebM
+// (https://ffmpeg.org/ffmpeg-formats.html#Format-Options). The one protocol is the local
+// file the clip was written to (https://ffmpeg.org/ffmpeg-protocols.html).
+var readOnlyAClip = []string{"-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm", "-protocol_whitelist", "file"}
+
 // errPrivate is a fetch that would have reached somewhere that is not the public internet.
 var errPrivate = errors.New("video: the URL resolves to an address that is not public")
 
@@ -143,6 +152,7 @@ func load(ctx context.Context, client *http.Client, source string) ([]byte, erro
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	request.Header.Set("User-Agent", egress.UserAgent)
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(err, errPrivate) {
@@ -166,8 +176,9 @@ func load(ctx context.Context, client *http.Client, source string) ([]byte, erro
 
 // duration is how long the clip at path plays for.
 func duration(ctx context.Context, path string) (time.Duration, error) {
-	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error",
-		"-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path).Output()
+	args := append([]string{"-v", "error"}, readOnlyAClip...)
+	out, err := exec.CommandContext(ctx, "ffprobe", append(args,
+		"-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path)...).Output()
 	seconds, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
 	if err != nil || parseErr != nil || seconds <= 0 {
 		return 0, stack.Wrap(errors.New("video: not a video ffmpeg can read"))
@@ -178,10 +189,11 @@ func duration(ctx context.Context, path string) (time.Duration, error) {
 // frameAt is the frame showing at a moment of the clip, as a JPEG.
 func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error) {
 	var stderr bytes.Buffer
-	command := exec.CommandContext(ctx, "ffmpeg", "-v", "error",
+	args := append([]string{"-v", "error"}, readOnlyAClip...)
+	command := exec.CommandContext(ctx, "ffmpeg", append(args,
 		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 3, 64), "-i", path,
 		"-frames:v", "1", "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", frameWidth),
-		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")
+		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")...)
 	command.Stderr = &stderr
 	jpeg, err := command.Output()
 	if err != nil || len(jpeg) == 0 {

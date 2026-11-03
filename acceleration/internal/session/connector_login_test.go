@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -24,7 +26,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -655,13 +656,25 @@ func (s *ConnectorLoginSuite) TestAnIncognitoSessionIsOfferedNoLogin() {
 
 // invocations is connection's call log, once it holds count rows and a moment more.
 func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.ConnectorInvocation {
+	fetch := func() ([]store.ConnectorInvocation, error) {
+		return s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+	}
 	read := func() []store.ConnectorInvocation {
-		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		rows, err := fetch()
 		s.Require().NoError(err)
 		return rows
 	}
-	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		rows, err := fetch()
+		require.NoError(c, err)
+		require.GreaterOrEqual(c, len(rows), count)
+	}, 5*time.Second, 20*time.Millisecond)
+	// An error counts as a change: never's check runs off the test goroutine, so it only returns.
+	never(s.T(), func() bool {
+		rows, err := fetch()
+		return err != nil || len(rows) > count
+	}, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
 
@@ -780,7 +793,7 @@ func (s *ConnectorLoginSuite) TestADeclinedLoginEndsTheCallWithoutRunningIt() {
 	s.Require().NoError(got.err)
 	s.Contains(got.said, `"status":"declined"`)
 	s.Equal(persistent.AuthorizationDeclined, s.endedOf("call-1"))
-	s.Never(func() bool {
+	never(s.T(), func() bool {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
 		return err != nil || len(rows) > 0
 	}, 300*time.Millisecond, 50*time.Millisecond, "nothing reached the provider")
@@ -960,7 +973,7 @@ func (s *ConnectorLoginSuite) TestAStoppedReplysCallNeverRunsOnALaterLogin() {
 	s.Zero(handed)
 	s.Require().NoError(got.err)
 	s.Contains(got.said, `"status":"stopped"`)
-	s.Never(func() bool {
+	never(s.T(), func() bool {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, mine, 0, nil)
 		return err != nil || len(rows) > 0
 	}, 300*time.Millisecond, 50*time.Millisecond, "the stopped request never reached the provider")
@@ -998,33 +1011,6 @@ func (s *ConnectorLoginSuite) heldOn(manager *Manager, config store.AgentConfig)
 		return shown && !over && !s.stopped[callID]
 	}
 	return d
-}
-
-// answered is what a call run in the background said.
-type answered struct {
-	said string
-	err  error
-}
-
-// callInBackground runs the call id on turn, and hands back what it said once it answers.
-func (s *ConnectorLoginSuite) callInBackground(turn context.Context, d *dispatcher, id, name, arguments string) chan answered {
-	answer := make(chan answered, 1)
-	go func() {
-		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: arguments})
-		answer <- answered{said: llm.TextOf(parts), err: err}
-	}()
-	return answer
-}
-
-// answerOf waits for a call run in the background to answer, past loginPoll.
-func (s *ConnectorLoginSuite) answerOf(answer chan answered) answered {
-	select {
-	case got := <-answer:
-		return got
-	case <-time.After(2*loginPoll + 5*time.Second):
-		s.FailNow("the call never answered")
-		return answered{}
-	}
 }
 
 func (s *ConnectorLoginSuite) stepOf(callID string) *persistent.Authorization {

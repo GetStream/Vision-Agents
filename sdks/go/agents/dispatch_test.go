@@ -31,6 +31,8 @@ type worked struct {
 	// answered is each request answered on a session someone else holds, as who it was
 	// answered for and the request, which is what a worker handed one has to send back.
 	answered []string
+	// shown is the URL of each image a question carried, in the order asked.
+	shown []string
 	// created is the sessions the worker opened itself, by id.
 	created  map[string]bool
 	sessions map[string]chan stream.Frame
@@ -74,6 +76,11 @@ func newWorked(t *testing.T, hand func(*websocket.Conn)) *worked {
 
 		router.mu.Lock()
 		router.asked = append(router.asked, r.PathValue("id")+": "+request.Text)
+		if request.Images != nil {
+			for _, image := range *request.Images {
+				router.shown = append(router.shown, image.Url)
+			}
+		}
 		held := router.created[r.PathValue("id")]
 		if !held && request.RequestId != nil {
 			router.answered = append(router.answered, r.Header.Get(stream.UserHeader)+": "+*request.RequestId)
@@ -234,7 +241,7 @@ func answering(t *testing.T, router *worked, prepare func(*stream.Pipeline)) (*D
 		if err != nil {
 			return err
 		}
-		return conversation.Respond(message.Text)
+		return conversation.Respond(message.Text, message.Images...)
 	})
 	return dispatch, &built
 }
@@ -305,6 +312,30 @@ func TestASessionIsOpenedOnTheChannelTheQuestionWasAskedIn(t *testing.T) {
 	}
 	if opened.Incognito != nil && *opened.Incognito {
 		t.Error("the session is incognito; the answer would be written nowhere the person can read it")
+	}
+}
+
+func TestThePhotosOfAMessageAreShownToTheAgentAnsweringIt(t *testing.T) {
+	// A worker that answers with Respond(message.Text) alone would answer a photo as though
+	// none had been sent.
+	router := newWorked(t, func(connection *websocket.Conn) {
+		frame := written("support-42", "is this fan broken?")
+		frame["images"] = []any{
+			map[string]any{"url": "https://cdn.example/fan.jpg", "mime_type": "image/jpeg"},
+			map[string]any{"url": "https://cdn.example/label.jpg"},
+		}
+		_ = connection.WriteJSON(frame)
+		_ = connection.WriteJSON(written("support-42", "and now?"))
+	})
+	dispatch, _ := answering(t, router, nil)
+	defer waited(t, dispatch)()
+
+	eventually(t, "the second question never reached the model", func() bool { return len(router.questions()) == 2 })
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if !slices.Equal(router.shown, []string{"https://cdn.example/fan.jpg", "https://cdn.example/label.jpg"}) {
+		t.Errorf("the photos shown were %v, want both of the first message and none for the second", router.shown)
 	}
 }
 
@@ -614,8 +645,33 @@ func TestAMessageWrittenToARunningSessionIsAnsweredThereForWhoeverWroteIt(t *tes
 	if !slices.Equal(router.answered, []string{"sam: request-1"}) {
 		t.Errorf("the request answered was %v, want request-1 for sam", router.answered)
 	}
+	if router.shown != nil {
+		t.Errorf("a message with no photos showed %v", router.shown)
+	}
 	if built.Load() != 0 || len(router.opened) != 0 {
 		t.Error("an agent was started for a conversation a session is already holding")
+	}
+}
+
+func TestThePhotosOfAMessageWrittenToARunningSessionAreAnsweredThere(t *testing.T) {
+	router := newWorked(t, nil)
+	dispatch, _ := answering(t, router, nil)
+
+	err := dispatch.Answer(t.Context(), InboundMessage{
+		AgentID: "support-42", SessionID: "session-9", Text: "is this fridge fan broken?", UserID: "sam",
+		Images: []stream.Image{{URL: "https://cdn.example/fan.jpg"}, {URL: "https://cdn.example/label.jpg", MIME: "image/jpeg"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if !slices.Equal(router.asked, []string{"session-9: is this fridge fan broken?"}) {
+		t.Errorf("the router was asked %v", router.asked)
+	}
+	if !slices.Equal(router.shown, []string{"https://cdn.example/fan.jpg", "https://cdn.example/label.jpg"}) {
+		t.Errorf("the photos shown were %v, want both, in the order sent", router.shown)
 	}
 }
 

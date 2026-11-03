@@ -251,17 +251,27 @@ func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*s
 
 // respondSession answers a piece of text through the model.
 func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
+	if request.Body != nil {
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, len(request.Body.Text)); err != nil {
+			return nil, err
+		}
+	}
 	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || request.Body.Text == "" {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil) {
 		return nil, invalidRequest("there is nothing to answer")
 	}
 
-	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, request.Body.Text, value(request.Body.ClientId), nil, options.LLM{})
+	id := value(request.Body.RequestId)
+	text, notes, failure := s.withHeardNote(ctx, found, id, request.Body.Text, request.Body.Audio, false, options.LLM{})
+	if failure != nil {
+		return nil, failure
+	}
+	if id != "" && found.Durable() {
+		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), nil, options.LLM{}, notes...)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}
@@ -273,7 +283,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
 		}}, nil
 	}
-	if _, err := found.Respond(ctx, request.Body.Text, nil, options.LLM{}); err != nil {
+	if _, err := found.Respond(ctx, text, nil, options.LLM{}); err != nil {
 		return nil, invalidRequest(err.Error())
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
@@ -698,6 +708,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
 	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
+	spec.MaxToolRounds = override(spec.MaxToolRounds, request.MaxToolRounds)
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
 
@@ -881,7 +892,7 @@ func storedSessionOf(row store.AgentSession) Session {
 }
 
 // mergeStored writes what only the row knows onto a rendered session: the labels, and when
-// it ended.
+// and why it ended.
 func mergeStored(rendered *Session, row *store.AgentSession) {
 	// A live session knows its modality before the row that records it.
 	if rendered.Modality == "" {
@@ -913,6 +924,10 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.ModelOverwrites = modelOverwritesFor(row.ModelOverwrites)
 	}
 	rendered.ClosedAt = row.ClosedAt
+	if row.EndReason != "" {
+		reason := SessionEndReason(row.EndReason)
+		rendered.EndReason = &reason
+	}
 	rendered.LastResponseAt = row.LastResponseAt
 }
 
@@ -1201,13 +1216,17 @@ func (s *Server) registerSessions(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.saySession)
 	huma.Register(api, huma.Operation{
-		OperationID: "respondSession",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/sessions/{id}/respond",
-		Summary:     "Answer a piece of text through the model, as though it had been said",
+		OperationID:     "respondSession",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/sessions/{id}/respond",
+		MaxBodyBytes:    maxInlineAudioBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Answer a piece of text through the model, as though it had been said",
 		Description: "A text session that ended is reopened under the same id, on the config it was " +
 			"opened with: a chat is never over for the person writing in it. A call that ended is " +
-			"not found.",
+			"not found.\n" +
+			"A voice note in audio is transcribed before the turn starts, and what was said is the " +
+			"question, after any text. A voice note that cannot be heard is refused and no turn starts.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Durable command accepted or replayed; only a new command starts inference"},
 			"409": errorResponse("The request id was already accepted with different content"),
@@ -1442,9 +1461,10 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 
 // RespondRequest is the RespondRequest schema.
 type RespondRequest struct {
-	ClientId  *string `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
-	RequestId *string `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Text      string  `json:"text" minLength:"1"`
+	ClientId  *string      `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
+	RequestId *string      `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio     *AudioSource `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
+	Text      string       `json:"text" doc:"What to answer, as though it had been said. May be empty when audio carries the question."`
 }
 
 // RewindSessionRequest is the RewindSessionRequest schema.

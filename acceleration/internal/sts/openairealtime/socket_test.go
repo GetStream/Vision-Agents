@@ -247,6 +247,82 @@ func (s *RealtimeSocketSuite) TestInterruptCancelsAndTruncatesWhatWasHeard() {
 	s.Equal(40, *truncate.AudioEndMs, "the listener's own count wins when there is one")
 }
 
+// replyOpen has the server open a reply and stream 100 ms of it, and waits for the audio.
+func (s *RealtimeSocketSuite) replyOpen(provider *STS, conn *websocket.Conn) {
+	s.serve(conn, serverEvent{Type: eventResponseCreated, Response: &response{ID: "r1"}})
+	s.serve(conn, serverEvent{
+		Type: eventAudioDelta, ResponseID: "r1", ItemID: "item_9",
+		Delta: base64.StdEncoding.EncodeToString(make([]byte, 2400*2)),
+	})
+	deadline := time.After(5 * time.Second)
+	for counted := false; !counted; {
+		select {
+		case event := <-provider.Events():
+			_, counted = event.(sts.AudioChunk)
+		case <-deadline:
+			s.FailNow("the audio never arrived")
+		}
+	}
+}
+
+// closed closes the provider and returns the replies it settled until its events ended.
+func (s *RealtimeSocketSuite) closed(provider *STS, closing func()) []sts.ResponseComplete {
+	go func() { _ = provider.Close() }()
+	closing()
+	var completes []sts.ResponseComplete
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				return completes
+			}
+			if complete, ok := event.(sts.ResponseComplete); ok {
+				completes = append(completes, complete)
+			}
+		case <-deadline:
+			s.FailNow("the events never ended")
+			return nil
+		}
+	}
+}
+
+func (s *RealtimeSocketSuite) TestAReplyClosedMidStreamIsBilledWithTheDoneTheCancelBrings() {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	s.replyOpen(provider, conn)
+
+	completes := s.closed(provider, func() {
+		s.Equal(eventResponseCancel, s.nextFrame(conn).Type)
+		s.serve(conn, serverEvent{Type: eventResponseDone, Response: &response{ID: "r1", Status: "cancelled",
+			Usage: &usage{InputTokens: 50, OutputTokens: 30, OutputTokenDetails: &tokenDetails{AudioTokens: 30}}}})
+	})
+
+	s.Require().Len(completes, 1)
+	s.True(completes[0].Interrupted)
+	s.EqualValues(30, completes[0].Usage.OutputTokens, "the vendor's count of the reply hung up on")
+	s.False(completes[0].Usage.Estimated)
+}
+
+func (s *RealtimeSocketSuite) TestAReplyClosedWithNoDoneInTheGraceIsEstimated() {
+	previous := closeGrace
+	closeGrace = 50 * time.Millisecond
+	defer func() { closeGrace = previous }()
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI})
+	s.replyOpen(provider, conn)
+
+	completes := s.closed(provider, func() {
+		s.Equal(eventResponseCancel, s.nextFrame(conn).Type)
+	})
+
+	s.Require().Len(completes, 1)
+	s.True(completes[0].Usage.Estimated)
+	s.EqualValues(2, completes[0].Usage.OutputAudioTokens, "at least the 100 ms it streamed")
+}
+
 func (s *RealtimeSocketSuite) TestAnAnswerCarriesTheResultAndAsksForAReply() {
 	fake := newFakeRealtime(false)
 	defer fake.close()

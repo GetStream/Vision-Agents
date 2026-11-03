@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // SecretSweepSuite is where a router sweeps the Daytona secrets a crashed router left behind:
@@ -49,7 +50,7 @@ func (s *SecretSweepSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.redis, s.logger = redis, slog.New(slog.DiscardHandler)
 	s.prefix = "w17sweep" + strings.ToLower(rand.Text())

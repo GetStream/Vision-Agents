@@ -6,6 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -227,7 +228,7 @@ func (s *AgentSuite) TestCountingWhatIsHeardChangesNothingTheCallerHearsOrIsAnsw
 		s.Len(pcm.Samples, 320)
 	}
 	s.Require().Len(s.model.requests(), 1)
-	s.Equal("book a table", s.model.requests()[0].Input[0].Content)
+	s.Equal("book a table", harness.WithoutNotes(s.model.requests()[0].Input)[0].Content)
 	var spoken []string
 	for _, request := range s.voice.spoken() {
 		spoken = append(spoken, request.Text)
@@ -236,7 +237,7 @@ func (s *AgentSuite) TestCountingWhatIsHeardChangesNothingTheCallerHearsOrIsAnsw
 	s.Equal([]llm.Message{
 		{Role: llm.User, Content: "book a table"},
 		{Role: llm.Assistant, Content: "Hello there. How are you?"},
-	}, s.agent.History())
+	}, harness.WithoutNotes(s.agent.History()))
 }
 
 func (s *AgentSuite) TestATurnIsReportedForItsOwnCallerWhenSomebodyElseSpokeLast() {

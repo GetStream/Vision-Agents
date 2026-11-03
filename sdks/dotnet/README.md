@@ -180,7 +180,7 @@ reason.
 
 ```
 agents/jean/
-  agent.yaml            required: what it runs on (llm, stt, tts, greeting, plugins, harness, tags, dispatch, ...)
+  agent.yaml            required: what it runs on (llm, stt, tts, greeting, connectors, harness, tags, dispatch, ...)
   instructions.md
   guardrail.md
   skills/think.md

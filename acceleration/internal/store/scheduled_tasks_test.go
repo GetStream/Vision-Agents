@@ -805,6 +805,48 @@ func (s *StoreSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCa
 	s.Equal(failed[0].ClaimID, task.ClaimID, "the settle runs under a claim of its own")
 }
 
+func (s *StoreSuite) TestTheAttemptCapRecordsWhatThePlacedCallLeft() {
+	due := s.base.Add(-time.Minute)
+	started := time.Now().Add(-time.Hour)
+	notAnswered, empty := "not_answered", ""
+	cases := []struct {
+		task    string
+		session string
+		reason  *string
+		want    string
+	}{
+		{task: "no-call", want: "delivery_failed"},
+		{task: "no-call-with-text", reason: &notAnswered, want: "delivery_failed"},
+		{task: "call-no-end", session: "call-1", want: "already_called"},
+		{task: "call-empty-end", session: "call-2", reason: &empty, want: "already_called"},
+		{task: "call-ended", session: "call-3", reason: &notAnswered, want: "not_answered"},
+	}
+	runs := map[string]string{}
+	for _, c := range cases {
+		s.task(c.task, func(task *ScheduledTask) { task.NextRunAt = &due })
+		// Three workers took it up and died: the store's cap.
+		run := &ScheduledTaskRun{TaskID: c.task, CustomerID: "acme", ScheduledFor: due,
+			Attempts: maxScheduledTaskRunAttempts, StartedAt: &started,
+			SessionID: c.session, Error: c.reason}
+		s.Require().NoError(s.store.InsertScheduledTaskRun(s.ctx, run))
+		runs[c.task] = run.ID
+	}
+
+	claimed, err := s.store.ClaimDueScheduledTasks(s.ctx, 16, time.Minute)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, len(cases))
+	for _, claim := range claimed {
+		s.True(claim.WorkersLost, claim.Task.ID)
+	}
+	for _, c := range cases {
+		stored := s.run(runs[c.task])
+		s.Equal(ScheduledTaskRunFailed, stored.State, c.task)
+		s.Require().NotNil(stored.Error, c.task)
+		s.Equal(c.want, *stored.Error, c.task)
+		s.Equal(c.session, stored.SessionID, "%s: the call stays on the run", c.task)
+	}
+}
+
 func (s *StoreSuite) TestALeaseLapsingAfterAHoldWasTakenUpIsParkedLikeAnyOther() {
 	due := s.base.Add(-time.Minute)
 	s.task("one", func(task *ScheduledTask) { task.NextRunAt = &due })

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -292,16 +294,17 @@ func (s *ConcurrencySuite) callAtOnce(d *dispatcher, name string, count int) fun
 // rowOf is the one invocation row binding's calls on connection left, once written.
 func (s *ConcurrencySuite) rowOf(connection, binding string) store.ConnectorInvocation {
 	var found []store.ConnectorInvocation
-	s.Require().Eventually(func() bool {
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
-		s.Require().NoError(err)
+		require.NoError(c, err)
 		found = found[:0]
 		for _, row := range rows {
 			if row.Binding == binding {
 				found = append(found, row)
 			}
 		}
-		return len(found) == 1
+		require.Len(c, found, 1)
 	}, 5*time.Second, 20*time.Millisecond)
 	return found[0]
 }

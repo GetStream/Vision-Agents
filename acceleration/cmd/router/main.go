@@ -174,7 +174,6 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
-  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
   prices                read and check the price list (router prices for its commands)
   usage replay          write the usage rows a log says were lost, once each (--from path)
   usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
@@ -260,8 +259,6 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
-	case "plugins":
-		return runPlugins(args, settings, logger)
 	case "prices":
 		return runPrices(args, settings, logger)
 	case "usage":
@@ -1054,7 +1051,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}
 	go learnDeploymentApp(ctx, streamClients, logger)
-	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
 	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
 	var phoneRecorder *routing.Recorder
@@ -1537,13 +1533,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		deliveries.Start(ctx)
 		defer deliveries.Close()
 	}
-	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
-	// pinned to, read once, within the one attempt's time the deployment's own check gets.
-	go func() {
-		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
-		defer cancel()
-		server.WarnWithoutMessageHooks(attempt)
-	}()
 
 	handler := server.Handler()
 	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
@@ -2281,7 +2270,7 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Apps:      phoneApps{clients: stream},
+		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,
 		Gate:      gate,
 		PublicURL: settings.PublicURL,
@@ -2373,7 +2362,7 @@ func buildDLC(
 			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
 	}
 
-	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Booker: gate, Logger: logger}
 	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
 		options.Registrar = registrar
 	} else {

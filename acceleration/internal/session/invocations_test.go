@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -32,13 +34,25 @@ func TestInvocationLogSuite(t *testing.T) {
 // logged waits for connection's log to hold count rows and a moment more, so a second row
 // written late would be seen, and returns them newest first.
 func (s *InvocationLogSuite) logged(connection string, count int) []store.ConnectorInvocation {
+	fetch := func() ([]store.ConnectorInvocation, error) {
+		return s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+	}
 	read := func() []store.ConnectorInvocation {
-		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		rows, err := fetch()
 		s.Require().NoError(err)
 		return rows
 	}
-	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		rows, err := fetch()
+		require.NoError(c, err)
+		require.GreaterOrEqual(c, len(rows), count)
+	}, 5*time.Second, 20*time.Millisecond)
+	// An error counts as a change: never's check runs off the test goroutine, so it only returns.
+	never(s.T(), func() bool {
+		rows, err := fetch()
+		return err != nil || len(rows) > count
+	}, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
 

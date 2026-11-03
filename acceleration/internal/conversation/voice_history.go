@@ -6,6 +6,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -97,7 +98,7 @@ func ThreadPhotoNote(attachments []getstream.Attachment) string {
 	if len(photos) == 0 {
 		return ""
 	}
-	return photoNote(len(photos))
+	return agent.PhotoNote("", len(photos))
 }
 
 // threadPhotos are the photos sent with a person's message in a thread channel, at most

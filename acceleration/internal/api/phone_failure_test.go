@@ -138,3 +138,16 @@ func TestAttachingWithoutAKeyringIsNotConfiguredAndNamesNoSetting(t *testing.T) 
 	require.NotContains(t, response.Body.String(), "ROUTER_AUTH_KEK")
 	require.Contains(t, logged.String(), "ROUTER_AUTH_KEK", "the operator still learns what to set")
 }
+
+func TestAHookThatCannotBePointedIsAnsweredWithTryAgain(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	failure := stack.Wrap(fmt.Errorf("%w: %w", phone.ErrCallHook, errors.New("phone: update app: refused")))
+	handler, _ := served(t, func() error { return phoneFailure(logger, failure) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.NotContains(t, response.Body.String(), "cmd/phone")
+	require.Contains(t, logged.String(), "level=ERROR")
+}

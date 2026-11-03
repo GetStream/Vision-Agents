@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -234,7 +236,7 @@ func (s *AgentSuite) TestARefusalCanBeAskedAbout() {
 		"the second turn never went out")
 
 	var spoken []string
-	for _, message := range s.model.requests()[1].Input {
+	for _, message := range harness.WithoutNotes(s.model.requests()[1].Input) {
 		spoken = append(spoken, message.Content)
 	}
 	s.Contains(spoken, theRefusal)
@@ -309,6 +311,22 @@ func (s *AgentSuite) TestARefusalOutLoudIsSpokenInsteadOfTheReply() {
 	s.NotContains(said(s.voice.spoken()), "dough",
 		"the model's reply was spoken despite the refusal")
 	s.NotContains(said(s.voice.spoken()), "sauce")
+}
+
+// A written aside is screened on what the model is asked, its words or imagesAlone for
+// photos sent alone, not on the note history keeps of its photos.
+func (s *AgentSuite) TestAWrittenAsideWithPhotosIsScreenedOnWhatIsAsked() {
+	s.sees = true
+	s.screens(guardrail.ModeBlocking)
+	s.joinText()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", photo)
+	s.Require().NoError(err)
+	_, err = s.agent.Ask(s.ctx, "", photo)
+	s.Require().NoError(err)
+
+	s.Equal([]string{"is this fan broken?", imagesAlone}, s.guards.screened())
 }
 
 func (s *AgentSuite) TestAWrittenAsideIsScreenedToo() {

@@ -181,8 +181,11 @@ def sync_detailed(
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
     invoking the model again; reuse with different content emits an error. Its images are data URIs, at
-    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
-    interrupted command is reported, not rerun.
+    most 8, uploaded to the conversation's channel and shown on the person's message. On a session a
+    dispatch worker opened for a message handed out from a channel, that message is already there:
+    nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a
+    duplicate even with other text or images. After restart an interrupted command is reported, not
+    rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -393,8 +396,11 @@ def sync(
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
     invoking the model again; reuse with different content emits an error. Its images are data URIs, at
-    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
-    interrupted command is reported, not rerun.
+    most 8, uploaded to the conversation's channel and shown on the person's message. On a session a
+    dispatch worker opened for a message handed out from a channel, that message is already there:
+    nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a
+    duplicate even with other text or images. After restart an interrupted command is reported, not
+    rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -600,8 +606,11 @@ async def asyncio_detailed(
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
     invoking the model again; reuse with different content emits an error. Its images are data URIs, at
-    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
-    interrupted command is reported, not rerun.
+    most 8, uploaded to the conversation's channel and shown on the person's message. On a session a
+    dispatch worker opened for a message handed out from a channel, that message is already there:
+    nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a
+    duplicate even with other text or images. After restart an interrupted command is reported, not
+    rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without
@@ -810,8 +819,11 @@ async def asyncio(
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
     invoking the model again; reuse with different content emits an error. Its images are data URIs, at
-    most 8, uploaded to the conversation's channel and shown on the person's message. After restart an
-    interrupted command is reported, not rerun.
+    most 8, uploaded to the conversation's channel and shown on the person's message. On a session a
+    dispatch worker opened for a message handed out from a channel, that message is already there:
+    nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a
+    duplicate even with other text or images. After restart an interrupted command is reported, not
+    rerun.
     An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its
     terminal receipt. A stop arriving after its command finished replays that command's receipt and
     leaves the command running now alone; an unknown command is reported as an error. Without

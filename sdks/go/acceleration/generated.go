@@ -2134,6 +2134,33 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionEndReason.
+const (
+	AgentHangup SessionEndReason = "agent_hangup"
+	Hangup      SessionEndReason = "hangup"
+	Start       SessionEndReason = "start"
+	Transferred SessionEndReason = "transferred"
+	Unanswered  SessionEndReason = "unanswered"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndReason enum.
+func (e SessionEndReason) Valid() bool {
+	switch e {
+	case AgentHangup:
+		return true
+	case Hangup:
+		return true
+	case Start:
+		return true
+	case Transferred:
+		return true
+	case Unanswered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionModality.
 const (
 	SessionModalityText  SessionModality = "text"
@@ -2980,6 +3007,13 @@ type AddTrunkNumberRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 }
 
+// AgentCalls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+type AgentCalls struct {
+	EndCall  *EndCallSettings  `json:"end_call,omitempty"`
+	Press    *PressSettings    `json:"press,omitempty"`
+	Transfer *TransferSettings `json:"transfer,omitempty"`
+}
+
 // AgentChanges What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
 type AgentChanges struct {
 	// Items The changes made since the last sync, newest first, at most 200. Empty when the agent has not been touched since.
@@ -3003,6 +3037,9 @@ type AgentChannels struct {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -3091,6 +3128,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -3174,6 +3214,9 @@ type AgentConfigPatch struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -3520,6 +3563,12 @@ type AttachedNumber struct {
 	// SipUri Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
 	SipUri  string `json:"sip_uri"`
 	TrunkId string `json:"trunk_id"`
+}
+
+// AudioSource defines model for AudioSource.
+type AudioSource struct {
+	// Url Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	Url string `json:"url"`
 }
 
 // AuditAction created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
@@ -4930,6 +4979,7 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
+	Audio  *AudioSource   `json:"audio,omitempty"`
 	Images *[]ImageSource `json:"images,omitempty"`
 
 	// MaxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -4938,10 +4988,10 @@ type CreateResponseRequest struct {
 	// ReasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
 	RequestId *string `json:"request_id,omitempty"`
 
-	// Text What to answer, as though it had been said.
+	// Text What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
 	Text string `json:"text"`
 
 	// Videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
@@ -5055,6 +5105,9 @@ type CreateSessionRequest struct {
 	// Llm A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
 	Llm       *string `json:"llm,omitempty"`
 	MaxTokens *int    `json:"max_tokens,omitempty"`
+
+	// MaxToolRounds The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+	MaxToolRounds *int `json:"max_tool_rounds,omitempty"`
 
 	// Memory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
 	Memory *SessionMemory `json:"memory,omitempty"`
@@ -5439,6 +5492,15 @@ type EffectiveQuota struct {
 
 	// TokensSetBy Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
 	TokensSetBy QuotaLevel `json:"tokens_set_by"`
+}
+
+// EndCallSettings defines model for EndCallSettings.
+type EndCallSettings struct {
+	// Enabled Offer the tool. Omitted is off.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// When When the agent should end the call, in the caller's terms.
+	When *string `json:"when,omitempty"`
 }
 
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
@@ -6576,7 +6638,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
-	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
+	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
 	Custom *map[string]string `json:"custom,omitempty"`
 
 	// From One of the customer's own numbers, which is what the person sees.
@@ -6823,6 +6885,12 @@ type PressDigitsRequest struct {
 
 	// Vendor Who is carrying the call, e.g. "telnyx".
 	Vendor string `json:"vendor"`
+}
+
+// PressSettings defines model for PressSettings.
+type PressSettings struct {
+	// Enabled Offer the tool. Omitted is on.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // Price What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
@@ -7384,12 +7452,16 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	Audio *AudioSource `json:"audio,omitempty"`
+
 	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
 	ClientId *string `json:"client_id,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
 	RequestId *string `json:"request_id,omitempty"`
-	Text      string  `json:"text"`
+
+	// Text What to answer, as though it had been said. May be empty when audio carries the question.
+	Text string `json:"text"`
 }
 
 // ResumeHistory How a conversation is handed back to the model when a session carries it on.
@@ -7641,7 +7713,7 @@ type ScheduledTask struct {
 	// SessionId The conversation the task follows up in. Empty until its first occurrence opens one.
 	SessionId string `json:"session_id"`
 
-	// State active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+	// State active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 	State ScheduledTaskState `json:"state"`
 	Title string             `json:"title"`
 
@@ -7654,7 +7726,7 @@ type ScheduledTask struct {
 // ScheduledTaskCreatedBy agent when the model made it in a conversation, api when a backend did.
 type ScheduledTaskCreatedBy string
 
-// ScheduledTaskState active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+// ScheduledTaskState active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 type ScheduledTaskState string
 
 // ScheduledTaskNext defines model for ScheduledTaskNext.
@@ -7697,7 +7769,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -7868,6 +7940,9 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
+	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
 	ForkedFrom *string `json:"forked_from,omitempty"`
 	Id         string  `json:"id"`
@@ -7969,6 +8044,9 @@ type SessionConnectorBinding struct {
 	// Name The binding's alias in the agent config.
 	Name string `json:"name"`
 }
+
+// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+type SessionEndReason string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {
@@ -8811,6 +8889,9 @@ type SyncAgentRequest struct {
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
 	BaseChange *string `json:"base_change,omitempty"`
 
+	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
+	Calls *AgentCalls `json:"calls,omitempty"`
+
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
@@ -9255,6 +9336,30 @@ type TransferCallRequest struct {
 
 	// To The human being brought onto the call.
 	To string `json:"to"`
+}
+
+// TransferDestination defines model for TransferDestination.
+type TransferDestination struct {
+	// Name What the agent calls this destination, such as Sales.
+	Name string `json:"name"`
+
+	// Number The number to transfer to, in E.164 form.
+	Number string `json:"number"`
+
+	// Warm Announce the caller to the person answering before connecting them.
+	Warm *bool `json:"warm,omitempty"`
+
+	// When When the agent should transfer here, in the caller's terms.
+	When *string `json:"when,omitempty"`
+}
+
+// TransferSettings defines model for TransferSettings.
+type TransferSettings struct {
+	// Destinations The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+	Destinations *[]TransferDestination `json:"destinations,omitempty"`
+
+	// Enabled Offer the tool. Omitted is on.
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // TtsOptions How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
@@ -10057,6 +10162,12 @@ type GetConversationCommandParams struct {
 type GetConversationMessagesParams struct {
 	AgentId string  `form:"agent_id" json:"agent_id"`
 	Before  *string `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// DeleteKnowledgeParams defines parameters for DeleteKnowledge.
+type DeleteKnowledgeParams struct {
+	// Namespace The knowledge base, as it was named when it was filled.
+	Namespace string `form:"namespace" json:"namespace"`
 }
 
 // ListKnowledgeDocumentsParams defines parameters for ListKnowledgeDocuments.
@@ -11948,8 +12059,6 @@ type ClientInterface interface {
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
-	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -11960,8 +12069,6 @@ type ClientInterface interface {
 	// SetConnectorOAuthClient Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
-	//
-	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -11983,8 +12090,6 @@ type ClientInterface interface {
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 	//
-	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -11995,8 +12100,6 @@ type ClientInterface interface {
 	// SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
-	//
-	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12059,6 +12162,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
 	ClaimGuestUser(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteKnowledge Delete a knowledge base
+	//
+	// Everything in it goes, for good: its passages, the documents it was filled with and the pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 naming those agents, so no agent is left looking things up in nothing.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/knowledge (the `DeleteKnowledge` operationId).
+	DeleteKnowledge(ctx context.Context, params *DeleteKnowledgeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestKnowledgeWithBody Fill a knowledge base with what the business wrote down
 	//
@@ -12590,6 +12701,7 @@ type ClientInterface interface {
 	// RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12599,6 +12711,7 @@ type ClientInterface interface {
 	// RespondSession Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -12616,6 +12729,7 @@ type ClientInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12626,6 +12740,7 @@ type ClientInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -15866,8 +15981,6 @@ func (c *Client) GetConnectorOAuthClient(ctx context.Context, id string, reqEdit
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
-// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -15888,8 +16001,6 @@ func (c *Client) SetConnectorOAuthClientWithBody(ctx context.Context, id string,
 // SetConnectorOAuthClient Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
-//
-// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -15931,8 +16042,6 @@ func (c *Client) DeleteConnectorProviderApp(ctx context.Context, id string, reqE
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 //
-// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -15953,8 +16062,6 @@ func (c *Client) SetConnectorProviderAppWithBody(ctx context.Context, id string,
 // SetConnectorProviderApp Create or update the app the router keeps at the connector's provider
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
-//
-// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -16078,6 +16185,24 @@ func (c *Client) ClaimGuestUserWithBody(ctx context.Context, contentType string,
 // Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
 func (c *Client) ClaimGuestUser(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimGuestUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteKnowledge Delete a knowledge base
+//
+// Everything in it goes, for good: its passages, the documents it was filled with and the pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 naming those agents, so no agent is left looking things up in nothing.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/knowledge (the `DeleteKnowledge` operationId).
+func (c *Client) DeleteKnowledge(ctx context.Context, params *DeleteKnowledgeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteKnowledgeRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -17194,6 +17319,7 @@ func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditor
 // RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17213,6 +17339,7 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id string, contentT
 // RespondSession Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17250,6 +17377,7 @@ func (c *Client) ListResponses(ctx context.Context, id string, params *ListRespo
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17270,6 +17398,7 @@ func (c *Client) CreateResponseWithBody(ctx context.Context, id string, contentT
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -24010,6 +24139,56 @@ func NewClaimGuestUserRequestWithBody(server string, contentType string, body io
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteKnowledgeRequest constructs an http.Request for the DeleteKnowledge method
+func NewDeleteKnowledgeRequest(server string, params *DeleteKnowledgeParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", false, "namespace", params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -33416,8 +33595,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 	//
-	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -33428,8 +33605,6 @@ type ClientWithResponsesInterface interface {
 	// SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 	//
 	// Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
-	//
-	// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -33453,8 +33628,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 	//
-	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -33465,8 +33638,6 @@ type ClientWithResponsesInterface interface {
 	// SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
 	//
 	// Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
-	//
-	// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -33533,6 +33704,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
 	ClaimGuestUserWithResponse(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimGuestUserResponse, error)
+
+	// DeleteKnowledgeWithResponse Delete a knowledge base
+	//
+	// Everything in it goes, for good: its passages, the documents it was filled with and the pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 naming those agents, so no agent is left looking things up in nothing.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/knowledge (the `DeleteKnowledge` operationId).
+	DeleteKnowledgeWithResponse(ctx context.Context, params *DeleteKnowledgeParams, reqEditors ...RequestEditorFn) (*DeleteKnowledgeResponse, error)
 
 	// IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
 	//
@@ -34132,6 +34313,7 @@ type ClientWithResponsesInterface interface {
 	// RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34141,6 +34323,7 @@ type ClientWithResponsesInterface interface {
 	// RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34160,6 +34343,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34170,6 +34354,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -43602,6 +43787,114 @@ func (r ClaimGuestUserResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClaimGuestUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteKnowledgeResponse204Headers the declared response headers of an HTTP 204 response for DeleteKnowledge
+type DeleteKnowledgeResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DeleteKnowledgeResponse402Headers the declared response headers of an HTTP 402 response for DeleteKnowledge
+type DeleteKnowledgeResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DeleteKnowledgeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteKnowledgeResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DeleteKnowledgeResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteKnowledgeResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteKnowledgeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteKnowledgeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteKnowledgeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteKnowledgeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -62823,8 +63116,6 @@ func (c *ClientWithResponses) GetConnectorOAuthClientWithResponse(ctx context.Co
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
 //
-// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -62841,8 +63132,6 @@ func (c *ClientWithResponses) SetConnectorOAuthClientWithBodyWithResponse(ctx co
 // SetConnectorOAuthClientWithResponse Set the app's own OAuth client for a connector
 //
 // Stores the OAuth client the app registered with the connector's provider, for every consent and refresh of the app's connections to it. Putting it again replaces it: a rotated secret is used from the next refresh of each connection. A new client_id makes the connections consented with the old one need a reconnect, since a refresh token is bound to the client it was issued to (RFC 6749 section 6). A connector whose client.registration does not list customer refuses it. With provider_app_id and signing_secret it is also the app's own provider app: the provider's events for the app, posted to /v1/connectors/events/{id}/{provider_app_id}, are verified with that secret and reach the app alone. Both secrets are sealed and never returned. A connector whose connections take no OAuth client, such as linq, takes the provider app alone: provider_app_id and signing_secret without client_id.
-//
-// A provider app of a connector whose channel is verified with the app's own secret, such as slack_bot, has its message hook pointed as the provider app PUTs point it. When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -62878,8 +63167,6 @@ func (c *ClientWithResponses) DeleteConnectorProviderAppWithResponse(ctx context
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
 //
-// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
-//
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -62896,8 +63183,6 @@ func (c *ClientWithResponses) SetConnectorProviderAppWithBodyWithResponse(ctx co
 // SetConnectorProviderAppWithResponse Create or update the app the router keeps at the connector's provider
 //
 // Creates the customer's own Slack app in its workspace with Slack's apps.manifest.create, from the connector's scopes and events, the name given and this router's callback and events URLs, with token rotation on. The app's client is what every later consent of the connector's connections uses. It needs an app configuration token's refresh token the first time, which a workspace admin generates in Slack's app settings; the router rotates it before it expires and keeps it sealed. Putting it again changes nothing at Slack but the app's manifest: there is one app per customer and connector, never a second. A connector that does not authorize at Slack, or whose client.registration does not list managed, refuses it. No response carries a token or a secret.
-//
-// When the provider app is pinned to a Stream app the customer registered, the router then points that app's message hook at itself, at ROUTER_PUBLIC_URL/v1/chat/hooks/stream/{stream app id}: it adds the hook, or updates the one already there, so the messages written in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, and putting it again points the hook again.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -63005,6 +63290,22 @@ func (c *ClientWithResponses) ClaimGuestUserWithResponse(ctx context.Context, bo
 		return nil, err
 	}
 	return ParseClaimGuestUserResponse(rsp)
+}
+
+// DeleteKnowledgeWithResponse Delete a knowledge base
+//
+// Everything in it goes, for good: its passages, the documents it was filled with and the pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 naming those agents, so no agent is left looking things up in nothing.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/knowledge (the `DeleteKnowledge` operationId).
+func (c *ClientWithResponses) DeleteKnowledgeWithResponse(ctx context.Context, params *DeleteKnowledgeParams, reqEditors ...RequestEditorFn) (*DeleteKnowledgeResponse, error) {
+	rsp, err := c.DeleteKnowledge(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteKnowledgeResponse(rsp)
 }
 
 // IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
@@ -63953,6 +64254,7 @@ func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Cont
 // RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -63968,6 +64270,7 @@ func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Con
 // RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -63999,6 +64302,7 @@ func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id 
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -64015,6 +64319,7 @@ func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Con
 //
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -75700,6 +76005,135 @@ func ParseClaimGuestUserResponse(rsp *http.Response) (*ClaimGuestUserResponse, e
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ClaimGuestUserResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteKnowledgeResponse parses an HTTP response from a DeleteKnowledgeWithResponse call
+func ParseDeleteKnowledgeResponse(rsp *http.Response) (*DeleteKnowledgeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteKnowledgeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteKnowledgeResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DeleteKnowledgeResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

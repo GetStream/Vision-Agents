@@ -273,6 +273,7 @@ type CreateSessionRequest struct {
 	Languages            *[]string          `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
 	Llm                  *string            `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
 	MaxTokens            *int               `json:"max_tokens,omitempty"`
+	MaxToolRounds        *int               `json:"max_tool_rounds,omitempty" doc:"The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups."`
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
@@ -299,6 +300,7 @@ type CreateSessionRequest struct {
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_tokens"].Format = ""
+	schema.Properties["max_tool_rounds"].Format = ""
 	schema.Properties["tool_timeout_ms"].Format = ""
 	return schema
 }
@@ -539,6 +541,11 @@ func (e ImageOptionsOutputFormat) Valid() bool {
 type ImageSource struct {
 	Detail *ImageSourceDetail `json:"detail,omitempty" enum:"auto,low,high"`
 	Url    string             `json:"url" doc:"Absolute HTTP(S) URL or base64 image data URI."`
+}
+
+// AudioSource is a voice note sent with a question.
+type AudioSource struct {
+	Url string `json:"url" doc:"Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address."`
 }
 
 // ImageSourceDetail is the ImageSourceDetail schema.
@@ -802,6 +809,7 @@ type Session struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	Custom           *map[string]interface{} `json:"custom,omitempty"`
 	Description      *string                 `json:"description,omitempty"`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped."`
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
@@ -866,6 +874,14 @@ func (e SessionModality) Valid() bool {
 
 func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
+}
+
+// SessionEndReason is why a session ended.
+type SessionEndReason string
+
+func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.",
+		"agent_hangup", "transferred", "hangup", "start", "unanswered")
 }
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.

@@ -23,6 +23,8 @@ final readonly class SyncAgentRequest
         public string $name,
         // The newest change the caller has already seen, as last_change named it. Everything up to it is taken as dec...
         public ?string $baseChange = null,
+        // The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps wh...
+        public ?AgentCalls $calls = null,
         // Lines this agent answers on besides Stream Chat, each a number the app connected.
         public ?AgentChannels $channels = null,
         // Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since...
@@ -97,6 +99,7 @@ final readonly class SyncAgentRequest
             hash: Json::string($data, 'hash'),
             name: Json::string($data, 'name'),
             baseChange: array_key_exists('base_change', $data) && $data['base_change'] !== null ? Json::string($data, 'base_change') : null,
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             checkChanges: array_key_exists('check_changes', $data) && $data['check_changes'] !== null ? Json::bool($data, 'check_changes') : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
@@ -146,6 +149,9 @@ final readonly class SyncAgentRequest
         $out['name'] = $this->name;
         if ($this->baseChange !== null) {
             $out['base_change'] = $this->baseChange;
+        }
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
         }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();

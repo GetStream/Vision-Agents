@@ -98,8 +98,11 @@ type Stat struct {
 	// the difference is a part of the bill the adapter missed.
 	VendorTotalTokens int64
 	Success           bool
-	ErrorCode         string
-	ErrorMessage      string
+	// Interrupted is a reply the caller cut off, which served them and so carries no error
+	// code. It is not stored: an estimate for it is counted as a cut, not as usage lost.
+	Interrupted  bool
+	ErrorCode    string
+	ErrorMessage string
 	// Fatal marks a failure that ended the session for a reason the provider gives every
 	// caller, such as an account it refuses. It makes the provider unavailable for one
 	// health window, however much it served before.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -911,6 +913,57 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Equal(deployment, limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment)))
 }
 
+func (s *PolicySuite) TestAUsersOwnQuotaThatCannotBeReadIsMarkedUnread() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+
+	s.True(enforcer.Quota(s.ctx, s.app, "someone", deployment).Unread, "a user whose policy failed to read")
+	s.False(enforcer.Quota(s.ctx, s.app, "", deployment).Unread, "nobody named has a policy to read")
+	s.False(s.enforcer.Quota(s.ctx, s.app, "someone", deployment).Unread, "a policy that was read")
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
+	s.False(s.enforcer.Quota(s.ctx, s.app, "vip", deployment).Unread, "a user's own policy that was read")
+}
+
+func (s *PolicySuite) TestADebitIsCountedForAUserWhoseOwnQuotaCannotBeRead() {
+	// Only the user's own policy sets a limit, and the store that holds it is down. The debit
+	// still lands in the customer's bucket, where that limit counts it once it is readable.
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+	limiter, err := quota.New(client, quota.Limits{}, enforcer, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	caller := routing.Caller{UserID: "vip", Verified: true}
+
+	limiter.Debit(s.ctx, s.app, caller, 10)
+
+	// The limiter stops waiting for a debit after two seconds, so when this process stalls the
+	// debit goes on after Debit has returned.
+	var messages, tokens int64
+	s.eventually(func() bool {
+		var err error
+		messages, tokens, _, err = limiter.Today(s.ctx, s.app, "vip")
+		return err == nil && messages > 0 && tokens > 0
+	}, 10*time.Second, 10*time.Millisecond, "the debit was never counted")
+	s.EqualValues(1, messages)
+	s.EqualValues(10, tokens)
+	_, err = limiter.Allow(s.ctx, s.app, caller)
+	s.NoError(err, "a request is still admitted when the policy cannot be read")
+}
+
 func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	// The policies are cached in Redis and the limits and spend are not, so closing Postgres
 	// once the cache is warm fails their reads alone, which the limits loop makes, never Admit.
@@ -920,7 +973,9 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	}
 	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
-	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	configs, err := redisready.Retry(address, func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))

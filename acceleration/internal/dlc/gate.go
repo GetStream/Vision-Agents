@@ -112,6 +112,24 @@ func (g *Gate) admit(ctx context.Context, customerID string) (routing.Admission,
 	return admission, stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
 }
 
+// Book sets micros of the owner's credit aside for a purchase before its vendor is asked, when
+// the money Charging set books (routing.Booker), refusing with ErrUnpaid what the credit does
+// not cover, in every limits mode. With no such money it books nothing.
+func (g *Gate) Book(ctx context.Context, owner routing.Owner, micros int64) (routing.Booked, error) {
+	if g == nil {
+		return routing.NoBooking, nil
+	}
+	booker, ok := g.money.(routing.Booker)
+	if !ok {
+		return routing.NoBooking, nil
+	}
+	booked, err := booker.Book(ctx, owner, micros)
+	if err != nil {
+		return routing.NoBooking, stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
+	}
+	return booked, nil
+}
+
 // NewGate returns a Gate. redis may be nil, which leaves the daily limits uncounted.
 func NewGate(store *store.Store, redis rueidis.Client, sandbox Sandbox, logger *slog.Logger) *Gate {
 	if logger == nil {

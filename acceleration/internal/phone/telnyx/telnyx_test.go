@@ -518,15 +518,19 @@ func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
 	s.ErrorContains(err, "bridge uri is required")
 }
 
-func (s *TelnyxSuite) TestPressingDigitsActsOnTheLegWithoutEndingIt() {
-	// Telnyx sends the tones as an action on the live call, so the agent stays bridged
-	// while the menu is answered.
-	s.answer(`{"data":{"result":"ok"}}`)
+func (s *TelnyxSuite) TestPressingDigitsActsOnThePersonsLegWithoutEndingIt() {
+	// Telnyx plays the tones out of the leg named, to whoever that leg reaches. The id
+	// placing returned is the person's leg; the leg its TeXML bridged to Stream would play
+	// them to the agent. Sent as an action on the live call, so the agent stays bridged.
+	var asked []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"result":"ok"}}`))
+	}
 
 	s.Require().NoError(s.provider.SendDigits(s.ctx, "cc-1", "4123"))
 
-	s.Equal(http.MethodPost, s.seen.method)
-	s.Equal("/v2/calls/cc-1/actions/send_dtmf", s.seen.path)
+	s.Equal([]string{"POST /v2/calls/cc-1/actions/send_dtmf"}, asked)
 	s.Equal("4123", s.seen.body["digits"])
 }
 

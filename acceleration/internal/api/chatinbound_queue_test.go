@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // ChatInboundQueueSuite is the queue's worker answering the Stream Chat deliveries queued in
@@ -728,8 +729,18 @@ func (s *ChatInboundQueueSuite) dispatchingBesideAWorkerElsewhere() (*websocket.
 func (s *ChatInboundQueueSuite) deafWorkers(logger *slog.Logger) *node.Workers {
 	listener := httptest.NewUnstartedServer(nil)
 	s.T().Cleanup(listener.Close)
-	ctx, cancel := context.WithCancel(context.Background())
-	workers, err := node.NewWorkers(ctx, dispatch.NewPool(), s.nodeDirectory(listener, s.otherShard, logger), s.workBus(logger), logger)
+	directory, bus := s.nodeDirectory(listener, s.otherShard, logger), s.workBus(logger)
+	// Made again as deploymentWorkers are, each attempt with a context of its own.
+	var cancel context.CancelFunc
+	workers, err := redisready.Retry(s.redisAddr, func() (*node.Workers, error) {
+		var ctx context.Context
+		ctx, cancel = context.WithCancel(context.Background())
+		workers, err := node.NewWorkers(ctx, dispatch.NewPool(), directory, bus, logger)
+		if err != nil {
+			cancel()
+		}
+		return workers, err
+	})
 	s.Require().NoError(err)
 	redis := s.live.Redis()
 	pattern := "*replies:" + listener.Listener.Addr().String()

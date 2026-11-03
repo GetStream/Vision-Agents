@@ -204,6 +204,42 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// The tools an agent on a phone call is offered: end the call, press keys, transfer.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentCalls
+    {
+
+        /// <summary>
+        /// Lets the agent hang up. Off by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_call")]
+        public EndCallSettings? EndCall { get; set; } = default!;
+
+        /// <summary>
+        /// Lets the agent press keys on the call, such as to get through a menu. On by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("press")]
+        public PressSettings? Press { get; set; } = default!;
+
+        /// <summary>
+        /// Lets the agent transfer the call to a person. On by default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("transfer")]
+        public TransferSettings? Transfer { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -272,6 +308,9 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfig
     {
+
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
@@ -440,6 +479,9 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfigPatch
     {
 
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
 
@@ -579,6 +621,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfigRequest
     {
+
+        /// <summary>
+        /// The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
 
         /// <summary>
         /// Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
@@ -1423,6 +1471,27 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("trunk_id")]
         public string TrunkId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AudioSource
+    {
+
+        /// <summary>
+        /// Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
+        public string Url { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4749,6 +4818,12 @@ namespace GetStream.VisionAgents.Models
     public partial class CreateResponseRequest
     {
 
+        /// <summary>
+        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("audio")]
+        public AudioSource? Audio { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
@@ -4765,13 +4840,13 @@ namespace GetStream.VisionAgents.Models
         public string? ReasoningEffort { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
         /// <summary>
-        /// What to answer, as though it had been said.
+        /// What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
@@ -5027,6 +5102,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("max_tokens")]
         public int? MaxTokens { get; set; } = default!;
+
+        /// <summary>
+        /// The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_tool_rounds")]
+        public int? MaxToolRounds { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("memory")]
         public SessionMemory? Memory { get; set; } = default!;
@@ -5863,6 +5944,33 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("tokens_set_by")]
         public string TokensSetBy { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EndCallSettings
+    {
+
+        /// <summary>
+        /// Offer the tool. Omitted is off.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
+
+        /// <summary>
+        /// When the agent should end the call, in the caller's terms.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public string? When { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8436,7 +8544,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
+        /// Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
@@ -9037,6 +9145,27 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("vendor")]
         public string Vendor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PressSettings
+    {
+
+        /// <summary>
+        /// Offer the tool. Omitted is on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -10311,17 +10440,26 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("audio")]
+        public AudioSource? Audio { get; set; } = default!;
+
+        /// <summary>
         /// The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("client_id")]
         public string? ClientId { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
+        /// <summary>
+        /// What to answer, as though it had been said. May be empty when audio carries the question.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
 
@@ -10921,7 +11059,7 @@ namespace GetStream.VisionAgents.Models
         public string SessionId { get; set; } = default!;
 
         /// <summary>
-        /// active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+        /// active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
         /// <br/>
         /// <br/>One of `active`, `paused`, `completed`, `failed`.
         /// </summary>
@@ -11049,7 +11187,7 @@ namespace GetStream.VisionAgents.Models
         public string DeliveredTo { get; set; } = default!;
 
         /// <summary>
-        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error")]
         public string? Error { get; set; } = default!;
@@ -11417,6 +11555,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("description")]
         public string? Description { get; set; } = default!;
+
+        /// <summary>
+        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
 
         /// <summary>
         /// The session this one continued from, empty for one opened fresh.
@@ -13573,6 +13717,12 @@ namespace GetStream.VisionAgents.Models
         public string? BaseChange { get; set; } = default!;
 
         /// <summary>
+        /// The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calls")]
+        public AgentCalls? Calls { get; set; } = default!;
+
+        /// <summary>
         /// Lines this agent answers on besides Stream Chat, each a number the app connected.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
@@ -14562,6 +14712,72 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("to")]
         public string To { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TransferDestination
+    {
+
+        /// <summary>
+        /// What the agent calls this destination, such as Sales.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// The number to transfer to, in E.164 form.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("number")]
+        public string Number { get; set; } = default!;
+
+        /// <summary>
+        /// Announce the caller to the person answering before connecting them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("warm")]
+        public bool? Warm { get; set; } = default!;
+
+        /// <summary>
+        /// When the agent should transfer here, in the caller's terms.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("when")]
+        public string? When { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TransferSettings
+    {
+
+        /// <summary>
+        /// The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("destinations")]
+        public System.Collections.Generic.List<TransferDestination>? Destinations { get; set; } = default!;
+
+        /// <summary>
+        /// Offer the tool. Omitted is on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+        public bool? Enabled { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

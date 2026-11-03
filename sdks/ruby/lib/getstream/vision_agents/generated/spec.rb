@@ -284,6 +284,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "deleteKnowledge" => {
+          method: :delete, path: "/v1/agents/knowledge",
+          path_params: [].freeze, query: %w[namespace].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "deleteKnowledgeDocument" => {
           method: :delete, path: "/v1/agents/knowledge/documents/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1727,6 +1733,10 @@ module GetStream
           properties: %w[country e164 tags].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "AgentCalls" => {
+          properties: %w[end_call press transfer].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "AgentChanges" => {
           properties: %w[items last_change synced_at].freeze,
           required: %w[items].freeze, open: false
@@ -1736,15 +1746,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[calls channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels connectors dispatch episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -1822,6 +1832,10 @@ module GetStream
         "AttachedNumber" => {
           properties: %w[agent_config_id route_id sip_uri trunk_id].freeze,
           required: %w[route_id sip_uri trunk_id].freeze, open: false
+        }.freeze,
+        "AudioSource" => {
+          properties: %w[url].freeze,
+          required: %w[url].freeze, open: false
         }.freeze,
         "AuditChange" => {
           properties: %w[after before field].freeze,
@@ -2140,7 +2154,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[images max_output_tokens reasoning_effort request_id text videos].freeze,
+          properties: %w[audio images max_output_tokens reasoning_effort request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2152,7 +2166,7 @@ module GetStream
           required: %w[title instructions schedule].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -2222,6 +2236,10 @@ module GetStream
         "EffectiveQuota" => {
           properties: %w[messages_per_user_per_day messages_set_by tokens_per_user_per_day tokens_set_by].freeze,
           required: %w[messages_per_user_per_day messages_set_by tokens_per_user_per_day tokens_set_by].freeze, open: false
+        }.freeze,
+        "EndCallSettings" => {
+          properties: %w[enabled when].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
           properties: %w[code doc_url message type].freeze,
@@ -2519,6 +2537,10 @@ module GetStream
           properties: %w[digits vendor].freeze,
           required: %w[digits vendor].freeze, open: false
         }.freeze,
+        "PressSettings" => {
+          properties: %w[enabled].freeze,
+          required: [].freeze, open: false
+        }.freeze,
         "Price" => {
           properties: %w[byok change description effective_at free local modality model provider rates region sku tiers when withdrawn].freeze,
           required: %w[free local modality provider model region].freeze, open: false
@@ -2620,7 +2642,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "RespondRequest" => {
-          properties: %w[client_id request_id text].freeze,
+          properties: %w[audio client_id request_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "ResumeHistory" => {
@@ -2732,7 +2754,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_reason forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
@@ -2900,7 +2922,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change calls channels check_changes connectors dispatch greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -2978,6 +3000,14 @@ module GetStream
         "TransferCallRequest" => {
           properties: %w[from session_id tags to].freeze,
           required: %w[from session_id to].freeze, open: false
+        }.freeze,
+        "TransferDestination" => {
+          properties: %w[name number warm when].freeze,
+          required: %w[name number].freeze, open: false
+        }.freeze,
+        "TransferSettings" => {
+          properties: %w[destinations enabled].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "TtsOptions" => {
           properties: %w[chunk_schedule data_policy emotion format languages overwrites pronunciations providers similarity speed stability style target voice volume].freeze,

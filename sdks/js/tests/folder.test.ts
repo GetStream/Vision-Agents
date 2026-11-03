@@ -75,8 +75,6 @@ describe("loadFolder", () => {
           "harness: default",
           "mode: voice",
           "keyterms: [Vision Agents, Stream]",
-          "plugins:",
-          "  - weather",
           "tags:",
           "  team: support",
           "video:",
@@ -99,7 +97,6 @@ describe("loadFolder", () => {
       harness: "default",
       mode: "voice",
       keyterms: ["Vision Agents", "Stream"],
-      plugins: ["weather"],
       tags: { team: "support" },
       video: { source: "camera", max_frames: 1 },
       dispatch: { text: "enabled" },
@@ -146,8 +143,6 @@ describe("loadFolder", () => {
       await agentDir({
         "agent.yaml": [
           "name: concierge",
-          "plugins:",
-          "  - linear",
           "connectors:",
           "  - github",
           "  - name: issues",
@@ -243,7 +238,6 @@ describe("loadFolder", () => {
       ["connectors:\n  - name: github\n    require_approval: create_*\n", /require_approval should be a list/],
       ["connectors:\n  - name: github\n    require_approval:\n      create: true\n", /require_approval should be a list/],
       ["connectors:\n  - linear\n    tools: [a]\n", /belongs to no connector/],
-      ["plugins:\n  - linear\nconnectors:\n  - linear\n", /"linear" is named under both connectors and plugins/],
     ] as const) {
       await assert.rejects(
         async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
@@ -253,22 +247,11 @@ describe("loadFolder", () => {
     }
   });
 
-  it("reads mcp_servers and channels", async () => {
+  it("reads channels", async () => {
     const folder = await loadFolder(
       await agentDir({
         "agent.yaml": [
           "name: concierge",
-          "mcp_servers:",
-          "  - name: crm # the sales one",
-          '    url: "https://crm.example.com/mcp"',
-          "    tools:",
-          "      - list_*",
-          "    scopes: [read, write]",
-          "    user: true",
-          "  -",
-          "    name: notes",
-          "    url: 'https://notes.example.com/mcp' # the notes one",
-          "    scopes: []",
           "channels:",
           "  # the support line",
           "  whatsapp:",
@@ -281,16 +264,6 @@ describe("loadFolder", () => {
       }),
     );
 
-    assert.deepEqual(folder.settings?.mcpServers, [
-      {
-        name: "crm",
-        url: "https://crm.example.com/mcp",
-        tools: ["list_*"],
-        scopes: ["read", "write"],
-        user: true,
-      },
-      { name: "notes", url: "https://notes.example.com/mcp" },
-    ]);
     assert.deepEqual(folder.settings?.channels, {
       whatsapp: { number: "+15551234567" },
       identity: "phone",
@@ -336,36 +309,26 @@ describe("loadFolder", () => {
     );
   });
 
-  it("tells mcp_servers and channels that say nothing from ones that are empty", async () => {
+  it("tells channels that say nothing from ones that are empty", async () => {
     const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
     const nothing = await loadFolder(
-      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers: ~\nchannels:\n" }),
+      await agentDir({ "agent.yaml": "name: concierge\nchannels:\n" }),
     );
     const nulled = await loadFolder(
-      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers:\nchannels: null\n" }),
+      await agentDir({ "agent.yaml": "name: concierge\nchannels: null\n" }),
     );
     const empty = await loadFolder(
-      await agentDir({ "agent.yaml": "name: concierge\nmcp_servers: []\nchannels: {}\n" }),
+      await agentDir({ "agent.yaml": "name: concierge\nchannels: {}\n" }),
     );
 
     assert.deepEqual(without.settings, { name: "concierge" });
     assert.deepEqual(nothing.settings, { name: "concierge" });
     assert.deepEqual(nulled.settings, { name: "concierge" });
-    assert.deepEqual(empty.settings?.mcpServers, []);
     assert.deepEqual(empty.settings?.channels, {});
   });
 
-  it("refuses mcp_servers, channels or sandbox_options it would otherwise have to guess at", async () => {
-    const server = "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n";
+  it("refuses channels or sandbox_options it would otherwise have to guess at", async () => {
     for (const [declaration, reason] of [
-      ["mcp_servers:\n  - https://example.com/mcp\n", /an mcp server is a mapping with a name and a url/],
-      ["mcp_servers:\n  name: notes\n", /mcp_servers should be a list/],
-      ["mcp_servers: notes\n", /mcp_servers should be a list of mappings/],
-      [`${server}    branding: x\n`, /"branding" is not something an mcp server says/],
-      [`${server}    user: yes please\n`, /mcp server "notes": user must be true or false/],
-      [`${server}    tools: list_*\n`, /tools should be a list/],
-      ["mcp_servers:\n  - name:\n      - notes\n", /an mcp server's name is one value, not a list/],
-      [`connectors:\n  - name: notes\n    connector: linear\n${server}`, /"notes" is named under both connectors and mcp_servers/],
       ["channels: whatsapp\n", /channels should be a mapping/],
       ["channels:\n  telegram:\n    number: x\n", /unknown channels setting "telegram"/],
       ["channels:\n  sms:\n    number: x\n    sender: y\n", /unknown channels\.sms setting "sender"/],
@@ -383,6 +346,49 @@ describe("loadFolder", () => {
         reason,
         declaration,
       );
+    }
+  });
+
+  it("refuses plugins and mcp_servers that name something, and says what replaced them", async () => {
+    const plugins = "plugins were replaced by connectors, so name the provider under connectors";
+    const servers =
+      "a server named by URL is now a custom connector, so create one for its URL and name it under connectors";
+    for (const [declaration, key, replacement] of [
+      ["plugins:\n  - weather\n", "plugins", plugins],
+      ["plugins: [weather]\n", "plugins", plugins],
+      ["plugins: weather\n", "plugins", plugins],
+      ['plugins: [""]\n', "plugins", plugins],
+      ["plugins:\n  - linear\nconnectors:\n  - linear\n", "plugins", plugins],
+      ["plugins:\n  # the weather one\n  - weather\n", "plugins", plugins],
+      ["mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n", "mcp_servers", servers],
+      ["mcp_servers:\n  - https://example.com/mcp\n", "mcp_servers", servers],
+      ["mcp_servers: notes\n", "mcp_servers", servers],
+      ["mcp_servers:\n  name: notes\n", "mcp_servers", servers],
+      ["connectors:\n  - github\nmcp_servers:\n  - name: github\n    url: https://example.com/mcp\n", "mcp_servers", servers],
+    ] as const) {
+      const path = await agentDir({ "agent.yaml": `name: concierge\n${declaration}` });
+      await assert.rejects(
+        () => loadFolder(path),
+        (error: unknown) => {
+          assert.ok(error instanceof ConfigurationError);
+          assert.equal(error.message, `${join(path, "agent.yaml")}: ${key} is no longer read: ${replacement}`);
+          return true;
+        },
+        declaration,
+      );
+    }
+  });
+
+  it("loads a plugins or mcp_servers that name nothing, as it did before", async () => {
+    const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\nllm: llm-fast\n" }));
+    for (const key of ["plugins", "mcp_servers"]) {
+      for (const empty of ["", " []", " [ ]", " ~", " null", "\n  # nothing yet"]) {
+        const folder = await loadFolder(
+          await agentDir({ "agent.yaml": `name: concierge\n${key}:${empty}\nllm: llm-fast\n` }),
+        );
+
+        assert.deepEqual(folder.settings, without.settings, `${key}:${empty}`);
+      }
     }
   });
 

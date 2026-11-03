@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -30,9 +29,9 @@ func TestEveryCallReportsWhatItBilled(t *testing.T) {
 	require.NoError(t, err)
 	namespace := fmt.Sprintf("acceleration-test-billing-%d", time.Now().UnixNano())
 	t.Cleanup(func() {
-		var deleted map[string]any
-		_, err := store.call(context.Background(), http.MethodDelete, "/v2/namespaces/"+namespace, nil, &deleted)
+		dropped, err := store.Drop(context.Background(), namespace)
 		require.NoError(t, err)
+		require.True(t, dropped.Existed)
 	})
 
 	written, err := store.Upsert(ctx, namespace, []knowledge.Document{

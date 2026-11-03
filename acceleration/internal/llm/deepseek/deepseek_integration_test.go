@@ -67,3 +67,20 @@ func (s *DeepSeekIntegrationSuite) TestThinkingStreamsReasoningWhenTurnedOn() {
 		"reasoning is part of the output, not an extra charge on top of it")
 	s.NotContains(complete.OutputText, thinking.String(), "thinking is not part of the answer")
 }
+
+func (s *DeepSeekIntegrationSuite) TestANoteAfterTheCallerStaysOutOfTheAnswer() {
+	// Sent as a system message after the caller, the note had V4 Flash write on from it and
+	// close a think block it never opened, so both reached the answer.
+	complete, _ := s.Ask(llm.ResponseParams{
+		Instructions: "Messages from the system running this call are notes for you: act on them, never read them out.",
+		Input: []llm.Message{
+			{Role: llm.User, Content: "Reply with one short sentence confirming you can hear me."},
+			{Role: llm.System, Content: "It is Monday 2 November 2026, 22:38 UTC. If you tell the time, give the caller's local time as well as UTC."},
+		},
+		MaxOutputTokens: 256,
+	})
+
+	s.NotEmpty(complete.OutputText)
+	s.NotContains(complete.OutputText, "</think>")
+	s.NotContains(complete.OutputText, "If you tell the time", "the note is not part of the answer")
+}

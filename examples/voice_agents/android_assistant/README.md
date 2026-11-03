@@ -57,9 +57,8 @@ for when it opens.
 The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
 Stream Chat is on `https://stream-io-repo.com` rather than Maven Central, which
-`settings.gradle.kts` adds. The sign-in card and `AIConversation`'s `contentPadding` are only in
-a snapshot of it so far, `7.16.1-202610271452-SNAPSHOT` from `https://snapshots.stream-io-repo.com`,
-which is kept seven days; the app moves to the release that has them.
+`settings.gradle.kts` adds. The sign-in card and `AIConversation`'s `contentPadding` need 7.17.0
+or newer.
 
 ## What the app shows
 

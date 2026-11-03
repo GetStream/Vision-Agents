@@ -79,12 +79,16 @@ func New(options Options) (*openaicompat.LLM, error) {
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:     ProviderName,
-		Model:        upstreamModel(options.Model),
-		StatsModel:   options.Model,
-		APIKey:       options.APIKey,
-		BaseURL:      options.BaseURL,
-		Capabilities: model,
+		// V4's chat template, given a system message after the caller, has the model carry
+		// on writing the note and then close a think block it never opened, all in the
+		// answer, on Flash and Pro alike. A later one goes on the user's side instead.
+		SystemTurnsAsUser: true,
+		Provider:          ProviderName,
+		Model:             upstreamModel(options.Model),
+		StatsModel:        options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
+		Capabilities:      model,
 		// The chat template decides whether the model thinks, so the switch travels as a
 		// template argument rather than as a standard request field.
 		RequestFields: requestFields(options.Model, options.Thinking),
