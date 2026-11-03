@@ -60,6 +60,13 @@ func (s *HooksSuite) olderTunnelGone() {
 	s.chat.Unresolvable("older.trycloudflare.com")
 }
 
+// olderRouterMessageHook builds the app again, as olderTunnelGone does, ready for a hook at a
+// host that resolves to be seeded on it.
+func (s *HooksSuite) olderRouterMessageHook() {
+	s.chat = chattest.NewServer(s.T())
+	s.stream = phone.NewStreamFromClient(s.chat.Client)
+}
+
 func (s *HooksSuite) urls() []string {
 	var urls []string
 	for _, hook := range s.chat.EventHooks("test") {
@@ -101,8 +108,7 @@ func (s *HooksSuite) TestMovingOffAGoneTunnelPointsTheNewOneInTheSameRun() {
 	s.Equal([]string{
 		otherHook,
 		"https://new.ngrok-free.dev/v1/phone/hooks/stream",
-		"https://new.ngrok-free.dev/v1/chat/hooks/stream",
-	}, s.urls())
+	}, s.urls(), "the call hook only: Stream Chat delivers messages, no message hook is written")
 	s.Equal(2, s.updates(), "the seed and one update")
 	events := map[string][]string{}
 	for _, hook := range s.chat.EventHooks("test") {
@@ -110,8 +116,33 @@ func (s *HooksSuite) TestMovingOffAGoneTunnelPointsTheNewOneInTheSameRun() {
 	}
 	s.Equal([]string{"call.session_started", "call.session_ended",
 		"call.session_participant_joined", "call.session_participant_left"}, events["https://new.ngrok-free.dev/v1/phone/hooks/stream"])
-	s.Equal([]string{"message.new"}, events["https://new.ngrok-free.dev/v1/chat/hooks/stream"])
-	s.Contains(said, "messages now go to https://new.ngrok-free.dev/v1/chat/hooks/stream")
+	s.Equal([]string{
+		"call events no longer go to " + goneBase + "/v1/phone/hooks/stream",
+		"messages no longer go to " + goneBase + "/v1/chat/hooks/stream",
+		"call events now go to https://new.ngrok-free.dev/v1/phone/hooks/stream",
+	}, said)
+}
+
+// A message hook an earlier version wrote at the base being pointed at is the app's, as it
+// was left: not removed, not switched back on, and no message hook is added beside it.
+func (s *HooksSuite) TestPointingLeavesAnOlderMessageHookOfTheSameBaseAsItWas() {
+	s.olderRouterMessageHook()
+	disabled := false
+	older := hookAt("https://router.example/v1/chat/hooks/stream", "message.updated")
+	older.Enabled = &disabled
+	s.seed(older)
+	s.chat.Unresolvable("gone.trycloudflare.com")
+
+	said, err := changeHooks(context.Background(), s.stream, "https://router.example", []string{goneBase}, "")
+
+	s.Require().NoError(err)
+	s.Equal("call events now go to https://router.example/v1/phone/hooks/stream", said[len(said)-1])
+	hooks := s.chat.EventHooks("test")
+	s.Require().Len(hooks, 3)
+	s.Equal("https://router.example/v1/chat/hooks/stream", *hooks[1].WebhookUrl)
+	s.False(*hooks[1].Enabled)
+	s.Equal([]string{"message.updated"}, hooks[1].EventTypes)
+	s.Equal("https://router.example/v1/phone/hooks/stream", *hooks[2].WebhookUrl)
 }
 
 func (s *HooksSuite) TestAnotherGoneTunnelLeftInPlaceIsNamedWithTheFix() {
@@ -135,6 +166,9 @@ func (s *HooksSuite) TestRemovingEveryGoneTunnelAtOnceWorks() {
 }
 
 func (s *HooksSuite) TestAnAppsOwnPathIsRemovedWithItsSegment() {
+	s.olderRouterMessageHook()
+	s.seed(hookAt("https://router.example/v1/chat/hooks/stream/1234", "message.new"))
+	s.chat.Unresolvable("gone.trycloudflare.com")
 	_, err := changeHooks(context.Background(), s.stream, "https://router.example", []string{goneBase}, "")
 	s.Require().NoError(err)
 	_, err = changeHooks(context.Background(), s.stream, "https://router.example", nil, "/1234")
@@ -143,7 +177,7 @@ func (s *HooksSuite) TestAnAppsOwnPathIsRemovedWithItsSegment() {
 	_, err = changeHooks(context.Background(), s.stream, "", []string{"https://router.example"}, "/1234")
 
 	s.Require().NoError(err)
-	s.Equal([]string{otherHook, "https://router.example/v1/phone/hooks/stream", "https://router.example/v1/chat/hooks/stream"}, s.urls())
+	s.Equal([]string{otherHook, "https://router.example/v1/phone/hooks/stream"}, s.urls(), "the call hook at the base stays, both hooks of the app's segment are gone")
 }
 
 // Removing a url nothing delivers to asks Stream only to read, as on base: a probe of
@@ -181,6 +215,6 @@ func (s *HooksSuite) TestMovingKeepsAnotherHookAsStreamSentIt() {
 
 	s.Require().NoError(err)
 	hooks := s.chat.EventHooksJSON("test")
-	s.Require().Len(hooks, 4)
+	s.Require().Len(hooks, 3)
 	s.Equal(string(sqs), string(hooks[1]))
 }
