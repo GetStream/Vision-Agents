@@ -190,7 +190,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
-	text, images := s.messagePhotos(turn, found.SeesImages(), event)
+	text, images := s.messagePhotos(turn, found.SeesImages(), s.heardText(turn, found.Spec(), event), event)
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, text, images)
@@ -208,13 +208,13 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	}
 }
 
-// messagePhotos is what a message tells the model: its text, and the photos sent with it,
-// read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
+// messagePhotos is what a message tells the model: its text, with what its voice recording
+// said (heardText), and the photos sent with it, read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
 // nothing that looks at one (the turn would be refused with ErrCannotSeeImages) or it could
 // not be fetched, is dropped and the turn is told of it, so the reply says so rather than the
 // person hearing nothing.
-func (s *Server) messagePhotos(ctx context.Context, sees bool, event messageEvent) (string, []llm.ImagePart) {
-	text, sent := event.Message.Text, event.photos()
+func (s *Server) messagePhotos(ctx context.Context, sees bool, text string, event messageEvent) (string, []llm.ImagePart) {
+	sent := event.photos()
 	if len(sent) == 0 {
 		return text, nil
 	}
@@ -231,13 +231,17 @@ func (s *Server) messagePhotos(ctx context.Context, sees bool, event messageEven
 			continue
 		}
 		// The host alone: a photo's URL may carry the signature that lets anyone fetch it.
-		host := ""
-		if parsed, err := url.Parse(photo.URL); err == nil {
-			host = parsed.Host
-		}
-		s.logger.Warn("could not fetch a photo of a message", "channel", event.ChannelID, "photo", index, "host", host)
+		s.logger.Warn("could not fetch a photo of a message", "channel", event.ChannelID, "photo", index, "host", hostOf(photo.URL))
 	}
 	return withPhotoNote(text, images, unfetchedPhoto, unfetchedPhotoWithMore), images
+}
+
+// hostOf is the host of the URL raw, or nothing for one that does not parse.
+func hostOf(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil {
+		return parsed.Host
+	}
+	return ""
 }
 
 // withPhotoNote is text with the note that says a photo was dropped: alone, the note for a
@@ -261,6 +265,13 @@ const (
 	unseenPhotoWithText    = "(The person also sent a photo, which you cannot see. Answer their message, and say in your reply that you cannot see the photo.)"
 	unfetchedPhoto         = "(The person sent a photo, which could not be opened. Reply in one short sentence that you could not open it.)"
 	unfetchedPhotoWithMore = "(The person also sent a photo that could not be opened. Answer the rest of their message, and say in your reply that you could not open that photo.)"
+)
+
+// The turn of a message whose voice recording could not be heard (heardText): sent alone, and
+// sent with text or photos.
+const (
+	unheardRecording         = "(The person sent a voice recording, which could not be heard. Reply in one short sentence that you could not listen to it.)"
+	unheardRecordingWithMore = "(The person also sent a voice recording that could not be heard. Answer the rest of their message, and say in your reply that you could not listen to that recording.)"
 )
 
 // takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.

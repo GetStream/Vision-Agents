@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -106,6 +107,25 @@ func (e messageEvent) photos() []llm.ImagePart {
 	return images
 }
 
+// recording is where the voice recording sent with a message is: the first attachment a Stream
+// Chat client plays as one, voiceRecording, or sends as a sound file, audio
+// (stream-chat-js isVoiceRecordingAttachment, isAudioAttachment), at its asset_url. sent is
+// false for a message with none.
+func (e messageEvent) recording() (source string, sent bool) {
+	var attachments []json.RawMessage
+	if json.Unmarshal(e.Message.Attachments, &attachments) != nil {
+		return "", false
+	}
+	for _, raw := range attachments {
+		var attachment messageAttachment
+		if json.Unmarshal(raw, &attachment) == nil && (attachment.Type == "voiceRecording" || attachment.Type == "audio") &&
+			attachment.AssetURL != "" {
+			return attachment.AssetURL, true
+		}
+	}
+	return "", false
+}
+
 // dispatchedPhotos are the photos sent with a message as a worker is handed them: their URLs,
 // which it fetches itself. None is nil, so a frame without photos carries no images.
 func (e messageEvent) dispatchedPhotos() []dispatch.Image {
@@ -189,9 +209,10 @@ func chatHookAttribution(customerID string, event messageEvent) routing.Attribut
 // Three things it is not. A message outside an agent's own channel: every message in the app
 // is delivered here, and a team's channel has nothing on the other end of it. A message
 // carrying a source: everything the agent stores does, whether it is speech it answered as
-// it was said or its own reply, and answering either is the agent talking to itself. And a
-// message with neither text nor a photo, such as a file or a video on its own, which nothing
-// that answers here reads.
+// it was said or its own reply, and answering either is the agent talking to itself, the
+// voice recording it shows on a person's message included. And a message with no text, photo
+// or voice recording, such as a file or a video on its own, which nothing that answers here
+// reads.
 func addressed(event messageEvent) bool {
 	// This namespace belongs to durable session commands, even on older channels
 	// without trigger metadata or when a client omits/forges the source marker.
@@ -201,7 +222,7 @@ func addressed(event messageEvent) bool {
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
 		return false
 	}
-	if event.Message.Text == "" && len(event.photos()) == 0 {
+	if _, recorded := event.recording(); event.Message.Text == "" && len(event.photos()) == 0 && !recorded {
 		return false
 	}
 	return len(event.Message.Source) == 0
@@ -230,7 +251,9 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		origin.answer(func() { s.answerThread(origin, thread, event) })
 		return true
 	}
-	// Only a linked thread answers a photo sent without text on a thread channel (addressed).
+	// Only a linked thread answers a photo or a voice recording sent without text on a thread
+	// channel (addressed).
+	_, recorded := event.recording()
 	if event.Message.Text == "" && strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) {
 		return true
 	}
@@ -258,37 +281,39 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				return true
 			}
 			// A worker not yet updated to read photos answers an empty text with an error,
-			// so a photo alone is not handed to one.
-			if found.Spec().DispatchText && event.Message.Text == "" {
+			// so a photo alone is not handed to one. A voice recording is, as what it says.
+			if found.Spec().DispatchText && event.Message.Text == "" && !recorded {
 				return true
 			}
 			if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 				return settled
 			}
 			if found.Spec().DispatchText {
-				_, err := s.dispatchText(ctx, found, dispatch.Message{
-					ChannelType: event.ChannelType,
-					ChannelID:   event.ChannelID,
-					Custom:      customOf(event.ChannelCustom),
-					Text:        event.Message.Text,
-					Images:      event.dispatchedPhotos(),
-					MessageID:   event.Message.ID,
-					UserID:      event.Message.User.ID,
-					UserName:    event.Message.User.Name,
-				}, "")
-				if err != nil {
-					s.logger.Error("nobody could answer an arriving message",
-						"channel", event.ChannelID, "session", found.ID(), "error", err)
-					if errors.Is(err, node.ErrNoReply) {
-						// The other node may have placed it before its reply was lost: queued
-						// again, it would be placed twice.
-						s.logger.Warn("a queued chat inbound message another node may have placed is left settled",
-							"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
-					} else {
-						s.unanswered(ctx, origin)
+				return s.handOn(ctx, origin, recorded, func(ctx context.Context) bool {
+					_, err := s.dispatchText(ctx, found, dispatch.Message{
+						ChannelType: event.ChannelType,
+						ChannelID:   event.ChannelID,
+						Custom:      customOf(event.ChannelCustom),
+						Text:        s.heardText(ctx, found.Spec(), event),
+						Images:      event.dispatchedPhotos(),
+						MessageID:   event.Message.ID,
+						UserID:      event.Message.User.ID,
+						UserName:    event.Message.User.Name,
+					}, "")
+					if err != nil {
+						s.logger.Error("nobody could answer an arriving message",
+							"channel", event.ChannelID, "session", found.ID(), "error", err)
+						if errors.Is(err, node.ErrNoReply) {
+							// The other node may have placed it before its reply was lost: queued
+							// again, it would be placed twice.
+							s.logger.Warn("a queued chat inbound message another node may have placed is left settled",
+								"channel", event.ChannelID, "message", origin.queuedMessage, "stream_app", origin.app)
+						} else {
+							s.unanswered(ctx, origin)
+						}
 					}
-				}
-				return err == nil
+					return err == nil
+				})
 			}
 			// The answer goes back to the channel rather than in a response, so there is
 			// nothing here to wait for.
@@ -305,8 +330,8 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 
-	// A photo alone is not handed to a worker (see DispatchText above).
-	if event.Message.Text == "" {
+	// A photo alone is not handed to a worker (see DispatchText above), a voice recording is.
+	if event.Message.Text == "" && !recorded {
 		return true
 	}
 
@@ -348,25 +373,99 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		UserName:    event.Message.User.Name,
 		At:          time.Now().UTC(),
 	}
+	var heardFor session.Spec
+	if recorded {
+		// Read before the delivery is settled, so a read that failed is tried again.
+		if heardFor, err = s.unopenedSpec(ctx, customerID, configID, event); err != nil {
+			s.logger.Error("could not read the config a voice recording would be heard for",
+				"channel", event.ChannelID, "customer", customerID, "config", configID, "error", err)
+			return false
+		}
+	}
 
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled
 	}
-	// Said before the worker has the message, so the session it opens for it finds it said.
-	s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
-	worker, err := s.dispatch.AssignMessage(customerID, message)
-	if err != nil {
-		// Somebody has written to an agent that nothing is going to answer, which is the
-		// most useful error this service can report.
-		s.logger.Error("nobody could answer an arriving message",
-			"channel", event.ChannelID, "customer", customerID, "error", err)
-		s.unanswered(ctx, origin)
-		return false
+	return s.handOn(ctx, origin, recorded, func(ctx context.Context) bool {
+		// Only a worker connected here is handed it (forwardedToWorkers): with none, nothing
+		// would answer what the recording says, so it is not heard.
+		if recorded && len(s.dispatch.Workers(customerID)) > 0 {
+			message.Text = s.heardText(ctx, heardFor, event)
+		}
+		// Said before the worker has the message, so the session it opens for it finds it said.
+		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
+		worker, err := s.dispatch.AssignMessage(customerID, message)
+		if err != nil {
+			// Somebody has written to an agent that nothing is going to answer, which is the
+			// most useful error this service can report.
+			s.logger.Error("nobody could answer an arriving message",
+				"channel", event.ChannelID, "customer", customerID, "error", err)
+			s.unanswered(ctx, origin)
+			return false
+		}
+		s.logger.Info("handed an arriving message to a worker",
+			"channel", event.ChannelID, "customer", customerID,
+			"config", configID, "worker", worker.ID, "stream_app", origin.app)
+		return true
+	})
+}
+
+// handOn hands a message on with hand, which says whether it was taken. A voice recording on a
+// hook is heard off the request, as hookOrigin.answer answers one, because hearing it takes up
+// to inlineDeadline and Stream is waiting on the delivery: the hook is taken then. Anything
+// else is handed on in line, as it always was.
+func (s *Server) handOn(ctx context.Context, origin hookOrigin, recorded bool, hand func(context.Context) bool) bool {
+	if !recorded || origin.queued {
+		return hand(ctx)
 	}
-	s.logger.Info("handed an arriving message to a worker",
-		"channel", event.ChannelID, "customer", customerID,
-		"config", configID, "worker", worker.ID, "stream_app", origin.app)
+	origin.answer(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), askTimeout)
+		defer cancel()
+		hand(ctx)
+	})
 	return true
+}
+
+// unopenedSpec is what a voice recording sent where no session runs is heard for, as a session
+// opened for it would hear it: the config answering the channel, else its customer alone in
+// the default region, for the channel's agent, under the attribution of the person who sent it.
+// A config nobody holds any more is the customer alone; err is a read that failed.
+func (s *Server) unopenedSpec(ctx context.Context, customerID, configID string, event messageEvent) (session.Spec, error) {
+	spec := session.Spec{CustomerID: customerID, Region: pricing.DefaultRegion}
+	if configID != "" {
+		config, err := s.store.AgentConfig(ctx, customerID, configID)
+		switch {
+		case err == nil:
+			spec = session.FromConfig(config)
+		case !errors.Is(err, store.ErrNoAgentConfig):
+			return session.Spec{}, err
+		}
+	}
+	spec.AgentID = event.ChannelID
+	spec.Attribution = chatHookAttribution(customerID, event)
+	return spec, nil
+}
+
+// heardText is a message's text with what its voice recording says after it, heard for spec as a
+// voice note sent with a question is (hearVoiceNote). A recording that could not be heard leaves
+// the note that says so instead, as a photo that could not be seen does (withPhotoNote), so the
+// reply says so rather than the person hearing nothing.
+func (s *Server) heardText(ctx context.Context, spec session.Spec, event messageEvent) string {
+	source, sent := event.recording()
+	if !sent {
+		return event.Message.Text
+	}
+	note, err := s.hearVoiceNote(ctx, spec, source, "")
+	if err != nil {
+		// The code and host alone: what fetching it failed with names its URL, which may carry
+		// the signature that lets anyone fetch it.
+		var refused APIError
+		errors.As(err, &refused)
+		s.logger.Warn("could not hear the voice recording of a message",
+			"channel", event.ChannelID, "host", hostOf(source), "code", refused.Code)
+		return withPhotoNote(event.Message.Text, event.photos(), unheardRecording, unheardRecordingWithMore)
+	}
+	return withVoiceNote(event.Message.Text, note.Heard)
 }
 
 // liveSessionOn is the session running on a message's channel that answers it. err is
@@ -595,8 +694,9 @@ func (s *Server) followUpMessage(found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	followUpID := "message_" + store.NewID()
+	text := s.heardText(ctx, found.Spec(), event)
 	for {
-		err := found.FollowUp(ctx, followUpID, event.Message.Text, nil)
+		err := found.FollowUp(ctx, followUpID, text, nil)
 		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
 			time.Sleep(threadTurnPoll)
 			continue
@@ -617,7 +717,13 @@ func (s *Server) answerMessage(found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 
-	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), event)
+	text := event.Message.Text
+	// A speech-to-speech agent answers only on the call (agent.Ask), so nothing it would refuse
+	// is heard.
+	if found.Mode() != "native" {
+		text = s.heardText(ctx, found.Spec(), event)
+	}
+	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), text, event)
 	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
 			"channel", event.ChannelID, "session", found.ID(), "error", err)
