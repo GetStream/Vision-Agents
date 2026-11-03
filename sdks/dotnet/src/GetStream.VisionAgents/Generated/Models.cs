@@ -26,7 +26,7 @@ namespace GetStream.VisionAgents.Models
 {
     using System = global::System;
 
-    
+
 
     /// <summary>
     /// The calling organization's account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream's, and is not here.
@@ -8550,6 +8550,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
 
         /// <summary>
+        /// Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("detect_voicemail")]
+        public bool? DetectVoicemail { get; set; } = default!;
+
+        /// <summary>
         /// One of the customer's own numbers, which is what the person sees.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("from")]
@@ -11934,6 +11940,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string? VendorCallId { get; set; } = default!;
 
+        /// <summary>
+        /// What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
+        public SessionVoicemail? Voicemail { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -12205,6 +12217,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string? Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What the agent does when an answering machine picks up.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionVoicemail
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("action")]
+        public string Action { get; set; } = default!;
+
+        /// <summary>
+        /// Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
+        public string? Message { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

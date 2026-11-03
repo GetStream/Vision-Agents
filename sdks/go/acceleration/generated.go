@@ -2141,6 +2141,7 @@ const (
 	Start       SessionEndReason = "start"
 	Transferred SessionEndReason = "transferred"
 	Unanswered  SessionEndReason = "unanswered"
+	Voicemail   SessionEndReason = "voicemail"
 )
 
 // Valid indicates whether the value is a known member of the SessionEndReason enum.
@@ -2155,6 +2156,8 @@ func (e SessionEndReason) Valid() bool {
 	case Transferred:
 		return true
 	case Unanswered:
+		return true
+	case Voicemail:
 		return true
 	default:
 		return false
@@ -2830,6 +2833,24 @@ func (e VoiceBindingState) Valid() bool {
 	case VoiceBindingStatePending:
 		return true
 	case VoiceBindingStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VoicemailAction.
+const (
+	HangUp       VoicemailAction = "hang_up"
+	LeaveMessage VoicemailAction = "leave_message"
+)
+
+// Valid indicates whether the value is a known member of the VoicemailAction enum.
+func (e VoicemailAction) Valid() bool {
+	switch e {
+	case HangUp:
+		return true
+	case LeaveMessage:
 		return true
 	default:
 		return false
@@ -6641,6 +6662,9 @@ type PlaceCallRequest struct {
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
 	Custom *map[string]string `json:"custom,omitempty"`
 
+	// DetectVoicemail Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail.
+	DetectVoicemail *bool `json:"detect_voicemail,omitempty"`
+
 	// From One of the customer's own numbers, which is what the person sees.
 	From string `json:"from"`
 
@@ -7940,7 +7964,7 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
-	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 	EndReason *SessionEndReason `json:"end_reason,omitempty"`
 
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
@@ -8045,7 +8069,7 @@ type SessionConnectorBinding struct {
 	Name string `json:"name"`
 }
 
-// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 type SessionEndReason string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
@@ -8114,6 +8138,9 @@ type SessionPhone struct {
 
 	// VendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
 	VendorCallId *string `json:"vendor_call_id,omitempty"`
+
+	// Voicemail What the agent does when an answering machine picks up.
+	Voicemail *SessionVoicemail `json:"voicemail,omitempty"`
 }
 
 // SessionQuery defines model for SessionQuery.
@@ -8239,6 +8266,16 @@ type SessionVideo struct {
 
 	// Source Track or processor source. Omitted requires one unambiguous available source.
 	Source *string `json:"source,omitempty"`
+}
+
+// SessionVoicemail What the agent does when an answering machine picks up.
+type SessionVoicemail struct {
+	// Action hang_up: end the call at once, saying nothing.
+	// leave_message: say message once the greeting has ended, then hang up.
+	Action VoicemailAction `json:"action"`
+
+	// Message Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+	Message *string `json:"message,omitempty"`
 }
 
 // SetNumberAgentRequest defines model for SetNumberAgentRequest.
@@ -9978,6 +10015,10 @@ type VoiceSampleRequest struct {
 	// Transcript What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
 	Transcript *string `json:"transcript,omitempty"`
 }
+
+// VoicemailAction hang_up: end the call at once, saying nothing.
+// leave_message: say message once the greeting has ended, then hang up.
+type VoicemailAction string
 
 // WhatsAppProfile defines model for WhatsAppProfile.
 type WhatsAppProfile struct {
@@ -13440,6 +13481,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveCallMachine Receive who picked up a placed call
+	//
+	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+	ReceiveCallMachine(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPhoneNumbers The numbers the calling customer holds
 	//
@@ -18859,6 +18907,23 @@ func (c *Client) ReceiveDLCReport(ctx context.Context, reqEditors ...RequestEdit
 // Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 func (c *Client) ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceiveTelnyxCallRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveCallMachine Receive who picked up a placed call
+//
+// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+func (c *Client) ReceiveCallMachine(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveCallMachineRequest(c.Server, token)
 	if err != nil {
 		return nil, err
 	}
@@ -28837,6 +28902,40 @@ func NewReceiveTelnyxCallRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewReceiveCallMachineRequest constructs an http.Request for the ReceiveCallMachine method
+func NewReceiveCallMachineRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/machine/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListPhoneNumbersRequest constructs an http.Request for the ListPhoneNumbers method
 func NewListPhoneNumbersRequest(server string, params *ListPhoneNumbersParams) (*http.Request, error) {
 	var err error
@@ -35116,6 +35215,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCallWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxCallResponse, error)
+
+	// ReceiveCallMachineWithResponse Receive who picked up a placed call
+	//
+	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+	ReceiveCallMachineWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallMachineResponse, error)
 
 	// ListPhoneNumbersWithResponse The numbers the calling customer holds
 	//
@@ -54215,6 +54323,47 @@ func (r ReceiveTelnyxCallResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveCallMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveCallMachineResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveCallMachineResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveCallMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveCallMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveCallMachineResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListPhoneNumbersResponse200Headers the declared response headers of an HTTP 200 response for ListPhoneNumbers
 type ListPhoneNumbersResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -65542,6 +65691,21 @@ func (c *ClientWithResponses) ReceiveTelnyxCallWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseReceiveTelnyxCallResponse(rsp)
+}
+
+// ReceiveCallMachineWithResponse Receive who picked up a placed call
+//
+// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+func (c *ClientWithResponses) ReceiveCallMachineWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallMachineResponse, error) {
+	rsp, err := c.ReceiveCallMachine(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveCallMachineResponse(rsp)
 }
 
 // ListPhoneNumbersWithResponse The numbers the calling customer holds
@@ -88170,6 +88334,44 @@ func ParseReceiveTelnyxCallResponse(rsp *http.Response) (*ReceiveTelnyxCallRespo
 		response.XML200 = &dest
 
 	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveCallMachineResponse parses an HTTP response from a ReceiveCallMachineWithResponse call
+func ParseReceiveCallMachineResponse(rsp *http.Response) (*ReceiveCallMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveCallMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
 		break // No content-type
 
 	case rsp.StatusCode == 404:

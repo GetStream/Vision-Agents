@@ -1322,6 +1322,12 @@ module GetStream
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "receiveCallMachine" => {
+          method: :post, path: "/v1/phone/machine/{token}",
+          path_params: %w[token].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveCallStatus" => {
           method: :post, path: "/v1/phone/status/{token}",
           path_params: %w[token].freeze, query: [].freeze,
@@ -2482,7 +2488,7 @@ module GetStream
           required: %w[capabilities implemented ready vendor].freeze, open: false
         }.freeze,
         "PlaceCallRequest" => {
-          properties: %w[custom from headers initial_digits ring_timeout_seconds session_id tags to].freeze,
+          properties: %w[custom detect_voicemail from headers initial_digits ring_timeout_seconds session_id tags to].freeze,
           required: %w[from to].freeze, open: false
         }.freeze,
         "PlacedCall" => {
@@ -2782,7 +2788,7 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "SessionPhone" => {
-          properties: %w[number vendor vendor_call_id].freeze,
+          properties: %w[number vendor vendor_call_id voicemail].freeze,
           required: %w[number].freeze, open: false
         }.freeze,
         "SessionQuery" => {
@@ -2812,6 +2818,10 @@ module GetStream
         "SessionVideo" => {
           properties: %w[max_frames source].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "SessionVoicemail" => {
+          properties: %w[action message].freeze,
+          required: %w[action].freeze, open: false
         }.freeze,
         "SetNumberAgentRequest" => {
           properties: %w[agent config_id].freeze,
