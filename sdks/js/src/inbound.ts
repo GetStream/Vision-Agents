@@ -43,11 +43,22 @@ export interface InboundMessage {
   sessionId: string;
   /** The request it was sent as, which the answer is created under. May be empty. */
   requestId: string;
+  /** What was written. Empty when a photo was sent without text. */
   text: string;
+  /** The photos sent with it, by the URLs the channel keeps them at. Empty when none was. */
+  images: InboundImage[];
   messageId: string;
   userId: string;
   userName: string;
   at?: Date;
+}
+
+/** A photo sent with a message. */
+export interface InboundImage {
+  /** Where it is kept, which the model fetches itself. */
+  url: string;
+  /** Its type, when the channel said. */
+  mimeType?: string;
 }
 
 /** Reads a call frame off the wire. */
@@ -75,11 +86,34 @@ export function messageOf(frame: Frame): InboundMessage {
     sessionId: text(frame, "session_id"),
     requestId: text(frame, "request_id"),
     text: text(frame, "text"),
+    images: imagesOf(frame["images"]),
     messageId: text(frame, "message_id"),
     userId: text(frame, "user_id"),
     userName: text(frame, "user_name"),
     ...(at ? { at } : {}),
   };
+}
+
+/**
+ * Reads the photos a message frame carries. An entry that is not an object or has no URL is
+ * dropped, since there is nothing to fetch.
+ */
+function imagesOf(value: unknown): InboundImage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const images: InboundImage[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const url = text(entry as Frame, "url");
+    const mimeType = text(entry as Frame, "mime_type");
+    if (url) {
+      images.push({ url, ...(mimeType ? { mimeType } : {}) });
+    }
+  }
+  return images;
 }
 
 function strings(value: unknown): Record<string, string> {

@@ -243,7 +243,8 @@ dispatch.onMessage(async (message) => {
     return;
   }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
-  await session.responses.create(message.text);
+  const images = message.images.map(({ url }) => ({ url }));
+  await session.responses.create(message.text, { images });
 });
 
 await dispatch.run();
@@ -260,7 +261,8 @@ agent is the one that knows what has been said. `sessionFor` keeps one conversat
 channel for the same reason. The exception is an agent whose agent.yaml says
 `dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
 written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the model answer
-it, with this worker's credential acting for the user who wrote it.
+it, with this worker's credential acting for the user who wrote it. The photos sent with a
+message come in `images`, by URL, and `dispatch.answer` shows them to the model.
 
 A worker can also host tools for every session opened under an agent id, including one a
 browser opened, where the session's own process cannot reach what the tool needs:

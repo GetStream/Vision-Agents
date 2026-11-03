@@ -209,14 +209,16 @@ export class Dispatch {
    *
    * The response is created with this worker's own credential, acting for whoever wrote the
    * message, so it reaches a conversation that belongs to them and goes to the model rather
-   * than back to a worker. It carries the message's request id, so the answer lands on it.
+   * than back to a worker. It carries the message's request id, so the answer lands on it, and
+   * the photos sent with it, by the URLs the router handed over.
    */
   async answer(message: InboundMessage): Promise<AgentResponse> {
     if (!message.sessionId) {
       throw new ConfigurationError("no session is holding this message; open one with sessionFor");
     }
     const acting = new Client(this.client.backend.actingFor(message.userId));
-    return createResponse(acting, message.sessionId, message.text, {}, message.requestId);
+    const images = message.images.map(({ url }) => ({ url }));
+    return createResponse(acting, message.sessionId, message.text, { images }, message.requestId);
   }
 
   /**
