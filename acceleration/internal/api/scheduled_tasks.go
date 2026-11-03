@@ -954,7 +954,7 @@ type ScheduledTask struct {
 	Schedule            ScheduledTaskSchedule    `json:"schedule"`
 	DeliverTo           []string                 `json:"deliver_to" nullable:"false" doc:"Where an occurrence is delivered, in order, the first that lands."`
 	QuietHours          *ScheduledTaskQuietHours `json:"quiet_hours,omitempty" doc:"The part of the user's day an occurrence that comes due in is held through. Absent is no hold."`
-	State               string                   `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it)." enum:"active,paused,completed,failed"`
+	State               string                   `json:"state" doc:"active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it)." enum:"active,paused,completed,failed"`
 	NextRunAt           *string                  `json:"next_run_at" doc:"The next occurrence, RFC 3339 with the offset of the task's own zone. Null when there is none."`
 	Upcoming            []string                 `json:"upcoming" nullable:"false" doc:"Up to the next five occurrences, RFC 3339 with the task zone's offset."`
 	LastRunAt           *string                  `json:"last_run_at" doc:"When a run last finished, in UTC. Null when none has."`
@@ -987,7 +987,7 @@ type ScheduledTaskRun struct {
 	Attempts     int        `json:"attempts"`
 	StartedAt    *time.Time `json:"started_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
-	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise."`
+	Error        *string    `json:"error" doc:"Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise."`
 }
 
 // ScheduledTaskPage is a page of scheduled tasks.

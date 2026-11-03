@@ -513,7 +513,7 @@ func messageFrame(message dispatch.Message) frame {
 	if custom == nil {
 		custom = map[string]string{}
 	}
-	return frame{
+	sent := frame{
 		"type":         "message",
 		"work_id":      message.WorkID,
 		"channel_type": message.ChannelType,
@@ -529,4 +529,18 @@ func messageFrame(message dispatch.Message) frame {
 		"user_name":    message.UserName,
 		"at":           message.At,
 	}
+	// Left out when there are none, so a worker written before photos were carried reads
+	// the same frame it always has.
+	if len(message.Images) > 0 {
+		images := make([]frame, 0, len(message.Images))
+		for _, image := range message.Images {
+			described := frame{"url": image.URL}
+			if image.MIME != "" {
+				described["mime_type"] = image.MIME
+			}
+			images = append(images, described)
+		}
+		sent["images"] = images
+	}
+	return sent
 }

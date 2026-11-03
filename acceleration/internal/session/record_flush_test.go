@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 type RecordFlushSuite struct {
 	suite.Suite
 	ctx      context.Context
+	dsn      string
 	store    *store.Store
 	customer string
 	records  *sessionRecorder
@@ -36,7 +38,8 @@ func (s *RecordFlushSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN is not set")
 	}
 	s.ctx = context.Background()
-	db, err := store.Open(testenv.Database(dsn, "record_flush"))
+	s.dsn = testenv.Database(dsn, "record_flush")
+	db, err := store.Open(s.dsn)
 	s.Require().NoError(err)
 	s.Require().NoError(db.Migrate(s.ctx))
 	s.store = db
@@ -277,6 +280,82 @@ func (s *RecordFlushSuite) TestAFlushTheWriterTookInGivesUpWhenItsCallerDoes() {
 	case <-time.After(recordWriteTimeout / 2):
 		s.Fail("the Flush waited for the writer rather than its caller")
 	}
+}
+
+func (s *RecordFlushSuite) TestATitleWrittenAfterTheSessionWasDeletedLogsNoError() {
+	logged := &syncBuffer{}
+	records := s.recorderLogging(s.store, logged)
+	row := s.row()
+	records.Opened(row, nil)
+	s.Require().NoError(records.Flush(s.bounded()))
+
+	// The title is queued behind a write the writer is stuck on, as the one a model is
+	// still composing is when the customer deletes the conversation.
+	held, release := s.heldRow()
+	records.Opened(held, nil)
+	records.Described(s.customer, row.ID, "Where an order went", "A question about an order.", nil)
+	s.Require().NoError(s.store.DeleteSession(s.ctx, s.customer, row.ID))
+	release()
+	s.Require().NoError(records.Flush(s.bounded()))
+
+	_, err := s.store.StoredSession(s.ctx, s.customer, row.ID)
+	s.ErrorIs(err, store.ErrNoSession, "the title brought the deleted session back")
+	s.NotContains(logged.String(), "level=ERROR", "a title for a deleted session is an expected drop")
+	s.Contains(logged.String(), "level=DEBUG", "the drop is logged, at debug")
+	s.Contains(logged.String(), "dropped the session's title", "the drop is logged, at debug")
+	s.True(s.stored(held.ID), "the write behind the title was lost with it")
+}
+
+func (s *RecordFlushSuite) TestATitleForASessionThatIsThereIsStored() {
+	logged := &syncBuffer{}
+	records := s.recorderLogging(s.store, logged)
+	row := s.row()
+	records.Opened(row, nil)
+	records.Described(s.customer, row.ID, "Where an order went", "A question about an order.", nil)
+	s.Require().NoError(records.Flush(s.bounded()))
+
+	got, err := s.store.StoredSession(s.ctx, s.customer, row.ID)
+	s.Require().NoError(err)
+	s.Equal("Where an order went", got.Title)
+	s.NotContains(logged.String(), "level=ERROR")
+}
+
+func (s *RecordFlushSuite) TestATitleTheStoreCouldNotWriteStillLogsAnError() {
+	logged := &syncBuffer{}
+	broken, err := store.Open(s.dsn)
+	s.Require().NoError(err)
+	s.Require().NoError(broken.Close())
+	records := s.recorderLogging(broken, logged)
+	records.Described(s.customer, rand.Text(), "Where an order went", "A question about an order.", nil)
+	s.Require().NoError(records.Flush(s.bounded()))
+
+	s.Contains(logged.String(), "level=ERROR")
+	s.Contains(logged.String(), "could not record the session's title")
+}
+
+// recorderLogging is a writer over db that logs everything, even debug lines, into logged.
+func (s *RecordFlushSuite) recorderLogging(db *store.Store, logged *syncBuffer) *sessionRecorder {
+	records := newSessionRecorder(db, slog.New(slog.NewTextHandler(logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	s.T().Cleanup(records.Close)
+	return records
+}
+
+// syncBuffer is what the writer's goroutine logs into and the test reads back.
+type syncBuffer struct {
+	mu sync.Mutex
+	sb strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sb.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sb.String()
 }
 
 // holdWriter stalls the writer on a session row another transaction is inserting, until the
