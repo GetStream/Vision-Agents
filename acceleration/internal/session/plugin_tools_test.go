@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -416,6 +418,52 @@ func (s *UserPluginsSuite) TestOnlyTheServersEachUserLogsIntoMayAskForALoginInTh
 		_, ok := plugins.RequestedAuthorization(tool, card, Logins(spec))
 		s.False(ok, "%s: the app logs in on the dashboard, so no card of its comes through the chat", tool)
 	}
+}
+
+// A config stored before mcp_servers names were checked may name a server like a catalog
+// plugin. Such a server is never offered, logged into or renewed, so the deployment's client
+// for the plugin of that name is never used there. A server with a name of its own is
+// offered as before.
+func (s *UserPluginsSuite) TestAServerNamedLikeACatalogPluginIsNeverLoggedInto() {
+	var secrets []string
+	outside := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secrets = append(secrets, r.FormValue("client_secret"))
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "renewed-token"})
+	}))
+	defer outside.Close()
+	s.T().Setenv("GONG_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("GONG_MCP_CLIENT_SECRET", "deployment-secret")
+	// Written to the store directly: saving it through the API is refused.
+	config := store.AgentConfig{CustomerID: s.runner.customerID, Name: "legacy", MCPServers: []store.MCPServer{
+		{Name: "gong", URL: outside.URL + "/mcp", User: true},
+		{Name: "linear", URL: outside.URL + "/mcp", NeedsLogin: &needsLogin},
+		{Name: "notes", URL: s.provider.URL + "/mcp", User: true},
+	}}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	expired := time.Now().Add(-time.Hour)
+	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+		CustomerID: config.CustomerID, ConfigID: config.ID, PluginID: "gong", UserID: "alice",
+		InstanceURL: outside.URL + "/mcp", Status: store.PluginConnected, AccessToken: "old-token",
+		ExpiresAt: &expired, RefreshToken: "refresh-token", ClientID: "deployment-client",
+		TokenEndpoint: outside.URL + "/token",
+	}))
+	stored, err := s.store.AgentConfig(context.Background(), config.CustomerID, config.ID)
+	s.Require().NoError(err)
+	spec := FromConfig(stored)
+	spec.Caller.UserID = "alice"
+	auth := &plugins.Auth{HTTP: outside.Client(), PublicURL: "https://router.example"}
+	manager := &Manager{logger: slog.New(slog.DiscardHandler), options: ManagerOptions{Store: s.store, PluginAuth: auth}}
+
+	runner := manager.userPlugins(spec, &pluginRunner{})
+	s.Require().NotNil(runner)
+	_, err = runner.Run(context.Background(), llm.ToolCall{ID: uuid.NewString(), Name: "gong__list_tools", Arguments: `{}`})
+	_, _, unconnected := attachPlugins(context.Background(), spec, s.store, auth, slog.New(slog.DiscardHandler))
+
+	s.ErrorContains(err, "gong__list_tools", "no tool of the server's")
+	s.Equal([]string{"notes"}, slices.Collect(maps.Keys(runner.named)))
+	s.Equal([]string{"notes"}, Logins(spec))
+	s.Empty(unconnected, "linear is not offered as a server to connect on the dashboard")
+	s.Empty(secrets, "no renewal")
 }
 
 // needsLogin is what a server that said at save it requires a login has stored.
