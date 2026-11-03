@@ -213,6 +213,8 @@ func (s *ChatInboundQueueSuite) TestQueuedMessagesToAWorkersSessionAreEachAnswer
 	queued := s.writtenAndQueued(config, second)
 	ended := make(chan error, 1)
 	go func() { ended <- s.router.AnswerChatInbound(ctx, queued) }()
+	// Its row is settled just before the session is handed the message.
+	s.Require().Eventually(func() bool { return s.row(queued.MessageID).State == store.ChatInboundDone }, settleFor, 5*time.Millisecond)
 	s.Never(func() bool { return len(ended) > 0 }, dropped, 20*time.Millisecond, "gave up on a message while the reply before it was written")
 	s.holding.answers()
 	select {
