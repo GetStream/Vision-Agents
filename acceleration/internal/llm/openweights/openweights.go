@@ -73,13 +73,18 @@ func (h Host) New(options Options) (*openaicompat.LLM, error) {
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:      h.Provider,
-		Model:         options.Model,
-		APIKey:        options.APIKey,
-		BaseURL:       options.BaseURL,
-		Capabilities:  Capabilities(options.Model, options.Thinking, options.ReasoningEffort),
-		RequestFields: RequestFields(options.Model, options.Thinking),
-		Logger:        options.Logger,
+		// The weights' own chat template renders the conversation, and these templates
+		// expect a system message only first. DeepSeek V4's, given one after the caller,
+		// has the model carry on writing the note and close a think block it never opened,
+		// all in the answer, so a later one goes on the user's side.
+		SystemTurnsAsUser: true,
+		Provider:          h.Provider,
+		Model:             options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
+		Capabilities:      Capabilities(options.Model, options.Thinking, options.ReasoningEffort),
+		RequestFields:     RequestFields(options.Model, options.Thinking),
+		Logger:            options.Logger,
 	})
 }
 

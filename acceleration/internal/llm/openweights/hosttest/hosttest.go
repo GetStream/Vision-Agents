@@ -73,3 +73,15 @@ func (s *Unit) TestAThinkingModelReportsThatItStreamsItsReasoning() {
 
 	s.True(provider.Capabilities().StreamsReasoning)
 }
+
+func (s *Unit) TestASystemMessageAfterTheCallerIsSentOnTheUsersSide() {
+	// The weights' chat template expects a system message only first. DeepSeek V4's, given
+	// one after the caller, has the model write on from the note and close a think block it
+	// never opened, all in the answer.
+	roles := SentRoles(s.T(), func(baseURL string) (*openaicompat.LLM, error) {
+		return s.New(openweights.Options{APIKey: "k", Model: s.Model, BaseURL: baseURL})
+	}, Noted())
+
+	s.Equal([]string{"system", "user", "user"}, roles,
+		"one that opens the conversation is still a system message")
+}
