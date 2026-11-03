@@ -2,9 +2,6 @@
 
 ## Features
 
-### Releasing a number bought moments ago says to try again
-
-`DELETE /v1/phone/numbers/{e164}` answers a 409 `phone_number_settling` when the vendor refuses to give back a number bought in the last minute, which it is still setting up: Telnyx refused one 4 seconds after its purchase and took the same release 13 seconds later. The number stays held, so the same release can be sent again. Any other vendor failure is still a 503 `phone_vendor_failed`. Both are now listed on the operation (AI-2187).
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
