@@ -2390,10 +2390,10 @@ Cut over once SDKs point here:
 
 1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
    until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
-   A pause ends the call in progress on the router that runs the campaign, and a call that
-   ends after the last `--once` is not carried. A pause lands on one router only: with more
-   than one replica at the source, confirm the campaign has stopped (no contact `calling` and
-   no new attempts) before the last `--once`.
+   A pause stops every replica from taking its next contact. It ends the call in progress only
+   on the replica the request reaches: a call on another replica goes on until it ends, for
+   at most 15 minutes. A call that ends after the last `--once` is not carried, so with more
+   than one replica at the source, wait until no contact is `calling`.
 2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
    holds every call the source made.
 3. Stop the source delivering. Do not pause the scheduled tasks there before that last

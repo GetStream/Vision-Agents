@@ -6,8 +6,9 @@
 // happening at once, and the runner holds that many and no more.
 //
 // Concurrency is enforced in this process, which is the same place sessions already live.
-// A second router would run its own campaigns rather than share these, and a contact is
-// claimed in the database so a restart mid-campaign resumes rather than starts again.
+// A second router counts its own calls, not these. A contact is claimed in the database, and
+// only while the campaign's row says running: a restart mid-campaign resumes rather than starts
+// again, and a pause on any router stops the next claim on every one.
 package campaign
 
 import (
