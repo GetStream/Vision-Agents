@@ -106,7 +106,8 @@ module GetStream
       #
       # The response is created with this worker's own credential acting for whoever wrote the
       # message, so it goes to the model rather than back to a worker, and it carries the
-      # message's request id so the answer lands on it.
+      # message's request id so the answer lands on it, and the photos sent with it, by the
+      # URLs the router handed over.
       #
       # @return [AgentResponse]
       def answer(message)
@@ -115,7 +116,8 @@ module GetStream
         end
 
         acting = Client.new(backend: @client.backend.acting_for(message.user_id))
-        Responses.new(acting, message.session_id).answer(message.text, message.request_id)
+        images = message.images.map { |image| { url: image.url } } unless message.images.empty?
+        Responses.new(acting, message.session_id).answer(message.text, message.request_id, images: images)
       end
 
       # Connects and hands out work until the socket closes or #stop is called, then waits for
