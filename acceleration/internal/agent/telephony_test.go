@@ -1904,7 +1904,7 @@ func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
 	s.Equal("none", capped.ToolChoice, "the capped reply has nothing to reach for")
-	s.Contains(shown(capped), "answer the caller now")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
@@ -1933,7 +1933,7 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
 	s.Equal("none", capped.ToolChoice, "deferring a reply must not bypass the tool limit")
-	s.Contains(shown(capped), "answer the caller now")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {

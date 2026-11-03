@@ -166,9 +166,10 @@ type Turn struct {
 	// AfterTool says the reply follows a tool result rather than the caller.
 	AfterTool bool
 	// Answers says the reply is offered no tools and must answer from what it has: the
-	// chain of tools before it has gone on as long as the caller can be kept waiting.
+	// chain of tools before it has reached its limit. It reads the same on a call and in
+	// text, so it says nothing of time or of anyone waiting.
 	Answers bool
-	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
+	// NoTools offers the reply no tools without telling it to answer now: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
 	// Asked is what the caller asked to change about this reply, written over the
@@ -180,8 +181,8 @@ type Turn struct {
 }
 
 // answerNow is the note a reply that Answers is given.
-const answerNow = "There is no time for another tool: answer the caller now from what the " +
-	"tools returned, and say plainly what you could not get."
+const answerNow = "No more tools this turn: answer now from what the tools returned, " +
+	"and say plainly what you could not get."
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
 type Harness struct {
