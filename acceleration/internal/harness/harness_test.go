@@ -1217,10 +1217,20 @@ func (s *HarnessSuite) TestTheNoteToAnswerSaysNothingOfTimeOrOfTheCaller() {
 
 			requests := s.fast.requests()
 			s.Require().Len(requests, 1)
-			told := shown(requests[0])
-			s.Contains(told, "No more tools this turn: answer now from what the tools returned")
+			input := requests[0].Input
+			end := len(input)
+			for end > 0 && IsNote(input[end-1]) {
+				end--
+			}
+			s.Require().Less(end, len(input), "the note is the trailing system note")
+			var notes []string
+			for _, message := range input[end:] {
+				notes = append(notes, message.Content)
+			}
+			note := strings.Join(notes, "\n")
+			s.Contains(note, "No more tools this turn: answer now from what the tools returned")
 			for _, wrong := range []string{"no time", "waiting", "answer the caller"} {
-				s.NotContains(strings.ToLower(told), wrong, "a text reader is told nothing of a call")
+				s.NotContains(strings.ToLower(note), wrong, "a text reader is told nothing of a call")
 			}
 		})
 	}

@@ -169,7 +169,7 @@ type Turn struct {
 	// chain of tools before it has reached its limit. It reads the same on a call and in
 	// text, so it says nothing of time or of anyone waiting.
 	Answers bool
-	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
+	// NoTools offers the reply no tools without telling it to answer now: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
 	// Asked is what the caller asked to change about this reply, written over the
