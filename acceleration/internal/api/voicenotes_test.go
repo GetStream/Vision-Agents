@@ -498,6 +498,26 @@ func (s *VoiceNotesSuite) TestAVoiceNoteTheSocketRefusesIsReportedAndNothingIsAs
 	s.nothingWasAsked(opened)
 }
 
+// A refused note takes the question with it: the photos sent beside it are not answered alone.
+func (s *VoiceNotesSuite) TestAVoiceNoteTheSocketRefusesTakesThePhotosSentWithIt() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	watching := s.watching(opened)
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+s.utils.uuid()))
+	before := len(s.chat.Uploads())
+
+	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "images": []frame{{"url": photo}},
+		"audio": frame{"url": s.serve(wavOf("  "))}}))
+	s.await(watching, "error")
+
+	command := s.utils.uuid()
+	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "request_id": command, "text": "And the next question"}))
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	s.Require().Eventually(func() bool {
+		return slices.ContainsFunc(s.chat.Stored(channel), func(stored map[string]any) bool { return stored["id"] == command })
+	}, settleFor, 10*time.Millisecond, "the next question was never written")
+	s.Empty(s.chat.Uploads()[before:], "the photo of a refused question is not shown")
+}
+
 func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnTheSocketIsHeardOnce() {
 	opened := s.noting()
 	since := time.Now().UTC()
