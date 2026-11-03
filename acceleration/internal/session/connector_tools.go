@@ -382,6 +382,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			return unavailableOpenFailed, nil
 		}
 		d.toolsets = append(d.toolsets, toolset)
+		offered := false
 		for _, tool := range toolset.Tools() {
 			name, found := strings.CutPrefix(tool.Name, binding.Name+mcp.Separator)
 			if _, taken := d.routes[tool.Name]; taken || !found {
@@ -391,6 +392,13 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 				tool: name, digest: digests[name], timeout: timeout, declared: declaredArguments(tool.Parameters),
 				limit: manifest.RateLimitKey(connection.CustomerID, resolved.Connection), maxInFlight: manifest.RateLimit.MaxConcurrentCalls}
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+			offered = true
+		}
+		// A built-in's tools are described well enough to use without, as a catalog plugin's
+		// are, and a server whose tools the model is not offered has nothing to advise on.
+		if offered && strings.HasPrefix(binding.ConnectorID, store.CustomPrefix) {
+			d.instructions = append(d.instructions, serverSaid{name: binding.Name,
+				tools: binding.Name + mcp.Separator + "*", text: toolset.Instructions()})
 		}
 	}
 	var changed []string

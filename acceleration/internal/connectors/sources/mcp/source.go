@@ -131,7 +131,8 @@ func (s *Source) Open(ctx context.Context, b core.ResolvedBinding, grants []core
 	for _, grant := range grants {
 		granted[grant.Name] = grant.SchemaDigest
 	}
-	set := &Toolset{session: session, timeout: b.Binding.Timeout, targets: map[string]target{}}
+	set := &Toolset{session: session, timeout: b.Binding.Timeout, targets: map[string]target{},
+		instructions: strings.TrimSpace(session.InitializeResult().Instructions)}
 	for _, tool := range listed {
 		want, found := granted[tool.Name]
 		if !found {

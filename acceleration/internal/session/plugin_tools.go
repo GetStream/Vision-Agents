@@ -202,17 +202,28 @@ func Logins(spec Spec) []string {
 	return ids
 }
 
-// serverInstructionsLimit caps what one server named by URL adds to the agent's
-// instructions, since nobody vetted how much it says.
+// serverInstructionsLimit caps what one server named by URL, or of a custom connector, adds
+// to the agent's instructions, since nobody vetted how much it says.
 const serverInstructionsLimit = 4000
 
+// serverSaid is what one server said about using its tools: name is what the config calls
+// it, tools the pattern of the names its tools are offered under.
+type serverSaid struct {
+	name, tools, text string
+}
+
 // serverInstructions are what the servers a config names by URL said about using their
-// tools, for the agent's instructions. Catalog plugins are left out: their tools are
-// described well enough to use without.
-func serverInstructions(servers []store.MCPServer, mcp *plugins.Runtime) string {
-	var said []string
+// tools, then what its custom connectors' servers said, for the agent's instructions.
+// Catalog plugins and built-in connectors are left out: their tools are described well
+// enough to use without.
+func serverInstructions(servers []store.MCPServer, mcp *plugins.Runtime, connectors []serverSaid) string {
+	all := make([]serverSaid, 0, len(servers)+len(connectors))
 	for _, server := range servers {
-		text := mcp.Instructions(server.Name)
+		all = append(all, serverSaid{name: server.Name, tools: plugins.Prefix(server.Name, "*"), text: mcp.Instructions(server.Name)})
+	}
+	var said []string
+	for _, server := range append(all, connectors...) {
+		text := server.text
 		if text == "" {
 			continue
 		}
@@ -220,7 +231,7 @@ func serverInstructions(servers []store.MCPServer, mcp *plugins.Runtime) string 
 			text = strings.ToValidUTF8(text[:serverInstructionsLimit], "")
 		}
 		said = append(said, fmt.Sprintf("The %s tools (%s) come with these instructions from their server:\n\n%s",
-			server.Name, plugins.Prefix(server.Name, "*"), text))
+			server.name, server.tools, text))
 	}
 	return strings.Join(said, "\n\n")
 }
