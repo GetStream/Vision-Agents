@@ -77,7 +77,7 @@ func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, h
 	// A note to an agent whose region runs no batch transcriber is refused before it is fetched:
 	// Transcribe would refuse it as a model failure, which a client retries. A target that
 	// resolves to nothing in any region is left for Transcribe to refuse.
-	if served, err := s.streams.Transcriptions.InRegion(ctx, recordedTarget(spec.LanguageHints), spec.Region); err == nil && !served {
+	if served, err := s.streams.Transcriptions.InRegion(ctx, recordedTarget(spec.LanguageHints), spec.Region, spec.LanguageHints); err == nil && !served {
 		return conversation.VoiceNote{}, errNoVoiceNotesInRegion
 	}
 	// The person is waiting for an answer, so the note is held to what an inline

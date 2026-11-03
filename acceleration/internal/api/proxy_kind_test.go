@@ -111,4 +111,6 @@ func (idleInspector) Providers(context.Context) []routing.Candidate { return nil
 func (idleInspector) Resolve(context.Context, string, []string) ([]routing.Candidate, error) {
 	return nil, nil
 }
-func (idleInspector) InRegion(context.Context, string, string) (bool, error) { return true, nil }
+func (idleInspector) InRegion(context.Context, string, string, []string) (bool, error) {
+	return true, nil
+}

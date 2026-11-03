@@ -208,6 +208,48 @@ func (s *VoiceNoteAudioSuite) TestAVoiceNoteInALanguageItsRegionDoesNotHearIsNot
 	s.Equal("se oye", english.Heard)
 }
 
+// Each instance declares its own languages, and a note's region is checked against the ones
+// that speak the session's, as transcribing it will: the eu here hears German but not Spanish,
+// though both are multilingual.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsCheckedAgainstTheLanguagesOfEachInstanceInItsRegion() {
+	heard := &heardTranscriber{}
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil }, routing.OverrideRegion)
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Transcribers: transcribers, Config: routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{Provider: "deepgram", Model: "nova-3", Languages: []string{"en", "de"}, Region: "eu"},
+			{Provider: "deepgram", Model: "nova-3", Languages: []string{"en", "de", "es"}},
+		},
+		Aliases: map[string]routing.Alias{
+			"en-recorded":           {Languages: []string{"en"}, RequireRecorded: true},
+			"multilingual-recorded": {Multilingual: true, RequireRecorded: true},
+		},
+	}})
+	s.Require().NoError(err)
+	server := &Server{streams: &Streams{Transcriptions: recordings}}
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("hola"))
+
+	_, err = server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"es"}}, note, "")
+	s.Equal(errNoVoiceNotesInRegion, err, "the eu instance does not speak Spanish: not a model failure to retry")
+	s.Nil(heard.recording.Audio, "the note was never sent to a transcriber")
+
+	german, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"de"}}, note, "")
+	s.Require().NoError(err)
+	s.Equal("se oye", german.Heard)
+}
+
+// A note sent by URL to an agent whose region cannot hear it is refused before the CDN is asked.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteByURLToARegionThatCannotHearItIsRefusedBeforeItIsFetched() {
+	heard := &heardTranscriber{}
+	server := &Server{streams: &Streams{Transcriptions: s.regionalRecordings(heard)}, imageHTTP: s.cdn.Client()}
+	s.served["/note"] = cdnFile{kind: "audio/wav", body: wavOf("hola")}
+
+	_, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"es"}}, s.cdn.URL+"/note", "")
+
+	s.Equal(errNoVoiceNotesInRegion, err)
+	s.Zero(s.fetches.Load(), "the note is refused before it is fetched")
+}
+
 func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsHeardInTheSessionsLanguages() {
 	heard := &heardTranscriber{}
 	server := &Server{streams: &Streams{Transcriptions: s.recordings(heard)}}
