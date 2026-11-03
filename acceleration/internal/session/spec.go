@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -55,6 +57,10 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
+	// Dispatched holds ConversationID on the channel a message the router handed to a worker
+	// was written in, which the worker's session answers (Manager.handedOut). The person writes
+	// there themselves, so the session writes only its replies. No request sets it.
+	Dispatched bool
 	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
@@ -320,6 +326,9 @@ type Spec struct {
 	Memory MemorySpec
 	// Phone attaches the session to a number, which is what turns transferring on.
 	Phone *PhoneSpec
+	// Voicemail is what the session does when the vendor says an answering machine picked
+	// up its placed call. Nil carries on as with a person.
+	Voicemail *VoicemailPlan
 
 	// CampaignID and ContactID say which piece of outbound work this call is, so a
 	// campaign can be told how its contacts went. Both are empty for a call nobody
@@ -344,6 +353,11 @@ type MemorySpec struct {
 	AppID string
 	// Filter narrows recall with the caller's own labels.
 	Filter map[string]string
+}
+
+// VoicemailPlan is the message left on an answering machine. Empty hangs up instead.
+type VoicemailPlan struct {
+	Message string
 }
 
 // PhoneSpec is the number the session acts from.
@@ -388,7 +402,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		ReviewInstructions: config.ReviewInstructions,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
-		MCPServers:         config.MCPServers,
+		MCPServers:         namedByURL(config.MCPServers),
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
@@ -406,6 +420,16 @@ func FromConfig(config store.AgentConfig) Spec {
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
+}
+
+// namedByURL is servers less any named like a catalog plugin, which is never offered or
+// logged into: a login under a catalog id would be taken for that plugin's, client and all.
+// Saving a config refuses such a name, so only one stored before the check carries it.
+func namedByURL(servers []store.MCPServer) []store.MCPServer {
+	return slices.DeleteFunc(slices.Clone(servers), func(server store.MCPServer) bool {
+		_, listed := plugins.Lookup(server.Name)
+		return listed
+	})
 }
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
@@ -481,6 +505,8 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
+	case s.Native() && s.Voicemail != nil && s.Voicemail.Message != "":
+		return stack.Wrap(errors.New("session: a speech-to-speech agent cannot say a fixed voicemail message; use hang_up"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))

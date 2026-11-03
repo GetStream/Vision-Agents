@@ -1217,6 +1217,12 @@ pub struct AttachedNumber {
     pub sip_uri: ::std::string::String,
     pub trunk_id: ::std::string::String,
 }
+///`AudioSource`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AudioSource {
+    ///Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    pub url: ::std::string::String,
+}
 ///created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
 #[derive(
     ::serde::Deserialize,
@@ -4136,6 +4142,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateOptOutRequestSourc
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
+    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
     ///Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -4144,10 +4153,10 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
-    ///What to answer, as though it had been said.
+    ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
     pub text: ::std::string::String,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -5438,6 +5447,9 @@ pub struct GuestUser {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
     ///A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     pub token: ::std::string::String,
 }
@@ -5446,12 +5458,15 @@ pub struct GuestUser {
 pub struct GuestUserRequest {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+    ///A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub id: ::std::option::Option<::std::string::String>,
-    ///What to call them, for a transcript a person reads later.
+    ///What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
@@ -7834,12 +7849,15 @@ pub struct PhoneVendor {
 ///`PlaceCallRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PlaceCallRequest {
-    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
+    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub detect_voicemail: ::std::option::Option<bool>,
     ///One of the customer's own numbers, which is what the person sees.
     pub from: ::std::string::String,
     ///Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call.
@@ -8948,12 +8966,16 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
+    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub audio: ::std::option::Option<AudioSource>,
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub client_id: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
+    ///What to answer, as though it had been said. May be empty when audio carries the question.
     pub text: ::std::string::String,
 }
 ///How a conversation is handed back to the model when a session carries it on.
@@ -9389,7 +9411,7 @@ pub struct ScheduledTask {
     pub schedule: ScheduledTaskSchedule,
     ///The conversation the task follows up in. Empty until its first occurrence opens one.
     pub session_id: ::std::string::String,
-    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
     pub state: ScheduledTaskState,
     pub title: ::std::string::String,
     ///Up to the next five occurrences, RFC 3339 with the task zone's offset.
@@ -9481,7 +9503,7 @@ pub struct ScheduledTaskRun {
     pub attempts: i64,
     ///Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
     pub delivered_to: ::std::string::String,
-    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
@@ -9639,7 +9661,7 @@ pub struct ScheduledTaskSchedule {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub until: ::std::option::Option<::std::string::String>,
 }
-///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -10013,7 +10035,7 @@ pub struct SessionConnectorBinding {
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
 }
-///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -10037,6 +10059,8 @@ pub enum SessionEndReason {
     Start,
     #[serde(rename = "unanswered")]
     Unanswered,
+    #[serde(rename = "voicemail")]
+    Voicemail,
 }
 impl ::std::fmt::Display for SessionEndReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10046,6 +10070,7 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Hangup => f.write_str("hangup"),
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
+            Self::Voicemail => f.write_str("voicemail"),
         }
     }
 }
@@ -10058,6 +10083,7 @@ impl ::std::str::FromStr for SessionEndReason {
             "hangup" => Ok(Self::Hangup),
             "start" => Ok(Self::Start),
             "unanswered" => Ok(Self::Unanswered),
+            "voicemail" => Ok(Self::Voicemail),
             _ => Err("invalid value".into()),
         }
     }
@@ -10259,6 +10285,9 @@ pub struct SessionPhone {
     ///The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<SessionVoicemail>,
 }
 ///`SessionQuery`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -10725,6 +10754,14 @@ pub struct SessionVideo {
     ///Track or processor source. Omitted requires one unambiguous available source.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
+}
+///What the agent does when an answering machine picks up.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SessionVoicemail {
+    pub action: VoicemailAction,
+    ///Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
 }
 ///`SetNumberAgentRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -13774,6 +13811,58 @@ pub struct VoiceSampleRequest {
     ///What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub transcript: ::std::option::Option<::std::string::String>,
+}
+/**hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum VoicemailAction {
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+}
+impl ::std::fmt::Display for VoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+        }
+    }
+}
+impl ::std::str::FromStr for VoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`WhatsAppProfile`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

@@ -26,7 +26,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -671,7 +670,11 @@ func (s *ConnectorLoginSuite) invocations(connection string, count int) []store.
 		require.NoError(c, err)
 		require.GreaterOrEqual(c, len(rows), count)
 	}, 5*time.Second, 20*time.Millisecond)
-	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// An error counts as a change: never's check runs off the test goroutine, so it only returns.
+	never(s.T(), func() bool {
+		rows, err := fetch()
+		return err != nil || len(rows) > count
+	}, 300*time.Millisecond, 50*time.Millisecond)
 	return read()
 }
 
@@ -1008,42 +1011,6 @@ func (s *ConnectorLoginSuite) heldOn(manager *Manager, config store.AgentConfig)
 		return shown && !over && !s.stopped[callID]
 	}
 	return d
-}
-
-// answered is what a call run in the background said.
-type answered struct {
-	said string
-	err  error
-}
-
-// callInBackground runs the call id on turn, and hands back what it said once it answers.
-func (s *ConnectorLoginSuite) callInBackground(turn context.Context, d *dispatcher, id, name, arguments string) chan answered {
-	answer := make(chan answered, 1)
-	turn, cancel := context.WithCancel(turn)
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: arguments})
-		answer <- answered{said: llm.TextOf(parts), err: err}
-	}()
-	// A test that fails before it reads the answer must not leave the call running: its late
-	// invocation record would send on the queue the fixture's cleanup has closed.
-	s.T().Cleanup(func() {
-		cancel()
-		<-finished
-	})
-	return answer
-}
-
-// answerOf waits for a call run in the background to answer, past loginPoll.
-func (s *ConnectorLoginSuite) answerOf(answer chan answered) answered {
-	select {
-	case got := <-answer:
-		return got
-	case <-time.After(2*loginPoll + 5*time.Second):
-		s.FailNow("the call never answered")
-		return answered{}
-	}
 }
 
 func (s *ConnectorLoginSuite) stepOf(callID string) *persistent.Authorization {

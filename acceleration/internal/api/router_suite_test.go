@@ -44,6 +44,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -305,6 +306,7 @@ type RouterSuite struct {
 	speechMu    sync.Mutex
 	newestVoice *recordingTTS
 	newestEars  *quietSTT
+	newestEdge  *silentEdge
 	// unconfiguredBuilds counts what the "unconfigured" transcriber was asked to build.
 	unconfiguredBuilds atomic.Int64
 	// noted are the "noted" models opened so far, one per session, newest last, for a test
@@ -462,7 +464,9 @@ type RouterSuite struct {
 	// own, set before it starts the harness: model instances laid over reasoningConfig, what
 	// registers their factories over the suite's stubs, a knowledge backend for each region
 	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
-	llmInstances     []routing.ProviderConfig
+	llmInstances []routing.ProviderConfig
+	// sttInstances are batch transcription instances added to the recording config.
+	sttInstances     []routing.ProviderConfig
 	llmFactories     func(*llmrouter.Registry)
 	knowledgeRegions map[string]knowledge.Backend
 	sandboxTargets   map[string]string
@@ -1106,6 +1110,19 @@ func (s *RouterSuite) ears() *quietSTT {
 	return s.newestEars
 }
 
+// callerSays has somebody speak on the call the router joined last. A reply to nobody yet
+// heard is offered no tools, so a test whose model calls one has the caller speak.
+func (s *RouterSuite) callerSays(text string) {
+	before := s.ears()
+	s.speechMu.Lock()
+	edge := s.newestEdge
+	s.speechMu.Unlock()
+	caller := stt.Participant{ID: "caller", UserID: "caller"}
+	edge.inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+	s.Require().Eventually(func() bool { return s.ears() != before }, settleFor, 5*time.Millisecond, "the call never began listening")
+	s.ears().emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
+}
+
 func (s *RouterSuite) spoke(voice *recordingTTS) {
 	s.speechMu.Lock()
 	defer s.speechMu.Unlock()
@@ -1302,8 +1319,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
+	recorded := recordingConfig()
+	recorded.Providers = append(recorded.Providers, s.sttInstances...)
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       recordingConfig(),
+		Config:       recorded,
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
@@ -1479,7 +1498,11 @@ func (s *RouterSuite) sessionManager(
 		// The policies a session's resume_history falls back to, as cmd/router passes them.
 		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
-			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+			edge := &silentEdge{inbound: make(chan agent.InboundAudio, 4)}
+			s.speechMu.Lock()
+			s.newestEdge = edge
+			s.speechMu.Unlock()
+			return edge, nil
 		},
 	})
 	s.Require().NoError(err)
@@ -1794,6 +1817,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	// The node shares the suite's phone service, and the last node made takes its unanswered
 	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
 	s.router.phone.OnUnanswered(s.router.endUnanswered)
+	s.router.phone.OnMachine(s.router.tellMachine)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)

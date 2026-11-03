@@ -521,7 +521,7 @@ public sealed class AgentTests : IDisposable
         var root = Path.Combine(_workspace, "agents", "jean");
         Directory.CreateDirectory(Path.Combine(root, "knowledge"));
         File.WriteAllText(Path.Combine(root, "agent.yaml"),
-            "name: jean\nllm: openai/gpt-5.6\ngreeting:\n  text: Hello.\n  mode: variation\nplugins: [sentry]\nharness: default\ntags:\n  team: docs\ndispatch:\n  text: enabled\n");
+            "name: jean\nllm: openai/gpt-5.6\ngreeting:\n  text: Hello.\n  mode: variation\nharness: default\ntags:\n  team: docs\ndispatch:\n  text: enabled\n");
         File.WriteAllText(Path.Combine(root, "instructions.md"), "You are Jean.\n");
         File.WriteAllText(Path.Combine(root, "knowledge", "pricing.md"), "A penny.\n");
         File.WriteAllText(Path.Combine(root, "knowledge", "urls.yaml"), "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n");
@@ -556,7 +556,7 @@ public sealed class AgentTests : IDisposable
         Assert.Equal(("https://example.com/plans", "Plans"), (synced["knowledge_urls"]![0].Text("url"), synced["knowledge_urls"]![0].Text("title")));
         Assert.Equal(24, synced["knowledge_urls"]![0]!["refresh_hours"]!.GetValue<long>());
         Assert.Equal(("Hello.", "variation", "default"), (synced["greeting"].Text("text"), synced["greeting"].Text("mode"), synced.Text("harness")));
-        Assert.Equal("sentry", synced["plugins"]![0]!.GetValue<string>());
+        Assert.Null(synced["plugins"]);
         Assert.Null(synced["speed"]);
         var simulation = Assert.Single(synced["simulations"]!.AsArray())!.AsObject();
         Assert.Equal(["assertion", "name", "scenario", "variations"], simulation.Select(pair => pair.Key).Order());
@@ -773,56 +773,32 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
-    public async Task PluginsStillSyncAndTheDeprecationIsLoggedOncePerSync()
+    public async Task AFolderNamingPluginsIsRefusedBeforeAnythingIsSynced()
     {
-        const string Warning = "agent.yaml plugins are deprecated: rename plugins to connectors";
-        var heard = new Heard();
-        System.Diagnostics.Trace.Listeners.Add(heard);
-        try
-        {
-            await using var router = await TestRouter.StartAsync();
-            router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("jean-plugins", "cfg-1") });
+        await using var router = await TestRouter.StartAsync();
+        var root = Path.Combine(_workspace, "agents", "jean-plugins");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean-plugins\nplugins: [sentry]\n");
+        using var client = Fixtures.Client(router);
 
-            var root = System.IO.Path.Combine(_workspace, "agents", "jean-plugins");
-            System.IO.Directory.CreateDirectory(root);
-            System.IO.File.WriteAllText(System.IO.Path.Combine(root, "agent.yaml"), "name: jean-plugins\nplugins: [sentry]\n");
-            router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean-plugins", "cfg-1") });
-            using var client = Fixtures.Client(router);
-            await using var agent = new Agent(new AgentOptions { Config = root, Client = client });
+        var refused = Assert.Throws<ConfigurationException>(() => new Agent(new AgentOptions { Config = root, Client = client }));
 
-            await agent.SyncAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(1, heard.Warnings.Count(line => line == Warning));
-
-            // Second sync hits the stamp path; warning must still fire once more
-            await agent.SyncAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(2, heard.Warnings.Count(line => line == Warning));
-
-            // Only one POST: the second sync returned early via the stamp
-            Assert.Single(router.To("POST", "/v1/agents/sync"));
-        }
-        finally
-        {
-            System.Diagnostics.Trace.Listeners.Remove(heard);
-        }
+        Assert.Equal(Path.Combine(root, "agent.yaml") + ": plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors", refused.Message);
+        Assert.Empty(router.To("POST", "/v1/agents/sync"));
     }
 
-    [Fact]
-    public async Task AnAgentWithoutPluginsLogsNoDeprecation()
+    [Theory]
+    [InlineData("")]
+    [InlineData("plugins: []\n")]
+    [InlineData("plugins:\n")]
+    public async Task AFolderWithNoPluginsOrAnEmptyListSyncsWithoutThem(string declaration)
     {
-        var heard = new Heard();
-        System.Diagnostics.Trace.Listeners.Add(heard);
-        try
-        {
-            await using var router = await TestRouter.StartAsync();
+        await using var router = await TestRouter.StartAsync();
 
-            await SyncDeclaringAsync(router, "connectors:\n  - linear\n");
+        var synced = await SyncDeclaringAsync(router, declaration + "connectors:\n  - linear\n");
 
-            Assert.DoesNotContain(heard.Warnings, line => line.Contains("plugins are deprecated"));
-        }
-        finally
-        {
-            System.Diagnostics.Trace.Listeners.Remove(heard);
-        }
+        Assert.Null(synced["plugins"]);
+        Assert.Equal("linear", synced["connectors"]![0].Text("name"));
     }
 
     [Fact]
@@ -902,32 +878,6 @@ public sealed class AgentTests : IDisposable
             return happened;
         }
         throw new InvalidOperationException("the session ended with nothing said");
-    }
-
-    private sealed class Heard : System.Diagnostics.TraceListener
-    {
-        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _warnings = new();
-
-        public IReadOnlyCollection<string> Warnings => _warnings;
-
-        public override void TraceEvent(System.Diagnostics.TraceEventCache? cache, string source, System.Diagnostics.TraceEventType type, int id, string? message)
-        {
-            if (type == System.Diagnostics.TraceEventType.Warning && message is not null)
-            {
-                _warnings.Enqueue(message);
-            }
-        }
-
-        public override void TraceEvent(System.Diagnostics.TraceEventCache? cache, string source, System.Diagnostics.TraceEventType type, int id, string? format, params object?[]? args) =>
-            TraceEvent(cache, source, type, id, format is null ? null : args is { Length: > 0 } ? string.Format(format, args) : format);
-
-        public override void Write(string? message)
-        {
-        }
-
-        public override void WriteLine(string? message)
-        {
-        }
     }
 
     private sealed record City(string Name);

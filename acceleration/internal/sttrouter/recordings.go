@@ -75,6 +75,13 @@ type Recording struct {
 	CustomerID string
 	// Tags are the customer's own cost labels.
 	Tags routing.Tags
+	// AgentID is the agent the recording was heard for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the recording was heard in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty is the region
+	// Options.DataPolicy asks for, else pricing.DefaultRegion.
+	Region string
 	// Options are what the caller asked for, target included.
 	Options options.STT
 	// Source is the recording itself.
@@ -102,6 +109,9 @@ func (r *Recordings) Transcribe(
 		CustomerID:    recording.CustomerID,
 		Attribution:   routing.AttributionFrom(ctx),
 		Spent:         routing.SpentFrom(ctx),
+		AgentID:       recording.AgentID,
+		CallID:        recording.CallID,
+		Region:        recording.Region,
 		Tags:          recording.Tags,
 		Target:        target,
 		Providers:     recording.Options.Providers,

@@ -13,7 +13,6 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -111,7 +110,7 @@ func (s *SlackChannelSuite) TestAPhotoAloneThatCannotBeFetchedGetsAShortReply() 
 	said := s.lastTurn(s.vision.replies()[asked:])
 	s.Equal(unfetchedPhoto, said.Content)
 	s.Empty(imagesIn(said))
-	s.Contains(s.logged.String(), "could not fetch a photo of a message in a thread channel")
+	s.Contains(s.logged.String(), "could not fetch a photo of a message")
 	s.Contains(s.logged.String(), "127.0.0.1:1")
 	s.NotContains(s.logged.String(), signature, "a photo's signed URL stays out of the log")
 }
@@ -316,33 +315,4 @@ func imagesIn(message llm.Message) []llm.ImagePart {
 		}
 	}
 	return images
-}
-
-// Control, as on base: a photo sent alone in an agent channel that is no thread reaches no
-// worker.
-func (s *MessageHooksSuite) TestAPhotoAloneInAChannelThatIsNoThreadReachesNoWorker() {
-	s.photoAloneReachesNoWorker()
-}
-
-// A photo sent alone in a channel named as a thread channel that no thread is linked to reaches
-// no worker either: only a linked thread answers a photo alone.
-func (s *MessageHooksSuite) TestAPhotoAloneInAThreadChannelNoThreadIsLinkedToReachesNoWorker() {
-	s.channelID = "thread-" + s.utils.uuid()
-	s.photoAloneReachesNoWorker()
-}
-
-// photoAloneReachesNoWorker delivers a photo with no text on the suite's channel, which names
-// a config, and fails when a worker is handed it.
-func (s *MessageHooksSuite) photoAloneReachesNoWorker() {
-	configID := s.holds()
-	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
-	defer release()
-	body := strings.Replace(s.writing(`{"`+ConfigField+`": "`+configID+`"}`),
-		`"text": "does the react sdk retry a failed upload?"`,
-		`"text": "", "attachments": [{"type": "image", "image_url": "https://cdn.example/photo.jpg"}]`, 1)
-	s.Require().Contains(body, `"attachments"`)
-
-	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", body))
-
-	s.nothingReaches(worker.Messages(), "a photo alone")
 }

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/uptrace/bun"
 
@@ -422,20 +424,18 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 		return s.QuerySessions(ctx, customerID, filter)
 	}
 
-	// websearch_to_tsquery rather than to_tsquery, because the text comes from a search
-	// box: it takes quoted phrases and bare words and never fails on punctuation, where
-	// to_tsquery would answer a syntax error to somebody who typed an apostrophe.
-	const rank = "ts_rank(searchable, websearch_to_tsquery('english', ?))"
+	words, args := searchedFor(text)
+	rank := "ts_rank(searchable, " + words + ")"
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
 		query := db.NewSelect().Model((*AgentSession)(nil)).
 			ColumnExpr("?TableColumns").
-			ColumnExpr(rank+" AS rank", text).
+			ColumnExpr(rank+" AS rank", args...).
 			Where("customer_id = ?", customerID).
-			Where("searchable @@ websearch_to_tsquery('english', ?)", text).
+			Where("searchable @@ "+words, args...).
 			Order("rank DESC", "updated_at DESC", "id DESC")
 		if after := filter.Cursor; after != nil {
 			query = query.Where("("+rank+", updated_at, id) < (?::real, ?, ?)",
-				text, after.Rank, after.UpdatedAt, after.ID)
+				append(slices.Clone(args), after.Rank, after.UpdatedAt, after.ID)...)
 		}
 		query = narrowSessions(query, filter)
 
@@ -449,6 +449,30 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 	return pageOfSessions(lists, filter, func(a, b AgentSession) int {
 		return cmp.Or(cmp.Compare(b.Rank, a.Rank), b.UpdatedAt.Compare(a.UpdatedAt), strings.Compare(b.ID, a.ID))
 	}), nil
+}
+
+// searchedFor is what a search's text asks for, as a tsquery expression and its arguments.
+//
+// websearch_to_tsquery rather than to_tsquery, because the text comes from a search box: it
+// takes quoted phrases and bare words and never fails on punctuation, where to_tsquery would
+// answer a syntax error to somebody who typed an apostrophe.
+//
+// A search box also searches as the person types, so a word at the very end is the start of
+// one and matches as a prefix: "Lis" finds "Lisbon". It is only letters and digits, which is
+// what lets it go to to_tsquery. A word followed by a space, inside a quote or excluded with a
+// minus was finished, and websearch_to_tsquery reads it as written.
+func searchedFor(text string) (string, []any) {
+	runes := []rune(text)
+	start := len(runes)
+	for start > 0 && (unicode.IsLetter(runes[start-1]) || unicode.IsDigit(runes[start-1])) {
+		start--
+	}
+	head := string(runes[:start])
+	if start == len(runes) || strings.Count(head, "\"")%2 == 1 || strings.HasSuffix(head, "-") {
+		return "websearch_to_tsquery('english', ?)", []any{text}
+	}
+	return "(websearch_to_tsquery('english', ?) && to_tsquery('english', ? || ':*'))",
+		[]any{head, string(runes[start:])}
 }
 
 // pageOfSessions merges every shard's page into one, keeping a session carried on in another
@@ -1212,8 +1236,11 @@ func jsonbOf[V any](values map[string]V) string {
 	return string(encoded)
 }
 
+// ErrNoSession is a session that is not there: never saved, or deleted since.
+var ErrNoSession = errors.New("store: there is no session")
+
 func unknownStoredSession(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no session %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoSession, id))
 }
 
 func notAGuest(id, customerID string) error {

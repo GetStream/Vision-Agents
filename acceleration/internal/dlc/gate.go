@@ -178,7 +178,7 @@ func (g *Gate) allow(ctx context.Context, customerID, channel, to string, into C
 		return err
 	}
 	if optedOut {
-		return stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel))
+		return refused(codeOptedOut, stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel)))
 	}
 	if err := g.inSandbox(ctx, customerID, channel, to); err != nil {
 		return err
@@ -197,7 +197,7 @@ func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) er
 		return err
 	}
 	if !slices.Contains(recipients, to) {
-		return stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to))
+		return refused(codeSandboxRecipient, stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to)))
 	}
 	spent, err := g.spent(ctx, customerID)
 	if err != nil {
@@ -205,12 +205,12 @@ func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) er
 	}
 	if channel == Voice {
 		if limit := g.sandbox.AudioMinutesPerDay; limit > 0 && spent.AudioSeconds >= limit*60 {
-			return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit))
+			return refused(codeSandboxMinutes, stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit)))
 		}
 		return nil
 	}
 	if limit := g.sandbox.MessagesPerDay; limit > 0 && spent.Messages >= limit {
-		return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit))
+		return refused(codeSandboxMessages, stack.Wrap(fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit)))
 	}
 	return nil
 }

@@ -1476,6 +1476,7 @@ func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 
 	s.respondAs(user, opened.Id, "and what else")
 	s.awaitAnswers(2)
+	s.awaitLeftOfTheDay(user, "1")
 	s.Equal("1", s.leftOfTheDay(user), "the user's own turn after it is counted on their day")
 }
 
@@ -1490,6 +1491,7 @@ func (s *ScheduledTasksSuite) TestAUsersOwnTurnInTheirConversationIsCountedOnThe
 
 	s.respondAs(user, opened.Id, "how much does a call cost")
 	s.awaitAnswers(1)
+	s.awaitLeftOfTheDay(user, "1")
 	s.Equal("1", s.leftOfTheDay(user))
 }
 
@@ -1506,6 +1508,14 @@ func (s *ScheduledTasksSuite) leftOfTheDay(user *testClient) string {
 	response := user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
 	return response.Header.Get("X-Quota-Remaining")
+}
+
+// awaitLeftOfTheDay waits until the user's day shows left, as the limiter stops waiting for
+// a debit after two seconds and a recorded answer does not mean its debit has landed.
+func (s *ScheduledTasksSuite) awaitLeftOfTheDay(user *testClient, left string) {
+	s.Require().Eventually(func() bool {
+		return user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil)).Header.Get("X-Quota-Remaining") == left
+	}, settleFor, 50*time.Millisecond, "the user's day never showed %s left", left)
 }
 
 // respondAs has the user type text into their conversation with their own
@@ -3028,6 +3038,8 @@ type channelSink struct {
 	// dialled, when set, is told the status URL of every call placed, before the call is
 	// answered as placed.
 	dialled func(statusURL string)
+	// machineURLs is the answering machine report URL of every call placed, by who was rung.
+	machineURLs map[string]string
 }
 
 // refuseMedia has the provider refuse every file sent to number, and take its words.
@@ -3056,9 +3068,16 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 		Text           json.RawMessage `json:"text"`
 		Media          []string        `json:"media_urls"`
 		StatusCallback string          `json:"StatusCallback"`
+		MachineURL     string          `json:"AsyncAmdStatusCallback"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	c.mu.Lock()
+	if body.StatusCallback != "" {
+		if c.machineURLs == nil {
+			c.machineURLs = map[string]string{}
+		}
+		c.machineURLs[body.To] = body.MachineURL
+	}
 	dialled := c.dialled
 	c.mu.Unlock()
 	if dialled != nil && body.StatusCallback != "" {
@@ -3097,6 +3116,14 @@ func (c *channelSink) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // to is everything the sink was sent for one person, in order.
+// machineURL is the answering machine report URL the call to number was placed with, empty
+// when it asked for none.
+func (c *channelSink) machineURL(number string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.machineURLs[number]
+}
+
 func (c *channelSink) to(number string) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

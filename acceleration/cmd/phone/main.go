@@ -484,13 +484,11 @@ func list(ctx context.Context, arguments []string) error {
 	return out.Flush()
 }
 
-// hooks shows or sets where Stream delivers its events, which is what makes an arriving
-// call or message reach an agent at all: nothing knows a caller has arrived, or that
-// somebody has written to an agent, until one of these lands.
+// hooks shows or sets where Stream delivers its call events, which is what makes an arriving
+// call reach an agent at all: nothing knows a caller has arrived until one lands.
 //
-// Both are pointed at once. They are two hooks so they can be moved independently, but a
-// router reachable for one is reachable for the other, and setting only one leaves half the
-// ways in dead with nothing saying so.
+// Messages are not pointed: Stream Chat delivers them to the router itself (chat.inbound_keys).
+// -remove still drops an old message hook of a base, which earlier versions wrote.
 //
 // With no url it only reads, because event hooks are one setting on the whole app and
 // looking before writing is how you find out what else is using them.
@@ -555,8 +553,8 @@ func hooks(ctx context.Context, arguments []string) error {
 	return out.Flush()
 }
 
-// changeHooks drops the call and message hooks at every base in removes and points both at
-// url, in one update of the app's hooks, and says what it did, a line each.
+// changeHooks drops the call and message hooks at every base in removes and points the call
+// hook at url, in one update of the app's hooks, and says what it did, a line each.
 //
 // One update rather than one per hook, because Stream refuses an update holding any hook
 // whose url does not resolve (phone.Stream.ChangeHooks): dropping a gone tunnel's call hook
@@ -597,16 +595,6 @@ func changeHooks(ctx context.Context, stream *phone.Stream, url string, removes 
 			said = append(said, fmt.Sprintf("call events now go to %s", hookURL))
 		}
 
-		messageURL := base + chat.MessageHookPath + segment
-		hooks, updated, err = chat.WithMessageHook(hooks, messageURL)
-		if err != nil {
-			return nil, false, err
-		}
-		if updated {
-			said = append(said, fmt.Sprintf("messages already went to %s, now asking for the right ones", messageURL))
-		} else {
-			said = append(said, fmt.Sprintf("messages now go to %s", messageURL))
-		}
 		return hooks, true, nil
 	})
 	if err != nil {

@@ -67,8 +67,12 @@ public data class GuestOptions(
 /**
  * Gets the remembered guest, or creates one.
  *
- * A remembered guest whose token has expired is asked for again by id, which the router answers
- * with the same guest and a fresh token: coming back is the same person.
+ * A remembered guest whose token has expired comes back with their id and the refresh secret
+ * they were last handed, which the router answers with the same guest and a fresh token.
+ * Without the secret, or with one already spent, the router mints somebody new, since a guest id
+ * is no proof of anything. Name and custom go along either way: a returning guest keeps their
+ * own, and a new one is given these. Whatever comes back replaces what was remembered, its next
+ * secret included, and the secret stays in the store: [Guest] does not carry it.
  */
 internal suspend fun Backend.guest(options: GuestOptions, store: GuestStore?): Guest {
     val held = if (options.fresh) null else store?.read()?.let(::remembered)
@@ -77,10 +81,17 @@ internal suspend fun Backend.guest(options: GuestOptions, store: GuestStore?): G
         if (expiry == null || expiry > Clock.System.now()) return Guest.of(held)
     }
 
+    // An id with no secret proves nothing and is ignored, so it is only sent with one.
+    val secret = held?.refreshSecret?.takeIf { it.isNotEmpty() }
     val minted = post(
         listOf("v1", "agents", "guests"),
         GuestUserRequest.serializer(),
-        GuestUserRequest(id = held?.id, name = options.name, custom = options.custom),
+        GuestUserRequest(
+            id = held?.id?.takeIf { secret != null },
+            refreshSecret = secret,
+            name = options.name,
+            custom = options.custom,
+        ),
         GuestSchema.serializer(),
         anonymously = anonymous,
     )

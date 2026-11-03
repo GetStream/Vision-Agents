@@ -191,7 +191,10 @@ type stubLLM struct {
 	asked []llm.ResponseParams
 	reply string
 	calls []llm.ToolCall
-	sees  bool
+	// called is whether calls were handed out: they go on the first request that offers
+	// tools, as a model told it may call none does not.
+	called bool
+	sees   bool
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -199,11 +202,12 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	first := len(s.asked) == 1
+	offered := len(params.Tools) > 0 && params.ToolChoice != "none"
 	reply := s.reply
 	var calls []llm.ToolCall
-	if first {
+	if offered && !s.called && len(s.calls) > 0 {
 		calls = append([]llm.ToolCall(nil), s.calls...)
+		s.called = true
 	}
 	s.mu.Unlock()
 
@@ -242,15 +246,41 @@ type stubTTS struct {
 
 	mu   sync.Mutex
 	said []tts.Request
+	// holding is a line whose synthesis is not reported complete until held is closed.
+	holding string
+	held    chan struct{}
 }
 
 func (s *stubTTS) Start(context.Context) error { return nil }
 
+// holds keeps the synthesis of text going until the returned func is called.
+func (s *stubTTS) holds(text string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holding, s.held = text, make(chan struct{})
+	return sync.OnceFunc(func() { close(s.held) })
+}
+
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
+	held := s.held
+	if request.Text != s.holding {
+		held = nil
+	}
 	s.mu.Unlock()
 
+	if held != nil {
+		go func() {
+			s.emitter.Send(tts.AudioChunk{
+				SynthesisID: request.ID,
+				Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+			})
+			<-held
+			s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, AudioDurationMs: 10})
+		}()
+		return nil
+	}
 	if request.Text != "" {
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,
@@ -492,7 +522,7 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
-		other := &stubLLM{reply: "Sure."}
+		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
 		s.othersMu.Unlock()
@@ -575,6 +605,26 @@ func (s *SessionSuite) joins(spec Spec) *Session {
 func (s *SessionSuite) says(created *Session, text string) {
 	_, err := created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
+}
+
+// hears has somebody speak to a session on a call, once. A reply to nobody yet heard is
+// offered no tools, so a test whose model calls one has the caller speak first.
+func (s *SessionSuite) hears(created *Session) {
+	s.Require().Eventually(func() bool { return len(s.edges) > 0 }, settleFor, 10*time.Millisecond)
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	s.model.mu.Lock()
+	calls := s.model.calls
+	s.model.calls = nil
+	s.model.mu.Unlock()
+	asked := len(s.model.requests())
+	pcm := audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}
+	s.edges[len(s.edges)-1].inbound <- agent.InboundAudio{Participant: alice, Audio: pcm}
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
+	s.Require().Eventually(func() bool { return len(s.model.requests()) == asked+1 }, settleFor, 10*time.Millisecond, "the caller was never answered")
+	s.Require().Eventually(func() bool { return !created.Busy() }, settleFor, 10*time.Millisecond)
+	s.model.mu.Lock()
+	s.model.calls = calls
+	s.model.mu.Unlock()
 }
 
 func (s *SessionSuite) eventually(condition func() bool, message string) {
@@ -1440,6 +1490,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "where is my order")
 
 	asked := awaitToolCall(events)
@@ -1949,6 +2000,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "what is on camera")
 
 	asked := awaitToolCall(events)
@@ -1981,6 +2033,7 @@ func (s *SessionSuite) TestAToolsPictureIsShownToAModelThatSeesWithItsReplyAlone
 	})
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "what is in the room")
 
 	asked := awaitToolCall(events)
@@ -2119,6 +2172,7 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "find my note")
 
 	var ran *agent.ToolRan

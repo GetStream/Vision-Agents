@@ -81,7 +81,9 @@ type InboundMessage struct {
 	ChannelType string
 	ChannelID   string
 	// AgentID is the agent the channel belongs to, and what a session started to answer
-	// this has to be given so its replies land back here. See SessionOptions.AgentID.
+	// this has to be given so its replies land back here: the router holds a text session
+	// the customer's backend opens under it, within ten minutes, on this channel. See
+	// SessionOptions.AgentID.
 	AgentID string
 	// ConfigID names the stored agent config the last conversation here ran under, so a
 	// worker serving several agents knows which one is being written to.
@@ -103,6 +105,9 @@ type InboundMessage struct {
 	Custom map[string]string
 	// Text is what was written.
 	Text string
+	// Images are the photos sent with it, each a URL to fetch and its MIME type when the
+	// router knows it. Nil when none was sent.
+	Images []Image
 	// MessageID is the message in the channel, for replying in its thread.
 	MessageID string
 	// UserID and UserName are who wrote it.
@@ -709,11 +714,27 @@ func messageOf(frame Frame) InboundMessage {
 		RequestID:   frame.String("request_id"),
 		Custom:      customOf(frame, "custom"),
 		Text:        frame.String("text"),
+		Images:      imagesOf(frame),
 		MessageID:   frame.String("message_id"),
 		UserID:      frame.String("user_id"),
 		UserName:    frame.String("user_name"),
 		At:          timeOf(frame.String("at")),
 	}
+}
+
+// imagesOf reads the photos a message frame carries. An entry with no URL is dropped, since
+// there is nothing to fetch, and so is one that is not an object.
+func imagesOf(frame Frame) []Image {
+	sent, _ := frame["images"].([]any)
+	var images []Image
+	for _, entry := range sent {
+		described, _ := entry.(map[string]any)
+		image := Image{URL: Frame(described).String("url"), MIME: Frame(described).String("mime_type")}
+		if image.URL != "" {
+			images = append(images, image)
+		}
+	}
+	return images
 }
 
 // timeOf reads an RFC 3339 timestamp, leaving the zero time for one that cannot be read:

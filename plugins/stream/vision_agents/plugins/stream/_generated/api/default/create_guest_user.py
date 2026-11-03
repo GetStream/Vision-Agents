@@ -94,9 +94,12 @@ def sync_detailed(
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
-    with. From the router's point of view a guest is an ordinary end user whose name is worth less:
-    their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so
-    a guest cannot be handed another guest's conversations by naming their id.
+    with, and a refresh_secret to come back with once it has expired. From the router's point of view a
+    guest is an ordinary end user whose name is worth less: their sessions are their own and nobody
+    else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another
+    guest's conversations by naming their id. A token for an existing guest goes only to the app's
+    backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed;
+    any other caller naming an id is minted a new guest.
     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor
     costs a round trip through the customer's own servers, which is exactly the integration this is
     meant to remove. An app that has turned guests off refuses it.
@@ -131,9 +134,12 @@ def sync(
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
-    with. From the router's point of view a guest is an ordinary end user whose name is worth less:
-    their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so
-    a guest cannot be handed another guest's conversations by naming their id.
+    with, and a refresh_secret to come back with once it has expired. From the router's point of view a
+    guest is an ordinary end user whose name is worth less: their sessions are their own and nobody
+    else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another
+    guest's conversations by naming their id. A token for an existing guest goes only to the app's
+    backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed;
+    any other caller naming an id is minted a new guest.
     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor
     costs a round trip through the customer's own servers, which is exactly the integration this is
     meant to remove. An app that has turned guests off refuses it.
@@ -163,9 +169,12 @@ async def asyncio_detailed(
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
-    with. From the router's point of view a guest is an ordinary end user whose name is worth less:
-    their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so
-    a guest cannot be handed another guest's conversations by naming their id.
+    with, and a refresh_secret to come back with once it has expired. From the router's point of view a
+    guest is an ordinary end user whose name is worth less: their sessions are their own and nobody
+    else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another
+    guest's conversations by naming their id. A token for an existing guest goes only to the app's
+    backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed;
+    any other caller naming an id is minted a new guest.
     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor
     costs a round trip through the customer's own servers, which is exactly the integration this is
     meant to remove. An app that has turned guests off refuses it.
@@ -198,9 +207,12 @@ async def asyncio(
     """Mint a guest so somebody can talk to an agent before signing up
 
      Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect
-    with. From the router's point of view a guest is an ordinary end user whose name is worth less:
-    their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so
-    a guest cannot be handed another guest's conversations by naming their id.
+    with, and a refresh_secret to come back with once it has expired. From the router's point of view a
+    guest is an ordinary end user whose name is worth less: their sessions are their own and nobody
+    else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another
+    guest's conversations by naming their id. A token for an existing guest goes only to the app's
+    backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed;
+    any other caller naming an id is minted a new guest.
     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor
     costs a round trip through the customer's own servers, which is exactly the integration this is
     meant to remove. An app that has turned guests off refuses it.

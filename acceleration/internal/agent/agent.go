@@ -895,7 +895,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		current, model := a.harness, a.llm
 		a.mu.Unlock()
 		if current == nil {
-			return "", stack.Wrap(errors.New("agent: not joined"))
+			return "", stack.Wrap(errNotJoined)
 		}
 		id := replyPrefix + turnStamp()
 		attached := make([]llm.ImagePart, 0, len(images))
@@ -939,8 +939,28 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
 }
 
-// imagesAlone is what the vision skill is asked about images sent with no text.
+// imagesAlone is what the vision skill, or the model asked in writing (Ask), is asked about
+// images sent with no text.
 const imagesAlone = "The caller sent these images without a message. Describe what they show."
+
+// PhotoNote is said as history keeps it once the photos sent with it have been seen: followed
+// by a note that they were sent, rather than the photos again, or the note alone for photos
+// sent with no words. said is as it is with no photos.
+func PhotoNote(said string, photos int) string {
+	var note string
+	switch {
+	case photos == 0:
+		return said
+	case photos == 1:
+		note = "[sent with a photo, not shown again]"
+	default:
+		note = fmt.Sprintf("[sent with %d photos, not shown again]", photos)
+	}
+	if said == "" {
+		return note
+	}
+	return said + "\n\n" + note
+}
 
 // SeesImages reports whether a turn's images reach something that looks at them: a vision
 // skill, or a conversation model that accepts images. RespondTo refuses a turn with images
@@ -950,6 +970,44 @@ func (a *Agent) SeesImages() bool {
 	current, model := a.harness, a.llm
 	a.mu.Unlock()
 	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
+}
+
+// CheckTurn reports what RespondTo refuses a turn for before it starts, for a caller to learn
+// it before work it pays for: an asked the model does not take (CheckAsked), an agent not
+// joined, or images with nothing that looks at them (ErrCannotSeeImages) or a speech-to-speech
+// agent, which takes none.
+func (a *Agent) CheckTurn(asked options.LLM, images bool) error {
+	if err := a.CheckAsked(asked); err != nil {
+		return err
+	}
+	if a.native() {
+		if images {
+			return stack.Wrap(errNativeTakesNoImages)
+		}
+		if a.speech() == nil {
+			return stack.Wrap(errNotJoined)
+		}
+		return nil
+	}
+	a.mu.Lock()
+	joined := a.harness != nil
+	a.mu.Unlock()
+	if !joined {
+		return stack.Wrap(errNotJoined)
+	}
+	if images && !a.SeesImages() {
+		return stack.Wrap(ErrCannotSeeImages)
+	}
+	return nil
+}
+
+// SeesImagesInWriting reports whether Ask hands images to the model: only a conversation
+// model that accepts images takes them, as an aside runs no vision skill.
+func (a *Agent) SeesImagesInWriting() bool {
+	a.mu.Lock()
+	model := a.llm
+	a.mu.Unlock()
+	return model != nil && model.Capabilities().Accepts(llm.ModalityImage)
 }
 
 // CheckAsked reports whether the conversation model takes what a caller asked to change
@@ -1016,9 +1074,24 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 // The exchange is kept, so what was asked in writing can be referred to out loud. No tools
 // are offered: a written aside must not press a keypad or transfer a call that the person
 // writing cannot see.
-func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
-	if strings.TrimSpace(text) == "" {
+//
+// Images go to the conversation model with this question alone, and only one that accepts
+// images takes them: an aside has no vision skill to hand them to (SeesImagesInWriting).
+// Images sent with no text are asked about as imagesAlone. History keeps the words with a
+// note that photos were sent (PhotoNote), as a thread's history does, and not imagesAlone,
+// which asks about images it no longer holds.
+func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
+	if strings.TrimSpace(text) == "" && len(images) == 0 {
 		return "", errors.New("agent: there is nothing to answer")
+	}
+	asked := text
+	if strings.TrimSpace(text) == "" {
+		text, asked = "", imagesAlone
+	}
+	for _, image := range images {
+		if err := image.Validate(); err != nil {
+			return "", err
+		}
 	}
 	// A native agent has no text model to ask on the side: everything it says, it says
 	// out loud, on the call.
@@ -1031,17 +1104,25 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		a.mu.Unlock()
 		return "", errors.New("agent: not joined")
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: harness.Defang(text)})
+	if len(images) > 0 && !a.llm.Capabilities().Accepts(llm.ModalityImage) {
+		a.mu.Unlock()
+		return "", stack.Wrap(ErrCannotSeeImages)
+	}
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images))})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
 	}
+	// On this question alone: the history keeps its words and the note, as a turn's images
+	// are kept only for its reply (keepTurnLocked).
+	history[len(history)-1].Content = harness.Defang(asked)
+	history = harness.WithImages(history, images)
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
 
 	turnID := writtenPrefix + turnStamp()
-	screening := a.screening(ctx, turnID, text)
+	screening := a.screening(ctx, turnID, asked)
 	if screening != nil && screening.blocking {
 		if verdict := screening.verdict(); !verdict.Allowed {
 			return a.refuseWritten(turnID, verdict), nil
@@ -2068,7 +2149,7 @@ func (a *Agent) respondTurn(
 	a.mu.Lock()
 	if a.harness == nil {
 		a.mu.Unlock()
-		return stack.Wrap(errors.New("agent: not joined"))
+		return stack.Wrap(errNotJoined)
 	}
 	said := participant
 	if listened.author != "" {
@@ -2848,6 +2929,9 @@ func (a *Agent) finish(response llm.Response) {
 	if response.Status == llm.StatusFailed {
 		calls = nil
 	}
+	// A reply offered no tools has none to run, whatever the provider returned: following
+	// them is how a model that ignores that chains past the tool rounds.
+	calls = a.harness.DropUnoffered(response.ID, calls)
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -3428,6 +3512,8 @@ func (a *Agent) follow() error {
 	instructions := a.prompted()
 	tell := a.tellLocked(turnID, len(a.speakers))
 	asked := a.asked
+	limit := cmp.Or(a.options.MaxToolRounds, maxToolRounds)
+	spent := limit > 0 && a.toolRounds >= limit
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
@@ -3441,6 +3527,7 @@ func (a *Agent) follow() error {
 		Tell:         tell,
 		History:      history,
 		Asked:        asked,
+		NoTools:      spent,
 	}, "")
 }
 

@@ -58,17 +58,23 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 	return session.Prompt(text)
 }
 
+// errNativeTakesNoImages is a typed turn with images for a speech-to-speech agent.
+var errNativeTakesNoImages = errors.New("agent: a speech-to-speech agent takes no images on a typed turn")
+
+// errNotJoined is a typed turn for an agent that has not joined, or has left.
+var errNotJoined = errors.New("agent: not joined")
+
 // respondNative injects a typed turn. The model answers it as it would a spoken one, and
 // the reply arrives on the same events. Images are refused: what a native model sees is
 // its own business, and a typed turn is words. Whether a scheduled task fired it is kept
 // for the work the model hands over until the caller is next heard.
 func (a *Agent) respondNative(ctx context.Context, text string, images []llm.ImagePart) error {
 	if len(images) > 0 {
-		return stack.Wrap(errors.New("agent: a speech-to-speech agent takes no images on a typed turn"))
+		return stack.Wrap(errNativeTakesNoImages)
 	}
 	session := a.speech()
 	if session == nil {
-		return stack.Wrap(errors.New("agent: not joined"))
+		return stack.Wrap(errNotJoined)
 	}
 	caller := stt.Participant{ID: "caller"}
 	// A typed turn is not transcribed, so it is written into the history here, where a

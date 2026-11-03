@@ -220,6 +220,15 @@ type stubLLM struct {
 	// as a reply past maxToolRounds is, has nothing to reach for: calling anyway would
 	// chain turns until Close, and Close waits for every one of them to be written.
 	keepCalling bool
+	// ignoresNone makes the model return its calls on a reply offered no tools too, as a
+	// provider or model that disregards tool choice does.
+	ignoresNone bool
+	// toolless, when set, is the reply to a request offered no tools: what the model
+	// writes once it is made to answer.
+	toolless []string
+	// replyOn replaces the reply to one request, counted from 1, so a test can have the
+	// model write a call as text at the request it picks.
+	replyOn map[int][]string
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
 	// callsUntil, when set, is the request, counted from 1, at which keepCalling stops and
@@ -335,7 +344,13 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	}
 	var calls []llm.ToolCall
 	// A model told to call no tool calls none, as a provider holds it to.
-	callable := len(params.Tools) > 0 && params.ToolChoice != "none"
+	callable := len(params.Tools) > 0 && params.ToolChoice != "none" || s.ignoresNone
+	if s.toolless != nil && !(len(params.Tools) > 0 && params.ToolChoice != "none") {
+		reply = append([]string(nil), s.toolless...)
+	}
+	if r, ok := s.replyOn[len(s.asked)]; ok {
+		reply = append([]string(nil), r...)
+	}
 	if len(s.asked) == max(s.callsOn, 1) ||
 		s.keepCalling && callable && (s.callsUntil == 0 || len(s.asked) < s.callsUntil) {
 		calls = append([]llm.ToolCall(nil), s.calls...)
@@ -2682,6 +2697,153 @@ func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
 	s.ErrorIs(err, ErrCannotSeeImages)
 }
 
+// CheckTurn says what RespondTo refuses a turn for, for each state an agent can be in: not
+// joined, joined with nothing that sees, and joined with a model that does.
+func (s *AgentSuite) TestCheckTurnRefusesWhatRespondToRefuses() {
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+	unjoined, err := New(Options{Text: true, CustomerID: "acme", Instructions: "be brief", LLM: s.reasoner(slog.New(slog.DiscardHandler)),
+		LLMTarget: "en-low-latency", Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unjoined.Close() })
+
+	_, refused := unjoined.RespondTo(s.ctx, "hello", nil, options.LLM{})
+	s.Require().Error(refused)
+	s.EqualError(unjoined.CheckTurn(options.LLM{}, false), refused.Error(), "an agent not joined refuses a turn of text alone")
+	s.EqualError(unjoined.CheckTurn(options.LLM{}, true), refused.Error(), "and one with images")
+
+	s.joinText()
+	s.NoError(s.agent.CheckTurn(options.LLM{}, false))
+	s.ErrorIs(s.agent.CheckTurn(options.LLM{}, true), ErrCannotSeeImages)
+	_, err = s.agent.RespondTo(s.ctx, "what is this?", photo, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
+
+	s.agent.nativeMode.Store(true)
+	s.EqualError(s.agent.CheckTurn(options.LLM{}, true), errNativeTakesNoImages.Error(), "a speech-to-speech agent takes no images")
+	_, err = s.agent.RespondTo(s.ctx, "what is this?", photo, options.LLM{})
+	s.ErrorIs(err, errNativeTakesNoImages)
+	s.ErrorIs(s.agent.CheckTurn(options.LLM{}, false), errNotJoined, "and none without a speech session")
+	s.agent.nativeMode.Store(false)
+}
+
+func (s *AgentSuite) TestCheckTurnLetsAJoinedAgentWithSightTakeImages() {
+	s.sees = true
+	s.joinText()
+
+	s.NoError(s.agent.CheckTurn(options.LLM{}, true))
+}
+
+// A written aside shows its photos to a model that accepts images, with its words.
+func (s *AgentSuite) TestAWrittenAsideShowsItsPhotosToAModelThatAcceptsImages() {
+	s.sees = true
+	s.joinText()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	s.True(s.agent.SeesImagesInWriting())
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", photo)
+	s.Require().NoError(err)
+
+	asked := lastFromCaller(harness.WithoutNotes(s.model.requests()[0].Input))
+	s.Equal([]llm.ContentPart{{Text: "is this fan broken?"}, {Image: &photo}}, asked.Parts)
+}
+
+// A photo written alone is asked about as imagesAlone: the model is not handed an empty
+// question.
+func (s *AgentSuite) TestAPhotoWrittenAloneIsAskedAboutAsImagesAlone() {
+	s.sees = true
+	s.joinText()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	for asked, text := range []string{"", " "} {
+		_, err := s.agent.Ask(s.ctx, text, photo)
+		s.Require().NoError(err, "text %q", text)
+
+		turn := lastFromCaller(harness.WithoutNotes(s.model.requests()[asked].Input))
+		s.Equal([]llm.ContentPart{{Text: imagesAlone}, {Image: &photo}}, turn.Parts, "text %q", text)
+	}
+}
+
+// A written aside's photo is seen with that question alone: the next one, and the history
+// it is kept in, carry its words and a note that a photo was sent.
+func (s *AgentSuite) TestAWrittenAsidesPhotoIsNotShownAgain() {
+	s.sees = true
+	s.joinText()
+
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}})
+	s.Require().NoError(err)
+	_, err = s.agent.Ask(s.ctx, "and now?")
+	s.Require().NoError(err)
+
+	input := harness.WithoutNotes(s.model.requests()[1].Input)
+	s.False(llm.HasImage(input), "a photo is seen with the question it came with alone")
+	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?\n\n[sent with a photo, not shown again]"})
+	s.False(llm.HasImage(s.agent.History()))
+}
+
+// History says what a written aside sent, as a thread's history does: its words, then a note
+// of its photos, or the note alone for photos sent with no words, never imagesAlone, which
+// asks about images the history no longer holds. An aside of words alone is kept as written.
+func (s *AgentSuite) TestAWrittenAsideIsKeptWithANoteOfItsPhotos() {
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	cases := map[string]struct {
+		text   string
+		photos []llm.ImagePart
+		kept   string
+	}{
+		"words and a photo":   {"is this fan broken?", []llm.ImagePart{photo}, "is this fan broken?\n\n[sent with a photo, not shown again]"},
+		"words and 2 photos":  {"which is nicer?", []llm.ImagePart{photo, photo}, "which is nicer?\n\n[sent with 2 photos, not shown again]"},
+		"a photo alone":       {"", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"blanks and a photo":  {" \n", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"2 photos alone":      {"", []llm.ImagePart{photo, photo}, "[sent with 2 photos, not shown again]"},
+		"words with no photo": {"is the fan broken?", nil, "is the fan broken?"},
+	}
+	for name, c := range cases {
+		s.Run(name, func() {
+			s.sees = true
+			s.joinText()
+
+			_, err := s.agent.Ask(s.ctx, c.text, c.photos...)
+			s.Require().NoError(err)
+			_, err = s.agent.Ask(s.ctx, "and now?")
+			s.Require().NoError(err)
+
+			kept := llm.Message{Role: llm.User, Content: c.kept}
+			s.Equal([]llm.Message{kept, {Role: llm.Assistant, Content: "Hello there. How are you?"}},
+				harness.WithoutNotes(s.agent.History())[:2])
+			next := harness.WithoutNotes(s.model.requests()[1].Input)
+			s.Contains(next, kept, "the next question is asked with the note")
+			s.False(slices.ContainsFunc(next, func(message llm.Message) bool { return strings.Contains(message.Content, imagesAlone) }),
+				"the next question is not asked with a prompt about images it is not shown")
+		})
+	}
+}
+
+// An aside runs no vision skill, so an agent whose skill alone sees does not see in writing,
+// and its photos are refused before the model is asked.
+func (s *AgentSuite) TestAWrittenAsideOfAnAgentWithOnlyAVisionSkillDoesNotSeePhotos() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.joinText()
+
+	s.True(s.agent.SeesImages(), "a turn's photos reach the skill")
+	s.False(s.agent.SeesImagesInWriting())
+	_, err := s.agent.Ask(s.ctx, "is this fan broken?", llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}})
+	s.ErrorIs(err, ErrCannotSeeImages)
+	s.Empty(s.model.requests())
+	s.Empty(harness.WithoutNotes(s.agent.History()), "a refused question is not kept")
+}
+
+// An image that is neither bytes nor an HTTP(S) URL is refused before the model is asked.
+func (s *AgentSuite) TestAWrittenAsideRefusesAnImageItCannotSend() {
+	s.sees = true
+	s.joinText()
+
+	_, err := s.agent.Ask(s.ctx, "what is this?", llm.ImagePart{URL: "file:///etc/passwd"})
+	s.Require().Error(err)
+	s.Empty(s.model.requests())
+}
+
 // lastFromCaller is the caller's latest message in a request's input.
 func lastFromCaller(input []llm.Message) llm.Message {
 	for i := len(input) - 1; i >= 0; i-- {
@@ -4223,7 +4385,7 @@ func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
 	}, "the reply made to answer was never kept")
 	requests := s.model.requests()
 	s.Len(requests, maxToolRounds+1, "the model was asked again after it was made to answer")
-	s.Contains(shown(requests[maxToolRounds]), "answer the caller now")
+	s.Contains(shown(requests[maxToolRounds]), "No more tools this turn")
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 
 	// The rounds are counted from the user's last message, so the next one starts afresh.
@@ -4233,6 +4395,170 @@ func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2*(maxToolRounds+1) },
 		"the next message was not given its own tool rounds")
 	s.NotEmpty(s.model.requests()[maxToolRounds+2].Tools, "the next message's reply to a tool was made to answer at once")
+}
+
+func (s *AgentSuite) TestATextReplyMadeToAnswerThatCallsAToolAnywayEndsWithItsText() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.model.ignoresNone = true
+	s.model.callsUntil = 3 * maxToolRounds
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		history := harness.WithoutNotes(s.agent.History())
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the reply made to answer was kept with its call")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 1, "the call on the reply made to answer ran")
+}
+
+func (s *AgentSuite) TestAVoiceReplyMadeToAnswerThatCallsAToolAnywayEndsWithItsText() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.logs = &logLines{}
+	s.join(false)
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.model.ignoresNone = true
+	s.model.callsUntil = 3 * maxToolRounds
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order": "12"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order": "13"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.model.requests()) >= maxToolRounds+1 }, "the rounds never ran out")
+	s.eventually(func() bool {
+		history := s.history()
+		return len(history) > 0 && history[len(history)-1].Role == llm.Assistant &&
+			len(history[len(history)-1].ToolCalls) == 0
+	}, "the reply made to answer was kept with its call")
+	s.Len(s.model.requests(), maxToolRounds+1, "the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 2, "the call on the reply made to answer ran")
+	s.True(s.spokenText("Order 12 ships tomorrow"), "the text of the reply made to answer was not said")
+	dropped := s.logs.records("a reply offered no tools asked for some, which were dropped")
+	s.Require().Len(dropped, 1, "the dropped calls were not logged exactly once")
+	s.Equal("WARN", dropped[0]["level"])
+	s.EqualValues(2, dropped[0]["calls"])
+}
+
+func (s *AgentSuite) TestAReplyMadeToAnswerThatAsksForNothingLogsNothing() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.logs = &logLines{}
+	s.join(false)
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is order twelve")
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+1 }, "the rounds never ran out")
+	s.eventually(func() bool { return s.spokenText("Order 12 ships tomorrow") }, "the answer was not said")
+	s.Empty(s.logs.records("a reply offered no tools asked for some, which were dropped"))
+}
+
+func (s *AgentSuite) TestAGreetingThatCallsAToolAnywayIsNotFollowed() {
+	// Nobody has spoken, so the reply is offered no tools; one returned anyway is no
+	// reason to run it and ask again.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Hello, how can I help?"}
+	s.model.ignoresNone = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "greet the caller", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return s.spokenText("Hello, how can I help?") }, "the greeting was not said")
+	s.Equal("none", s.model.requests()[0].ToolChoice, "the greeting was offered tools")
+	s.Empty(s.runner.asked(), "the call on the greeting ran")
+	s.Len(s.model.requests(), 1, "the greeting was followed by another reply")
+}
+
+func (s *AgentSuite) TestATextReplyMadeToAnswerThatWritesACallDoesNotRunIt() {
+	// A call written as a tag is a call all the same: on a reply offered no tools it is
+	// dropped like one the provider returned.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`Order 12 ships tomorrow. <call tool="lookup_order" order="13"/>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+1 }, "the rounds never ran out")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+1 },
+		"the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 1, "the call the reply made to answer wrote ran")
+}
+
+func (s *AgentSuite) TestAFollowUpAfterTheToolRoundsRanOutIsOfferedNoTools() {
+	// The reply made to answer hands a question to a skill; its answer is told in a
+	// follow-up. Offered tools again, that follow-up starts the rounds over, and the reply
+	// that ends them asks again: one message never stops asking the model.
+	s.delegates()
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.subagent.reply = []string{"order 12 is in the warehouse"}
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`One moment. <ask skill="think">where exactly is order 12</ask>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+2 }, "the skill's answer was never told")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+2 },
+		"the follow-up after the rounds ran out started them again")
+	s.Equal("none", s.model.requests()[maxToolRounds+1].ToolChoice, "the follow-up was offered tools")
+	s.Len(s.runner.asked(), 1)
+}
+
+func (s *AgentSuite) TestAFollowUpToAnUnknownToolAfterTheToolRoundsRanOutIsOfferedNoTools() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`One moment. <call tool="track_parcel"/>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+2 }, "the unknown tool was never corrected")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+2 },
+		"the follow-up after the rounds ran out started them again")
+	s.Equal("none", s.model.requests()[maxToolRounds+1].ToolChoice, "the follow-up was offered tools")
+	s.Len(s.runner.asked(), 1)
+}
+
+func (s *AgentSuite) TestAModelThatIgnoresToolChoiceStillHasItsFirstCallRun() {
+	// The control: a turn offered tools has its call run and followed, whatever the model does
+	// with tool choice.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Order 12 ships tomorrow."}
+	s.model.ignoresNone = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+	s.Len(s.runner.asked(), 1)
 }
 
 func (s *AgentSuite) TestATextAgentWithAHigherToolRoundLimitChainsPastTheDefault() {
@@ -4251,10 +4577,10 @@ func (s *AgentSuite) TestATextAgentWithAHigherToolRoundLimitChainsPastTheDefault
 	requests := s.model.requests()
 	s.NotEmpty(requests[maxToolRounds].Tools, "the default's round was made to answer under a higher limit")
 	s.NotEqual("none", requests[maxToolRounds].ToolChoice, "the default's round was made to answer under a higher limit")
-	s.NotContains(shown(requests[maxToolRounds]), "answer the caller now")
+	s.NotContains(shown(requests[maxToolRounds]), "No more tools this turn")
 	s.NotEmpty(requests[s.toolRoundLimit].Tools, "tools remain offered to preserve the cached prefix")
 	s.Equal("none", requests[s.toolRoundLimit].ToolChoice, "the reply at the configured limit could still call tools")
-	s.Contains(shown(requests[s.toolRoundLimit]), "answer the caller now")
+	s.Contains(shown(requests[s.toolRoundLimit]), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
@@ -4279,8 +4605,38 @@ func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
 	for round, request := range requests {
 		s.NotEmpty(request.Tools, "round %d was offered no tools", round)
 		s.NotEqual("none", request.ToolChoice, "round %d was made to answer", round)
-		s.NotContains(shown(request), "answer the caller now", "round %d was told to answer", round)
+		s.NotContains(shown(request), "No more tools this turn", "round %d was told to answer", round)
 	}
+}
+
+func (s *AgentSuite) TestATextFollowUpAfterManyToolRoundsIsOfferedToolsUnderANegativeLimit() {
+	s.assertFollowUpAfterManyRoundsIsOfferedTools(-1)
+}
+
+func (s *AgentSuite) TestATextFollowUpAfterManyToolRoundsIsOfferedToolsUnderAHigherLimit() {
+	s.assertFollowUpAfterManyRoundsIsOfferedTools(maxToolRounds + 4)
+}
+
+// assertFollowUpAfterManyRoundsIsOfferedTools has a reply after maxToolRounds+2 rounds write
+// a call as text, so the follow-up that runs it must still be offered tools: the limit the
+// session set is not the default one.
+func (s *AgentSuite) assertFollowUpAfterManyRoundsIsOfferedTools(limit int) {
+	s.toolRoundLimit = limit
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.keepCalling = true
+	s.model.callsUntil = maxToolRounds + 2
+	s.model.replyOn = map[int][]string{maxToolRounds + 2: {`One moment. <call tool="track_parcel"/>`}}
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) >= maxToolRounds+3 }, "the follow-up was never asked")
+	followUp := s.model.requests()[maxToolRounds+2]
+	s.NotEmpty(followUp.Tools, "the follow-up under limit %d was offered no tools", limit)
+	s.NotEqual("none", followUp.ToolChoice, "the follow-up under limit %d was made to answer", limit)
 }
 
 func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {
@@ -4296,7 +4652,7 @@ func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
 	afterTool := s.model.requests()[1]
 	s.NotEmpty(afterTool.Tools, "a reply after one tool round was offered no tools")
-	s.NotContains(shown(afterTool), "answer the caller now")
+	s.NotContains(shown(afterTool), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {

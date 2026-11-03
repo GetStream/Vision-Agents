@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -45,6 +46,8 @@ type TransferSuite struct {
 	customer string
 	number   string
 	model    *stubLLM
+	ears     *stubSTT
+	edge     *quietEdge
 	manager  *Manager
 	// stream is the Stream the number's lines are made at and its calls ended at.
 	stream *chattest.Server
@@ -103,7 +106,8 @@ func (s *TransferSuite) manages() *Manager {
 	s.Require().NoError(err)
 
 	transcription := sttrouter.NewRegistry()
-	transcription.Register("stub", func(routing.Spec) (stt.STT, error) { return &stubSTT{emitter: stt.NewEmitter(64)}, nil })
+	s.ears = &stubSTT{emitter: stt.NewEmitter(64)}
+	transcription.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
 	transcriber, err := sttrouter.New(sttrouter.Options{Config: stubConfig(), Registry: transcription, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -128,7 +132,8 @@ func (s *TransferSuite) manages() *Manager {
 	m, err := NewManager(ManagerOptions{
 		LLM: reasoner, STT: transcriber, TTS: speaker, Phone: telephony, Logger: logger,
 		Edge: func(context.Context, Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
-			return attendedEdge{newQuietEdge(caller)}, nil
+			s.edge = newQuietEdge(caller)
+			return attendedEdge{s.edge}, nil
 		},
 	})
 	s.Require().NoError(err)
@@ -157,6 +162,21 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 	created := s.answers()
 	events, detach := created.Watch()
 	defer detach()
+
+	// Somebody has spoken first: a reply to nobody yet heard is offered no tools, and a
+	// transfer is one.
+	s.model.mu.Lock()
+	calls := s.model.calls
+	s.model.calls = nil
+	s.model.mu.Unlock()
+	s.Require().Eventually(func() bool { return s.edge != nil }, settleFor, 10*time.Millisecond)
+	s.edge.inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+	s.ears.emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
+	s.Require().Eventually(func() bool { return len(s.model.requests()) == 1 && !created.Busy() },
+		settleFor, 10*time.Millisecond, "the caller was never answered")
+	s.model.mu.Lock()
+	s.model.calls = calls
+	s.model.mu.Unlock()
 
 	_, err := created.Respond(s.ctx, "can I talk to support please", nil, options.LLM{})
 	s.Require().NoError(err)

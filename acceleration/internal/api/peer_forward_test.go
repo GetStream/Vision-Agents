@@ -17,12 +17,13 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// forwardDelivery hands a scheduled delivery for a stored task's session on other to it the
-// way a peer does, presenting credential, and returns the text it carried and what other
-// answered.
+// forwardDelivery hands a scheduled delivery for a stored task's running run, in the task's
+// session on other, to it the way a peer does, presenting credential, and returns the run's
+// prompt, which the agent is to hear, and what other answered.
 func (s *ScheduledTasksSuite) forwardDelivery(other *httptest.Server, credential []byte) (string, *node.ForwardResponse, error) {
 	return s.forwardChanged(other, credential, nil)
 }
@@ -33,7 +34,8 @@ func (s *ScheduledTasksSuite) forwardChanged(other *httptest.Server, credential 
 }
 
 // forwardStored is forwardChanged with edit applied to the task before it is stored; the
-// payload then names the edited task's owner but the session the task was made in.
+// payload then names the edited task's owner but the session the task was made in. change
+// sees the payload with the task's id and its run's in it.
 func (s *ScheduledTasksSuite) forwardStored(other *httptest.Server, credential []byte, edit func(*store.ScheduledTask), change func(map[string]any)) (string, *node.ForwardResponse, error) {
 	return s.forwardStoredTo(other, other, credential, edit, change)
 }
@@ -53,22 +55,33 @@ func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, cred
 		edit(&task)
 	}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 25))
+	now := time.Now()
+	run := store.ScheduledTaskRun{
+		TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: now, Trigger: store.ScheduledTaskTriggerManual,
+		Prompt: "peer-delivery-" + s.utils.uuid(), State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &run))
 
-	text := "peer-delivery-" + s.utils.uuid()
 	payload := map[string]any{
 		"customer_id": s.customerID(),
 		"session_id":  opened.Id,
 		"user_id":     task.UserID,
 		"caller_kind": task.CallerKind,
 		"task_id":     task.ID,
-		"run_id":      "peer-run",
-		"command_id":  "st_peer",
-		"text":        text,
-		"due":         time.Now(),
+		"run_id":      run.ID,
+		"command_id":  "st_" + run.ID,
+		"text":        "<scheduled_task>" + run.Prompt + "</scheduled_task>",
+		"due":         now,
 	}
 	if change != nil {
 		change(payload)
 	}
+	answer, err := s.handOff(to, credential, payload)
+	return run.Prompt, answer, err
+}
+
+// handOff posts payload to to's peer path the way a peer does, presenting credential.
+func (s *ScheduledTasksSuite) handOff(to *httptest.Server, credential []byte, payload any) (*node.ForwardResponse, error) {
 	body, err := json.Marshal(payload)
 	s.Require().NoError(err)
 	request, err := http.NewRequest(http.MethodPost, scheduledPeerPath, bytes.NewReader(body))
@@ -76,8 +89,7 @@ func (s *ScheduledTasksSuite) forwardStoredTo(holding, to *httptest.Server, cred
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	answer, err := node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
-	return text, answer, err
+	return node.NewForwarder(nil, credential).Ask(ctx, to.Listener.Addr().String(), request, body)
 }
 
 // suiteCredential is what a node holding the suite's keyring presents to its peers.
@@ -167,11 +179,10 @@ func (s *ScheduledTasksSuite) TestAPeerNamingChannelsTheStoredTaskLacksDeliversI
 	}))
 }
 
-func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
-	other, _ := s.otherRouter(nil)
-	writer := s.writerNumber()
-
-	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+// textedTask has a task stored for delivery by text to writer, on an agent with an SMS line
+// whose user writes from writer.
+func (s *ScheduledTasksSuite) textedTask(writer string) func(*store.ScheduledTask) {
+	return func(task *store.ScheduledTask) {
 		number := s.lineNumber()
 		s.seedSMSLine(number)
 		config := s.agentWithScheduling(func(r *AgentConfigRequest) {
@@ -182,12 +193,159 @@ func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByTex
 		}))
 		task.ConfigID = config
 		task.Channels = []string{"sms"}
-	}, nil)
+	}
+}
+
+// textsRecordedFor waits for the texts recorded as sent for user and answers them.
+func (s *ScheduledTasksSuite) textsRecordedFor(user string) []store.Request {
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ? AND user_id = ? AND provider = ?", s.customerID(), user, "telnyx").
+			Scan(s.T().Context())
+		return err == nil && len(rows) > 0
+	}, 10*time.Second, 50*time.Millisecond, "no text was recorded for the task's user")
+	return rows
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingNoConfigDeliversAStoredSMSTaskByText() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), s.textedTask(writer), nil)
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
 	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
 	s.Eventually(func() bool { return len(s.sink.to(writer)) > 0 }, 10*time.Second, 50*time.Millisecond,
 		"the stored task's text never went out")
+}
+
+// The peer reads the task's row to check whose it is, so it takes what the row holds from
+// there too: a payload naming another key or other categories cannot bill the task's texts
+// to them.
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherKeyAndCategoriesTextsUnderTheStoredOnes() {
+	other, _ := s.otherRouter(nil)
+	writer := s.writerNumber()
+	var stored store.ScheduledTask
+
+	_, answer, err := s.forwardStored(other, s.suiteCredential(), func(task *store.ScheduledTask) {
+		s.textedTask(writer)(task)
+		task.UsageCategories = []string{"project:reminders"}
+		stored = *task
+	}, func(payload map[string]any) {
+		payload["api_key"] = "forged-key"
+		payload["usage_categories"] = []string{"forged"}
+		payload["conversation_id"] = s.utils.uuid()
+		payload["timezone"] = "Pacific/Kiritimati"
+	})
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusOK), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"delivered_to":"sms"`)
+	for _, row := range s.textsRecordedFor(stored.UserID) {
+		s.Equal(s.app.key, row.APIKey, "the text was billed to the payload's key")
+		s.Equal([]string{"project:reminders"}, row.UsageCategories)
+	}
+}
+
+// The peer says what the run's row holds, not the words it was handed.
+func (s *ScheduledTasksSuite) TestAPeerHandedOtherWordsSaysTheRunsPrompt() {
+	other, _ := s.otherRouter(nil)
+	forged := "forged-" + s.utils.uuid()
+
+	prompt, answer, err := s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["text"] = "<scheduled_task>" + forged + "</scheduled_task>"
+	})
+
+	s.delivers(prompt, answer, err)
+	s.False(s.model().heard(forged), "the agent was told the payload's words")
+}
+
+// Each occurrence follows up under its own run's command id: under an earlier occurrence's,
+// the session would take it for that follow-up again and the agent would never hear it.
+func (s *ScheduledTasksSuite) TestAPeerHandedAnEarlierRunsCommandFollowsUpUnderItsOwn() {
+	other, _ := s.otherRouter(nil)
+	var handed map[string]any
+	first, answer, err := s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		handed = payload
+	})
+	s.delivers(first, answer, err)
+	now := time.Now()
+	next := store.ScheduledTaskRun{
+		TaskID: handed["task_id"].(string), CustomerID: s.customerID(), ScheduledFor: now,
+		Trigger: store.ScheduledTaskTriggerManual, Prompt: "peer-delivery-" + s.utils.uuid(),
+		State: store.ScheduledTaskRunRunning, Attempts: 1, StartedAt: &now,
+	}
+	s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &next))
+	handed["run_id"] = next.ID
+
+	answer, err = s.handOff(other, s.suiteCredential(), handed)
+
+	s.delivers(next.Prompt, answer, err)
+}
+
+// A run is the task's to deliver only while it runs: a finished one was carried out already.
+func (s *ScheduledTasksSuite) TestAPeerNamingAFinishedRunOfTheTaskIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		finished := store.ScheduledTaskRun{
+			TaskID: payload["task_id"].(string), CustomerID: s.customerID(), ScheduledFor: time.Now(),
+			Trigger: store.ScheduledTaskTriggerManual, Prompt: "done", State: store.ScheduledTaskRunDelivered,
+		}
+		s.Require().NoError(s.store.InsertScheduledTaskRun(context.Background(), &finished))
+		payload["run_id"] = finished.ID
+	}))
+}
+
+func (s *ScheduledTasksSuite) TestAPeerNamingARunThatIsNotStoredIsRefused() {
+	other, _ := s.otherRouter(nil)
+
+	s.refusedAsNoTask(s.forwardChanged(other, s.suiteCredential(), func(payload map[string]any) {
+		payload["run_id"] = s.utils.uuid()
+	}))
+}
+
+// A run of another user's task is not this task's occurrence: taking it would ring this
+// task's call on that run, which then never rings for its own task.
+func (s *ScheduledTasksSuite) TestAPeerNamingAnotherTasksRunIsRefusedAndLeavesThatRunAlone() {
+	s.placingCalls()
+	other, peer := s.otherRouter(nil)
+	peer.phone = s.router.phone
+	mine := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, time.Now())
+	theirs := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, time.Now())
+	theirRun := s.runOf(theirs, time.Now(), "")
+
+	answer, err := s.handOff(other, s.suiteCredential(), s.deliveryOf(mine, theirRun.ID))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeScheduledTaskNotFound+`"`)
+	s.Empty(s.runsOf(theirs)[0].SessionID, "the other task's run gave its call away")
+}
+
+// A call's grace counts from when the run came due, not from the due time the payload names.
+// The asker hands it over, so the peer has the whole window to ring and the run's lateness
+// alone makes it missed.
+func (s *ScheduledTasksSuite) TestAPeerHandedALaterDueMissesACallTheRunIsTooLateFor() {
+	s.placingCalls()
+	other, peer := s.otherRouter(nil)
+	peer.phone = s.router.phone
+	due := time.Now().Add(-16 * time.Minute)
+	task := s.phoneTask(s.data.createUser().on(other), []string{"phone"}, due)
+	run := s.runOf(task, due, "")
+	delivery := s.deliveryOf(task, run.ID)
+	delivery.Due = time.Now()
+
+	_, handed, err := s.router.handDeliveryToPeer(context.Background(), delivery)
+
+	s.True(handed, "the peer took the occurrence")
+	var missed *scheduling.Missed
+	s.ErrorAs(err, &missed, "the peer counted the grace from the payload's due time")
+	stored := s.runsOf(task)[0]
+	s.Empty(stored.SessionID, "a call was placed past its grace")
+	s.Nil(stored.Error, "a call was placed past its grace and ended")
 }
 
 func (s *ScheduledTasksSuite) TestAPeerNamingNoUserIsRefused() {
@@ -288,6 +446,15 @@ func (s *ScheduledTasksSuite) TestANodeWithNoKeyringRefusesEveryForward() {
 	s.refused(text, err)
 	text, _, err = s.forwardDelivery(other, nil)
 	s.refused(text, err)
+}
+
+func (s *ScheduledTasksSuite) TestTheMachinePeerPathIsRefusedWithoutAPeer() {
+	body, err := json.Marshal(map[string]string{"customer_id": s.customerID(), "session_id": s.utils.uuid(), "machine": "greeting_ended"})
+	s.Require().NoError(err)
+
+	status, answer := s.deliver(machinePeerPath, string(body), "")
+
+	s.Equal(http.StatusNotFound, status, "body: %s", answer)
 }
 
 func (s *ScheduledTasksSuite) TestTheUnansweredPeerPathIsRefusedWithoutAPeer() {

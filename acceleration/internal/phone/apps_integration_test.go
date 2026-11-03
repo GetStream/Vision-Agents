@@ -1668,6 +1668,47 @@ func (s *AppsSuite) TestADialWithCustomIsRefusedWhenItsCustomCannotBePutOnTheCal
 	}
 }
 
+func (s *AppsSuite) TestADialThatFailsAfterItsCustomIsOnTheCallLeavesItThere() {
+	// Stream cannot take a custom key off a call, so the custom of a dial that then failed
+	// stays: a retry with the same custom places, a corrected one is refused, as the place-call
+	// doc says. A call that held the same custom before the dial is not changed by it.
+	for _, line := range []struct {
+		name   string
+		shared bool
+	}{{"shared line", true}, {"its own trunk", false}} {
+		for _, held := range []struct {
+			name   string
+			custom map[string]any
+		}{{"a call with none", nil}, {"a call holding the same", map[string]any{"k": "wrong"}}} {
+			s.Run(line.name+", "+held.name, func() {
+				s.SetupTest()
+				s.ownApp()
+				if line.shared {
+					s.sealed()
+				}
+				session := uuid.NewString()
+				s.heldWith(session, held.custom)
+				s.vendor.err = errors.New("the vendor refused")
+
+				err := s.dialInto(session, "+15550001111", map[string]string{"k": "wrong"})
+
+				s.Require().Error(err)
+				s.NotErrorIs(err, errCustomKept)
+				data, _ := s.own.Call(defaultCallType, session)["data"].(map[string]any)
+				s.Equal(map[string]any{"k": "wrong"}, data["custom"])
+
+				s.vendor.err = nil
+				s.vendor.dialed = Outbound{}
+				s.ErrorIs(s.dialInto(session, "+15550002222", map[string]string{"k": "right"}), errCustomKept)
+				s.Empty(s.vendor.dialed.To, "a corrected retry rings no leg")
+
+				s.Require().NoError(s.dialInto(session, "+15550003333", map[string]string{"k": "wrong"}))
+				s.Equal("+15550003333", s.vendor.dialed.To)
+			})
+		}
+	}
+}
+
 func (s *AppsSuite) TestADialWithCustomIntoASessionInProgressPutsItsCustomOnTheCall() {
 	// A session's call that is in progress is already there, whatever made it.
 	s.ownApp()

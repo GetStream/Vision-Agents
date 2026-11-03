@@ -14,6 +14,8 @@ Begin(Ref, Manifest, RedirectURI)
   PKCE       refuse a server listing methods without S256; refuse one found through RFC 9728 that lists none
   client     customer, managed, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in
              that order, each only if client.registration names it
+  scopes     scopes.list; a custom_ definition with none found through RFC 9728 asks for the protected
+             resource metadata's scopes_supported (MCP «Scope Selection Strategy»), registration included
   URL        authorize endpoint + authorize_params + response_type, client_id, redirect_uri, state,
              code_challenge, S256, resource, scope joined by scopes.separator
   -> AuthorizeURL, State (JSON: state, verifier, redirect URI, client, issuer, token endpoint, resource,
@@ -37,12 +39,6 @@ Complete(Ref, Manifest, Supplied), no State: a grant the provider already issued
   client     customer, managed or operator only: a client registered now (cimd, dcr) is not the
              one the grant was issued to
   -> StoredCredentials as above, AccountInfo{Scopes} only: nothing is captured
-
-MoveGrant(Ref, Manifest, MovedGrant): a plugin login's grant (move.go), for router plugins migrate
-  endpoints  discover, as Begin; the token endpoint found must be the one the plugin renewed at
-  client     a preregistered client with the grant's id, else, when the plugin may have registered it
-             and client.registration names dcr, that public client (auth none); else ErrGrantElsewhere
-  -> StoredCredentials as above, expiry zero when the plugin stored none; nothing sent, nothing captured
 
 Retrieve(stored, m, opts)
   due        expiry known and within refresh.margin (default 1 min, the prototype's) or at or before

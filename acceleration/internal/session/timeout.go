@@ -17,6 +17,8 @@ const (
 	TimeoutStart EndReason = "start"
 	// TimeoutUnanswered ends a placed call's session once its vendor says nobody will answer.
 	TimeoutUnanswered EndReason = "unanswered"
+	// EndVoicemail ends a placed call an answering machine picked up, once the message is left.
+	EndVoicemail EndReason = "voicemail"
 )
 
 // SetTimeout ends the session d from now. Calling it again moves the moment and replaces
@@ -81,6 +83,25 @@ func (s *Session) noteEnd(reason EndReason) {
 	if s.ended == "" {
 		s.ended = reason
 	}
+}
+
+// endsFor notes reason as why the session ends, reporting whether it did: not once the
+// session is closing or another reason was noted.
+func (s *Session) endsFor(reason EndReason) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing || s.ended != "" {
+		return false
+	}
+	s.ended = reason
+	return true
+}
+
+// closingNow reports whether the session has begun to close.
+func (s *Session) closingNow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closing
 }
 
 // endReason is why the session ended, empty while nothing has said.

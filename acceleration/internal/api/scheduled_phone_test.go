@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -711,6 +713,33 @@ func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() 
 	s.True(failure.Final, "the user was rung already")
 }
 
+// placesACall places a call from a number of the customer's through the API, asking for
+// answering machine detection when detect is set, and returns who was rung.
+func (s *ScheduledTasksSuite) placesACall(detect *bool) string {
+	s.placingCalls()
+	from, to := s.lineNumber(), s.lineNumber()
+	s.seedSMSLine(from)
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: from, To: to, DetectVoicemail: detect,
+	})
+	s.Require().Equal(http.StatusAccepted, status, "%s", payload)
+	return to
+}
+
+func (s *ScheduledTasksSuite) TestACallThatAsksToDetectVoicemailGivesTheVendorWhereToReport() {
+	to := s.placesACall(pointerTo(true))
+
+	s.True(strings.HasPrefix(s.sink.machineURL(to), "https://router.test/v1/phone/machine/"),
+		"the vendor was told no machine URL: %q", s.sink.machineURL(to))
+}
+
+func (s *ScheduledTasksSuite) TestACallThatDoesNotAskToDetectVoicemailGivesTheVendorNoReportURL() {
+	to := s.placesACall(nil)
+
+	s.Require().Len(s.sink.to(to), 1, "the call was not placed")
+	s.Empty(s.sink.machineURL(to))
+}
+
 // placingCalls has the router place calls for the test: Telnyx is the suite's
 // channel sink, which takes the call, and the trunk and rule the call rings
 // into are made at the suite's Stream.
@@ -837,7 +866,7 @@ func (s *ScheduledTasksSuite) TestAFailureOnTheNodeHoldingTheConversationKeepsIt
 	user := s.data.createUser()
 	task := s.phoneTask(user.on(other), []string{"whatsapp"}, time.Now())
 
-	_, handed, err := s.router.handDeliveryToPeer(context.Background(), s.deliveryOf(task, store.NewID()))
+	_, handed, err := s.router.handDeliveryToPeer(context.Background(), s.deliveryOf(task, s.runOf(task, time.Now(), "").ID))
 
 	s.True(handed, "the peer took the occurrence")
 	failure := s.failure(err)

@@ -393,8 +393,7 @@ func (s *CallHooksSuite) TestAnAgentThatHangsUpEndsThePhoneCall() {
 	on := true
 	found := s.answeredOn("hanging-up/hanging-up-model", &AgentCalls{EndCall: &EndCallSettings{Enabled: &on}})
 
-	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
-		"/v1/agents/sessions/"+found.ID()+"/respond", SayRequest{Text: "that is all, thanks"}, nil))
+	s.callerSays("that is all, thanks")
 
 	s.Eventually(func() bool { return s.markedEnded("default", s.callID) }, settleFor, 20*time.Millisecond,
 		"the phone call was left up after the agent hung up")

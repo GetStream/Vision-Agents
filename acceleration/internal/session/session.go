@@ -251,6 +251,8 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// machine holds the agent's hang-up while a call that leaves a voicemail is checked.
+	machine machineCheck
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
@@ -611,19 +613,38 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // particular answer by: its items are asked for under it. Empty when nothing is being
 // recorded -- an incognito session, or a deployment with no store -- and empty for a native
 // session, where the model decides for itself what counts as a turn. asked is what the
-// caller wants changed about this reply alone.
-func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
+// caller wants changed about this reply alone. photos are those of images the person sent,
+// rather than frames of a video: with no text they are the question, so a conversation kept
+// in Stream Chat shows them on the person's message, as a command's are (RespondCommand).
+func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM, photos ...llm.ImagePart) (string, error) {
+	var shown []persistent.Photo
+	if text == "" && s.persisted != nil && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
+		if !s.Voicing() {
+			// Uploaded before commandMu, as a command's photos are: a stop waits on that lock.
+			published, err := s.persisted.PublishPhotos(ctx, photos)
+			if err != nil {
+				return "", stack.Wrap(err)
+			}
+			shown = published
+		}
+	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if err := s.current().CheckAsked(asked); err != nil {
 		return "", stack.Wrap(err)
 	}
+	// What a worker hands on from a channel it answers is already there, written by the
+	// person, so only the reply is (Spec.Dispatched).
+	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
+		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
+		return turnID, err
+	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
 	if s.persisted != nil && s.spec.Text {
 		if s.spec.Caller.UserID != "" {
-			return "", stack.Wrap(errors.New("personal conversations require a command ID"))
+			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
-		if err := s.persisted.Begin(text); err != nil {
+		if err := s.persisted.Begin(text, shown...); err != nil {
 			return "", stack.Wrap(err)
 		}
 	}
@@ -642,6 +663,38 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	return s.openTurn(turnID, text), nil
 }
 
+// errPersonalNeedsCommand is a question to a personal conversation sent without a command ID.
+var errPersonalNeedsCommand = errors.New("personal conversations require a command ID")
+
+// CheckRespond refuses what Respond, or RespondCommand with command id, would refuse a
+// question with a voice note for before its turn starts, for a caller to learn it before work
+// it pays for: hearing the voice note. text is what was typed with it, and images is whether
+// photos go with it. heard is what the voice note of a command begun before said then, for a
+// retry to carry rather than hear it again.
+func (s *Session) CheckRespond(ctx context.Context, id, text string, images bool, asked options.LLM) (heard string, err error) {
+	if err := s.current().CheckTurn(asked, images); err != nil {
+		return "", stack.Wrap(err)
+	}
+	if s.persisted == nil {
+		return "", nil
+	}
+	if id != "" {
+		if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+			return "", stack.Wrap(err)
+		}
+		heard, err := s.persisted.CheckBegin(id, text)
+		return heard, stack.Wrap(err)
+	}
+	if s.Voicing() {
+		return "", nil
+	}
+	if s.spec.Caller.UserID != "" {
+		return "", stack.Wrap(errPersonalNeedsCommand)
+	}
+	_, err = s.persisted.CheckBegin("", text)
+	return "", stack.Wrap(err)
+}
+
 // Durable is whether a question's request id is kept, so a retry of it is answered once.
 // Only a conversation stored in Stream Chat keeps them; any other answers every question.
 func (s *Session) Durable() bool { return s.persisted != nil }
@@ -651,11 +704,18 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // that one returns the id of the response it recorded. clientID names the install the
 // command came from, which a client tool called while answering is addressed to. images
 // are photos sent with it, shown on the person's message and to the model with this reply
-// alone. asked is what the caller wants changed about this reply alone.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
-	photos, err := s.photos(ctx, id, images)
-	if err != nil {
-		return persistent.CommandReceipt{}, "", err
+// alone. asked is what the caller wants changed about this reply alone. notes are voice
+// notes sent with it, shown on the person's message; text already holds what they said.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+	// A worker's command on a channel it answers hands on what the person wrote there, photos
+	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
+	handedOn := s.spec.Text && s.spec.Dispatched
+	var photos []persistent.Photo
+	if !handedOn {
+		var err error
+		if photos, err = s.photos(ctx, id, images, notes); err != nil {
+			return persistent.CommandReceipt{}, "", err
+		}
 	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -667,6 +727,9 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
+	}
+	if handedOn {
+		return s.followUp(ctx, id, text, images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
@@ -696,26 +759,40 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	return receipt, s.openTurn(turnID, text), nil
 }
 
-// photos uploads what a person sent with a command to their conversation before the command
-// takes commandMu: an upload takes as long as the network does, and a stop waits on that
-// lock. A caller the conversation is not theirs uploads nothing into it, and a retry of a
-// command it already took (a client resending after a lost answer) uploads nothing again.
-func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart) ([]persistent.Photo, error) {
-	if len(images) == 0 || s.persisted == nil {
+// photos uploads what a person sent with a command, photos and voice notes, to their
+// conversation before the command takes commandMu: an upload takes as long as the network
+// does, and a stop waits on that lock. A caller the conversation is not theirs uploads nothing
+// into it, and a retry of a command it already took (a client resending after a lost answer)
+// uploads nothing again.
+func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart, notes []persistent.VoiceNote) ([]persistent.Photo, error) {
+	if len(images)+len(notes) == 0 || s.persisted == nil {
 		return nil, nil
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return nil, err
 	}
 	if _, err := s.persisted.Command(id); err == nil {
-		photos := make([]persistent.Photo, 0, len(images))
+		photos := make([]persistent.Photo, 0, len(images)+len(notes))
 		for _, image := range images {
 			photos = append(photos, persistent.Photo{Sent: image})
+		}
+		for _, note := range notes {
+			photos = append(photos, note.Sent())
 		}
 		return photos, nil
 	}
 	photos, err := s.persisted.PublishPhotos(ctx, images)
-	return photos, stack.Wrap(err)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	for _, note := range notes {
+		published, err := s.persisted.PublishVoiceNote(ctx, note)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		photos = append(photos, published)
+	}
+	return photos, nil
 }
 
 // chose keeps connectionID as the session's selection for the connector binding called name,
@@ -746,31 +823,42 @@ func (s *Session) chose(name, connectionID string) {
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
+	_, _, err := s.followUp(ctx, id, text, images, options.LLM{}, false)
+	return err
+}
+
+// followUp is FollowUp under commandMu, with asked changing this reply alone. It returns the
+// follow-up's receipt and the id the turn was recorded as, as RespondCommand does. accepted
+// broadcasts the receipt before the turn starts, as RespondCommand does for a command.
+func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
-		return stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
-		return stack.Wrap(err)
+		return receipt, "", stack.Wrap(err)
+	}
+	if accepted {
+		s.broadcast(receipt)
 	}
 	if receipt.Duplicate {
-		return nil
+		return receipt, "", nil
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, options.LLM{})
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		// No turn started, so a caller retrying the same id must start one, not be told
 		// it is already there.
 		s.persisted.AbandonFollowUp(receipt.CommandID)
-		return stack.Wrap(err)
+		return receipt, "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
-	if turnID != "" {
-		s.openTurn(turnID, text)
+	if turnID == "" {
+		return receipt, "", nil
 	}
-	return nil
+	return receipt, s.openTurn(turnID, text), nil
 }
 
 // FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
@@ -849,14 +937,14 @@ func (s *Session) WaitsOnCommand(id string) bool {
 	return bound
 }
 
-// Ask answers a piece of text in writing, without speaking any of it, and writes the answer
-// into the conversation.
+// Ask answers a piece of text in writing, and any images sent with it, without speaking any
+// of it, and writes the answer into the conversation.
 //
 // The answer is stored here rather than by the caller because the transcript is the
 // session's: a caller holding a session has no channel to write to, and an answer that only
 // went back over HTTP would be missing from the conversation it belongs to.
-func (s *Session) Ask(ctx context.Context, text string) (string, error) {
-	answer, err := s.current().Ask(ctx, text)
+func (s *Session) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
+	answer, err := s.current().Ask(ctx, text, images...)
 	if err != nil {
 		return "", err
 	}
@@ -1003,6 +1091,9 @@ func (s *Session) Busy() bool { return s.current().Busy() }
 
 // SeesImages reports whether the agent has something that looks at a turn's images.
 func (s *Session) SeesImages() bool { return s.current().SeesImages() }
+
+// SeesImagesInWriting reports whether Ask hands the agent's model images.
+func (s *Session) SeesImagesInWriting() bool { return s.current().SeesImagesInWriting() }
 
 // settleGap is how long the agent stays quiet, with nothing left to do, before a headless
 // conversation is taken as finished.
@@ -1503,6 +1594,7 @@ func (s *Session) close() error {
 	s.closing = true
 	s.stopTimeout()
 	s.mu.Unlock()
+	s.checked(false)
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
@@ -1577,6 +1669,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
+		s.heardCaller(event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)

@@ -43,7 +43,7 @@ Retell agents do not name STT/TTS separately from the voice: `voice_id` (e.g.
 
 | Retell tool | Accelerate |
 | --- | --- |
-| `custom` (URL, method, args schema, headers, query params) | Python function with the same name/args that makes the call, or a connector/`mcp_servers:` entry when the system is catalogued |
+| `custom` (URL, method, args schema, headers, query params) | Python function with the same name/args that makes the call, or a catalog connector when the system is catalogued |
 | `end_call` | Nothing to build; the backend ends calls. Drop and note it |
 | `transfer_call` (predefined/cold/warm) | No tool equivalent. Put the transfer policy in `instructions.md`; the number itself is router phone setup. Report warm-transfer behaviour |
 | `check_availability`, `book_appointment`, calendar tools | Connector for the calendar system when catalogued, else a Python function |

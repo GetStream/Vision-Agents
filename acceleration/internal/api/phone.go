@@ -387,9 +387,10 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	call := phone.CallRequest{
-		Owner: routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
-		From:  request.Body.From,
-		To:    request.Body.To,
+		Owner:         routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
+		From:          request.Body.From,
+		To:            request.Body.To,
+		DetectMachine: value(request.Body.DetectVoicemail),
 	}
 	if request.Body.SessionId != nil {
 		held, ok := conversation.SessionID(*request.Body.SessionId)
@@ -485,6 +486,23 @@ var errNoCallStatus = notFound("that call is not waiting for its status")
 // Like answerPhoneCall it is reached by a telephony vendor rather than a customer, so it
 // carries no customer header: the token made when the call was placed is the only proof.
 func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "status", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.ReportStatus(ctx, token, contentType, body)
+	})
+}
+
+// receiveCallMachine takes who picked up a placed call from the vendor that placed it, under
+// the same proof as receiveCallStatus.
+func (s *Server) receiveCallMachine(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "machine report", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.Machine(ctx, token, contentType, body)
+	})
+}
+
+// receiveVendorPost reads what a vendor posted to one of a placed call's URLs and hands it to
+// take, answering the failures every such URL shares.
+func (s *Server) receiveVendorPost(w http.ResponseWriter, r *http.Request, what string,
+	take func(ctx context.Context, token, contentType string, body []byte) error) {
 	if s.phone == nil {
 		writeError(w, errNoCallStatus)
 		return
@@ -492,15 +510,15 @@ func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, callStatusLimit))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeError(w, payloadTooLarge("a status is at most 64 KiB"))
+		writeError(w, payloadTooLarge("a "+what+" is at most 64 KiB"))
 		return
 	}
 	if err != nil {
-		writeError(w, invalidRequest("could not read that status"))
+		writeError(w, invalidRequest("could not read that "+what))
 		return
 	}
 
-	err = s.phone.ReportStatus(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
+	err = take(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
 	switch {
 	case errors.Is(err, phone.ErrUnknownStatus):
 		writeError(w, errNoCallStatus)
@@ -1521,7 +1539,8 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
-	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom."`
+	DetectVoicemail    *bool              `json:"detect_voicemail,omitempty" doc:"Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail."`
+	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
 	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`

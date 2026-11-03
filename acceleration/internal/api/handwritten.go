@@ -126,7 +126,10 @@ func documentHandWritten(api huma.API) {
 			"persistent text sessions require this ID. A retry with the same text and images returns " +
 			"the existing IDs without invoking the model again; reuse with different content emits an " +
 			"error. Its images are data URIs, at most 8, uploaded to the conversation's channel and " +
-			"shown on the person's message. After restart an interrupted command is reported, not rerun.\n" +
+			"shown on the person's message. On a session a dispatch worker opened for a message handed " +
+			"out from a channel, that message is already there: nothing is written or uploaded for it, " +
+			"user_message_id is empty, and a reused id is answered as a duplicate even with other text " +
+			"or images. After restart an interrupted command is reported, not rerun.\n" +
 			"An `interrupt` command carrying `request_id` stops that command and emits " +
 			"`command_stopped` with its terminal receipt. A stop arriving after its command finished " +
 			"replays that command's receipt and leaves the command running now alone; an unknown " +
@@ -821,6 +824,25 @@ func documentHandWritten(api huma.API) {
 			"400": {Description: "The status could not be read"},
 			"404": {Description: "No placed call is waiting for its status at this token"},
 			"413": {Description: "The status is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveCallMachine",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/machine/{token}",
+		Summary:     "Receive who picked up a placed call",
+		Description: "Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated " +
+			"because the vendor is not a customer: the token made when the call was placed is the " +
+			"only proof, and it names that one call.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The report is taken"},
+			"400": {Description: "The report could not be read"},
+			"404": {Description: "No placed call is waiting at this token"},
+			"413": {Description: "The report is over 64 KiB"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

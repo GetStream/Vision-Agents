@@ -56,24 +56,30 @@ export type Guest = Schemas["GuestUser"];
  * A page with only the app's key asks anonymously, which the router must admit; one that does
  * not throws a `ConfigurationError`, and the guest is minted by the app's backend instead.
  *
- * The remembered token is not checked here. It is a JWT the router verifies, and verifying
- * it in the page would mean shipping the key to do it; a token that has expired fails on the
- * next request with a 401, which is the same thing a stale session of any kind does.
+ * A remembered guest whose `expires_at` has passed comes back with their id and the
+ * `refresh_secret` they were last handed, which the router answers with the same guest, a fresh
+ * token and the next secret. The secret works once, so whatever comes back replaces what was
+ * remembered; one already spent is answered with a new guest, since a guest id is no proof of
+ * anything. Name and custom go along, kept by a returning guest and given to a new one. An
+ * expired guest with no secret is minted afresh. One with no `expires_at` is handed back as it
+ * is: its token is not verified here, which would mean shipping the key.
  */
 export async function guestUser(
   client: Client,
   options: GuestUserOptions = {},
   store: GuestStore | undefined = browserStore(),
 ): Promise<Guest> {
-  if (!options.fresh) {
-    const held = read(store);
-    if (held) {
-      return held;
-    }
+  const held = options.fresh ? undefined : read(store);
+  if (held && !expired(held)) {
+    return held;
   }
+  // An expired guest with no secret, remembered from before there were any, cannot prove who
+  // they are; their token no longer works, so they start again as a new guest.
+  const comingBack = held?.refresh_secret ? held : undefined;
 
   const minted = await client.post("/v1/agents/guests", {
     body: {
+      ...(comingBack ? { id: comingBack.id, refresh_secret: comingBack.refresh_secret } : {}),
       ...(options.name ? { name: options.name } : {}),
       ...(options.custom ? { custom: options.custom } : {}),
     },
@@ -137,6 +143,12 @@ function read(store: GuestStore | undefined): Guest | undefined {
     // the recoverable answer; throwing would leave the page unable to ask anything at all.
     return undefined;
   }
+}
+
+/** Whether the router said when the guest's token stops working, and that time has passed. */
+function expired(guest: Guest): boolean {
+  const at = guest.expires_at ? Date.parse(guest.expires_at) : Number.NaN;
+  return !Number.isNaN(at) && at <= Date.now();
 }
 
 /**

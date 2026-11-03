@@ -40,8 +40,6 @@ module GetStream
       # How long an outbound call's block waits for the person to answer.
       ANSWER_WAIT = 60
 
-      PLUGINS_DEPRECATED = "agent.yaml plugins are deprecated: rename plugins to connectors"
-
       attr_reader :name, :config, :folder, :user_id, :tools, :client, :session, :cost_tracking,
                   :memory_filter
 
@@ -236,7 +234,6 @@ module GetStream
       #
       # @return [Hash] the SyncAgentResult: unchanged, and the config as stored.
       def sync
-        warn PLUGINS_DEPRECATED if @folder&.settings&.dig("plugins")&.any?
         hash = fingerprint
         if @folder&.stamp == hash
           stored = @client.get("/v1/agents/configs", query: { name: @config }).find { |each| each["name"] == @config }
@@ -377,7 +374,6 @@ module GetStream
           sts: settings["sts"], voice: presence(settings["voice"]), llm: presence(settings["llm"]),
           harness: presence(@harness) || presence(settings["harness"]),
           search: presence(settings["search"]), greeting: settings["greeting"],
-          plugins: settings["plugins"]&.then { |p| p unless p.empty? },
           connectors: settings["connectors"]&.map { |entry| connector_binding(entry) },
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,

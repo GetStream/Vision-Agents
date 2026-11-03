@@ -197,6 +197,9 @@ func (ToolCancel) isSTSEvent() {}
 // report is cumulative, and the last comes as the session closes.
 type SessionUsage struct {
 	Seconds int64
+	// Final is the report the vendor sends as the session closes. A session that ends without
+	// one is billed the seconds it was open beyond the last report, on the router's clock.
+	Final bool
 }
 
 func (SessionUsage) isSTSEvent() {}

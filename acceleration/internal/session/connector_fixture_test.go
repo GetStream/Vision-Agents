@@ -331,7 +331,7 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		answers: map[string]fixedAnswer{}, running: map[string]int{}, peak: map[string]int{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
-		servers[account] = accountServer(account)
+		servers[account] = accountServer(account, "")
 	}
 	p.servers = servers
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -437,9 +437,11 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	return p
 }
 
-// accountServer is account's MCP server, with the provider's stock tools.
-func accountServer(account string) *mcpsdk.Server {
-	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
+// accountServer is account's MCP server, with the provider's stock tools, saying instructions
+// about them at initialize.
+func accountServer(account, instructions string) *mcpsdk.Server {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"},
+		&mcpsdk.ServerOptions{Instructions: instructions})
 	server.AddTool(toolWhoami, whoami(account))
 	server.AddTool(toolSecret, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the secret"}}}, nil
@@ -487,6 +489,12 @@ func (p *accountsProvider) addTool(account, name, description string) {
 	})
 }
 
+// instruct has account's server say instructions about its tools, until forget. The tools
+// added since forget are dropped.
+func (p *accountsProvider) instruct(account, instructions string) {
+	p.servers[account] = accountServer(account, instructions)
+}
+
 // redescribe has account list whoami with description, a schema change, until forget.
 func (p *accountsProvider) redescribe(account, description string) {
 	changed := *toolWhoami
@@ -508,7 +516,7 @@ func (p *accountsProvider) forget() {
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
 	p.answers, p.gate, p.peak = map[string]fixedAnswer{}, nil, map[string]int{}
 	for account := range p.servers {
-		p.servers[account] = accountServer(account)
+		p.servers[account] = accountServer(account, "")
 	}
 }
 
@@ -599,4 +607,40 @@ func (p *accountsProvider) sent(account string) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.methods[account]...)
+}
+
+// answered is what a call run in the background said.
+type answered struct {
+	said string
+	err  error
+}
+
+// callInBackground runs the call id on turn, and hands back what it said once it answers.
+func (s *connectorFixture) callInBackground(turn context.Context, d *dispatcher, id, name, arguments string) chan answered {
+	answer := make(chan answered, 1)
+	turn, cancel := context.WithCancel(turn)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: arguments})
+		answer <- answered{said: llm.TextOf(parts), err: err}
+	}()
+	// A test that fails before it reads the answer must not leave the call running: its late
+	// invocation record would send on the queue the fixture's cleanup has closed.
+	s.T().Cleanup(func() {
+		cancel()
+		<-finished
+	})
+	return answer
+}
+
+// answerOf waits for a call run in the background to answer, past loginPoll.
+func (s *connectorFixture) answerOf(answer chan answered) answered {
+	select {
+	case got := <-answer:
+		return got
+	case <-time.After(2*loginPoll + 5*time.Second):
+		s.FailNow("the call never answered")
+		return answered{}
+	}
 }

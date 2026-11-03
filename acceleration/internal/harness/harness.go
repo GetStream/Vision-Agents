@@ -166,9 +166,10 @@ type Turn struct {
 	// AfterTool says the reply follows a tool result rather than the caller.
 	AfterTool bool
 	// Answers says the reply is offered no tools and must answer from what it has: the
-	// chain of tools before it has gone on as long as the caller can be kept waiting.
+	// chain of tools before it has reached its limit. It reads the same on a call and in
+	// text, so it says nothing of time or of anyone waiting.
 	Answers bool
-	// NoTools offers the reply no tools without telling it to hurry: nobody has spoken
+	// NoTools offers the reply no tools without telling it to answer now: nobody has spoken
 	// yet, so there is nothing to act on.
 	NoTools bool
 	// Asked is what the caller asked to change about this reply, written over the
@@ -180,8 +181,8 @@ type Turn struct {
 }
 
 // answerNow is the note a reply that Answers is given.
-const answerNow = "There is no time for another tool: answer the caller now from what the " +
-	"tools returned, and say plainly what you could not get."
+const answerNow = "No more tools this turn: answer now from what the tools returned, " +
+	"and say plainly what you could not get."
 
 // Harness decides what the fast model is asked and what becomes of what it answers.
 type Harness struct {
@@ -231,6 +232,9 @@ type Harness struct {
 	// carried is what each reply in flight was sent after the conversation it was given,
 	// which joins the conversation once the reply is written (Remember).
 	carried map[string][]llm.Message
+	// toolless is the replies in flight that were offered no tools (Turn.Answers,
+	// Turn.NoTools, a colleague's question), until they are written (DropUnoffered).
+	toolless map[string]bool
 	// shape is what the last request opened with besides the conversation: instructions,
 	// tools, tool choice and effort. cold reports that it changed, which costs the
 	// provider's cache of the conversation and so says nothing about whether it pays.
@@ -270,11 +274,12 @@ func New(options Options) (*Harness, error) {
 	}
 
 	h := &Harness{
-		options: options,
-		logger:  options.Logger,
-		emitter: NewEmitter(eventBuffer),
-		charged: context.Background(),
-		carried: make(map[string][]llm.Message),
+		options:  options,
+		logger:   options.Logger,
+		emitter:  NewEmitter(eventBuffer),
+		charged:  context.Background(),
+		carried:  make(map[string][]llm.Message),
+		toolless: make(map[string]bool),
 	}
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
@@ -331,6 +336,7 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 
 	carried := h.carried[response.ID]
 	delete(h.carried, response.ID)
+	delete(h.toolless, response.ID)
 	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
 		h.release(response.ID)
 		carried = nil
@@ -360,6 +366,7 @@ func (h *Harness) Forget(turnID string) {
 	h.mu.Lock()
 	h.stored = stored{}
 	delete(h.carried, turnID)
+	delete(h.toolless, turnID)
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
@@ -430,14 +437,18 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	// prompt and changing them costs the provider's cache of everything after them.
 	tools := h.options.Tools.Requests()
 	toolChoice := ""
-	if (h.asking || turn.Answers || turn.NoTools) && len(tools) > 0 {
+	offersNone := h.asking || turn.Answers || turn.NoTools
+	if offersNone {
+		h.toolless[turn.ID] = true
+	}
+	if offersNone && len(tools) > 0 {
 		if len(model.ToolChoices) == 0 || slices.Contains(model.ToolChoices, "none") {
 			toolChoice = "none"
 		} else {
 			tools = nil
 		}
 	}
-	input := slices.Concat(withImages(turn.History, turn.Images), carried)
+	input := slices.Concat(WithImages(turn.History, turn.Images), carried)
 	if transient != "" {
 		input = append(input, llm.Message{Role: llm.System, Content: noteHeader + "\n" + transient})
 	}
@@ -511,6 +522,7 @@ func (h *Harness) release(turnID string) {
 	// owed again, data and all, so carrying them into the conversation as well would send
 	// what came back twice.
 	delete(h.carried, turnID)
+	delete(h.toolless, turnID)
 	if h.written.turn == turnID {
 		// The conversation keeps the reply as it was written, so the model would otherwise
 		// read itself as having already said this.
@@ -577,10 +589,10 @@ func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 const resumption = "Carry on with the caller from the note that follows. Say only what a " +
 	"tool or your colleague actually returned."
 
-// withImages puts images on the caller's last message in history, after its words and each
+// WithImages puts images on the caller's last message in history, after its words and each
 // beside its caption. That is the last message of a reply to the caller, and comes before
 // the tool calls and results a reply to a tool follows.
-func withImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
+func WithImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 	at := len(history) - 1
 	for at >= 0 && history[at].Role != llm.User {
 		at--
@@ -620,6 +632,21 @@ func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 		call.Arguments = Coerce(tool.Parameters, call.Arguments)
 		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
 	}
+}
+
+// DropUnoffered returns the calls a finished reply asked for, or none when the reply was
+// offered no tools. Such a reply, one made to answer after the tool rounds ran out or sent
+// before anyone had spoken, was told it could not call a tool, and what a provider returns
+// anyway is not run or followed, or a model that ignored it would chain past the limit.
+func (h *Harness) DropUnoffered(turnID string, calls []llm.ToolCall) []llm.ToolCall {
+	h.mu.Lock()
+	toolless := h.toolless[turnID]
+	h.mu.Unlock()
+	if !toolless || len(calls) == 0 {
+		return calls
+	}
+	h.logger.Warn("a reply offered no tools asked for some, which were dropped", "turn", turnID, "calls", len(calls))
+	return nil
 }
 
 // Decide asks the fast flow controller what to do with an evolving transcript.

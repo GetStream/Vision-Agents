@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -54,6 +55,10 @@ func TestRegionsSuite(t *testing.T) {
 
 func (s *RegionsSuite) SetupSuite() {
 	s.us, s.eu = s.claudeAt("from the us"), s.claudeAt("from the eu")
+	// The batch model an English recording goes to in the eu, beside the us one every suite has.
+	s.sttInstances = []routing.ProviderConfig{{
+		Provider: "stub", Model: "stub-batch-eu", Languages: []string{"en"}, Terms: everyTerm, Region: pricing.RegionEU,
+	}}
 	// The suites share the process, so each variable is the suite's own.
 	s.Require().NoError(os.Setenv(regionsUSKey, "us-key"))
 	s.Require().NoError(os.Setenv(regionsEUKey, "eu-key"))
@@ -221,6 +226,19 @@ func (s *RegionsSuite) TestAnAgentSyncedInTheEUIsServedOnlyByTheEUInstanceAndBil
 	row := s.rowsOf(anthropic.ProviderName)[0]
 	s.Equal("llm-anthropic-claude-haiku-5-5-eu", row.SKU)
 	s.Equal(s.pricedAt(pricingtest.LLM(pricing.RegionEU, false), row), row.CostMicros)
+}
+
+func (s *RegionsSuite) TestAVoiceNoteToAnEUAgentIsTranscribedByTheEUInstance() {
+	agent := s.syncedIn(pricing.RegionEU, haiku)
+	opened := s.serverClient.createSession(CreateSessionRequest{ConfigId: &agent.Id})
+	since := time.Now().UTC()
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("region "+s.utils.uuid()))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Audio: &AudioSource{Url: note}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal("stub-batch-eu", heard.Model, "the note is heard where the agent is, not by the us batch model")
 }
 
 func (s *RegionsSuite) TestAnAgentThatNamesNoRegionIsInTheUS() {

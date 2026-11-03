@@ -375,7 +375,15 @@ func (s *AgentSuite) TestAToolsPictureInATurnAScheduledTaskFiredIsLookedAtAsSche
 	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
 	s.join(true)
 	s.model.reply = []string{"Let me look."}
+	s.model.callsOn = 2
 	s.asksFor("photograph_room", "{}")
+	// Somebody has spoken, so the turn is offered the tool: with nobody heard yet a reply is
+	// offered none, and a call it returns is dropped.
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	s.Empty(s.subagent.requests())
 
 	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
 	s.Require().NoError(err)
@@ -1896,7 +1904,7 @@ func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
 	s.Equal("none", capped.ToolChoice, "the capped reply has nothing to reach for")
-	s.Contains(shown(capped), "answer the caller now")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
@@ -1925,7 +1933,7 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
 	s.Equal("none", capped.ToolChoice, "deferring a reply must not bypass the tool limit")
-	s.Contains(shown(capped), "answer the caller now")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
