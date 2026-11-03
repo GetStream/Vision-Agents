@@ -636,6 +636,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
+		if nothingToAnswer(text, images) {
+			return "", stack.Wrap(errNothingToAnswer)
+		}
 		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
 		return turnID, err
 	}
@@ -661,6 +664,16 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
 	return s.openTurn(turnID, text), nil
+}
+
+// errNothingToAnswer is an answer handed on from a channel with no text and no images.
+var errNothingToAnswer = errors.New("there is nothing to answer")
+
+// nothingToAnswer is a respond a worker from before photos were read sends for a photo sent
+// alone: no text and no images, so the model has nothing to be asked, as on the HTTP answer's
+// 400. It is the worker's socket only: a photo the router follows up itself reaches the model.
+func nothingToAnswer(text string, images []llm.ImagePart) bool {
+	return strings.TrimSpace(text) == "" && len(images) == 0
 }
 
 // errPersonalNeedsCommand is a question to a personal conversation sent without a command ID.
@@ -759,6 +772,9 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	if handedOn {
+		if nothingToAnswer(text, images) {
+			return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
+		}
 		return s.followUp(ctx, id, text, images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
