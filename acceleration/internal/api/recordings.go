@@ -48,6 +48,11 @@ const callbackTimeout = 30 * time.Second
 // inline, or a voice note sent with a question.
 const maxInlineAudio = 8 << 20
 
+// maxInlineAudioBody is the most a request that may carry maxInlineAudio in its body reads:
+// the audio rides base64, a third larger, so 8 MiB is under 11 MiB, with room for the rest of
+// the request. Huma's 1 MiB default would refuse a voice note of a minute.
+const maxInlineAudioBody = 12 << 20
+
 // inlineDeadline bounds work done while its caller waits.
 const inlineDeadline = 90 * time.Second
 
@@ -588,10 +593,12 @@ func inlineResult(job store.Recording, provider, model string, result json.RawMe
 // registerRecordings declares the operations served in recordings.go.
 func (s *Server) registerRecordings(api huma.API) {
 	huma.Register(api, huma.Operation{
-		OperationID: "transcribeRecording",
-		Method:      http.MethodPost,
-		Path:        "/v1/stt/recordings",
-		Summary:     "Transcribe a recording, off the live path",
+		OperationID:     "transcribeRecording",
+		Method:          http.MethodPost,
+		Path:            "/v1/stt/recordings",
+		MaxBodyBytes:    maxInlineAudioBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Transcribe a recording, off the live path",
 		Description: "The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. " +
 			"It is a job rather than a response because an hour of audio takes minutes to " +
 			"transcribe, so this returns immediately with an id to poll, or calls a callback when it " +

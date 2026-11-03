@@ -4778,7 +4778,7 @@ export type components = {
             readonly allowed_ips?: readonly string[];
         };
         readonly AudioSource: {
-            /** @description Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, and a data URI rides in a request body of at most 1 MiB. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
+            /** @description Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
             readonly url: string;
         };
         /**

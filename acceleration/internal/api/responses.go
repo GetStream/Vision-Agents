@@ -238,10 +238,12 @@ func (s *Server) registerResponses(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.listResponses)
 	huma.Register(api, huma.Operation{
-		OperationID: "createResponse",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/sessions/{id}/responses",
-		Summary:     "Ask the agent something and get a handle on the answer",
+		OperationID:     "createResponse",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/sessions/{id}/responses",
+		MaxBodyBytes:    maxInlineAudioBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Ask the agent something and get a handle on the answer",
 		Description: "The same thing respond does, with an id back. That is the whole difference and the " +
 			"reason this exists: respond returns nothing, so a caller that wants to follow one " +
 			"particular turn has to watch the socket and guess which events belong to it. With an id " +
