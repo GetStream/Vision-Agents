@@ -17,6 +17,9 @@ The `instructions` a custom connector's MCP server (`custom_…`) sends when a s
 ### A number or a 10DLC registration is paid for before it is bought
 
 `POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
+### The JavaScript SDK catches up with the Swift and Kotlin client SDKs
+
+`session.conversation` follows a conversation the way Swift's and Kotlin's `conversation` does, beside `session.state` and with the same `get` and `subscribe`: its `turns` (what the page typed, what was transcribed on the call, the agent's replies as they were written), `failure` (what the agent last reported going wrong, with `failureContext` naming the part and `failureAt`, until it next hears, answers or speaks), `approvals` (the calls waiting for the person, now told when they change, a cancel by the model included), and `connected` with the `socketError` that stopped the socket; `session.failure` says the same. `session.declineLogin(toolCallId)` is the Not now of a connector's sign-in on its `awaiting_authorization` step, and `connectorScopeRequiredOf(event)` reads a `connector_scope_required` event. A voice session's snapshot keeps why joining, muting or the camera last failed as `failure`. A tool shows the model pictures by returning a `ToolOutput` (`text` and `images`). `sessions.query` and `search` take `createdSince`, `createdBefore`, `custom` and `sort`; `memory` on a new session is remembered for the user `setUser` named, never another a page names; `returnUrl` names where a sign-in goes back to, as on the phones; `sessions.update`, `startVoice`, `stopVoice`, `close` and `fork` take a session by its id; `VoiceSession.attach(api, sessionId)` joins a session's call by its id with a watcher of its own; `api.router({ config, tags }).search(query)` searches, the one routed modality a device may reach; `api.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks and reads their runs; and `api.clearUser()` signs out, while `api.setUser(guest)` acts as a guest. `session.events()` can now be read by several loops at once, each told everything from when it started, and one that falls 256 events behind is ended rather than left with a hole.
 
 ### A session sets how many tool rounds a reply may chain
 
@@ -341,6 +344,9 @@ Moving a running session onto other models or another voice (`PATCH /v1/agents/s
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+### A JavaScript question with photos is kept in its conversation
+
+`responses.create` in the JS SDK left out the request id whenever a question had images, so a photo asked about in a personal conversation kept in Stream Chat, which needs one, was refused. Every question now goes with one, as in Swift and Kotlin; only videos are refused beside it.
 
 ### A voice reply cut short is billed for what it generated
 
@@ -723,6 +729,10 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
 
 ## Breaking Changes
+
+### A JavaScript tool's result can be parts
+
+`render()` and `Tools.call()` in the JS SDK answer `string | ToolOutputPart[]` rather than `string`, since a tool that returns a `ToolOutput` with images is told to the model as its words and then its pictures. Code that took either for a string checks for an array first. A tool's `run` is unchanged: what it returned before renders as before.
 
 ### A Dart tool's `run` returns a `ToolOutput`
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
+import { Backend, Client, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -121,6 +121,36 @@ describe("Backend", () => {
       "Stream-Auth-Type": "jwt",
     });
     assert.equal(backend.serverSide, false, "a token is not a secret");
+  });
+
+  it("forgets the user and their token, which is signing out", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser({ id: "jlahey", name: "Jim Lahey" }, "token-for-jim");
+
+    backend.clearUser();
+
+    assert.equal(backend.userId, "");
+    assert.equal(backend.identity, undefined);
+    await assert.rejects(() => backend.headers(), ConfigurationError);
+  });
+
+  it("acts as a guest from the token it was minted with", async () => {
+    const api = new Client({ url: router.url, apiKey: "vak_live_x" });
+
+    await api.setUser({ id: "guest-1", name: "Guest", token: "token-for-guest" });
+
+    assert.equal(api.backend.userId, "guest-1");
+    assert.equal(api.backend.identity?.name, "Guest");
+    assert.equal((await api.backend.headers())["Authorization"], "Bearer token-for-guest");
+  });
+
+  it("never takes a guest's token for a field of the user, even with a token of its own", async () => {
+    const api = new Client({ url: router.url, apiKey: "vak_live_x" });
+
+    await api.setUser({ id: "guest-1", name: "Guest", token: "minted-token" }, "fresher-token");
+
+    assert.deepEqual(api.backend.identity, { id: "guest-1", name: "Guest" });
+    assert.equal((await api.backend.headers())["Authorization"], "Bearer fresher-token");
   });
 
   it("refuses a user with no id, and a user with no token", async () => {

@@ -237,6 +237,11 @@ export class Backend {
     return this.userIdValue;
   }
 
+  /** The end user `actingFor` named, beside this backend's own credential, or the empty string. */
+  get actsFor(): string {
+    return this.actingForValue;
+  }
+
   /** The user `setUser` was given, for a caller that wants their name back. */
   get identity(): StreamUser | undefined {
     return this.user;
@@ -273,6 +278,16 @@ export class Backend {
     if (!this.declaredSecret) {
       this.apiSecret = "";
     }
+  }
+
+  /**
+   * Forgets the user `setUser` named and the token held for them, which is what signing out
+   * is. Requests that need a user are refused until `setUser` names another.
+   */
+  clearUser(): void {
+    this.user = undefined;
+    this.userIdValue = "";
+    this.token = undefined;
   }
 
   /**
