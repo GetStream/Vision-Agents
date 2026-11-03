@@ -4,7 +4,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // leavesVoicemail is a placed call's session whose plan is to leave message on a machine,
@@ -34,7 +38,7 @@ func (s *SessionSuite) saidText() []string {
 
 // carriesOn checks a machine report left the session running and said nothing for it.
 func (s *SessionSuite) carriesOn(created *Session, said int) {
-	s.Never(func() bool {
+	never(s.T(), func() bool {
 		return created.State() == Ended || !s.manager.Running(created.ID()) || len(s.voice.spoken()) != said
 	}, 4*testTimeout, 5*time.Millisecond, "the report changed the conversation")
 	s.Empty(created.endReason())
@@ -62,7 +66,7 @@ func (s *SessionSuite) TestTheSessionEndsOnlyOnceTheMessageHasBeenSpoken() {
 
 	s.eventually(func() bool { return slices.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.") },
 		"the message was never said")
-	s.Never(func() bool { return created.State() == Ended || !s.manager.Running(created.ID()) }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return created.State() == Ended || !s.manager.Running(created.ID()) }, 4*testTimeout, 5*time.Millisecond,
 		"the session ended while the message was being spoken")
 	release()
 	s.endedForVoicemail(created)
@@ -157,4 +161,94 @@ func (s *SessionSuite) TestAMachineReportForASessionHeldElsewhereIsNotHere() {
 	s.manages()
 
 	s.False(s.manager.Machine("acme", "held-elsewhere", phone.MachineGreetingEnded))
+}
+
+// checksForVoicemail has a placed call that leaves a voicemail ring a caller, with a model
+// that says goodbye and calls end_call on its first turn.
+func (s *SessionSuite) checksForVoicemail() *Session {
+	s.manages()
+	s.model.reply = "Goodbye."
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "end_call", Arguments: "{}"}}
+	spec := leavesVoicemail("Hi Ali, this is Northwind Dental.")
+	spec.ConfigID, spec.Calls = "cfg-1", endsCalls()
+	created := s.rings(spec, caller)
+	s.settles(created)
+	s.hears(created)
+	return created
+}
+
+// asksToHangUp has the model call end_call on a turn nobody on the phone said, and returns
+// what it was told came of it.
+func (s *SessionSuite) asksToHangUp(created *Session) string {
+	s.says(created, "nobody has said anything for a while")
+	var told string
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				if message.ToolCallID == "call-1" {
+					told = message.Content + llm.TextOf(message.Parts)
+					return true
+				}
+			}
+		}
+		return created.State() == Ended
+	}, "the model was never told what end_call did")
+	s.Require().NotEqual(Ended, created.State(), "the agent hung up before the machine report")
+	return told
+}
+
+func (s *SessionSuite) TestAnAgentHangingUpBeforeTheMachineReportIsHeldAndToldToWait() {
+	created := s.checksForVoicemail()
+
+	told := s.asksToHangUp(created)
+
+	s.Contains(told, "answering machine")
+	s.NotContains(told, "did not work")
+	never(s.T(), func() bool { return created.State() == Ended || !s.manager.Running(created.ID()) },
+		4*testTimeout, 5*time.Millisecond, "the agent hung up before the machine report")
+}
+
+func (s *SessionSuite) TestAMachineReportAfterAHeldHangUpLeavesTheMessage() {
+	created := s.checksForVoicemail()
+	s.asksToHangUp(created)
+
+	s.True(s.manager.Machine("acme", created.ID(), phone.MachineGreetingEnded))
+
+	s.endedForVoicemail(created)
+	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
+}
+
+func (s *SessionSuite) TestAHeldHangUpGoesThroughOnceTheCheckRunsOut() {
+	wait := machineWait
+	machineWait = 4 * testTimeout
+	s.T().Cleanup(func() { machineWait = wait })
+	created := s.checksForVoicemail()
+
+	s.asksToHangUp(created)
+
+	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
+		"the held hang-up never went through")
+	s.Equal(EndAgentHangup, created.endReason())
+}
+
+func (s *SessionSuite) TestAHeldHangUpGoesThroughWhenAPersonPicksUp() {
+	created := s.checksForVoicemail()
+	s.asksToHangUp(created)
+
+	s.True(s.manager.Machine("acme", created.ID(), phone.MachineHuman))
+
+	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
+		"the held hang-up never went through")
+	s.Equal(EndAgentHangup, created.endReason())
+}
+
+func (s *SessionSuite) TestTheCallerSpeakingToTheAgentLetsItHangUp() {
+	created := s.checksForVoicemail()
+	s.call().inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+
+	s.ears.emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "who is this?", Language: "en", Confidence: 1})
+
+	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
+		"the agent could not hang up on a caller who spoke to it")
+	s.Equal(EndAgentHangup, created.endReason())
 }
