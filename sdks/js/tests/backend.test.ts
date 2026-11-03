@@ -226,6 +226,14 @@ describe("Backend", () => {
     assert.equal(url.searchParams.get("user_id"), "jlahey");
   });
 
+  it("calls a page that also holds a secret what its requests say, since that router never sees the secret", async () => {
+    const backend = new Backend({ url: router.url, customerId: "local", apiSecret: "shh" });
+    await backend.setUser("jlahey", "token-for-jim");
+
+    assert.equal(backend.serverSide, false);
+    assert.equal(backend.query()["stream-auth-type"], "jwt");
+  });
+
   it("speaks for the app's backend again once the page's user is cleared", async () => {
     const backend = new Backend({ url: router.url, customerId: "local" });
     await backend.setUser("jlahey", "token-for-jim");
