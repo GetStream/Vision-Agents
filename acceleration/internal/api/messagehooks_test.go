@@ -44,6 +44,8 @@ func (s *MessageHooksSuite) SetupSuite() {
 	s.imageHTTP = &http.Client{}
 	s.images = photoServer("/photo.png", "/other.png")
 	s.T().Cleanup(s.images.Close)
+	// A recording written to a speech-to-speech session is not heard.
+	s.speechToSpeech = true
 	s.RouterSuite.SetupSuite()
 }
 

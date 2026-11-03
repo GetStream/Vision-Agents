@@ -2388,10 +2388,18 @@ back if the source edits it afterwards. So once SDKs point here, stop writing at
 
 Cut over once SDKs point here:
 
-1. Run `replicate --from … --once` one last time, to pick up the last writes.
-2. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
-   pauses are carried over, they clear the marks, and step 3 then resumes nothing.
-3. Run the cut-over:
+1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
+   until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
+   A pause ends the call in progress on the router that runs the campaign, and a call that
+   ends after the last `--once` is not carried. A pause lands on one router only: with more
+   than one replica at the source, confirm the campaign has stopped (no contact `calling` and
+   no new attempts) before the last `--once`.
+2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
+   holds every call the source made.
+3. Stop the source delivering. Do not pause the scheduled tasks there before that last
+   `--once`: the pauses are carried over, they clear the marks, and step 4 then resumes
+   nothing.
+4. Run the cut-over:
 
    ```bash
    go run ./cmd/router replicate --resume --as <app id>
@@ -2399,21 +2407,30 @@ Cut over once SDKs point here:
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
-and lists the marked campaigns. The source went on delivering between the last `--once` and its
+and names the marked campaigns. The source went on delivering between the last `--once` and its
 stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
 the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
 the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
 hold ends. A marked task with no occurrence left is
-completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
-step 2: an occurrence due between the two is delivered by neither. A marked task whose
+completed, a one-shot with a `missed` run of the time it slept through. Run step 4 right after
+step 3: an occurrence due between the two is delivered by neither. A marked task whose
 agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
 and the command prints how many it left that way. A user holds at most the config's
 `max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
 made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
 and the rest stay paused and marked. The command prints how many; run it again once the user
-has made room. A campaign rings
-only from the router that started it, so start each one here with
-`POST /v1/agents/campaigns/{id}/start`.
+has made room.
+
+A campaign rings only from the router that started it, and `--resume` starts none. A campaign
+paused at the source in step 1 stays paused here and is not named. Start it here with
+`POST /v1/agents/campaigns/{id}/start` when it is to ring again. A campaign still running at the
+source at the last `--once` stays paused here, and `--resume` names it: a contact the source rang
+after that is still `pending` here, and a start here rings that contact again. Read its contacts
+at the source before you start it here. A campaign paused at the source that still holds contacts
+`calling` is named too, with how many: a start here rings them again.
+
+Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
+again: it overwrites what the cut-over resumed and started here with what the source has.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app

@@ -91,6 +91,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -456,7 +457,10 @@ type RouterSuite struct {
 	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
 	llmInstances []routing.ProviderConfig
 	// sttInstances are batch transcription instances added to the recording config.
-	sttInstances     []routing.ProviderConfig
+	sttInstances []routing.ProviderConfig
+	// speechToSpeech gives the sessions the suite's speech-to-speech stub, for a suite to set
+	// before it starts the harness. Off, a session naming one is refused.
+	speechToSpeech   bool
 	llmFactories     func(*llmrouter.Registry)
 	knowledgeRegions map[string]knowledge.Backend
 	sandboxTargets   map[string]string
@@ -1425,7 +1429,12 @@ func (s *RouterSuite) sessionManager(
 		// reaches the suite's Stream.
 		telephony = s.telephonySealedBy(sealer, phone.AppsOf(s.stream), logger)
 	}
+	var speechToSpeech *stsrouter.Router
+	if s.speechToSpeech {
+		speechToSpeech = streams.STS
+	}
 	sessions, err := session.NewManager(session.ManagerOptions{
+		STS:           speechToSpeech,
 		Phone:         telephony,
 		Sandboxes:     sandboxes,
 		LLM:           streams.LLM,

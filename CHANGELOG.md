@@ -55,7 +55,13 @@ Runtime rows (`modality: runtime`) are now priced by the entry of the session's 
 
 ### A photo sent in an agent's chat channel reaches the model
 
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A video or a file sent alone is still not answered (AI-2521, AI-2522).
+
+### A voice recording sent in an agent's chat channel is heard
+
+A voice recording (a `voiceRecording` or `audio` attachment) a person sends in a plain `agent` channel is now answered. The router transcribes it once per message, as it does a voice note sent with a question. The transcription is billed to the session that answers, or to the channel's agent and the person who sent it while no session runs. The recording then reaches the answering model or dispatch worker as text: what was typed, then what was said. A worker gets the transcript in `text` and needs no change. A recording that cannot be fetched or heard is answered with a short reply that the agent could not listen to it. Nothing is transcribed when no worker is connected to answer. A recording the agent shows on a message it wrote is never heard. In a thread channel (Slack, SMS) a recording alone is still not answered (AI-2570).
 A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is handed to a worker too, with an empty `text` and the photo in `images`; a worker on an SDK from before this answers it with an empty text, which the router refuses, so the person gets no reply, as when the photo was never handed over (AI-2652). A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
 
 ### Rust and PHP dispatch workers pass a message's photos to the model
 
@@ -324,6 +330,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A moved campaign does not ring again a contact the source rang
+
+`router replicate --resume` told the operator to start each campaign that was running at the source, and a start rang again each contact the source had rung after the last `--once`, and each contact in a call at that moment. The cut-over now begins with a pause of the campaigns at the source and a wait for their calls to end, before the last `--once`. A campaign paused that way stays paused here and `--resume` does not name it. A campaign still running at the source at the last `--once` stays paused, and `--resume` says that a start here rings again the contacts rung there since then (AI-2428).
 
 ### A typed message in a voice session is offered tools once the caller has spoken
 

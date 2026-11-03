@@ -180,12 +180,15 @@ type queuedChatInbound struct {
 	Deployment bool   `json:"deployment"`
 	APIKey     string `json:"api_key"`
 	Body       []byte `json:"body"`
+	// Heard is the row's, never handed over: the peer reads it from the row.
+	Heard *string `json:"-"`
 }
 
 // queuedFrom is a queued delivery's row as one router hands it to another.
 func queuedFrom(delivery store.ChatInbound) queuedChatInbound {
 	return queuedChatInbound{Seq: delivery.Seq, StreamApp: delivery.StreamApp, MessageID: delivery.MessageID,
-		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body}
+		CustomerID: delivery.CustomerID, Deployment: delivery.Deployment, APIKey: delivery.APIKey, Body: delivery.Body,
+		Heard: delivery.Heard}
 }
 
 // storedAs reports whether a handed-over delivery names the app, message, customer and
@@ -198,7 +201,7 @@ func (q queuedChatInbound) storedAs(row queuedChatInbound) bool {
 // origin is where the delivery came from, as the endpoint verified it.
 func (q queuedChatInbound) origin() hookOrigin {
 	return hookOrigin{customer: q.CustomerID, app: q.StreamApp, deployment: q.Deployment, apiKey: q.APIKey,
-		queuedMessage: q.MessageID}
+		queuedMessage: q.MessageID, heard: q.Heard}
 }
 
 // AnswerChatInbound answers a delivery the endpoint queued, as it would have answered it on
