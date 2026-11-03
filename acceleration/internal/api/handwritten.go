@@ -126,7 +126,10 @@ func documentHandWritten(api huma.API) {
 			"persistent text sessions require this ID. A retry with the same text and images returns " +
 			"the existing IDs without invoking the model again; reuse with different content emits an " +
 			"error. Its images are data URIs, at most 8, uploaded to the conversation's channel and " +
-			"shown on the person's message. After restart an interrupted command is reported, not rerun.\n" +
+			"shown on the person's message. On a session a dispatch worker opened for a message handed " +
+			"out from a channel, that message is already there: nothing is written or uploaded for it, " +
+			"user_message_id is empty, and a reused id is answered as a duplicate even with other text " +
+			"or images. After restart an interrupted command is reported, not rerun.\n" +
 			"An `interrupt` command carrying `request_id` stops that command and emits " +
 			"`command_stopped` with its terminal receipt. A stop arriving after its command finished " +
 			"replays that command's receipt and leaves the command running now alone; an unknown " +
