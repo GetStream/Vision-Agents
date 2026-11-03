@@ -18,8 +18,7 @@ connects each kind in a different way. Sentry, GitHub, HubSpot and Salesforce ar
 company's accounts: each is an object with `connection: company`, fixed to the app's
 connection of that label. Create that connection on the dashboard and label it exactly
 `company`. A name alone is a session binding: each person connects their own, in the chat,
-the first time the agent needs it, and it offers every tool. `readonly`, `scopes` and
-`toolsets` are plugins-only; `connectors` does not read them.
+the first time the agent needs it, and it offers every tool.
 
 ```yaml
 connectors:
@@ -35,6 +34,9 @@ connectors:
   - linear                  # a person's own, in the chat
   - google_calendar
   # google_drive, google_docs, calendly, calcom and slack the same way
+  - name: tablejourney      # an MCP server outside the catalog: a custom connector
+    connector: custom_tablejourney
+    connection: tablejourney
 sandbox: daytona  # Blender, built into the router's sandbox for the render skill
 ```
 
@@ -106,103 +108,24 @@ MCP:
 2. Slack's connector takes only the operator's client. Set `SLACK_MCP_CLIENT_ID` and
    `SLACK_MCP_CLIENT_SECRET` on the router and restart it. The app cannot store its own.
 
-By default the login asks for `channels:history`, `channels:read`, `chat:write`,
-`search:read.public` and `users:read`: search and read public channels, post, and look
-people up. `scopes` is plugins-only; `connectors` does not read it. Under `plugins` it
-replaces that list, say to search private channels and DMs as well, or to drop
-`chat:write` so the agent can only read:
-
-```yaml
-plugins:
-  - name: slack
-    scopes:
-      - search:read.public
-      - search:read.private
-      - search:read.im
-      - channels:history
-      - users:read
-```
-
-[Slack's docs](https://docs.slack.dev/ai/slack-mcp-server/#oauth-scopes) list which tool
-needs which scope. The router refuses one Slack's server does not offer, and the app must
-have every scope asked for. A tool whose scope was not granted fails when it is called, so
-pair `scopes` with `tools` to keep the model from seeing it:
-
-```yaml
-    tools: [slack_search_*, slack_read_*]
-```
-
-### Read-only, and which scopes a login asks for
-
-`readonly`, `scopes` and `toolsets` are plugins-only. This example's `connectors` entries
-do not read them; the blocks below are what `plugins` still accepts.
-
-A plugin named by its id alone is reached as the catalog has it, which for Linear is
-`https://mcp.linear.app/mcp` asking for `read` and `write`. Name it with a mapping instead
-to change how it is reached and what its login asks for. Whether each person connects their
-own is the catalog's call: a person's own account (Linear, Slack, Calendly, Cal.com and the
-Google apps) is, a company's (Sentry, GitHub, HubSpot, Salesforce, Shopify, Gong) is the app's,
-connected once on the dashboard. `user: true` or `user: false` overrides it:
-
-```yaml
-plugins:
-  - name: linear
-    readonly: true   # https://mcp.linear.app/mcp/readonly: no tool that writes, asks for read
-    scopes: [read]   # replaces the scopes the login asks for
-```
-
-`readonly` is only accepted for a plugin whose vendor runs a read-only server (Linear, so
-far), and the router refuses it for any other. A login made before a change keeps what it
-was granted, so connect the plugin again after changing either.
-
-`toolsets` limits a server to some of its tools, for a vendor that lets you choose. Cal.com
-does, and offers every tool when none are picked:
-
-```yaml
-plugins:
-  - name: calcom
-    toolsets: [bookings, availability, event-types]
-```
-
-Its toolsets are `profile`, `event-types`, `bookings`, `availability`, `schedules`,
-`calendars`, `teams`, `organizations`, `routing-forms` and `catalog`; `get_app_link` and
-`search_docs` come whichever are picked, and the router refuses a name not on that list.
-The login is for the server, not the toolsets, so changing them needs no new one.
-
-`scopes` does nothing for Cal.com: its MCP server ignores the scopes it is asked for and
-always asks your Cal.com account for the same fixed set. Toolsets are what narrow it.
-
-Cal.com also only registers clients whose redirect host is on its own list. `localhost`
-is, so a local router logs in; a router at any other host, getstream.io included, is
-refused at registration until Cal.com adds it.
-
-Google Drive asks for `drive.readonly` unless told otherwise. Its `create_file` and
-`copy_file` tools need `drive.file` as well, which reaches only the files the agent made or
-was given. `scopes` must be ones the server advertises; for Drive those are `drive`,
-`drive.readonly` and `drive.file`:
-
-```yaml
-plugins:
-  - name: google_drive
-    scopes:
-      - https://www.googleapis.com/auth/drive.readonly
-      - https://www.googleapis.com/auth/drive.file
-```
+The login asks for the scopes listed in `acceleration/internal/connectors/providers/slack.yaml`.
+A binding's `tools` keeps the model from seeing the rest, such as `tools: [slack_search_*,
+slack_read_*]`.
 
 ### Only some tools
 
 Every tool a server offers goes to the model unless `tools` says otherwise. Fewer tools
 take less context and give the agent less it may do. `tools` takes names or patterns such
-as `get_*`, on a connector and on `mcp_servers`, and needs no new login. Left out, a
+as `get_*`, and needs no new login. Left out, a
 connector offers every tool; `tools: []` is refused.
 
 ```yaml
 connectors:
   - name: linear
     tools: [list_issues, get_issue, save_comment]
-mcp_servers:
   - name: tablejourney
-    url: https://tablejourney.com/mcp
+    connector: custom_tablejourney
+    connection: tablejourney
     tools: [search_places, place, dishes]
 ```
 
@@ -232,7 +155,7 @@ time it calls one for somebody who has not connected their calendar, the reply c
 
 A chat client renders it as a button, and the call that needed it waits on its own
 `ai_tool_call` step until the person has connected, then carries on in the same reply. This
-example prints no link for it: the Python SDK reads only a plugin's login. Connect the calendar
+example prints no link for it. Connect the calendar
 for the person on the dashboard first, under Library › Connectors › Connections, and the
 session opens on it with no sign-in. Asked before that, the call waits until the sign-in
 expires, ten minutes later. A login belongs to one person on one agent and is never used for anybody
@@ -288,56 +211,57 @@ script prints. The router needs `DAYTONA_API_KEY` for this.
 ## TableJourney: an MCP server the router does not know
 
 Sentry and Google Calendar are in the router's catalog, which is what lets `agent.yaml` name
-them under `connectors`. Any other MCP server goes under `mcp_servers`, by
-its URL:
-
-```yaml
-mcp_servers:
-  - name: tablejourney
-    url: https://tablejourney.com/mcp
-```
+them under `connectors`. Any other MCP server becomes a custom connector of your own: your
+backend creates it once, for the server's URL, and `agent.yaml` binds it like a catalog one.
+[Custom connectors](https://getstream.io/agents/docs/python/connectors/mcp/) has the calls in
+full, with the auth headers (`$SERVER_TOKEN` is a server token).
 
 [TableJourney](https://tablejourney.com/agents/) is a public server of verified restaurants,
-food festivals and food tours, and needs no login. The router opens it when the
-conversation does, offers its tools as `tablejourney__<tool>`, and runs each call itself.
-What the server says at initialize about using its tools is added to the agent's
-instructions, which is how TableJourney's own terms (keep its booking links whole, say
-they are affiliate links, cite its pages) reach the model.
+food festivals and food tours, and needs no login, so its connector takes `"schemes": ["none"]`.
+Create the connector, then the app's connection to it, then connect that with empty
+credentials:
+
+```bash
+curl -X POST "$STREAM_ACCELERATION_URL/v1/agents/connectors" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "custom_tablejourney", "name": "TableJourney",
+       "description": "Verified restaurants, food festivals and food tours",
+       "endpoint": "https://tablejourney.com/mcp", "schemes": ["none"]}'
+curl -X POST "$STREAM_ACCELERATION_URL/v1/agents/connections" \
+  -H "Content-Type: application/json" \
+  -d '{"connector_id": "custom_tablejourney", "owner": {"type": "app"}, "label": "tablejourney"}'
+# the response is the connection, pending, with its id: use it as $CONNECTION_ID
+curl -X PUT "$STREAM_ACCELERATION_URL/v1/agents/connections/$CONNECTION_ID/credentials" \
+  -H "Content-Type: application/json" -d '{"expected_revision": 1}'
+```
+
+Then `agent.yaml` names it. `connector` is the connector's id and `connection` the label of
+its connection:
+
+```yaml
+connectors:
+  - name: tablejourney
+    connector: custom_tablejourney
+    connection: tablejourney
+```
+
+Keep `connection`: a binding to a connector that takes no login gets no tools without it. The
+agent sees each tool as `tablejourney__<tool>`.
 
 ```bash
 uv run mcp_plugins.py "I'm in Rome tonight. Where should I go for cacio e pepe?"
 ```
 
-The URL has to be https, and no headers are sent (TableJourney's optional `X-API-Key` is
-not). The server says whether it needs an OAuth login, and the router asks it when the
-config is saved: by its `/.well-known/oauth-protected-resource`, or by a 401 that says how
-to authenticate. The answer is the read-only `needs_login`. The app connects such a server
-once, on the dashboard, unless `user: true` has each person connect their own in the chat,
-as it does for a catalog plugin:
-
-```yaml
-mcp_servers:
-  - name: crm                  # the app connects it once, on the dashboard
-    url: https://crm.example.com/mcp
-  - name: notes                # each person connects their own, in the chat
-    url: https://notes.example.com/mcp
-    user: true
-    scopes: [notes.read]       # left out, asks for what the server advertises
-```
-
-The login is the one the MCP authorization spec describes: the authorization server's
-metadata, a client the router registers there itself, PKCE and `resource`. A server that
-needs a login the router cannot make is refused when the config is saved, and so is
-`scopes` or `user` on one that needs none. Until the app connects it, the server's tools
-fail with "connect crm on the dashboard". Connect it on the dashboard, the same way as a
-catalog connector. A login is only good at
-the URL it was made at, and one made before a change of scopes keeps what it was granted,
-so connect again after changing either.
+A server whose tools act in each person's own account has them sign in instead. Its connector
+takes `"schemes": ["oauth2_code"]` with `"client": {"registration": ["cimd", "dcr"]}`, so the
+router registers its own OAuth client, and its binding leaves `connection` out so each person
+connects their own. The server has to publish its OAuth protected resource metadata. The
+docs page above has the whole call.
 
 ## WhatsApp, texting and iMessage: the agent on a phone number
 
-A plugin is an account the agent reads. A channel is somewhere the conversation happens.
-Slack is both, and they are not the same thing: `slack` under `plugins` lets the agent
+A connector is an account the agent reads. A channel is somewhere the conversation happens.
+Slack is both, and they are not the same thing: `slack` under `connectors` lets the agent
 search your workspace; the channels here are a person writing to the agent from their phone.
 
 There is no code for this in the example. The router answers the lines, so it takes three
