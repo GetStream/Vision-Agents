@@ -152,17 +152,19 @@ public sealed class Responses
     /// <summary><see cref="Dispatch.AnswerAsync"/>'s way in.</summary>
     /// <param name="text">What to answer.</param>
     /// <param name="images">Images to show the agent with it.</param>
-    /// <param name="requestId">The request id of the inbound message being answered; null generates one.</param>
+    /// <param name="requestId">
+    /// The request id of the inbound message being answered, kept with its images. Null generates
+    /// one for a question of text alone; one with images goes without.
+    /// </param>
     /// <param name="cancellationToken">Stops waiting.</param>
     internal async Task<Response> AnswerAsync(string text, IReadOnlyList<ImageSource>? images, string? requestId, CancellationToken cancellationToken)
     {
-        // The router refuses a request id on a question with media.
         var media = images is { Count: > 0 };
         var request = new CreateResponseRequest
         {
             Text = text,
             Images = media ? [.. images!] : null,
-            RequestId = media ? null : VisionAgentsClient.Blank(requestId) ?? Guid.NewGuid().ToString("N"),
+            RequestId = VisionAgentsClient.Blank(requestId) ?? (media ? null : Guid.NewGuid().ToString("N")),
         };
         var created = await _client.PostAsync<AgentResponse>(
             $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);

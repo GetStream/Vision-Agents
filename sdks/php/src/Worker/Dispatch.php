@@ -16,8 +16,10 @@ use GetStream\VisionAgents\AgentResponse;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\HostingRefusedException;
+use GetStream\VisionAgents\Generated\ImageSource;
 use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Inbound\InboundCall;
+use GetStream\VisionAgents\Inbound\InboundImage;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Responses;
@@ -180,7 +182,8 @@ final class Dispatch
      *
      * The response is created with this worker's own credential, acting for whoever wrote the
      * message, so it goes to the model rather than back to a worker. It carries the message's
-     * request id, so the answer lands on it.
+     * request id, so the answer lands on it, and the photos sent with it, by the URLs the router
+     * handed over.
      */
     public function answer(InboundMessage $message): AgentResponse
     {
@@ -188,7 +191,8 @@ final class Dispatch
             throw new ConfigurationException('no session is holding this message; open one with getOrCreateAgent');
         }
         $client = $this->client->withBackend($this->client->backend->onBehalfOf($message->userId));
-        return (new Responses($client, $message->sessionId))->createAnswering($message->text, [], $message->requestId);
+        $images = array_map(static fn (InboundImage $image): ImageSource => new ImageSource(url: $image->url), $message->images);
+        return (new Responses($client, $message->sessionId))->createAnswering($message->text, $images, $message->requestId);
     }
 
     /**

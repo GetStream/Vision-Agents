@@ -21,15 +21,20 @@ class GuestUserRequest:
     """
     Attributes:
         custom (GuestUserRequestCustom | Unset):
-        id (str | Unset): A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that
-            is already a guest of this customer returns that guest with a fresh token rather than failing, because coming
-            back is the same person.
-        name (str | Unset): What to call them, for a transcript a person reads later.
+        id (str | Unset): A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller
+            that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they
+            were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no
+            secret: it is the author of their messages. Omitted mints a new guest.
+        name (str | Unset): What to call a new guest, for a transcript a person reads later. A guest coming back keeps
+            their name unless the app's backend renames them.
+        refresh_secret (str | Unset): The refresh_secret this guest was last handed, sent with their id once their token
+            has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
     """
 
     custom: GuestUserRequestCustom | Unset = UNSET
     id: str | Unset = UNSET
     name: str | Unset = UNSET
+    refresh_secret: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +46,8 @@ class GuestUserRequest:
 
         name = self.name
 
+        refresh_secret = self.refresh_secret
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -50,6 +57,8 @@ class GuestUserRequest:
             field_dict["id"] = id
         if name is not UNSET:
             field_dict["name"] = name
+        if refresh_secret is not UNSET:
+            field_dict["refresh_secret"] = refresh_secret
 
         return field_dict
 
@@ -69,10 +78,13 @@ class GuestUserRequest:
 
         name = d.pop("name", UNSET)
 
+        refresh_secret = d.pop("refresh_secret", UNSET)
+
         guest_user_request = cls(
             custom=custom,
             id=id,
             name=name,
+            refresh_secret=refresh_secret,
         )
 
         guest_user_request.additional_properties = d

@@ -460,97 +460,6 @@ impl Client {
         )
         .await
     }
-    /// The plugin logins this agent holds
-    ///
-    /// `GET /v1/agents/configs/{id}/plugins` (`listConfigPlugins`).
-    pub async fn list_config_plugins(&self, id: &str) -> Result<Vec<types::PluginConnection>> {
-        self.send(
-            Method::GET,
-            &format!("/v1/agents/configs/{id}/plugins", id = segment(id)),
-            None::<&()>,
-            None::<&()>,
-            "listConfigPlugins",
-        )
-        .await
-    }
-    /// Drop a plugin login
-    ///
-    /// `DELETE /v1/agents/configs/{id}/plugins/{plugin_id}` (`disconnectPlugin`).
-    pub async fn disconnect_plugin(&self, id: &str, plugin_id: &str) -> Result<()> {
-        self.send(
-            Method::DELETE,
-            &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
-            ),
-            None::<&()>,
-            None::<&()>,
-            "disconnectPlugin",
-        )
-        .await
-    }
-    /// Start a plugin login
-    ///
-    /// `POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize` (`authorizePlugin`).
-    pub async fn authorize_plugin(
-        &self,
-        id: &str,
-        plugin_id: &str,
-        body: Option<&types::AuthorizePluginRequest>,
-    ) -> Result<types::PluginAuthorization> {
-        self.send(
-            Method::POST,
-            &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
-            ),
-            None::<&()>,
-            body,
-            "authorizePlugin",
-        )
-        .await
-    }
-    /// Set the OAuth client an agent logs a plugin in with
-    ///
-    /// `PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client` (`setPluginClient`).
-    pub async fn set_plugin_client(
-        &self,
-        id: &str,
-        plugin_id: &str,
-        body: &types::SetPluginClientRequest,
-    ) -> Result<types::PluginClient> {
-        self.send(
-            Method::PUT,
-            &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
-            ),
-            None::<&()>,
-            Some(body),
-            "setPluginClient",
-        )
-        .await
-    }
-    /// Drop the OAuth client an agent logs a plugin in with
-    ///
-    /// `DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client` (`deletePluginClient`).
-    pub async fn delete_plugin_client(&self, id: &str, plugin_id: &str) -> Result<()> {
-        self.send(
-            Method::DELETE,
-            &format!(
-                "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
-                id = segment(id),
-                plugin_id = segment(plugin_id)
-            ),
-            None::<&()>,
-            None::<&()>,
-            "deletePluginClient",
-        )
-        .await
-    }
     /// List connections
     ///
     /// `GET /v1/agents/connections` (`listConnections`).
@@ -1439,45 +1348,6 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "deleteCustomModel",
-        )
-        .await
-    }
-    /// The hosted MCP servers an agent may attach
-    ///
-    /// `GET /v1/agents/plugins` (`listPlugins`).
-    pub async fn list_plugins(&self, query: &ListPluginsQuery) -> Result<Vec<types::Plugin>> {
-        self.send(
-            Method::GET,
-            "/v1/agents/plugins",
-            Some(query),
-            None::<&()>,
-            "listPlugins",
-        )
-        .await
-    }
-    /// Finish a plugin login
-    ///
-    /// `GET /v1/agents/plugins/callback` (`pluginOAuthCallback`).
-    pub async fn plugin_o_auth_callback(&self, query: &PluginOAuthCallbackQuery) -> Result<()> {
-        self.send(
-            Method::GET,
-            "/v1/agents/plugins/callback",
-            Some(query),
-            None::<&()>,
-            "pluginOAuthCallback",
-        )
-        .await
-    }
-    /// Receive a plugin's MCP event
-    ///
-    /// `POST /v1/agents/plugins/events/{token}` (`receivePluginEvent`).
-    pub async fn receive_plugin_event(&self, token: &str) -> Result<()> {
-        self.send(
-            Method::POST,
-            &format!("/v1/agents/plugins/events/{token}", token = segment(token)),
-            None::<&()>,
-            None::<&()>,
-            "receivePluginEvent",
         )
         .await
     }
@@ -3130,6 +3000,19 @@ impl Client {
         )
         .await
     }
+    /// Receive who picked up a placed call
+    ///
+    /// `POST /v1/phone/machine/{token}` (`receiveCallMachine`).
+    pub async fn receive_call_machine(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/machine/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveCallMachine",
+        )
+        .await
+    }
     /// The numbers the calling customer holds
     ///
     /// `GET /v1/phone/numbers` (`listPhoneNumbers`).
@@ -4381,23 +4264,6 @@ pub struct ListCustomModelsQuery {
     /// The `next_cursor` of the previous page. Omitted is the first page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
-}
-/// The query string `listPlugins` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct ListPluginsQuery {
-    /// Filter by name, category or description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
-}
-/// The query string `pluginOAuthCallback` takes. A field left `None` is left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct PluginOAuthCallbackQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 /// The query string `listProviderKeys` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

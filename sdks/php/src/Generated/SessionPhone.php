@@ -20,6 +20,8 @@ final readonly class SessionPhone
         public ?string $vendor = null,
         // The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
         public ?string $vendorCallId = null,
+        // What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voi...
+        public ?SessionVoicemail $voicemail = null,
     ) {
     }
 
@@ -32,6 +34,7 @@ final readonly class SessionPhone
             number: Json::string($data, 'number'),
             vendor: array_key_exists('vendor', $data) && $data['vendor'] !== null ? Json::string($data, 'vendor') : null,
             vendorCallId: array_key_exists('vendor_call_id', $data) && $data['vendor_call_id'] !== null ? Json::string($data, 'vendor_call_id') : null,
+            voicemail: array_key_exists('voicemail', $data) && $data['voicemail'] !== null ? SessionVoicemail::fromArray(Json::object($data, 'voicemail')) : null,
         );
     }
 
@@ -49,6 +52,9 @@ final readonly class SessionPhone
         }
         if ($this->vendorCallId !== null) {
             $out['vendor_call_id'] = $this->vendorCallId;
+        }
+        if ($this->voicemail !== null) {
+            $out['voicemail'] = $this->voicemail->toArray();
         }
         return $out;
     }

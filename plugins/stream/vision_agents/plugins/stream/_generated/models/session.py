@@ -51,7 +51,8 @@ class Session:
         description (str | Unset):
         end_reason (SessionEndReason | Unset): Why the session ended: agent_hangup, the agent hung up; transferred, the
             agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered,
-            the call placed was never answered.
+            the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent
+            left its message or hung up.
         forked_from (str | Unset): The session this one continued from, empty for one opened fresh.
         incognito (bool | Unset): Nothing about this session was recorded. It is reported so a caller can see that what
             they asked for is what they got, but it is never read back from storage: an incognito session has no row to read

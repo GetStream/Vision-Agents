@@ -7,52 +7,58 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="PluginClient")
+from ..models.voicemail_action import VoicemailAction
+from ..types import UNSET, Unset
+
+T = TypeVar("T", bound="SessionVoicemail")
 
 
 @_attrs_define
-class PluginClient:
-    """The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
+class SessionVoicemail:
+    """What the agent does when an answering machine picks up.
 
     Attributes:
-        client_id (str): The client id the provider issued.
-        has_secret (bool): Whether a client secret is stored. It is never returned.
+        action (VoicemailAction): hang_up: end the call at once, saying nothing.
+            leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+        message (str | Unset): Said word for word once the machine's greeting has ended, or once the call counts as a
+            machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
     """
 
-    client_id: str
-    has_secret: bool
+    action: VoicemailAction
+    message: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        client_id = self.client_id
+        action = self.action.value
 
-        has_secret = self.has_secret
+        message = self.message
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "client_id": client_id,
-                "has_secret": has_secret,
+                "action": action,
             }
         )
+        if message is not UNSET:
+            field_dict["message"] = message
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        client_id = d.pop("client_id")
+        action = VoicemailAction(d.pop("action"))
 
-        has_secret = d.pop("has_secret")
+        message = d.pop("message", UNSET)
 
-        plugin_client = cls(
-            client_id=client_id,
-            has_secret=has_secret,
+        session_voicemail = cls(
+            action=action,
+            message=message,
         )
 
-        plugin_client.additional_properties = d
-        return plugin_client
+        session_voicemail.additional_properties = d
+        return session_voicemail
 
     @property
     def additional_keys(self) -> list[str]:

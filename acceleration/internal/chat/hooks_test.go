@@ -71,7 +71,7 @@ func texts(hooks ...json.RawMessage) []string {
 
 // lastUpdate is the fields the last app update sent, by name.
 func (s *HooksSuite) lastUpdate() map[string]json.RawMessage {
-	updates := s.chat.AppUpdates("test")
+	updates := s.chat.AppUpdates(s.chat.Key)
 	s.Require().NotEmpty(updates)
 	var fields map[string]json.RawMessage
 	s.Require().NoError(json.Unmarshal(updates[len(updates)-1], &fields))
@@ -79,7 +79,7 @@ func (s *HooksSuite) lastUpdate() map[string]json.RawMessage {
 }
 
 func (s *HooksSuite) TestWritingKeepsEveryHookAsStreamSentIt() {
-	s.chat.SetEventHooks("test", otherHooks...)
+	s.chat.SetEventHooks(s.chat.Key, otherHooks...)
 
 	s.Require().NoError(s.rewrite())
 
@@ -87,7 +87,7 @@ func (s *HooksSuite) TestWritingKeepsEveryHookAsStreamSentIt() {
 }
 
 func (s *HooksSuite) TestWritingSendsTheHooksAndNoOtherSetting() {
-	s.chat.SetEventHooks("test", otherHooks...)
+	s.chat.SetEventHooks(s.chat.Key, otherHooks...)
 
 	s.Require().NoError(s.rewrite())
 
@@ -96,7 +96,7 @@ func (s *HooksSuite) TestWritingSendsTheHooksAndNoOtherSetting() {
 }
 
 func (s *HooksSuite) TestRemovingKeepsEveryOtherHookAsStreamSentIt() {
-	s.chat.SetEventHooks("test", sqsFIFO, routerOwned, pubSub, s3Failover)
+	s.chat.SetEventHooks(s.chat.Key, sqsFIFO, routerOwned, pubSub, s3Failover)
 
 	removed, err := s.stream.RemoveMessageHook(context.Background(), routerHook)
 
@@ -120,7 +120,7 @@ func keys(fields map[string]json.RawMessage) []string {
 // same instant, in RFC 3339, and the rest of the hook as it was.
 func (s *HooksSuite) TestAHooksTimesGoBackAsText() {
 	read := json.RawMessage(`{"id":"h9","hook_type":"webhook","enabled":true,"event_types":["call.session_started"],"webhook_url":"https://other.example/h","created_at":1791485542458572000,"updated_at":1791588958134941000}`)
-	s.chat.SetEventHooks("test", read)
+	s.chat.SetEventHooks(s.chat.Key, read)
 
 	s.Require().NoError(s.rewrite())
 	sent := s.sent()
@@ -130,7 +130,7 @@ func (s *HooksSuite) TestAHooksTimesGoBackAsText() {
 
 // The router's own hook keeps its times as text too.
 func (s *HooksSuite) TestTheRoutersOwnHookKeepsItsTimesAsText() {
-	s.chat.SetEventHooks("test", json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"`+routerHook+`","created_at":1791485542458572000}`))
+	s.chat.SetEventHooks(s.chat.Key, json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"`+routerHook+`","created_at":1791485542458572000}`))
 
 	s.Require().NoError(s.rewrite())
 

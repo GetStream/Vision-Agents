@@ -261,7 +261,8 @@ class Accelerated(OmniLLM):
         if images:
             command["images"] = [image.as_image_dict() for image in images]
         else:
-            # Each message is taken once, by its id; the router refuses one alongside images.
+            # Each message is taken once, by its id. Images go without one here: sending an id
+            # beside them would change what the socket does with the images.
             command["request_id"] = uuid4().hex
         await self._command(command)
 

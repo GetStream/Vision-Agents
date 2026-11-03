@@ -670,99 +670,6 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/configs/{id}/plugins": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The plugin logins this agent holds
-         * @deprecated
-         * @description Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
-         */
-        readonly get: operations["listConfigPlugins"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /**
-         * Drop a plugin login
-         * @deprecated
-         * @description Deprecated: use deleteConnection.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-         */
-        readonly delete: operations["disconnectPlugin"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Start a plugin login
-         * @deprecated
-         * @description Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-         */
-        readonly post: operations["authorizePlugin"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/configs/{id}/plugins/{plugin_id}/client": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Set the OAuth client an agent logs a plugin in with
-         * @deprecated
-         * @description Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-         */
-        readonly put: operations["setPluginClient"];
-        readonly post?: never;
-        /**
-         * Drop the OAuth client an agent logs a plugin in with
-         * @deprecated
-         * @description Deprecated: use deleteConnectorOAuthClient.
-         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-         */
-        readonly delete: operations["deletePluginClient"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/v1/agents/connections": {
         readonly parameters: {
             readonly query?: never;
@@ -1350,7 +1257,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Mint a guest so somebody can talk to an agent before signing up
-         * @description Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+         * @description Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
          *     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
          */
         readonly post: operations["createGuestUser"];
@@ -1667,90 +1574,6 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly delete: operations["deleteCustomModel"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * The hosted MCP servers an agent may attach
-         * @deprecated
-         * @description Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-         */
-        readonly get: operations["listPlugins"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins/{plugin_id}/logo": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * A plugin's logo
-         * @deprecated
-         * @description Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-         */
-        readonly get: operations["getPluginLogo"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins/callback": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Finish a plugin login
-         * @deprecated
-         * @description Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-         */
-        readonly get: operations["pluginOAuthCallback"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/v1/agents/plugins/events/{token}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Receive a plugin's MCP event
-         * @deprecated
-         * @description Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
-         */
-        readonly post: operations["receivePluginEvent"];
-        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3205,6 +3028,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/phone/machine/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive who picked up a placed call
+         * @description Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+         */
+        readonly post: operations["receiveCallMachine"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/numbers": {
         readonly parameters: {
             readonly query?: never;
@@ -4382,19 +4225,8 @@ export type components = {
             /** @description The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none. */
             readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
-            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
-            /**
-             * @deprecated
-             * @description Deprecated: use the events of a fixed binding under connectors.
-             */
-            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
-            /**
-             * @deprecated
-             * @description Deprecated: use connectors, a binding to a connector.
-             */
-            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             /**
              * @description Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
              * @example us
@@ -4444,18 +4276,22 @@ export type components = {
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            /**
+             * @deprecated
+             * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+             */
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
             /**
              * @deprecated
-             * @description Deprecated: use the events of a fixed binding under connectors.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             /**
              * @deprecated
-             * @description Deprecated: use connectors, a binding to a connector.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             /**
@@ -4491,7 +4327,7 @@ export type components = {
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
-            /** @description The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
+            /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
@@ -4507,19 +4343,22 @@ export type components = {
             readonly knowledge_namespace?: string;
             /** @description The model holding the conversation. */
             readonly llm?: string;
-            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>. */
+            /**
+             * @deprecated
+             * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+             */
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
             /**
              * @deprecated
-             * @description Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             /**
              * @deprecated
-             * @description Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             /**
@@ -4550,7 +4389,7 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay. */
+            /** @description How the agent is offered its connector tools. Left out on an update, the stored settings stay. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
@@ -4877,10 +4716,6 @@ export type components = {
         readonly AuthorizationRequest: {
             /** @description The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app. */
             readonly return_url?: string;
-        };
-        readonly AuthorizePluginRequest: {
-            /** @description The shop hostname. Required for plugins that have no single global URL. */
-            readonly instance_url?: string;
         };
         readonly AvailableNumber: {
             readonly capabilities: readonly components["schemas"]["PhoneCapability"][];
@@ -6005,7 +5840,7 @@ export type components = {
             readonly source?: "api" | "dashboard";
         };
         readonly CreateResponseRequest: {
-            /** @description A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing. */
+            /** @description A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region. */
             readonly audio?: components["schemas"]["AudioSource"];
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's. */
@@ -6589,6 +6424,8 @@ export type components = {
             readonly expires_at?: string;
             readonly id: string;
             readonly name?: string;
+            /** @description What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working. */
+            readonly refresh_secret?: string;
             /** @description A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it. */
             readonly token: string;
         };
@@ -6596,10 +6433,12 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: unknown;
             };
-            /** @description A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person. */
+            /** @description A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest. */
             readonly id?: string;
-            /** @description What to call them, for a transcript a person reads later. */
+            /** @description What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them. */
             readonly name?: string;
+            /** @description The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead. */
+            readonly refresh_secret?: string;
         };
         /**
          * @description Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -7528,6 +7367,8 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: string;
             };
+            /** @description Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail. */
+            readonly detect_voicemail?: boolean;
             /** @description One of the customer's own numbers, which is what the person sees. */
             readonly from: string;
             /** @description Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call. */
@@ -7554,68 +7395,6 @@ export type components = {
             readonly vendor?: string;
             readonly vendor_call_id: string;
         };
-        /** @description One hosted MCP server from the built-in catalog. */
-        readonly Plugin: {
-            readonly category: string;
-            /** @description True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin. */
-            readonly client_required?: boolean;
-            readonly description: string;
-            readonly id: string;
-            readonly instance_hint?: string;
-            readonly instance_required?: boolean;
-            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. */
-            readonly logo_url: string;
-            readonly name: string;
-            /** @description True when the plugin has a read-only endpoint an agent may pick on its entry. */
-            readonly readonly?: boolean;
-            /** @description The redirect URI that client has to list, which is this deployment's. Only with client_required. */
-            readonly redirect_uri?: string;
-            /** @description The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through. */
-            readonly scopes_supported?: readonly string[];
-            /** @description What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin. */
-            readonly setup_steps?: readonly components["schemas"]["PluginSetupStep"][];
-            /**
-             * Format: uri
-             * @description Where the app creates that client with the provider. Only with client_required.
-             */
-            readonly setup_url?: string;
-            /** @description The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited. */
-            readonly toolsets?: readonly string[];
-        };
-        readonly PluginAuthorization: {
-            /** @description The URL the browser should open to finish the login. */
-            readonly authorize_url: string;
-        };
-        /** @description The OAuth client a config logs a plugin in with. Its secret is sealed and never returned. */
-        readonly PluginClient: {
-            /** @description The client id the provider issued. */
-            readonly client_id: string;
-            /** @description Whether a client secret is stored. It is never returned. */
-            readonly has_secret: boolean;
-        };
-        /** @description A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation. */
-        readonly PluginConnection: {
-            readonly category?: string;
-            /** @description The OAuth client the config set for the plugin. Absent when it set none. */
-            readonly client?: components["schemas"]["PluginClient"];
-            /** @description True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient. */
-            readonly client_required?: boolean;
-            readonly description?: string;
-            readonly instance_hint?: string;
-            readonly instance_required?: boolean;
-            readonly instance_url?: string;
-            /** @description Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL. */
-            readonly logo_url: string;
-            readonly name: string;
-            readonly plugin_id: string;
-            /**
-             * @description The app's login. Always not_connected for a plugin with user, which the app does not log into.
-             * @enum {string}
-             */
-            readonly status: "pending" | "connected" | "failed" | "not_connected";
-            /** @description True when the config names the plugin with user: each end user connects their own account in the conversation. */
-            readonly user?: boolean;
-        };
         /** @description One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached. */
         readonly PluginEntry: string | components["schemas"]["PluginWithOptions"];
         /** @description One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it. */
@@ -7630,13 +7409,6 @@ export type components = {
             readonly instructions?: string;
             /** @description A catalog plugin the config names under plugins. */
             readonly plugin: string;
-        };
-        /** @description One thing to do with a plugin's provider before its OAuth client can be set. */
-        readonly PluginSetupStep: {
-            /** @description How to do it with the provider. */
-            readonly description: string;
-            /** @description What the step does, in a few words. */
-            readonly title: string;
         };
         /** @description One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take. */
         readonly PluginWithOptions: {
@@ -8262,7 +8034,7 @@ export type components = {
          */
         readonly RecordingStatus: "queued" | "running" | "completed" | "failed";
         readonly RespondRequest: {
-            /** @description A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing. */
+            /** @description A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region. */
             readonly audio?: components["schemas"]["AudioSource"];
             /** @description The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it. */
             readonly client_id?: string;
@@ -8760,10 +8532,10 @@ export type components = {
             readonly name: string;
         };
         /**
-         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
          * @enum {string}
          */
-        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered";
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
@@ -8823,6 +8595,8 @@ export type components = {
             readonly vendor?: string;
             /** @description The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
             readonly vendor_call_id?: string;
+            /** @description What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it. */
+            readonly voicemail?: components["schemas"]["SessionVoicemail"];
         };
         readonly SessionQuery: {
             /** @description The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page. */
@@ -8926,20 +8700,17 @@ export type components = {
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
         };
+        /** @description What the agent does when an answering machine picks up. */
+        readonly SessionVoicemail: {
+            readonly action: components["schemas"]["VoicemailAction"];
+            /** @description Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up. */
+            readonly message?: string;
+        };
         readonly SetNumberAgentRequest: {
             /** @description The name of the agent config that answers the number. Give this or config_id. */
             readonly agent?: string;
             /** @description The id of the agent config that answers the number. Give this or agent. */
             readonly config_id?: string;
-        };
-        /** @description The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback. */
-        readonly SetPluginClientRequest: {
-            /** @description The client id the provider issued. */
-            readonly client_id: string;
-            /** @description The client secret the provider issued. Left out for a public client. */
-            readonly client_secret?: string;
-            /** @description Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's. */
-            readonly user?: boolean;
         };
         readonly SetSandboxRecipientsRequest: {
             /** @description Numbers in E.164, at most max_recipients of them. */
@@ -9546,19 +9317,22 @@ export type components = {
             /** @description The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors. */
             readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
-            /** @description MCP servers outside the plugin catalog, opened by their URL with no login. */
+            /**
+             * @deprecated
+             * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+             */
             readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
             /**
              * @deprecated
-             * @description Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
             /**
              * @deprecated
-             * @description Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+             * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
             readonly plugins?: readonly components["schemas"]["PluginEntry"][];
             /**
@@ -9585,7 +9359,7 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
-            /** @description How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored. */
+            /** @description How connector tools are offered. A setting left out keeps what is stored. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
             readonly video?: components["schemas"]["SessionVideo"];
@@ -10465,6 +10239,12 @@ export type components = {
             /** Format: date-time */
             readonly updated_at?: string;
         };
+        /**
+         * @description hang_up: end the call at once, saying nothing.
+         *     leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+         * @enum {string}
+         */
+        readonly VoicemailAction: "hang_up" | "leave_message";
         readonly VoicePreview: {
             /**
              * Format: byte
@@ -10623,7 +10403,7 @@ export type components = {
         readonly "X-Stream-Balance-Warning": "low" | "exhausted";
         /** @description true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise. */
         readonly "X-Stream-Cost-Estimated": "true";
-        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none. */
+        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse or respondSession, sends none. */
         readonly "X-Stream-Cost-Micros": number;
     };
     pathItems: never;
@@ -12019,188 +11799,6 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["AgentChanges"];
                 };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly listConfigPlugins: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The resource, as returned when it was created. */
-                readonly id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The config's connections */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["PluginConnection"][];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly disconnectPlugin: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The resource, as returned when it was created. */
-                readonly id: string;
-                /** @description A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into. */
-                readonly plugin_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The login is gone */
-            readonly 204: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly authorizePlugin: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The resource, as returned when it was created. */
-                readonly id: string;
-                /** @description A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into. */
-                readonly plugin_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AuthorizePluginRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The URL the browser should open */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PluginAuthorization"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly setPluginClient: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The resource, as returned when it was created. */
-                readonly id: string;
-                /** @description A built-in catalog id such as google_calendar. */
-                readonly plugin_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SetPluginClientRequest"];
-            };
-        };
-        readonly responses: {
-            /** @description The client as stored, without its secret */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PluginClient"];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly deletePluginClient: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description The resource, as returned when it was created. */
-                readonly id: string;
-                /** @description A built-in catalog id such as google_calendar. */
-                readonly plugin_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The client is gone */
-            readonly 204: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
             };
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
@@ -14644,136 +14242,6 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly listPlugins: {
-        readonly parameters: {
-            readonly query?: {
-                /** @description Filter by name, category or description. */
-                readonly q?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description Matching plugins, in catalog order */
-            readonly 200: {
-                headers: {
-                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
-                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
-                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
-                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["Plugin"][];
-                };
-            };
-            readonly 400: components["responses"]["BadRequest"];
-            readonly 401: components["responses"]["Unauthorized"];
-            readonly 402: components["responses"]["PaymentRequired"];
-            readonly 403: components["responses"]["Forbidden"];
-            readonly 500: components["responses"]["InternalError"];
-            readonly 503: components["responses"]["Unavailable"];
-        };
-    };
-    readonly getPluginLogo: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                /** @description A built-in catalog id such as slack or linear. */
-                readonly plugin_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The logo */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "image/svg+xml": string;
-                };
-            };
-            readonly 404: components["responses"]["NotFound"];
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly pluginOAuthCallback: {
-        readonly parameters: {
-            readonly query?: {
-                readonly code?: string;
-                readonly error?: string;
-                readonly state?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description The browser is sent back to the agent editor */
-            readonly 302: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            readonly 500: components["responses"]["InternalError"];
-        };
-    };
-    readonly receivePluginEvent: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly token: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description A verification's challenge, echoed, or an event already taken */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The event is taken, and a conversation is opening for it */
-            readonly 202: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The delivery is not signed with the subscription's secret */
-            readonly 401: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description There is no such subscription any more; stop delivering to it */
-            readonly 410: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The delivery is over 256 KiB */
-            readonly 413: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-            readonly 500: components["responses"]["InternalError"];
         };
     };
     readonly listProviderKeys: {
@@ -17956,6 +17424,48 @@ export interface operations {
                 content?: never;
             };
             /** @description The call is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveCallMachine: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The report is taken */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report could not be read */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No placed call is waiting at this token */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report is over 64 KiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;

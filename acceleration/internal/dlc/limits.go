@@ -69,11 +69,11 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 	if len(limits.Countries) > 0 {
 		country := region.Of(to)
 		if country == "" {
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %s only to %s, and this recipient is in no country",
-				ErrRefused, tier, channel, strings.Join(limits.Countries, ", "))), "country"
+			return refused(codeCountry, stack.Wrap(fmt.Errorf("%w: %s tier allows %s only to %s, and this recipient is in no country",
+				ErrRefused, tier, channel, strings.Join(limits.Countries, ", ")))), codeCountry
 		}
 		if !slices.Contains(limits.Countries, country) {
-			return stack.Wrap(fmt.Errorf("%w: %s tier is not allowed to reach %s by %s", ErrRefused, tier, country, channel)), "country"
+			return refused(codeCountry, stack.Wrap(fmt.Errorf("%w: %s tier is not allowed to reach %s by %s", ErrRefused, tier, country, channel))), codeCountry
 		}
 	}
 	if g.redis != nil && (limits.PerDay != nil || limits.RecipientsPerDay != nil) {
@@ -86,12 +86,12 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 			if channel == Voice {
 				unit = "minutes"
 			}
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d %s of %s a day, and those of today (UTC) are used up",
-				ErrRefused, tier, *limits.PerDay, unit, channel)), "per_day"
+			return refused(codePerDay, stack.Wrap(fmt.Errorf("%w: %s tier allows %d %s of %s a day, and those of today (UTC) are used up",
+				ErrRefused, tier, *limits.PerDay, unit, channel))), codePerDay
 		}
 		if limits.RecipientsPerDay != nil && !today.reached && today.recipients >= int64(*limits.RecipientsPerDay) {
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %s to %d recipients a day, and that many were reached today (UTC); "+
-				"the ones already reached can still be", ErrRefused, tier, channel, *limits.RecipientsPerDay)), "recipients_per_day"
+			return refused(codeRecipientsPerDay, stack.Wrap(fmt.Errorf("%w: %s tier allows %s to %d recipients a day, and that many were reached today (UTC); "+
+				"the ones already reached can still be", ErrRefused, tier, channel, *limits.RecipientsPerDay))), codeRecipientsPerDay
 		}
 	}
 	if channel == Voice && limits.Concurrent != nil {
@@ -102,8 +102,8 @@ func (g *Gate) overTier(ctx context.Context, organization, tier, channel, to str
 		// The leg being transferred is one of the call's.
 		up -= min(inCall, 1)
 		if up >= *limits.Concurrent {
-			return stack.Wrap(fmt.Errorf("%w: %s tier allows %d calls at once, and that many are up",
-				ErrRefused, tier, *limits.Concurrent)), "concurrent"
+			return refused(codeConcurrent, stack.Wrap(fmt.Errorf("%w: %s tier allows %d calls at once, and that many are up",
+				ErrRefused, tier, *limits.Concurrent))), codeConcurrent
 		}
 	}
 	return nil, ""

@@ -13,10 +13,12 @@ final readonly class GuestUserRequest
     public function __construct(
         /** @var array<string, mixed>|null */
         public ?array $custom = null,
-        // A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a...
+        // A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it...
         public ?string $id = null,
-        // What to call them, for a transcript a person reads later.
+        // What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unles...
         public ?string $name = null,
+        // The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by be...
+        public ?string $refreshSecret = null,
     ) {
     }
 
@@ -29,6 +31,7 @@ final readonly class GuestUserRequest
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
+            refreshSecret: array_key_exists('refresh_secret', $data) && $data['refresh_secret'] !== null ? Json::string($data, 'refresh_secret') : null,
         );
     }
 
@@ -48,6 +51,9 @@ final readonly class GuestUserRequest
         }
         if ($this->name !== null) {
             $out['name'] = $this->name;
+        }
+        if ($this->refreshSecret !== null) {
+            $out['refresh_secret'] = $this->refreshSecret;
         }
         return $out;
     }

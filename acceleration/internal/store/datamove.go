@@ -152,7 +152,9 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
+// A guest's refresh secret hash is the same kind of thing: a moved guest is handed a new
+// one by its own token or by the app's backend, or comes back as a new guest.
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed", "refresh_secret_hash"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {

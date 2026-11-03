@@ -247,15 +247,41 @@ type stubTTS struct {
 
 	mu   sync.Mutex
 	said []tts.Request
+	// holding is a line whose synthesis is not reported complete until held is closed.
+	holding string
+	held    chan struct{}
 }
 
 func (s *stubTTS) Start(context.Context) error { return nil }
 
+// holds keeps the synthesis of text going until the returned func is called.
+func (s *stubTTS) holds(text string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holding, s.held = text, make(chan struct{})
+	return sync.OnceFunc(func() { close(s.held) })
+}
+
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
+	held := s.held
+	if request.Text != s.holding {
+		held = nil
+	}
 	s.mu.Unlock()
 
+	if held != nil {
+		go func() {
+			s.emitter.Send(tts.AudioChunk{
+				SynthesisID: request.ID,
+				Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+			})
+			<-held
+			s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, AudioDurationMs: 10})
+		}()
+		return nil
+	}
 	if request.Text != "" {
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,
@@ -2090,7 +2116,8 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 		return false
 	}, "the next turn was never asked")
 	s.False(next.HasImage(), "the picture was sent again with a later turn")
-	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
+	s.Contains(handed(next), "user: what is this\n\n[sent with a photo, not shown again]",
+		"the words that came with the picture, and that a picture came, were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
@@ -2123,11 +2150,10 @@ func awaitReply(events <-chan Event) string {
 	}
 }
 
-// TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector: a session with a plugin and
-// no connector binding. Its tools are the plugin's, its call goes through the plugin's
-// runner and its answer reaches the model, and nothing connector-shaped is said on its
-// events. Every connector hook is a no-op without a binding (AI-851).
-func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
+// TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered: a config's mcp_servers and
+// plugins are no longer read, so a session whose spec still carries them, as one of a row
+// saved before they were refused does, never reaches the server and offers none of its tools.
+func (s *SessionSuite) TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered() {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
 	server.AddTool(&mcpsdk.Tool{
 		Name: "search", Description: "Finds a note.",
@@ -2136,39 +2162,27 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
 		})
-	provider := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
+		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	var reached atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
 	defer provider.Close()
 	s.plugins = &plugins.Auth{HTTP: provider.Client()}
 	s.manages()
-	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "notes__search", Arguments: "{}"}}
 	needsLogin := false
-	created := s.joins(Spec{MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}}})
 
-	events, detach := created.Watch()
-	defer detach()
-	s.hears(created)
-	s.says(created, "find my note")
+	created := s.joins(Spec{
+		MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}},
+		Plugins:    []store.PluginEntry{{Name: "linear"}},
+	})
 
-	var ran *agent.ToolRan
-	deadline := time.After(settleFor)
-	for ran == nil {
-		select {
-		case event := <-events:
-			if _, connector := event.(ConnectorUnavailable); connector {
-				s.Fail("a session with no binding says nothing about connectors")
-			}
-			if finished, ok := event.(agent.ToolRan); ok {
-				ran = &finished
-			}
-		case <-deadline:
-			s.Require().FailNow("the plugin's tool never ran")
-		}
+	for _, tool := range created.current().Tools() {
+		s.False(strings.HasPrefix(tool, "notes__") || strings.HasPrefix(tool, "linear__"), "%s is offered", tool)
 	}
-	s.Equal("notes__search", ran.Tool)
-	s.Equal("the note", ran.Result)
-	s.NoError(ran.Err)
-	s.Contains(created.current().Tools(), "notes__search")
+	s.Zero(reached.Load(), "the server is never opened")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {

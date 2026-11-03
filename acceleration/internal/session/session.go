@@ -251,6 +251,8 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// machine holds the agent's hang-up while a call that leaves a voicemail is checked.
+	machine machineCheck
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
@@ -1592,6 +1594,7 @@ func (s *Session) close() error {
 	s.closing = true
 	s.stopTimeout()
 	s.mu.Unlock()
+	s.checked(false)
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
@@ -1666,6 +1669,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
+		s.heardCaller(event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
