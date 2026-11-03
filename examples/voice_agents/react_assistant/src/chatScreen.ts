@@ -1,5 +1,6 @@
 import type { Session } from "@stream-io/calypso";
 import type { VoiceSession } from "@stream-io/calypso/video";
+import type { LocalMessage } from "stream-chat";
 import type { AIPendingMessage } from "stream-chat-react/ai-components";
 
 import { isAgentReply, type AgentChat } from "./agentChat";
@@ -10,6 +11,8 @@ import { Store } from "./store";
 export interface ChatScreenDeps {
   /** Carries on the conversation `sessionId` names, or starts one for undefined, with its chat open. */
   open(sessionId: string | undefined): Promise<AgentChat>;
+  /** A conversation's latest messages, read from its channel without its session. */
+  history(conversationId: string): Promise<LocalMessage[]>;
   /** Deletes a conversation's session. */
   remove(sessionId: string): Promise<void>;
   /** The call of a session whose voice is on. */
@@ -31,6 +34,16 @@ export interface ChatScreenSnapshot {
   readonly pending: AIPendingMessage | undefined;
   /** Why opening the conversation failed, or undefined. */
   readonly failure: string | undefined;
+  /**
+   * A conversation's messages from the list, read from Stream while its session comes back on the
+   * router, which takes seconds longer. Shown until the chat is open, which then has them too.
+   */
+  readonly history: readonly LocalMessage[] | undefined;
+  /**
+   * Whether a conversation from the list has nothing to show yet: neither its messages nor its
+   * chat. The screen says so meanwhile rather than look like a new conversation.
+   */
+  readonly isLoading: boolean;
   /** Whether voice mode is up, over the chat. */
   readonly isVoiceShown: boolean;
   /** The call in voice mode, once it has started. */
@@ -64,16 +77,21 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   /**
    * @param sessionId The conversation to carry on, or undefined for a new one.
    * @param onStarted Says which session a new conversation became, once it is first used.
+   * @param conversationId The carried-on conversation's channel, as `type:id`, so its messages can
+   * be read while its session opens.
    */
   constructor(
     private readonly sessionId: string | undefined,
     private readonly deps: ChatScreenDeps,
     private readonly onStarted: (sessionId: string) => void,
+    conversationId?: string,
   ) {
     super({
       chat: undefined,
       pending: undefined,
       failure: undefined,
+      history: undefined,
+      isLoading: sessionId !== undefined,
       isVoiceShown: false,
       voice: undefined,
       voiceFailure: undefined,
@@ -81,6 +99,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
     });
     if (sessionId) {
       void this.open();
+      if (conversationId) void this.preview(conversationId);
     }
   }
 
@@ -215,7 +234,8 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   }
 
   private userMessages(): number {
-    return this.get().chat?.get().messages.filter((each) => !isAgentReply(each)).length ?? 0;
+    const { chat, history } = this.get();
+    return (chat?.get().messages ?? history ?? []).filter((each) => !isAgentReply(each)).length;
   }
 
   private setAsked(asked: Asked | undefined): void {
@@ -245,6 +265,17 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
     return this.opening;
   }
 
+  /**
+   * Reads a carried-on conversation's messages from Stream, which takes a fraction of the time its
+   * session does to come back. Nothing is lost if it fails: the chat reads them again once open.
+   */
+  private async preview(conversationId: string): Promise<void> {
+    const history = await this.deps.history(conversationId).catch(() => undefined);
+    // The session opened first, or the person moved on: there is nothing to show this for.
+    if (!history || this.left || this.get().chat) return;
+    this.update({ history, isLoading: false });
+  }
+
   /** Carries on the conversation's session, or starts one for a new conversation, and opens its channel. */
   private async start(): Promise<AgentChat | undefined> {
     this.update({ failure: undefined });
@@ -263,10 +294,10 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
           this.setAsked(undefined);
         }
       });
-      this.update({ chat });
+      this.update({ chat, history: undefined, isLoading: false });
       return chat;
     } catch (cause) {
-      this.update({ failure: messageOf(cause) });
+      this.update({ failure: messageOf(cause), isLoading: false });
       return undefined;
     }
   }

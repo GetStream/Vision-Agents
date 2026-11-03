@@ -455,6 +455,62 @@ button {
   color: var(--muted);
 }
 
+/* A conversation opening. It waits a moment before showing, so one that opens quickly never
+   flashes it, then shimmers until the messages take its place. It sits at the top, where the
+   first question will, rather than in the middle as the greeting does. */
+.loading-conversation {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding-top: 1rem;
+  animation: fade-in var(--duration) 200ms var(--ease) backwards;
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    color-mix(in srgb, var(--surface) 55%, var(--bg)) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-question {
+  align-self: flex-end;
+  width: 46%;
+  height: 40px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+}
+
+.skeleton-question.narrow {
+  width: 32%;
+  margin-top: 20px;
+}
+
+.skeleton-line {
+  width: 88%;
+}
+
+.skeleton-line.short {
+  width: 54%;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 .notice {
   max-width: 480px;
   margin: 20vh auto;
@@ -677,7 +733,9 @@ button {
   .voice-mode,
   .call-controls,
   .theme-icon,
-  .control {
+  .control,
+  .loading-conversation,
+  .skeleton {
     animation: none;
     transition: none;
   }

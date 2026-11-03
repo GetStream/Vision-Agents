@@ -34,8 +34,16 @@ class FakeChat extends Store<{ messages: LocalMessage[]; failure: string | undef
   }
 }
 
-/** A router whose session opens when the test says, and that records what it deleted. */
-function router() {
+/** A message as Stream holds it: the person's, or the agent's reply. */
+function message(text: string, isReply = false): LocalMessage {
+  return { id: crypto.randomUUID(), text, ...(isReply ? { ai_generated: true } : {}) } as unknown as LocalMessage;
+}
+
+/**
+ * A router whose session opens when the test says, and that records what it deleted, beside a
+ * Stream channel that hands back `history` at once.
+ */
+function router(history: LocalMessage[] = []) {
   const chat = new FakeChat();
   const removed: string[] = [];
   let open: (() => void) | undefined;
@@ -47,6 +55,7 @@ function router() {
       await opened;
       return chat as unknown as AgentChat;
     },
+    history: async () => history,
     remove: async (id) => {
       removed.push(id);
     },
@@ -70,6 +79,87 @@ describe("ChatScreen", () => {
     expect(await first).toBe(true);
 
     expect(chat.asked).toEqual(["Write me a poem about Lisbon"]);
+  });
+
+  it("says a conversation from the list is loading until its session is open", async () => {
+    const { deps, open } = router();
+    const screen = new ChatScreen("session-1", deps, () => undefined);
+    expect(screen.get().isLoading).toBe(true);
+
+    open();
+    await settle();
+    expect(screen.get().isLoading).toBe(false);
+    expect(screen.get().chat).toBeDefined();
+  });
+
+  it("stops saying it is loading when the conversation could not be opened", async () => {
+    const { deps } = router();
+    const failing: ChatScreenDeps = { ...deps, open: async () => Promise.reject(new Error("the router is down")) };
+    const screen = new ChatScreen("session-1", failing, () => undefined);
+
+    await settle();
+    expect(screen.get().isLoading).toBe(false);
+    expect(screen.get().failure).toContain("the router is down");
+  });
+
+  it("shows a conversation's messages from Stream before its session is open", async () => {
+    const earlier = [message("Plan a weekend in Lisbon"), message("Here is a plan", true)];
+    const { deps } = router(earlier);
+    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
+
+    await settle();
+    expect(screen.get().history).toEqual(earlier);
+    expect(screen.get().isLoading).toBe(false);
+    expect(screen.get().chat).toBeUndefined();
+  });
+
+  it("lets the chat's own messages take over once its session is open", async () => {
+    const { chat, deps, open } = router([message("Plan a weekend in Lisbon")]);
+    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
+    await settle();
+
+    open();
+    await settle();
+    expect(screen.get().chat).toBe(chat);
+    expect(screen.get().history).toBeUndefined();
+  });
+
+  it("keeps a question asked over the history until Stream's copy of it arrives", async () => {
+    const earlier = [message("Plan a weekend in Lisbon"), message("Here is a plan", true)];
+    const { chat, deps, open } = router(earlier);
+    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
+    await settle();
+
+    const sending = screen.send("Make it three days");
+    // The chat opens holding what the history held: the question has not arrived yet.
+    chat.update({ messages: [...earlier] });
+    open();
+    await sending;
+    // Anything the chat says meanwhile, such as the session starting to respond.
+    chat.update({});
+    expect(screen.get().pending?.text).toBe("Make it three days");
+
+    chat.arrives("Make it three days");
+    expect(screen.get().pending).toBeUndefined();
+  });
+
+  it("ignores history that arrives after the session opened", async () => {
+    const { chat, deps, open } = router();
+    let giveHistory: (messages: LocalMessage[]) => void = () => undefined;
+    const late: ChatScreenDeps = { ...deps, history: () => new Promise((resolve) => (giveHistory = resolve)) };
+    open();
+    const screen = new ChatScreen("session-1", late, () => undefined, "agent:session-1");
+    await settle();
+    expect(screen.get().chat).toBe(chat);
+
+    giveHistory([message("Stale")]);
+    await settle();
+    expect(screen.get().history).toBeUndefined();
+  });
+
+  it("does not say a new conversation is loading", () => {
+    const { deps } = router();
+    expect(new ChatScreen(undefined, deps, () => undefined).get().isLoading).toBe(false);
   });
 
   it("waits for a reply that is still being written before sending the next question", async () => {
