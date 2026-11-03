@@ -10400,7 +10400,7 @@ export type components = {
         readonly "X-Stream-Balance-Warning": "low" | "exhausted";
         /** @description true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise. */
         readonly "X-Stream-Cost-Estimated": "true";
-        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none. */
+        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse or respondSession, sends none. */
         readonly "X-Stream-Cost-Micros": number;
     };
     pathItems: never;

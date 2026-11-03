@@ -48,11 +48,13 @@ final readonly class Responses
      * @internal for Dispatch, which answers an inbound message on the request it was sent as
      *
      * @param list<ImageSource> $images
-     * @param string $requestId the request id of the inbound message being answered; empty generates one
+     * @param string $requestId the request id of the inbound message being answered, kept with images
+     *     too, since that message and its photos are already in the channel; empty generates one for
+     *     text only
      */
     public function createAnswering(string $text, array $images, string $requestId): AgentResponse
     {
-        $requestId = $images !== [] ? null : ($requestId === '' ? bin2hex(random_bytes(16)) : $requestId);
+        $requestId = $requestId !== '' ? $requestId : ($images !== [] ? null : bin2hex(random_bytes(16)));
         $body = new CreateResponseRequest(text: $text, images: $images === [] ? null : $images, requestId: $requestId);
         $created = $this->client->post('/v1/agents/sessions/{id}/responses', ['id' => $this->sessionId], body: $body->toArray());
         return new AgentResponse($this->client, ResponseRow::fromArray(Json::asObject($created)));
