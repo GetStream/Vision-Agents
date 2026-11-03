@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,24 +11,56 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// never fails t if condition holds at any of its checks, made every tick for waitFor. It is
-// testify's Never checked on the test's own goroutine: testify's runs each check on a goroutine
-// and returns at waitFor without waiting for the one still running, so a check that reads a
-// suite's fields would race the next test's setup rewriting them.
+// neverGrace is how long past waitFor a check of never may run. A check reads a store or a
+// fake, which takes milliseconds, or seconds under load; a read stuck in I/O wait lasted
+// 1m50s once. 30s is past the first and well short of go test's 10m timeout.
+const neverGrace = 30 * time.Second
+
+// never fails t if condition holds at any of its checks, made every tick for waitFor. A check
+// that outlives waitFor+neverGrace fails t, so a stuck check fails its test, not the binary.
 func never(t assert.TestingT, condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
 	if h, ok := t.(interface{ Helper() }); ok {
 		h.Helper()
 	}
-	timer := time.NewTimer(waitFor)
-	defer timer.Stop()
+	return neverWithin(t, condition, waitFor, tick, neverGrace, msgAndArgs...)
+}
+
+// neverWithin is never with its grace given. Each check runs on a goroutine that the test
+// waits for, and waitFor returns only after the check running at its end has finished, so a
+// check that reads a suite's fields cannot race the next test's setup rewriting them: testify's
+// Never returns at waitFor and leaves its check running.
+func neverWithin(t assert.TestingT, condition func() bool, waitFor, tick, grace time.Duration, msgAndArgs ...any) bool {
+	if h, ok := t.(interface{ Helper() }); ok {
+		h.Helper()
+	}
+	window := time.NewTimer(waitFor)
+	defer window.Stop()
+	limit := time.NewTimer(waitFor + grace)
+	defer limit.Stop()
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	for {
-		if condition() {
-			return assert.Fail(t, "Condition satisfied", msgAndArgs...)
+		held, finished := make(chan bool, 1), make(chan struct{})
+		go func() {
+			defer close(finished)
+			held <- condition()
+		}()
+		select {
+		case <-finished:
+			select {
+			case holds := <-held:
+				if holds {
+					return assert.Fail(t, "Condition satisfied", msgAndArgs...)
+				}
+			default:
+				// The check left through FailNow, which has failed the test itself.
+				return false
+			}
+		case <-limit.C:
+			return assert.Fail(t, fmt.Sprintf("a check was still running %s after the %s it was to run for", grace, waitFor), msgAndArgs...)
 		}
 		select {
-		case <-timer.C:
+		case <-window.C:
 			return true
 		case <-ticker.C:
 		}
@@ -49,7 +82,7 @@ func (f *failures) Errorf(format string, args ...any) {
 	f.messages = append(f.messages, fmt.Sprintf(format, args...))
 }
 
-// A check that outlasts waitFor has finished by the time never returns, so nothing it reads
+// A check that outlasts waitFor within the grace has finished by the time never returns, so nothing it reads
 // is read after its test.
 func (s *NeverSuite) TestACheckStillRunningAtTheDeadlineHasFinishedWhenItReturns() {
 	var running atomic.Bool
@@ -92,4 +125,38 @@ func (s *NeverSuite) TestTheWindowIsWaitForAndTheCheckIsMadeOncePerTick() {
 
 	s.False(held, "a condition true half way through the window went unseen")
 	s.LessOrEqual(checks.Load(), int32(waitFor/tick+1))
+}
+
+// A check that blocks past the grace fails its test then, with the message, rather than holding
+// the run until go test's timeout. The check is let go when the test ends.
+func (s *NeverSuite) TestACheckStuckPastTheGraceFailsItsTest() {
+	release := make(chan struct{})
+	s.T().Cleanup(func() { close(release) })
+	start := time.Now()
+	t := &failures{}
+	held := neverWithin(t, func() bool {
+		<-release
+		return false
+	}, 10*time.Millisecond, time.Millisecond, 100*time.Millisecond, "it is stuck")
+
+	s.False(held)
+	s.Less(time.Since(start), 5*time.Second, "never waited on the stuck check")
+	s.Require().Len(t.messages, 1)
+	s.Contains(t.messages[0], "a check was still running 100ms after the 10ms")
+	s.Contains(t.messages[0], "it is stuck")
+}
+
+// A check that leaves through FailNow has failed its test itself: never returns at once, rather
+// than waiting out the grace for an answer that will not come.
+func (s *NeverSuite) TestACheckThatLeavesThroughFailNowReturnsAtOnce() {
+	start := time.Now()
+	t := &failures{}
+	held := neverWithin(t, func() bool {
+		runtime.Goexit()
+		return false
+	}, time.Second, time.Millisecond, 10*time.Second)
+
+	s.False(held)
+	s.Less(time.Since(start), 2*time.Second)
+	s.Empty(t.messages)
 }

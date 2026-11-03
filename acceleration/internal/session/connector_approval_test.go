@@ -46,7 +46,7 @@ func (s *ConnectorApprovalSuite) SetupTest() {
 func (s *ConnectorApprovalSuite) TestACallIsSentOnlyOnceTheUserAllowsIt() {
 	d, connection := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return len(answer) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "it waits for the person")
 	s.Zero(s.provider.calls("primary"), "nothing reached the provider before they answered")
@@ -64,7 +64,7 @@ func (s *ConnectorApprovalSuite) TestACallIsSentOnlyOnceTheUserAllowsIt() {
 func (s *ConnectorApprovalSuite) TestADeclinedCallIsNotSentAndTheModelIsTold() {
 	d, connection := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.True(d.answerApproval("call-1", "command-1", false, "Not now"))
 	got := s.answerOf(answer)
@@ -83,7 +83,7 @@ func (s *ConnectorApprovalSuite) TestADeclinedCallIsNotSentAndTheModelIsTold() {
 func (s *ConnectorApprovalSuite) TestAnAnswerNamingAnotherCommandOrCallIsRefused() {
 	d, _ := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 
 	s.False(d.answerApproval("call-1", "command-2", true, ""), "another command")
@@ -102,7 +102,7 @@ func (s *ConnectorApprovalSuite) TestACallNobodyAllowsInTimeIsDeclined() {
 	d, connection := s.holding("whoami")
 	d.approvals.wait = 300 * time.Millisecond
 
-	got := s.answerOf(s.callInBackground(s.ctx, d, "call-1", "crm__whoami"))
+	got := s.answerOf(s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}"))
 
 	s.Require().NoError(got.err)
 	s.JSONEq(`{"status":"declined","message":"Nobody allowed crm__whoami in time, so it was declined and not run. Tell the user, and that they can ask again."}`, got.said)
@@ -152,7 +152,7 @@ func (s *ConnectorApprovalSuite) TestATurnThatEndsStopsTheWait() {
 	turn, end := context.WithCancel(s.ctx)
 	defer end()
 
-	answer := s.callInBackground(turn, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(turn, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	end()
 	got := s.answerOf(answer)
@@ -168,7 +168,7 @@ func (s *ConnectorApprovalSuite) TestATurnThatEndsStopsTheWait() {
 func (s *ConnectorApprovalSuite) TestAStoppedReplysCallStopsWaiting() {
 	d, _ := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.stop("call-1")
 	got := s.answerOf(answer)
@@ -182,7 +182,7 @@ func (s *ConnectorApprovalSuite) TestAStoppedReplysCallStopsWaiting() {
 func (s *ConnectorApprovalSuite) TestAnAllowAfterTheReplyStoppedRunsNothing() {
 	d, connection := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.stop("call-1")
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -208,7 +208,7 @@ func (s *ConnectorApprovalSuite) TestAToolTheListDoesNotNameIsSentAtOnce() {
 func (s *ConnectorApprovalSuite) TestAPatternHoldsTheToolsItMatches() {
 	d, _ := s.holding("who*")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -225,7 +225,7 @@ func (s *ConnectorApprovalSuite) TestApprovalAddedToTheConfigHoldsTheNextCall() 
 	binding.RequireApproval = []string{"whoami"}
 	s.rebind(config, binding)
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Zero(s.provider.calls("primary"))
@@ -243,7 +243,7 @@ func (s *ConnectorApprovalSuite) TestApprovalTakenOffTheConfigStillHoldsTheSessi
 	binding.RequireApproval = nil
 	s.rebind(config, binding)
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.True(d.answerApproval("call-1", "command-1", false, ""))
@@ -256,7 +256,7 @@ func (s *ConnectorApprovalSuite) TestOnlyTheSessionsUserOrItsBackendMayAnswer() 
 	d, _ := s.holding("whoami")
 	session := &Session{spec: d.spec, connectors: d}
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 
 	s.False(session.AnswerConnectorApproval("call-1", "command-1", true, "",
@@ -272,7 +272,7 @@ func (s *ConnectorApprovalSuite) TestOnlyTheSessionsUserOrItsBackendMayAnswer() 
 		Owner{CustomerID: s.customerID, Kind: auth.KindServer}), "the backend")
 	s.Equal("primary", s.answerOf(answer).said)
 
-	again := s.callInBackground(s.ctx, d, "call-2", "crm__whoami")
+	again := s.callInBackground(s.ctx, d, "call-2", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-2") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.True(session.AnswerConnectorApproval("call-2", "command-1", true, "",
 		Owner{CustomerID: s.customerID, UserID: "alice", Kind: auth.KindAuthenticated}), "the user")
@@ -319,7 +319,7 @@ func (s *ConnectorApprovalSuite) TestABindingRemovedWhileTheCallWaitsIsNotSent()
 	config, err := s.store.AgentConfig(s.ctx, s.customerID, d.spec.ConfigID)
 	s.Require().NoError(err)
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.rebind(config)
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -335,7 +335,7 @@ func (s *ConnectorApprovalSuite) TestABindingRemovedWhileTheCallWaitsIsNotSent()
 func (s *ConnectorApprovalSuite) TestAConfigDeletedWhileTheCallWaitsIsNotSent() {
 	d, connection := s.holding("whoami")
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, s.customerID, d.spec.ConfigID))
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -353,7 +353,7 @@ func (s *ConnectorApprovalSuite) TestAnAllowedCallsLatencyLeavesOutTheWait() {
 	d, connection := s.holding("whoami")
 	const wait = 500 * time.Millisecond
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return len(answer) > 0 }, wait, 20*time.Millisecond)
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -368,7 +368,7 @@ func (s *ConnectorApprovalSuite) TestAReplyThatEndsAsTheAnswerComesRunsNothing()
 	d, _ := s.holding("whoami")
 	d.approvals.waits = func(string) bool { return true }
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.stop("call-1")
 	s.True(d.answerApproval("call-1", "command-1", true, ""))
@@ -390,7 +390,7 @@ func (s *ConnectorApprovalSuite) TestAnAnswerAsTheQuestionIsShownFindsTheCall() 
 		return commandID, asked
 	}
 
-	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami")
+	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.True(<-taken, "the answer found the call")
 	s.Equal("primary", s.answerOf(answer).said)
@@ -449,28 +449,6 @@ func (s *ConnectorApprovalSuite) waiting(callID string) bool {
 	_, asked := s.asked[callID]
 	_, over := s.settled[callID]
 	return asked && !over && !s.stopped[callID]
-}
-
-// callInBackground runs the call id of name on turn, and hands back what it said once it
-// answers.
-func (s *ConnectorApprovalSuite) callInBackground(turn context.Context, d *dispatcher, id, name string) chan answered {
-	answer := make(chan answered, 1)
-	go func() {
-		parts, err := d.Run(turn, llm.ToolCall{ID: id, Name: name, Arguments: "{}"})
-		answer <- answered{said: llm.TextOf(parts), err: err}
-	}()
-	return answer
-}
-
-// answerOf waits for a call run in the background to answer, past loginPoll.
-func (s *ConnectorApprovalSuite) answerOf(answer chan answered) answered {
-	select {
-	case got := <-answer:
-		return got
-	case <-time.After(2*loginPoll + 5*time.Second):
-		s.FailNow("the call never answered")
-		return answered{}
-	}
 }
 
 func (s *ConnectorApprovalSuite) questionOf(callID string) *persistent.ToolApproval {
