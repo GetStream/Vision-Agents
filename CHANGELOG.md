@@ -5,6 +5,12 @@
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
+### Usage rows say where the work ran and whether on the customer's own key
+
+Every `requests` row and usage event now carries `region` and `byok`, the priced item's, whether or not an entry priced it, so spend splits by region and by the customer's own provider keys, and unpriced work, which has no SKU, still says where it ran. The organization's usage listing in the usage service shows both. Rows and events from before read empty and false. Migrations `20261207120000_requests_region_byok` (router) and `00006_usage_event_region_byok` (usage service) add the columns with constant defaults, rewriting no row (AI-2187).
+### A session's runtime is priced in its region
+
+Runtime rows (`modality: runtime`) are now priced by the entry of the session's region: an `eu` agent's time is priced by `runtime/stream/*` in `eu`, never by the `us` one. A price list with no `eu` runtime entries leaves an `eu` session's time unpriced, so add them, free or priced, before an `eu` agent opens a session (AI-2187).
 
 ### A voice note sent with a question is transcribed and answered
 
@@ -270,6 +276,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A session outside region us cannot ask for memory
+
+The memory provider (mem0, at `api.mem0.ai`) keeps everything in the US, and an agent's work is done in its own region only. A session in another region, such as an `eu` agent's, that asks for memory (`memory.user_id`) is now refused with a 400 naming the region, rather than sending what the user said to the US (AI-2187).
+
+### Two regions kept in one turbopuffer region are refused
+
+`knowledge.regions` (`ROUTER_KNOWLEDGE_REGIONS`) mapping two of the router's regions to one turbopuffer region, the default region's included (`TURBOPUFFER_REGION`, else `gcp-us-central1`), stops the router and `router usage storage` from starting. Its knowledge bases would be listed under both regions, and the hourly storage job billed each twice under different usage ids (AI-2187).
 ### A voice session naming an unpriced backend or transcriber is refused
 
 `backend_model` (a GPT-Live session's text model) and `transcription_model` (OpenAI Realtime's transcriber) come from the caller's overwrites, and each is billed as a row of its own under that name. A name the price list does not cover was recorded at nothing. The session is now refused before the vendor is called, as a request error naming the model. `gpt-4o-transcribe` ($2.50 and $10 a million tokens in and out) and `whisper-1` ($0.006 a minute of audio) gain vendor prices, so they are accepted (AI-2187).
