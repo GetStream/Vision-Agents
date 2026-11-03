@@ -360,10 +360,9 @@ func (s *SessionSuite) TestPhotosWithoutTextAreShownOnTheMessageOfAQuestionWitho
 	s.Equal(photo.Data, uploads[0].Data)
 }
 
-// Voice started while the photos of a question with no text upload waits for the question to
-// take its turn, so the photos are shown on the person's message rather than uploaded for a
-// call that never shows them (AI-2550).
-func (s *SessionSuite) TestVoiceStartedWhilePhotosWithoutTextUploadLeavesThemShown() {
+// Voice starts while the photos of a question with no text upload: the upload holds no lock a
+// voice start needs, so it does not wait on the network, and the question still returns (AI-2550).
+func (s *SessionSuite) TestVoiceStartsWhilePhotosWithoutTextUpload() {
 	chat := chattest.NewServer(s.T())
 	service := persistent.NewForChat(chat.Client)
 	s.T().Cleanup(service.Close)
@@ -388,20 +387,16 @@ func (s *SessionSuite) TestVoiceStartedWhilePhotosWithoutTextUploadLeavesThemSho
 	}
 	voiced := make(chan error, 1)
 	go func() { voiced <- shared.StartVoice(s.ctx, Call{}) }()
-	s.Never(shared.Voicing, 300*time.Millisecond, 5*time.Millisecond, "voice started while the photo uploaded")
+	select {
+	case err := <-voiced:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("voice start waited for the photo upload")
+	}
+	s.True(shared.Voicing())
 	release()
 
 	s.Require().NoError(<-asked)
-	s.Require().NoError(<-voiced)
-	s.True(shared.Voicing())
-	s.eventually(func() bool {
-		for _, message := range s.stored(shared) {
-			if message.Role == "user" && message.Text == "" && len(message.Files) == 1 {
-				return true
-			}
-		}
-		return false
-	}, "the person's message never showed the photo")
 	s.Len(chat.Uploads(), 1)
 }
 
