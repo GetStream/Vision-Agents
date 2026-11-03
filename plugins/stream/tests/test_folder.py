@@ -621,8 +621,12 @@ class TestFolder:
             "slack",
         ):
             assert by_name[person].connection == ""
+        assert "tablejourney" not in by_name
         readme = (root / "README.md").read_text()
+        assert "    connector: custom_tablejourney\n" in readme
         source = (root / "mcp_plugins.py").read_text()
+        assert "mcp_servers" not in readme
+        assert "plugins:" not in readme
         assert "/v1/agents/connectors/oauth/callback" in readme
         assert "/v1/agents/plugins/callback" not in readme
         assert "/plugins" not in readme

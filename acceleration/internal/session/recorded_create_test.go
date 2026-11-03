@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -67,11 +69,12 @@ func (s *RecordedCreateSuite) TestAGreetingSlowerThanTheRowIsStored() {
 	created, err := m.Create(s.ctx, s.spec(Spec{Greeting: "Hi, I'm listening."}))
 	s.Require().NoError(err)
 
-	s.Require().Eventually(func() bool {
-		s.Require().NoError(m.records.Flush(s.ctx))
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		require.NoError(c, m.records.Flush(s.ctx))
 		got, err := s.store.SessionResponses(s.ctx, s.customer, created.ID(), 10, nil)
-		s.Require().NoError(err)
-		return len(got) == 1
+		require.NoError(c, err)
+		require.Len(c, got, 1)
 	}, settleFor, 20*time.Millisecond, "the greeting's turn is not stored")
 }
 

@@ -2763,7 +2763,7 @@ func (s *AgentSuite) TestAPhotoWrittenAloneIsAskedAboutAsImagesAlone() {
 }
 
 // A written aside's photo is seen with that question alone: the next one, and the history
-// it is kept in, carry its words only.
+// it is kept in, carry its words and a note that a photo was sent.
 func (s *AgentSuite) TestAWrittenAsidesPhotoIsNotShownAgain() {
 	s.sees = true
 	s.joinText()
@@ -2775,8 +2775,46 @@ func (s *AgentSuite) TestAWrittenAsidesPhotoIsNotShownAgain() {
 
 	input := harness.WithoutNotes(s.model.requests()[1].Input)
 	s.False(llm.HasImage(input), "a photo is seen with the question it came with alone")
-	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?"})
+	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?\n\n[sent with a photo, not shown again]"})
 	s.False(llm.HasImage(s.agent.History()))
+}
+
+// History says what a written aside sent, as a thread's history does: its words, then a note
+// of its photos, or the note alone for photos sent with no words, never imagesAlone, which
+// asks about images the history no longer holds. An aside of words alone is kept as written.
+func (s *AgentSuite) TestAWrittenAsideIsKeptWithANoteOfItsPhotos() {
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	cases := map[string]struct {
+		text   string
+		photos []llm.ImagePart
+		kept   string
+	}{
+		"words and a photo":   {"is this fan broken?", []llm.ImagePart{photo}, "is this fan broken?\n\n[sent with a photo, not shown again]"},
+		"words and 2 photos":  {"which is nicer?", []llm.ImagePart{photo, photo}, "which is nicer?\n\n[sent with 2 photos, not shown again]"},
+		"a photo alone":       {"", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"blanks and a photo":  {" \n", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"2 photos alone":      {"", []llm.ImagePart{photo, photo}, "[sent with 2 photos, not shown again]"},
+		"words with no photo": {"is the fan broken?", nil, "is the fan broken?"},
+	}
+	for name, c := range cases {
+		s.Run(name, func() {
+			s.sees = true
+			s.joinText()
+
+			_, err := s.agent.Ask(s.ctx, c.text, c.photos...)
+			s.Require().NoError(err)
+			_, err = s.agent.Ask(s.ctx, "and now?")
+			s.Require().NoError(err)
+
+			kept := llm.Message{Role: llm.User, Content: c.kept}
+			s.Equal([]llm.Message{kept, {Role: llm.Assistant, Content: "Hello there. How are you?"}},
+				harness.WithoutNotes(s.agent.History())[:2])
+			next := harness.WithoutNotes(s.model.requests()[1].Input)
+			s.Contains(next, kept, "the next question is asked with the note")
+			s.False(slices.ContainsFunc(next, func(message llm.Message) bool { return strings.Contains(message.Content, imagesAlone) }),
+				"the next question is not asked with a prompt about images it is not shown")
+		})
+	}
 }
 
 // An aside runs no vision skill, so an agent whose skill alone sees does not see in writing,

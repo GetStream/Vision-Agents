@@ -62,7 +62,7 @@ the retrieval machinery. A retrieval *tool* disappears: lookup is built in, and
 - Telephony connections (Twilio/Telnyx via Pipecat transports) move to the router's
   phone setup (`acceleration/cmd/phone`).
 - HTTP calls inside functions stay as HTTP calls inside the migrated Python functions,
-  or become connectors/`mcp_servers:` when the system is catalogued.
+  or become catalog connectors when the system is catalogued.
 
 ## Memory and state
 
