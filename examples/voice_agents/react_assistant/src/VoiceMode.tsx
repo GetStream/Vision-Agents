@@ -48,9 +48,15 @@ export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentCha
   const trouble = failureAt > 0 && failureAt >= voiceOpenedAt ? troubleText(failureContext) : undefined;
   const call = snapshot.call;
 
+  const root = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
+    // Escape is voice mode's own only while nothing else has the focus: beside the sidebar on a
+    // wide window it would otherwise hang up on somebody clearing the search box.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") screen.hangUp();
+      const focused = document.activeElement;
+      const isOurs = !focused || focused === document.body || root.current?.contains(focused);
+      if (event.key === "Escape" && isOurs) screen.hangUp();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -60,7 +66,7 @@ export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentCha
   const request = approvals[0];
 
   return (
-    <div className="voice-mode" role="dialog" aria-label="Talking to Juno">
+    <div aria-label="Talking to Juno" className="voice-mode" ref={root} role="dialog">
       <div className="voice-top">
         <button
           aria-label="Back to chat"

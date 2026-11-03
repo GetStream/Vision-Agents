@@ -33,7 +33,7 @@ export function ConversationList({
   theme: Theme;
   onTheme: (theme: Theme) => void;
 }) {
-  const { items, failure } = useStore(conversations);
+  const { items, searched, failure } = useStore(conversations);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -92,7 +92,10 @@ export function ConversationList({
             </ul>
           </section>
         ))}
-        {search && items.length === 0 && !failure && <p className="list-empty">No conversations match “{search}”.</p>}
+        {/* Only once the list was read for what is typed now, not from the last search's answer. */}
+        {search && searched === search && items.length === 0 && !failure && (
+          <p className="list-empty">No conversations match “{search}”.</p>
+        )}
         {failure && <p className="list-failure">{failure}</p>}
       </div>
       <SignedIn>

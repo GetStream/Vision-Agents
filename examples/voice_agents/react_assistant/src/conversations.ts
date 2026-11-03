@@ -14,14 +14,19 @@ export type SessionRow = Schemas["Session"];
  * conversation that ended carries on when it is next asked something, so there is nothing to
  * keep here but the list.
  */
-export class Conversations extends Store<{ items: readonly SessionRow[]; failure: string | undefined }> {
+export class Conversations extends Store<{
+  items: readonly SessionRow[];
+  /** The search `items` were read for, or empty for all of them. */
+  searched: string;
+  failure: string | undefined;
+}> {
   /** What the list is narrowed to, or empty for all of them. */
   private search = "";
   /** Counts the reads, so only the latest one's answer is shown. */
   private reads = 0;
 
   constructor() {
-    super({ items: [], failure: undefined });
+    super({ items: [], searched: "", failure: undefined });
   }
 
   /** Narrows the list to conversations matching `text` from the next read on. */
@@ -40,7 +45,7 @@ export class Conversations extends Store<{ items: readonly SessionRow[]; failure
       if (read !== this.reads) return;
       // Only the ones kept in writing can be opened again as a chat: a session that was only
       // ever a call, or incognito, has no channel to read back.
-      this.update({ items: page.items.filter((each) => Boolean(each.conversation_id)), failure: undefined });
+      this.update({ items: page.items.filter((each) => Boolean(each.conversation_id)), searched: search, failure: undefined });
     } catch (cause) {
       if (read === this.reads) this.update({ failure: messageOf(cause) });
     }
