@@ -231,7 +231,7 @@ func (e *Enforcer) sandboxAnswer(organization, appID string, refusal error) erro
 		return refusal
 	}
 	wouldRefuse.WithLabelValues(reasonSandbox).Inc()
-	if e.money.refusals.due(organization+"\x00"+reasonSandbox, logEvery) {
+	if e.money.refusals.Due(organization+"\x00"+reasonSandbox, logEvery) {
 		e.logger.Info("would refuse", append(who(organization), "app", appID, "reason", reasonSandbox, "refusal", refusal)...)
 	}
 	return nil
@@ -302,7 +302,7 @@ func (s *sandboxSlots) Take(ctx context.Context, running bool) (func(), error) {
 	}
 	held, others, err := s.call(ctx, id, "take", strconv.Itoa(s.most), force)
 	if err != nil {
-		if ctx.Err() == nil && e.money.refusals.due(s.organization+"\x00sandbox_slots", logEvery) {
+		if ctx.Err() == nil && e.money.refusals.Due(s.organization+"\x00sandbox_slots", logEvery) {
 			e.logger.Error("could not count the organization's running sandboxes, so this one runs whatever its limit",
 				append(who(s.organization), "error", err)...)
 		}
@@ -343,7 +343,7 @@ func (s *sandboxSlots) renew(id string, stop <-chan struct{}, done chan<- struct
 			return
 		case <-ticker.C:
 			if _, _, err := s.call(context.Background(), id, "renew"); err != nil &&
-				s.enforcer.money.refusals.due(s.organization+"\x00sandbox_renew", logEvery) {
+				s.enforcer.money.refusals.Due(s.organization+"\x00sandbox_renew", logEvery) {
 				s.enforcer.logger.Warn("could not renew a running sandbox's slot; it is tried again",
 					append(who(s.organization), "error", err)...)
 			}
