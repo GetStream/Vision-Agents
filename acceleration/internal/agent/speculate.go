@@ -210,7 +210,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 		spec.drop()
 		return false, spec.id
 	}
-	a.keepTurnLocked(ready.Participant, ready.Said(), nil)
+	a.keepTurnLocked(ready.Participant, ready.Said(), 0, nil)
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0

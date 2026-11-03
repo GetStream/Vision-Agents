@@ -297,6 +297,10 @@ The router fetches a photo, a voice note or a video clip sent by URL with the Us
 
 A dispatch worker's session on the channel a message was handed out from no longer writes a second copy of that message as `support-operator`. The copy came from the first question the worker asked with a `request_id`, which the Go SDK sends with every text-only question. Such a question is now answered with the reply alone, and the router uploads no photo again, as it already did for a question without a `request_id` and for a follow-up in the channel. Every other session still writes the question it is asked into its own channel (AI-2551).
 
+### A photo sent to a session's turn stays in its history as a note
+
+A turn with photos (`POST /v1/agents/sessions/{id}/responses` with `images`, or the socket's `respond`) is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a written aside and a thread's history keep it, and a turn of photos alone as the note alone. The reply to the turn, and the replies after its tools, still get the photos with the words alone. Before, the history kept the text with no sign of the photo, and a photo alone as an empty message, so later replies did not know a photo had been sent (AI-2561).
+
 ### A photo sent to a running session's chat channel stays in its history as a note
 
 A message with photos that a running session answers in writing is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a thread's history keeps it. A message of photos alone is kept as the note alone. Before, the history kept the text with no sign of the photo, and for a photo alone the question the router asked about it, so later replies read a request to describe images they were not shown (AI-2548).

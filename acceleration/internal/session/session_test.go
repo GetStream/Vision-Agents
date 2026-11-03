@@ -2115,7 +2115,8 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 		return false
 	}, "the next turn was never asked")
 	s.False(next.HasImage(), "the picture was sent again with a later turn")
-	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
+	s.Contains(handed(next), "user: what is this\n\n[sent with a photo, not shown again]",
+		"the words that came with the picture, and that a picture came, were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
