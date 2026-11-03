@@ -4142,7 +4142,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateOptOutRequestSourc
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
-    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -8966,7 +8966,7 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
-    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
