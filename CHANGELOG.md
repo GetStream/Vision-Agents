@@ -234,6 +234,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### The Python SDK refuses `mcp_servers` in agent.yaml
 
 `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `mcp_servers`, with a `ValueError` that says to create a custom connector for the server's URL and name it under `connectors`, and never sends `mcp_servers` to the router. An empty key (`mcp_servers: []`, or the key with nothing after it) names nothing and loads. `RemoteEvent` has no `authorization_required` type and no `url` or `image_url`: only a plugin's login made it, and a connector's login is a step of the reply (AI-2532).
+
 ### The Go SDK refuses `mcp_servers` in agent.yaml
 
 A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`agents.Load`, `agents.New`) with `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`; `mcp_servers: []` and a null `mcp_servers:` load and sync as before, and `agents.MCPServerSettings` and `Settings.MCPServers` are gone (AI-2531).
