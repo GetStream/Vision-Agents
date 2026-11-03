@@ -196,10 +196,12 @@ type Enforcer struct {
 	tiers   map[string]tierSeen
 	// now is the clock the tiers are kept by.
 	now func() time.Time
-	// userQuotaLogs throttles the line a user's own quota that cannot be read logs, per app.
-	userQuotaLogs throttle
+	// userQuotaLogs throttles (quota.Throttle) the line a user's own quota that cannot be read logs, to once a minute per customer.
+	userQuotaLogs quota.Throttle
 
 	money money
+	// localBookings are the bookings of a router with no shared Redis.
+	localBookings localBookings
 }
 
 // tierSeen is an organization's tier, empty when none is known, and when it was last known to
@@ -230,11 +232,9 @@ type decision struct {
 	// where it sets none.
 	balanceWarning *int64
 	// appQuota and organizationQuota are the daily limits per end user the app's and the
-	// organization's policies set, nil where they set none. users is an app some of whose
-	// users have a policy of their own, so a user of an app with none costs no lookup.
+	// organization's policies set, nil where they set none.
 	appQuota          *store.Quota
 	organizationQuota *store.Quota
-	users             bool
 	// unread is a decision made without the policies, which could not be read.
 	unread error
 	// read is when the policies were read, used when Admit last answered with it, and
@@ -315,10 +315,13 @@ func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Ad
 
 // Quota returns what one of a customer's end users may spend in a day, each number the first
 // set of the user's own policy, the app's, the organization's and defaults. A limit of zero
-// is no cap. A policy that could not be read leaves the level below it in place.
+// is no cap. A policy that could not be read leaves the level below it in place; a user's own
+// is then marked Unread, so a debit still counts what they spend.
 //
-// It answers from the app's decision in memory. Only a user of an app some of whose users
-// have a policy of their own is looked up, through appconfig.
+// The app's and the organization's numbers come from the app's decision in memory. Whether
+// any of the app's users has a policy of their own is read through appconfig, not the
+// decision, which another router's write does not drop: the next request after one is saved
+// is held to it. Only a user of such an app is looked up.
 func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
 	held := quota.Default(defaults)
 	if e == nil || customerID == "" {
@@ -327,17 +330,23 @@ func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, default
 	decided := e.decide(ctx, customerID)
 	held = layered(held, decided.organizationQuota, quota.Setter{Level: quota.LevelOrganization, ID: decided.organization})
 	held = layered(held, decided.appQuota, quota.Setter{Level: quota.LevelApp, ID: customerID})
-	if !decided.users || userID == "" {
+	if userID == "" {
 		return held
 	}
 	reading, cancel := context.WithTimeout(ctx, joinTimeout)
 	defer cancel()
+	// An app whose users cannot be told apart is taken to have some with a policy, so each is
+	// looked up, and one that fails holds them to the app's quota.
+	if some, err := e.config.HasUserPolicies(reading, customerID); err == nil && !some {
+		return held
+	}
 	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
 	if err != nil {
-		if e.userQuotaLogs.due(customerID, time.Minute) {
+		if e.userQuotaLogs.Due(customerID, time.Minute) {
 			e.logger.Error("could not read a user's own quota, holding them to their app's",
 				"customer", customerID, "error", err)
 		}
+		held.Unread = true
 		return held
 	}
 	return layered(held, own.Quota, quota.Setter{Level: quota.LevelUser, ID: userID})
@@ -736,14 +745,6 @@ func (e *Enforcer) configuration(ctx context.Context, appID string) (decision, e
 		toolOutput:     organization.ToolOutputRetention.Shorter(app.ToolOutputRetention),
 	}
 	decided.appQuota, decided.organizationQuota = app.Quota, organization.Quota
-	// An app whose users cannot be told apart is taken to have some with a policy, so each is
-	// looked up, and one that fails holds them to the app's quota. The decision itself stands:
-	// it is what RequiresOwnStreamApp fails closed on.
-	users, err := e.config.HasUserPolicies(ctx, appID)
-	if err != nil {
-		users = true
-	}
-	decided.users = users
 	return decided, nil
 }
 
@@ -799,26 +800,6 @@ func allowedByBoth(organization, app *[]string) []string {
 		}
 	}
 	return both
-}
-
-// throttle says whether a line keyed by key is due, at most once every every.
-type throttle struct {
-	mu   sync.Mutex
-	last map[string]time.Time
-}
-
-func (t *throttle) due(key string, every time.Duration) bool {
-	now := time.Now()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if last, ok := t.last[key]; ok && now.Sub(last) < every {
-		return false
-	}
-	if t.last == nil {
-		t.last = map[string]time.Time{}
-	}
-	t.last[key] = now
-	return true
 }
 
 // once is a throttle of one line, in Unix nanoseconds.

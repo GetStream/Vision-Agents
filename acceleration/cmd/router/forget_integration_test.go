@@ -3,11 +3,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	usageservice "github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
@@ -59,7 +64,7 @@ func (s *ForgetUserSuite) SetupSuite() {
 	}
 	s.usageDSN = usagetest.Database(s.T(), "usage_forget")
 	s.counters = usagetest.Redis(s.T())
-	routers, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	routers, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(routers.Close)
 	s.routers = routers
@@ -168,11 +173,29 @@ func (s *ForgetUserSuite) stopped(replacement string) {
 	s.Require().NoError(err)
 }
 
+// runForget runs the usage command, again while its one dial of Redis fails, which it makes
+// before it writes anything. Any other error is the command's own.
+func (s *ForgetUserSuite) runForget(command []string, out *bytes.Buffer) error {
+	var failed error
+	_, err := redisready.Retry(s.settings.Redis.Addr, func() (struct{}, error) {
+		out.Reset()
+		failed = runUsage(command, s.settings, out)
+		if failed != nil && strings.Contains(failed.Error(), "usage forget-user: redis:") {
+			return struct{}{}, failed
+		}
+		return struct{}{}, nil
+	})
+	if err != nil {
+		return err
+	}
+	return failed
+}
+
 // forget runs the command with --settle 0 and the args, and answers what it printed.
 func (s *ForgetUserSuite) forget(app, user string, args ...string) string {
 	var out bytes.Buffer
 	command := append([]string{"forget-user", "--app", app, "--user", user, "--actor", "staff@example.com", "--settle", "0s"}, args...)
-	s.Require().NoError(runUsage(command, s.settings, &out))
+	s.Require().NoError(s.runForget(command, &out))
 	return out.String()
 }
 
@@ -425,6 +448,80 @@ func (s *ForgetUserSuite) TestADryRunChangesNothing() {
 	s.Empty(entries)
 }
 
+// holdFirstDial puts a TCP forwarder in front of the routers' Redis that holds the first
+// connection which does not open with redisready's PING past rueidis' 5 s dial timeout, the
+// command's dial, and forwards every other.
+func (s *ForgetUserSuite) holdFirstDial() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	done := make(chan struct{})
+	s.T().Cleanup(func() {
+		close(done)
+		listener.Close()
+	})
+	target := s.settings.Redis.Addr
+	var held atomic.Bool
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				opening := bufio.NewReader(conn)
+				first, err := opening.Peek(4)
+				if err != nil {
+					return
+				}
+				if string(first) != "PING" && held.CompareAndSwap(false, true) {
+					select {
+					case <-time.After(6 * time.Second):
+					case <-done:
+					}
+					return
+				}
+				upstream, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				go io.Copy(upstream, opening)
+				io.Copy(conn, upstream)
+			}()
+		}
+	}()
+	s.settings.Redis.Addr = listener.Addr().String()
+}
+
+func (s *ForgetUserSuite) TestARunWhoseRedisDialStallsIsRunAgain() {
+	s.recorded(0, s.app, person, 100)
+	s.recorded(1, s.app, person, 100)
+	routers, _ := s.userKeys(s.app, person)
+	s.Require().NotEmpty(routers)
+	s.holdFirstDial()
+
+	out := s.forget(s.app, person, "--dry-run")
+
+	s.Contains(out, "requests: 2 rows\n")
+	s.Contains(out, "redis: 8 keys\n", "the Redis was reached on the second run")
+}
+
+func (s *ForgetUserSuite) TestARunWhoseUsageServiceIsGoneFailsAtOnce() {
+	s.recorded(0, s.app, person, 100)
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.settings.Usage.URL = "http://" + closed.Addr().String()
+	s.Require().NoError(closed.Close())
+	started := time.Now()
+
+	err = s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com", "--dry-run"}, &bytes.Buffer{})
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "redis:")
+	s.Less(time.Since(started), 10*time.Second, "an error that is not the Redis dial is not run again")
+}
+
 func (s *ForgetUserSuite) TestARunThatStoppedIsFinishedWithItsReplacement() {
 	ids := []uuid.UUID{s.recorded(0, s.app, person, 300), s.recorded(1, s.app, person, 200)}
 	late := s.written(1, s.app, person, 50)
@@ -474,8 +571,8 @@ func (s *ForgetUserSuite) TestAReplacementNoRunPrintedIsRefused() {
 	id := s.recorded(0, s.app, person, 100)
 
 	for _, replacement := range []string{"grace", "forgotten:ada", usageservice.ForgottenPrefix + strings.Repeat("A", 32)} {
-		err := runUsage([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com",
-			"--replacement", replacement}, s.settings, &bytes.Buffer{})
+		err := s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com",
+			"--replacement", replacement}, &bytes.Buffer{})
 		s.ErrorContains(err, "--replacement", replacement)
 	}
 
@@ -486,7 +583,7 @@ func (s *ForgetUserSuite) TestAReplacementNoRunPrintedIsRefused() {
 func (s *ForgetUserSuite) TestForgettingAUserNeedsTheManageKey() {
 	s.settings.Usage.ManageKey = ""
 
-	err := runUsage([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com"}, s.settings, &bytes.Buffer{})
+	err := s.runForget([]string{"forget-user", "--app", s.app, "--user", person, "--actor", "staff@example.com"}, &bytes.Buffer{})
 
 	s.ErrorContains(err, "ROUTER_USAGE_MANAGE_KEY")
 }

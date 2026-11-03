@@ -45,7 +45,7 @@ integration) become:
 | Decagon | Accelerate |
 | --- | --- |
 | Pre-built integration action (Zendesk, Salesforce, Shopify...) | `connectors:` entry for that system in `agent.yaml` (app connection), with the action kept as skill instructions |
-| Custom endpoint action | Python function making the same call, or `mcp_servers:` if the system exposes MCP |
+| Custom endpoint action | Python function making the same call, or a custom connector plus a binding if the system exposes MCP (see "MCP servers by URL" in `SKILL.md`) |
 | An AOP step that only reads/decides | Stays inside the skill text; no tool |
 
 Action inputs the AOP collects from the customer become the function's parameters or the

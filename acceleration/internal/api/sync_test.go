@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -109,6 +111,32 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsScheduling() {
 	s.Equal("Europe/Amsterdam", value(again.Config.Scheduling.DefaultTimezone))
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresItsCalls() {
+	calls := callsExample()
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "calls": calls})
+
+	other := s.sync(map[string]any{"name": "by-put", "hash": "v1"})
+	var put AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+other.Config.Id,
+		map[string]any{"name": "by-put", "calls": calls}, &put))
+	synced, err := json.Marshal(result.Config.Calls)
+	s.Require().NoError(err)
+	direct, err := json.Marshal(put.Calls)
+	s.Require().NoError(err)
+	s.JSONEq(string(direct), string(synced))
+	s.Contains(string(synced), "+442071234567")
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	kept, err := json.Marshal(again.Config.Calls)
+	s.Require().NoError(err)
+	s.JSONEq(string(direct), string(kept), "a directory that says nothing leaves what is stored")
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "concierge", "hash": "v3", "calls": map[string]any{
+			"transfer": map[string]any{"destinations": []any{map[string]any{"name": "A", "number": "12"}}}}})
+	s.Equal(http.StatusBadRequest, status)
+}
+
 func (s *SyncSuite) TestASyncNamingAnUnknownDefaultTimezoneIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
 		map[string]any{"name": "concierge", "hash": "v1",
@@ -190,6 +218,17 @@ func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "memory_gb")
+}
+
+func (s *SyncSuite) TestASyncAllowingAnIPAddressAsADomainIsRefused() {
+	for _, address := range []string{"203.0.113.7", "203.0.113.7:443", "[2001:db8::7]"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+			map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+				"sandbox_options": map[string]any{"allowed_domains": []string{"api.example.com", address}}})
+
+		s.Equal(http.StatusBadRequest, status, address)
+		s.Contains(failure, fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", address), address)
+	}
 }
 
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {

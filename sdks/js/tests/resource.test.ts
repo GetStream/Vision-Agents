@@ -784,6 +784,96 @@ describe("guest users", () => {
     assert.equal(router.received.length, 0);
   });
 
+  it("remembers the refresh secret a minted guest is handed", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: { id: "guest-1", token: "token-for-guest", refresh_secret: "secret-1" },
+    });
+    const store = memory();
+
+    await api.guestUser({}, store);
+
+    assert.equal(JSON.parse(store.value ?? "{}").refresh_secret, "secret-1");
+  });
+
+  it("comes back with the refresh secret once the remembered token has expired", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: {
+        id: "guest-7",
+        token: "fresh-token",
+        expires_at: "2999-01-01T00:00:00Z",
+        refresh_secret: "secret-2",
+      },
+    });
+    const store = memory();
+    store.write(
+      JSON.stringify({
+        id: "guest-7",
+        token: "expired-token",
+        expires_at: "2020-01-01T00:00:00Z",
+        refresh_secret: "secret-1",
+      }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.deepEqual(router.last.body, { id: "guest-7", refresh_secret: "secret-1" });
+    assert.equal(guest.token, "fresh-token");
+    const stored = JSON.parse(store.value ?? "{}");
+    assert.equal(stored.token, "fresh-token");
+    assert.equal(stored.refresh_secret, "secret-2", "each secret works once, so the next is kept");
+  });
+
+  it("remembers whoever comes back when a spent secret is answered with a new guest", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: { id: "guest-8", token: "new-token", refresh_secret: "secret-9" },
+    });
+    const store = memory();
+    store.write(
+      JSON.stringify({
+        id: "guest-7",
+        token: "expired-token",
+        expires_at: "2020-01-01T00:00:00Z",
+        refresh_secret: "spent",
+      }),
+    );
+
+    const guest = await api.guestUser({ name: "Visitor" }, store);
+    const again = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-8");
+    assert.equal(again.id, "guest-8");
+    assert.equal(router.received.length, 1);
+    assert.deepEqual(router.last.body, { id: "guest-7", refresh_secret: "spent", name: "Visitor" });
+    assert.equal(JSON.parse(store.value ?? "{}").refresh_secret, "secret-9");
+  });
+
+  it("mints a new guest for an expired one with no refresh secret, naming no id", async () => {
+    const store = memory();
+    store.write(
+      JSON.stringify({ id: "guest-7", token: "expired-token", expires_at: "2020-01-01T00:00:00Z" }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-1");
+    assert.deepEqual(router.last.body, {}, "an id it cannot prove is not sent");
+  });
+
+  it("hands back a remembered guest whose token has not expired without asking", async () => {
+    const store = memory();
+    store.write(
+      JSON.stringify({ id: "guest-7", token: "live-token", expires_at: "2999-01-01T00:00:00Z" }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-7");
+    assert.equal(router.received.length, 0);
+  });
+
   it("mints a fresh one when the person says they are not that guest", async () => {
     const store = memory();
     store.write(JSON.stringify({ id: "guest-7", token: "token-for-seven" }));

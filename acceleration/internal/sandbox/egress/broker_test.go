@@ -40,6 +40,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/brokertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 func TestProxyBrokerContract(t *testing.T) {
@@ -765,11 +766,13 @@ const publicURL = "http://203.0.113.7:8091"
 
 // unusableURLs are proxy URLs the sandbox cannot use: an address it may not reach or the
 // provider's range would reach too much of (unspecified, loopback, RFC 1918, link-local with the
-// metadata address, broadcast), a port that is none, or a path, query or fragment.
+// metadata address, broadcast, a range no public host is in), a port that is none, or a path,
+// query (a bare ? too) or fragment.
 var unusableURLs = []string{"http://0.0.0.0:8091", "http://127.0.0.1:8091", "http://10.1.2.3:8091", "http://172.16.0.1:8091",
-	"http://192.168.1.1:8091", "http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://203.0.113.7",
+	"http://192.168.1.1:8091", "http://169.254.169.254:8091", "http://255.255.255.255:8091", "http://0.1.2.3:8091",
+	"http://100.64.0.1:8091", "http://192.0.0.8:8091", "http://198.18.0.1:8091", "http://240.0.0.1:8091", "http://203.0.113.7",
 	"http://203.0.113.7:0", "http://203.0.113.7:99999", "http://203.0.113.7:8091/", "http://203.0.113.7:8091/path",
-	"http://203.0.113.7:8091?a=b", "http://203.0.113.7:8091#frag"}
+	"http://203.0.113.7:8091?a=b", "http://203.0.113.7:8091?", "http://203.0.113.7:8091#frag"}
 
 // TestAProxyURLItCannotUseIsRefused: the sandbox's own credential is the URL's user, and the
 // sandbox reaches an IPv4 address alone.
@@ -854,7 +857,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	}
 	r := &rig{test: t.Name(), run: uuid.NewString()}
 	var err error
-	r.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	r.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +866,7 @@ func newRig(t *testing.T, tokens sandbox.Tokens, logger *slog.Logger) *rig {
 	// One connection (PipelineMultiplex -1): by default rueidis spreads keyed commands over
 	// four and sends PING on the first only, so recover's PING would not prove the others back
 	// (rueidis v1.0.76 rueidis.go:220, mux.go slotfn).
-	gated, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{r.gate.listener.Addr().String()}, DisableCache: true,
+	gated, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{r.gate.listener.Addr().String()}, DisableCache: true,
 		DisableRetry: true, PipelineMultiplex: -1})
 	if err != nil {
 		t.Fatal(err)

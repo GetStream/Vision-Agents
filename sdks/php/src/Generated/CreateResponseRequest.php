@@ -11,8 +11,10 @@ use GetStream\VisionAgents\Json;
 final readonly class CreateResponseRequest
 {
     public function __construct(
-        // What to answer, as though it had been said.
+        // What to answer, as though it had been said. May be empty when images or audio carry the question. Images wi...
         public string $text,
+        // A voice note to answer. The router transcribes it and answers what was said, after text when both are sent;...
+        public ?AudioSource $audio = null,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
         // Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the ses...
@@ -37,6 +39,7 @@ final readonly class CreateResponseRequest
     {
         return new self(
             text: Json::string($data, 'text'),
+            audio: array_key_exists('audio', $data) && $data['audio'] !== null ? AudioSource::fromArray(Json::object($data, 'audio')) : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
             maxOutputTokens: array_key_exists('max_output_tokens', $data) && $data['max_output_tokens'] !== null ? Json::int($data, 'max_output_tokens') : null,
             reasoningEffort: array_key_exists('reasoning_effort', $data) && $data['reasoning_effort'] !== null ? Json::string($data, 'reasoning_effort') : null,
@@ -55,6 +58,9 @@ final readonly class CreateResponseRequest
     {
         $out = [];
         $out['text'] = $this->text;
+        if ($this->audio !== null) {
+            $out['audio'] = $this->audio->toArray();
+        }
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
         }

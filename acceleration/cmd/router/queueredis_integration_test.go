@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // clusterEnvVar names a node of a Redis Cluster with more than one shard, which CI does not
@@ -156,7 +157,7 @@ func (s *QueueRedisSuite) address(variable string) string {
 // connect is a client of the Redis at address made the way the router makes its own, so it
 // finds out the same way whether that Redis is a cluster.
 func (s *QueueRedisSuite) connect(address string) rueidis.Client {
-	client, err := live.New(live.Options{Address: address})
+	client, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	return client.Redis()

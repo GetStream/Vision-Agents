@@ -209,7 +209,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `network: true` or a `network_allow_list` keeps its own.
 - A connection saved before its connector had a `sandbox` block (GitHub revision 5) gives the
   sandbox nothing, with a WARN «reconnect to use sandbox access»; a `required` binding refuses
-  the session.
+  the session. Where a later revision has the block, every `run_code` result says to ask the
+  user to reconnect, which takes effect from the next session (`Result.Reconnect`).
 - Google Drive has a block from revision 5 (`GOOGLE_DRIVE_TOKEN`, host `www.googleapis.com`; AI-1958),
   so its connections of revisions 2-4 give the sandbox nothing until reconnected. Its token
   carries `drive.file`, so code can also create files and change files the app opened. A
@@ -236,7 +237,9 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   `<alias>__list_tools` (`Result.Unconnected`). Once the user consents, the next run
   binds the grant: at once behind the proxy, within 18 to 24 s as a Daytona secret, whose run that
   binds it says to wait 20 s on a 401 (`Result.Connected`; a run the login finished during says it
-  too). A required binding still refuses the session, and a voice
+  too). A login on a connection whose revision has no `sandbox` block, or another env var or
+  hosts, binds nothing: every run after it says to ask the user to reconnect, which takes effect from the next session (`Result.Reconnect`).
+  A required binding still refuses the session, and a voice
   session gets no grant.
 - Before each run a new credential revision updates the secret; a connection that needs a
   reconnect, or was deleted, withdraws it, and so does a binding the agent config dropped, no
@@ -283,6 +286,10 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
 - Known limit (A5, accepted for GitHub): Daytona scrubs only the token's literal value. A granted
   host that echoes the token escaped or encoded would hand it to the sandbox. Wave 14's proxy
   broker closes it.
+- Known limit (any header, AI-1976, accepted): Daytona substitutes the placeholder in any request
+  header to a granted host, not only `Authorization` (https://www.daytona.io/docs/en/secrets.md,
+  «Substitution scope»; the live suite sends it in `X-Probe`). The proxy broker substitutes only in
+  `Authorization` (`internal/sandbox/egress/AGENTS.md`, step 5). A granted host that echoes that header would hand the token to the sandbox.
 - Known limit (Daytona lag): after the router withdraws a secret (connection deleted or needs a
   reconnect), Daytona keeps substituting it for a while. The withdrawal is an update, which takes
   effect within 15 seconds (https://www.daytona.io/docs/en/secrets.md); a live probe on
@@ -370,23 +377,24 @@ in the thread. It needs more than tools:
 3. **A connection.** New connection › Slack bot › install the app into the workspace.
 4. **One live agent per connection.** Bind it `fixed` on exactly one agent config. With two,
    the bridge does not know which agent answers.
-5. **The Stream message hook.** The reply runs when Stream delivers `message.new` for the
-   thread to this router. Point the app's hook at it, then check:
+5. **Stream Chat delivery.** A Slack message is answered with no Stream Chat delivery: the
+   bridge worker reads it from the events route (`internal/channelbridge/AGENTS.md`). Delivery
+   matters only for text written straight into the thread channel: Stream Chat delivers
+   `message.new` to this router (`POST /v1/chat/internal/messages`, signed with a key in
+   `chat.inbound_keys`). The router points no message hook any more: not when a provider
+   app is put, not through `PUT …/oauth-client`, not through `go run ./cmd/phone hooks`
+   (it writes the call hook only). The old route `/v1/chat/hooks/stream` is still served for
+   one release, as a way back. **A local router behind a tunnel gets no Chat text written
+   into a thread channel from a shared shard's app:** Stream Chat delivers to the one router
+   its shard names. Test a direct write on a router the shard delivers to, or a Stream app on
+   a shard that delivers to yours. The Slack reply itself needs no such router.
 
-   ```bash
-   cd acceleration
-   go run ./cmd/phone hooks                     # read only: shows every hook on the app
-   go run ./cmd/phone hooks -url <ROUTER_PUBLIC_URL> -app <stream app id>
-   ```
-
-   `hooks` needs `STREAM_API_KEY` and `STREAM_API_SECRET` in the environment. When the router
-   runs per-app tenancy, `-app <stream app id>` is required, and the hook path is
-   `/v1/chat/hooks/stream/<stream app id>`. Saving the app's own Slack OAuth client
-   (`PUT …/oauth-client`) does not point the hook. Run `hooks`, or set it in the dashboard.
-
-   Hooks are one setting for the whole Stream app, and the command also points the call
-   hooks. Look first, and change only your own. In the dashboard they are under
-   **Chat › Settings › Webhooks**.
+   An app that an older router pointed keeps its message hook until someone drops it:
+   `go run ./cmd/phone hooks -url <ROUTER_PUBLIC_URL> -remove <ROUTER_PUBLIC_URL> [-app <stream app id>]`
+   drops the call and the message hook of that base and keeps the call hook of the running
+   router (`-remove` alone drops the call hook too), `hooks` alone lists what is left. Hooks are one
+   setting for the whole Stream app: look first, and change only your own. In the dashboard
+   they are under **Chat › Settings › Webhooks**.
 6. **Test with a mention typed by hand.** A message posted through another Slack app (an
    MCP tool, a script) carries `app_id`, and the bot skips it on purpose, so bots never
    answer each other.
@@ -402,7 +410,7 @@ Check the router log first (`docker compose logs -f router` locally).
 | «no OAuth client available» on consent | No Stream client (`<ENV>_MCP_CLIENT_ID`) and no app client | Set one of them |
 | 409 «Another customer's record already names this provider app» | That Slack app is registered to another customer on this router | Use another Slack app, or remove the old record |
 | A 401 on `/v1/connectors/events/…` with the text `api_key is required` | The gateway in front does not allow the route. The router's own refusal is a different body: it checks the provider's signature | Allowlist the events routes on the gateway |
-| The events request gets 200, but no reply. The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | The Stream message hook points at another router. Read it in **Chat › Settings › Webhooks**, or `GET` the app's `event_hooks`. Do not wait for a startup warning: in app tenancy it is skipped | Point the hook (step 4.5). Also check that two configs do not bind the connection, and that the mention did not come from an app (steps 4.4, 4.6) |
+| A message written straight into the thread channel gets no reply (a Slack message does not need delivery: step 4.5). The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | Stream Chat delivers the app's messages to another router (the shard's `AGENTS_ROUTER_URL`), or an old message hook of the app still points at one | Delivery goes to the router the shard names (step 4.5); drop an old message hook with `phone hooks -remove`. Also check that two configs do not bind the connection, and, for a Slack message, that the mention did not come from an app (steps 4.4, 4.6) |
 | A `session` binding opens with no tools | The user has no connected connection, or the caller is not a verified end user | Connect from Playground; check the user header |
 | Validate says failed | The provider refused the credential | Replace the token, or Reconnect for OAuth |
 | The consent fails, and the connection's last validation has code `connector_consent_refused` with `unauthorized_client` | The provider does not let this client sign in for the organization. For Gong, its tech admin has not added the router as an MCP integration | An admin at the provider allows the client with the router's redirect URI (for Gong, see step 2), then consent again |

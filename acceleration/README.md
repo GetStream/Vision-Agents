@@ -1877,8 +1877,10 @@ revives the leg the end left unanswered, billed once. A leg ends when its phone 
 `phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
 leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
 long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
-The call hook has to deliver the participant events: run `go run ./cmd/phone hooks -url <router
-url>` again once. Until then a placed call that ends unanswered with no participant event
+The call hook has to deliver the participant events. With `ROUTER_PUBLIC_URL` set, the router points
+the app's call hook itself when a number is bought or attached. For a router that predates that, or
+an app whose hook lacks the participant events, run `go run ./cmd/phone hooks -url <router url>`
+once. Until the hook delivers them a placed call that ends unanswered with no participant event
 delivered logs `call hook does not deliver participant events; re-run cmd/phone hooks` at ERROR,
 once an hour per app. Placing a call is a free `dial` row, for its latency and failures. A number is
 billed every month it is held, on the day it was bought, at the price its vendor quoted (or the
@@ -2037,6 +2039,26 @@ A config built in code, as phone, knowledge, memory and sandbox metering build o
 and runs in the default region too. The default region is only where such an instance runs,
 never a fallback when an item is priced.
 
+Unpriced work is recorded at nothing and reserves no spend, so it is refused or alarmed rather
+than left silently free. `billable.Items` lists every item a deployment bills: each routed
+provider in its region and, where its router takes a customer key (the LLM vendors), its BYOK
+twin; knowledge `lookup`, `write` and `storage` in every knowledge region and sandbox `running`
+and `stopped` in `us` and every Daytona target's region, each with its BYOK twin; `dial` and
+`call_minutes` for each phone vendor with its credentials, `sms` when Telnyx is one, the 10DLC
+fees when a registrar is set, and runtime `text`, `voice` and `video`. A number's month (the
+vendor quotes it) and WhatsApp and iMessage (the app's own account bills them) are not on it.
+An item with no attributes is priced by its entry with no `when`, or, where it has none, by any
+of its entries, so work priced only per class or per country is not listed. The router logs
+"billable work has no price" for each item on the list the price list in force leaves unpriced
+when it starts (the database's once read, else the files'), and the price list's `unpriced`, a
+change's preview and `router prices show --unpriced` check the same list. An agent's sync, and
+a config create or update, is refused with a 400 naming each item when the work it asks for in
+its region has no price: every instance there of each model it names, its knowledge and its
+sandbox, and their BYOK twins where the customer keeps a key for the vendor in that region.
+The usage jobs run the router's metering alerts and check them once more as they stop, so a row
+a job records with no price raises `unpriced` as a router's does. A cost the vendor quoted
+outright, such as a number's month, is its price, and is not logged as unpriced.
+
 Work done with the customer's own key is billed to the customer by the vendor, so its price is
 a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
 tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
@@ -2110,7 +2132,7 @@ it would read as a US price.
 
 | Command | What it does |
 | --- | --- |
-| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's item, region and BYOK state, its SKU, its vendor rates and its price; `--unpriced` lists the routed items no entry prices, each in its region |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's item, region and BYOK state, its SKU, its vendor rates and its price; `--unpriced` lists the billed items (`billable.Items`) no entry prices, each in its region |
 | `router prices sync --dry-run` | What the next start would load, each item with its region and BYOK state, writing nothing |
 | `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database, counting its entries by region and BYOK state |
 | `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
@@ -2350,6 +2372,48 @@ the copy, which is what makes the switchover free of a window where writes are l
 go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
 ```
+
+The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
+`--source-auth server` is for a source router reached directly.
+
+A scheduled task active on the source is imported paused, and so is a campaign running there,
+since the source goes on delivering them until the move is cut over. Each is marked as paused by
+the move; a change carried later sets the mark again from the source's state, so one the user
+paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
+any other edit keeps it.
+
+Until the last `--once`, the source is the truth: each change carried writes the row as the source
+has it, over whatever was done to that row here, a delete included. A config deleted here comes
+back if the source edits it afterwards. So once SDKs point here, stop writing at the source.
+
+Cut over once SDKs point here:
+
+1. Run `replicate --from … --once` one last time, to pick up the last writes.
+2. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
+   pauses are carried over, they clear the marks, and step 3 then resumes nothing.
+3. Run the cut-over:
+
+   ```bash
+   go run ./cmd/router replicate --resume --as <app id>
+   ```
+
+`--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
+at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
+and lists the marked campaigns. The source went on delivering between the last `--once` and its
+stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
+the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
+the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
+hold ends. A marked task with no occurrence left is
+completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
+step 2: an occurrence due between the two is delivered by neither. A marked task whose
+agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
+and the command prints how many it left that way. A user holds at most the config's
+`max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
+made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
+and the rest stay paused and marked. The command prints how many; run it again once the user
+has made room. A campaign rings
+only from the router that started it, so start each one here with
+`POST /v1/agents/campaigns/{id}/start`.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app

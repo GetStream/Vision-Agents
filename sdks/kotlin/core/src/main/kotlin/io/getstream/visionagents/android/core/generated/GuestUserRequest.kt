@@ -37,8 +37,9 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param custom 
- * @param id A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
- * @param name What to call them, for a transcript a person reads later.
+ * @param id A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
+ * @param name What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
+ * @param refreshSecret The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
  */
 @Serializable
 
@@ -47,13 +48,17 @@ internal data class GuestUserRequest (
     @Contextual @SerialName(value = "custom")
     val custom: kotlin.collections.Map<kotlin.String, kotlinx.serialization.json.JsonElement>? = null,
 
-    /* A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person. */
+    /* A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest. */
     @SerialName(value = "id")
     val id: kotlin.String? = null,
 
-    /* What to call them, for a transcript a person reads later. */
+    /* What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them. */
     @SerialName(value = "name")
-    val name: kotlin.String? = null
+    val name: kotlin.String? = null,
+
+    /* The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead. */
+    @SerialName(value = "refresh_secret")
+    val refreshSecret: kotlin.String? = null
 
 ) {
 

@@ -171,6 +171,29 @@ type Reserver interface {
 	Release(usageID uuid.UUID)
 }
 
+// Booker sets credit aside for a purchase that costs a known amount at once, such as a number,
+// before the vendor is asked: Book refuses unless the organization's credit covers all of it,
+// whatever the limits mode. Its answer is never nil, so its methods can always be called.
+type Booker interface {
+	Book(ctx context.Context, owner Owner, micros int64) (Booked, error)
+}
+
+// Booked is credit a Booker set aside. Charged says the purchase was made and its rows
+// recorded, which then count for themselves; Release says it was not, and frees the credit at
+// once. Either may be called more than once. One never called expires on its own.
+type Booked interface {
+	Charged()
+	Release()
+}
+
+// NoBooking is a booking that set nothing aside, for a purchase there was nothing to check.
+var NoBooking Booked = noBooking{}
+
+type noBooking struct{}
+
+func (noBooking) Charged() {}
+func (noBooking) Release() {}
+
 // Admission is what a customer's policies hold every request of theirs to.
 type Admission struct {
 	// DataPolicy is the floor every request is held to, on top of whatever it asked for.

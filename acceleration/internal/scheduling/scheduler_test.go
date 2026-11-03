@@ -400,6 +400,57 @@ func (s *SchedulerSuite) TestAFifthFailureInARowFailsTheTask() {
 	s.Equal(5, s.read(task).ConsecutiveFailures)
 }
 
+// A run that found its occurrence's call placed with no end recorded may have
+// been carried out on that call, so it is no step towards failing the task.
+func (s *SchedulerSuite) TestARunWhoseCallMayHaveCarriedItOutKeepsTheFailureStreak() {
+	deliver := &deliverer{err: &Failure{Reason: ReasonRungAlready, Final: true,
+		Err: errors.New("a call was placed for this occurrence already")}}
+	due := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = 4
+	})
+	s.started(deliver.deliver, func(scheduler *Scheduler) {
+		scheduler.retries = []time.Duration{time.Millisecond}
+	})
+
+	runs := s.settled(task)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Equal(ReasonRungAlready, *runs[0].Error)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskActive, read.State, "a fifth run in a row whose call may have landed does not fail the task")
+	s.Equal(4, read.ConsecutiveFailures)
+	s.Require().NotNil(read.NextRunAt)
+	s.Equal(due.AddDate(0, 0, 1), read.NextRunAt.UTC(), "the task moves on to its next occurrence")
+	s.Len(deliver.callsFor(task.ID), 1, "the user is not rung again")
+}
+
+func (s *SchedulerSuite) TestAOneShotWhoseCallMayHaveCarriedItOutIsCompletedNotFailed() {
+	deliver := &deliverer{err: &Failure{Reason: ReasonRungAlready, Final: true,
+		Err: errors.New("a call was placed for this occurrence already")}}
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	s.started(deliver.deliver, nil)
+
+	runs := s.settled(task)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Equal(ReasonRungAlready, *runs[0].Error)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskCompleted, read.State)
+	s.Zero(read.ConsecutiveFailures)
+	s.Nil(read.NextRunAt)
+}
+
+// settled waits for the task's one run to finish and its claim to be let go,
+// and returns its runs.
+func (s *SchedulerSuite) settled(task store.ScheduledTask) []store.ScheduledTaskRun {
+	s.Require().Eventually(func() bool {
+		runs := s.runs(task)
+		return len(runs) == 1 && runs[0].State != store.ScheduledTaskRunRunning && s.read(task).ClaimID == ""
+	}, 10*time.Second, 10*time.Millisecond)
+	return s.runs(task)
+}
+
 func (s *SchedulerSuite) TestAOneShotMoreThanADayLateIsMissedNotDelivered() {
 	deliver := &deliverer{}
 	due := time.Now().UTC().Add(-25 * time.Hour).Truncate(time.Second)
@@ -549,6 +600,68 @@ func (s *SchedulerSuite) TestAnOccurrenceSettledBeforeItsAdvanceIsNotDeliveredAg
 	}, 10*time.Second, 10*time.Millisecond)
 	s.Empty(deliver.callsFor(task.ID))
 	s.Len(s.runs(task), 1)
+}
+
+// An occurrence written already_called whose advance was lost is settled as
+// the worker would have: the failure streak is kept.
+func (s *SchedulerSuite) TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceKeepsTheFailureStreak() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = 4
+	})
+	started := due.Add(-time.Minute)
+	reason := ReasonRungAlready
+	run := store.ScheduledTaskRun{
+		CustomerID: task.CustomerID, TaskID: task.ID, ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunFailed, Error: &reason,
+		Attempts: 2, StartedAt: &started, FinishedAt: &due,
+	}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &run))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskActive, read.State)
+	s.Equal(4, read.ConsecutiveFailures)
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Require().NotNil(runs[0].Error)
+	s.Equal(ReasonRungAlready, *runs[0].Error, "the settle keeps the run's reason")
+}
+
+// The same for a one-shot: the call may have carried it out, so it is
+// completed, not failed.
+func (s *SchedulerSuite) TestAOneShotSettledAsCalledAlreadyBeforeItsAdvanceIsCompleted() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
+	task := s.task(due, nil)
+	started := due.Add(-time.Minute)
+	reason := ReasonRungAlready
+	run := store.ScheduledTaskRun{
+		CustomerID: task.CustomerID, TaskID: task.ID, ScheduledFor: due,
+		Trigger: store.ScheduledTaskTriggerSchedule, Prompt: task.Instructions,
+		State: store.ScheduledTaskRunFailed, Error: &reason,
+		Attempts: 2, StartedAt: &started, FinishedAt: &due,
+	}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &run))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		return s.read(task).State != store.ScheduledTaskActive
+	}, 10*time.Second, 10*time.Millisecond)
+	read := s.read(task)
+	s.Equal(store.ScheduledTaskCompleted, read.State)
+	s.Zero(read.ConsecutiveFailures)
+	s.Empty(deliver.callsFor(task.ID))
 }
 
 // stalling holds every delivery until its context ends, and records the
@@ -973,6 +1086,67 @@ func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsFailedNotDeliver
 	s.Equal(ReasonFailed, *runs[0].Error, "the reason is a code")
 	s.Contains(logged.String(), "its worker was lost each time", "the story is in the logs")
 	s.Contains(logged.String(), "run="+runs[0].ID)
+}
+
+func (s *SchedulerSuite) TestACappedOccurrenceWhoseCallMayHaveLandedIsNotCountedAsAFailure() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = maxConsecutiveFailures - 1
+	})
+	// Three workers took it up and died, one after placing the call, whose end
+	// no worker recorded.
+	started := time.Now().Add(-time.Hour)
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
+		Attempts: 3, StartedAt: &started, SessionID: "call-" + uuid.NewString()}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond, "the task moves on")
+	read := s.read(task)
+	s.Equal(maxConsecutiveFailures-1, read.ConsecutiveFailures, "the call may have carried the task out")
+	s.Equal(store.ScheduledTaskActive, read.State, "a run that may have delivered does not fail the task")
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Equal(store.ScheduledTaskRunFailed, runs[0].State)
+	s.Require().NotNil(runs[0].Error)
+	s.Equal(ReasonRungAlready, *runs[0].Error)
+	s.Equal(stale.SessionID, runs[0].SessionID)
+}
+
+func (s *SchedulerSuite) TestACappedOccurrenceKeepsTheReasonItsCallEndedUnder() {
+	deliver := &deliverer{}
+	due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	task := s.task(due, func(task *store.ScheduledTask) {
+		task.StartLocal = due.AddDate(0, 0, -2)
+		task.RRule = "FREQ=DAILY"
+		task.ConsecutiveFailures = 2
+	})
+	// The call was placed and nobody answered; the worker died before it
+	// finished the run, and so did the next.
+	started := time.Now().Add(-time.Hour)
+	reason := ReasonNotAnswered
+	stale := store.ScheduledTaskRun{TaskID: task.ID, CustomerID: task.CustomerID, ScheduledFor: due,
+		Attempts: 3, StartedAt: &started, SessionID: "call-" + uuid.NewString(), Error: &reason}
+	s.Require().NoError(s.db.InsertScheduledTaskRun(s.ctx, &stale))
+	s.started(deliver.deliver, nil)
+
+	s.Require().Eventually(func() bool {
+		read := s.read(task)
+		return read.NextRunAt != nil && read.NextRunAt.After(time.Now())
+	}, 10*time.Second, 10*time.Millisecond, "the task moves on")
+	s.Equal(3, s.read(task).ConsecutiveFailures, "an unanswered call is a failure")
+	s.Empty(deliver.callsFor(task.ID))
+	runs := s.runs(task)
+	s.Require().Len(runs, 1)
+	s.Require().NotNil(runs[0].Error)
+	s.Equal(ReasonNotAnswered, *runs[0].Error, "the call's reason, not overwritten")
 }
 
 // logBuffer is a log a worker writes while a test reads it.

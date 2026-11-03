@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // RateLimitSuite is what a session's connector call does after the provider answered 429
@@ -287,7 +290,7 @@ sources:
 // limitedManager is a router of its own whose limiter keeps holds in the shared Redis, with
 // a client of its own, by now (nil is time.Now).
 func (s *RateLimitSuite) limitedManager(now func() time.Time) *Manager {
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{s.address}, DisableCache: true})
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{s.address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	manager := s.managerWith(fixtureRequestTimeout)
@@ -307,13 +310,25 @@ func (s *RateLimitSuite) attachWith(manager *Manager, bindings ...store.Connecto
 
 // logged is the error types of the count rows connection's calls left, once all are written.
 func (s *RateLimitSuite) logged(connection string, count int) []string {
+	fetch := func() ([]store.ConnectorInvocation, error) {
+		return s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+	}
 	read := func() []store.ConnectorInvocation {
-		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
+		rows, err := fetch()
 		s.Require().NoError(err)
 		return rows
 	}
-	s.Require().Eventually(func() bool { return len(read()) >= count }, 5*time.Second, 20*time.Millisecond)
-	s.Never(func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		rows, err := fetch()
+		require.NoError(c, err)
+		require.GreaterOrEqual(c, len(rows), count)
+	}, 5*time.Second, 20*time.Millisecond)
+	// An error counts as a change: never's check runs off the test goroutine, so it only returns.
+	never(s.T(), func() bool {
+		rows, err := fetch()
+		return err != nil || len(rows) > count
+	}, 300*time.Millisecond, 50*time.Millisecond)
 	var types []string
 	for _, row := range read() {
 		types = append(types, row.ErrorType)

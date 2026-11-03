@@ -126,7 +126,8 @@ type Mount struct {
 	// next.
 	Setup []string
 	// EachRun are shell commands run in the sandbox before each run of code, once Setup is
-	// done. One that fails fails the run, and no code runs.
+	// done. One that fails fails the run, and no code runs. The first run after Setup skips
+	// them, so they may only start again what Setup started.
 	EachRun []string
 }
 

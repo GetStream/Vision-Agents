@@ -151,6 +151,20 @@ func Settle(meter Meter, work pricing.Metered) error {
 	return nil
 }
 
+// Price is what the meter's work will be charged once it succeeds having used used, priced as
+// its row will be, so a purchase can book it before the vendor is asked. Zero with no
+// recorder, and for free work.
+func (m Meter) Price(used pricing.Quantities) int64 {
+	if m.Recorder == nil || m.Free {
+		return 0
+	}
+	stat := m.stat(time.Now())
+	stat.Success, stat.CostMicros = true, m.CostMicros
+	stat.Use(used)
+	request, _ := m.Recorder.priced(m.Config, stat)
+	return request.CostMicros
+}
+
 // stat is the row of work the meter records, before it has used anything.
 func (m Meter) stat(started time.Time) Stat {
 	if !m.BilledAt.IsZero() {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,6 +98,8 @@ type nativePeer struct {
 	conn   *websocket.Conn
 	frames chan map[string]json.RawMessage
 	setup  json.RawMessage
+	// next is each connection the agent opens after the first, as it replaces a lost one.
+	next chan *websocket.Conn
 }
 
 func (s *AgentSuite) joinNativeDelegating() *nativePeer { return s.joinNativeWith(nil) }
@@ -104,7 +107,55 @@ func (s *AgentSuite) joinNativeDelegating() *nativePeer { return s.joinNativeWit
 // joinNativeWith joins a native agent over the real OpenAI adapter, with configure changing
 // its options first when given.
 func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
-	connections := make(chan *websocket.Conn, 1)
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		if conn.WriteJSON(map[string]any{"type": "session.created", "session": map[string]any{}}) != nil {
+			return false
+		}
+		var setup map[string]json.RawMessage
+		if conn.ReadJSON(&setup) != nil {
+			return false
+		}
+		frames <- setup
+		return conn.WriteJSON(map[string]any{"type": "session.updated", "session": map[string]any{}}) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return openairealtime.New(openairealtime.Options{
+			Vendor: openairealtime.OpenAI, URL: url, APIKey: "test",
+			Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions, InputTranscript: true,
+		})
+	}
+	return s.joinNativeOver(handshake, adapter, "openai/gpt-realtime-2", configure)
+}
+
+// joinLiveDelegating joins a native agent over the real GPT-Live adapter, whose replies
+// settle after replyGap of quiet.
+func (s *AgentSuite) joinLiveDelegating(replyGap time.Duration) *nativePeer {
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		var start map[string]json.RawMessage
+		if conn.ReadJSON(&start) != nil {
+			return false
+		}
+		frames <- start
+		return conn.WriteJSON(map[string]any{"type": "session.started", "session": map[string]any{"id": "test-live", "model": "gpt-live-1"}}) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return openailive.New(openailive.Options{
+			APIKey: "test-key", URL: url, Model: spec.Model, Tools: spec.Tools,
+			Instructions: spec.STS.Instructions, ReplyGap: replyGap, HandshakeTimeout: 5 * time.Second,
+		})
+	}
+	return s.joinNativeOver(handshake, adapter, "openai/gpt-live-1", nil)
+}
+
+// joinNativeOver joins a native agent, delegating to a stub subagent, over the adapter that
+// connects to a local server greeting each connection with handshake.
+func (s *AgentSuite) joinNativeOver(
+	handshake func(*websocket.Conn, chan map[string]json.RawMessage) bool,
+	adapter func(url string, spec routing.Spec) (sts.STS, error),
+	target string,
+	configure func(*Options),
+) *nativePeer {
+	connections := make(chan *websocket.Conn, 4)
 	frames := make(chan map[string]json.RawMessage, 32)
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,15 +164,7 @@ func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 			return
 		}
 		defer conn.Close()
-		if conn.WriteJSON(map[string]any{"type": "session.created", "session": map[string]any{}}) != nil {
-			return
-		}
-		var setup map[string]json.RawMessage
-		if conn.ReadJSON(&setup) != nil {
-			return
-		}
-		frames <- setup
-		if conn.WriteJSON(map[string]any{"type": "session.updated", "session": map[string]any{}}) != nil {
+		if !handshake(conn, frames) {
 			return
 		}
 		connections <- conn
@@ -144,17 +187,17 @@ func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 	s.Require().NoError(err)
 	speech := stsrouter.NewRegistry()
 	speech.Register("openai", func(spec routing.Spec) (sts.STS, error) {
-		return openairealtime.New(openairealtime.Options{
-			Vendor: openairealtime.OpenAI, URL: "ws" + strings.TrimPrefix(server.URL, "http"), APIKey: "test",
-			Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions, InputTranscript: true,
-		})
+		return adapter("ws"+strings.TrimPrefix(server.URL, "http"), spec)
+	})
+	speech.Register("gemini", func(spec routing.Spec) (sts.STS, error) {
+		return adapter("ws"+strings.TrimPrefix(server.URL, "http"), spec)
 	})
 	router, err := stsrouter.New(stsrouter.Options{Config: config[routing.STS], Registry: speech})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	s.edge = newLoopbackEdge()
 	options := Options{
-		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: "openai/gpt-realtime-2",
+		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: target,
 		LLM: reasoner, SubagentTarget: "stub/stub-model",
 		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
 	}
@@ -166,7 +209,7 @@ func (s *AgentSuite) joinNativeWith(configure func(*Options)) *nativePeer {
 	s.events = collect(s.agent)
 	s.T().Cleanup(func() { s.agent.Close() })
 	s.Require().NoError(s.agent.Join(s.ctx))
-	return &nativePeer{conn: <-connections, frames: frames}
+	return &nativePeer{conn: <-connections, frames: frames, next: connections}
 }
 
 func (s *AgentSuite) nativeFrame(peer *nativePeer, kind string) map[string]json.RawMessage {
@@ -207,7 +250,7 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.nativeFrame(peer, "response.create")
 	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
 	request := s.subagent.requests()[0]
-	s.Equal("My booking is for six people", request.Input[0].Content)
+	s.Equal("My booking is for six people", harness.WithoutNotes(request.Input)[0].Content)
 	s.True(s.agent.delegating())
 
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"chat"}}`)
@@ -280,6 +323,350 @@ func (s *AgentSuite) TestWorkANativeModelHandsOverInATurnTheCallerSpokeIntoBefor
 	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
 
 	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller's voice came before the transcript")
+}
+
+// heardSpeechStart waits until the agent has taken in the caller's speech starting.
+func (s *AgentSuite) heardSpeechStart() {
+	s.Eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.nativeListening
+	}, time.Second, time.Millisecond)
+}
+
+// heldStart holds each tool call as it starts, between its arrival and its run, until let.
+type heldStart struct {
+	started chan struct{}
+	release chan struct{}
+	let     func()
+}
+
+func newHeldStart() *heldStart {
+	held := &heldStart{started: make(chan struct{}, 4), release: make(chan struct{})}
+	held.let = sync.OnceFunc(func() { close(held.release) })
+	return held
+}
+
+func (h *heldStart) hold(ToolStarted) {
+	h.started <- struct{}{}
+	<-h.release
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAScheduledTurnIsAskedAsScheduledWhenTheCallerCutsInBeforeItRuns() {
+	// The barge-in arrives after the model asked for the work and before the work runs: the
+	// work is still the scheduled turn's.
+	held := newHeldStart()
+	s.T().Cleanup(held.let)
+	peer := s.joinNativeWith(func(options *Options) { options.OnToolStarted = held.hold })
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	select {
+	case <-held.started:
+	case <-time.After(settleFor):
+		s.FailNow("the tool call never started")
+	}
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	held.let()
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the caller cut in after the model asked")
+	s.Eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(s.agent.toolScheduled) == 0
+	}, time.Second, time.Millisecond, "a finished call's mark is kept")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAScheduledReplyIsAskedAsScheduledWhenTheCallerCutInBeforeTheCall() {
+	// The model can finish asking for a tool in the reply the caller cut into: that call is
+	// the reply's, and the reply is the scheduled turn's.
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"cancelled"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r2","call_id":"call2","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 2 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true, false}, s.subagent.askedScheduled(), "the reply that answers the caller is theirs")
+}
+
+// stoppedSpeaking sends the caller's stop and waits until the agent has taken it in.
+func (s *AgentSuite) stoppedSpeaking(peer *nativePeer) {
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_stopped"}`)
+	s.Eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return !s.agent.nativeListening
+	}, time.Second, time.Millisecond)
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInTheReplyToTheCallersStopIsNotAskedAsScheduledWhenAScheduledTurnLandsFirst() {
+	// The server opens a reply for the caller's speech when they stop. A scheduled turn typed
+	// in before that reply begins is answered after it, so the reply is the caller's.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r0"}}`)
+	s.nativeSend(peer, `{"type":"conversation.item.input_audio_transcription.completed","transcript":"And for eight people?"}`)
+	s.Eventually(func() bool { return countOf[Heard](s.reported()) == 1 }, time.Second, time.Millisecond)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r0","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller's reply is theirs")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAScheduledTurnAfterTheCallerWasAnsweredIsAskedAsScheduled() {
+	// Only the first reply after the caller's stop is theirs: a scheduled turn typed in once
+	// it began keeps its reply's mark across a barge-in.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r0"}}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r0","status":"completed"}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, time.Second, time.Millisecond)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the caller's answer came before the scheduled turn")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAScheduledTurnOnAReplacedSessionIsAskedAsScheduled() {
+	// A session lost after the caller stopped never answers them, and its replacement heard
+	// no stop: its first reply to a scheduled turn is the task's.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	old := s.agent.speech()
+	_ = peer.conn.Close()
+	var replaced *websocket.Conn
+	select {
+	case replaced = <-peer.next:
+	case <-time.After(settleFor):
+		s.FailNow("the lost session was never replaced")
+	}
+	s.Eventually(func() bool { return !s.agent.switching.Load() && s.agent.speech() != old }, settleFor, time.Millisecond)
+	peer.conn = replaced
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the old session's stop is not the new one's")
+}
+
+func (s *AgentSuite) TestWorkGPTLiveHandsOverInAScheduledTurnIsAskedAsScheduledWhenItsCallComesAfterTheCaller() {
+	// GPT-Live's backend asks for the work on its own time: here after the reply that handed
+	// it over ended and the caller spoke again, in the reply answering them.
+	peer := s.joinLiveDelegating(50 * time.Millisecond)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"session.delegation.created","delegation":{"id":"d1","type":"responses","target":"responses"}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the reply the work was handed over in never ended")
+	s.nativeSend(peer, `{"type":"session.input_transcript.delta","delta":"And for eight people?"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, settleFor, time.Millisecond, "the caller was never answered")
+	s.nativeSend(peer, `{"type":"response.event","delegation_id":"d1","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInTheReplyToTheCallersStopIsNotAskedAsScheduledWhenItsCallComesBeforeTheirWords() {
+	// The transcript of what the caller said runs alongside the reply, so a call of the reply
+	// answering them can arrive while the scheduled turn typed in before it is the last thing.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r0"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r0","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller's reply is theirs")
+}
+
+func (s *AgentSuite) TestWorkGPTLiveHandsOverInTheCallersReplyIsNotAskedAsScheduledWhenItsCallComesInAScheduledTurn() {
+	// The backend asks for the work after a scheduled turn was typed in, but the work was
+	// handed over in the reply answering the caller.
+	peer := s.joinLiveDelegating(50 * time.Millisecond)
+	s.nativeSend(peer, `{"type":"session.input_transcript.delta","delta":"Price eight seats"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.nativeSend(peer, `{"type":"session.delegation.created","delegation":{"id":"d0","type":"responses","target":"responses"}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the caller's reply never ended")
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeSend(peer, `{"type":"response.event","delegation_id":"d0","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price eight seats\"}"}}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the work is the caller's")
+}
+
+// geminiAudio is a server message with a tenth of a second of the model's speech.
+func geminiAudio() string {
+	return `{"serverContent":{"modelTurn":{"role":"model","parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"` +
+		base64.StdEncoding.EncodeToString(make([]byte, 4800)) + `"}}]}}}`
+}
+
+func (s *AgentSuite) TestWorkGeminiHandsOverInAScheduledTurnIsAskedAsScheduledAfterTheCallerWasHeardDuringAReply() {
+	// On Gemini a reply still open takes the caller's stop and none follows for it, so the
+	// next reply, a scheduled turn's, is the task's.
+	handshake := func(conn *websocket.Conn, frames chan map[string]json.RawMessage) bool {
+		var setup map[string]json.RawMessage
+		if conn.ReadJSON(&setup) != nil {
+			return false
+		}
+		frames <- setup
+		return conn.WriteMessage(websocket.TextMessage, []byte(`{"setupComplete":{}}`)) == nil
+	}
+	adapter := func(url string, spec routing.Spec) (sts.STS, error) {
+		return gemini.New(gemini.Options{APIKey: "test", URL: url, Model: spec.Model, Tools: spec.Tools, Instructions: spec.STS.Instructions})
+	}
+	peer := s.joinNativeOver(handshake, adapter, "gemini/gemini-3.8-live", nil)
+	send := func(frame string) { s.Require().NoError(peer.conn.WriteMessage(websocket.TextMessage, []byte(frame))) }
+	send(`{"serverContent":{"inputTranscription":{"text":"What time is my table?"}}}`)
+	s.heardSpeechStart()
+	send(geminiAudio())
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, settleFor, time.Millisecond)
+	send(`{"serverContent":{"inputTranscription":{"text":"mhm"}}}`)
+	s.heardSpeechStart()
+	send(geminiAudio())
+	send(`{"serverContent":{"turnComplete":true}}`)
+	s.Eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, settleFor, time.Millisecond, "the caller's reply never ended")
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	send(geminiAudio())
+	s.Eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, settleFor, time.Millisecond, "the scheduled turn was never answered")
+	send(`{"serverContent":{"inputTranscription":{"text":"wait"}}}`)
+	s.heardSpeechStart()
+	send(`{"toolCall":{"functionCalls":[{"id":"call1","name":"delegate_skill","args":{"skill":"think","prompt":"Work out the booking total"}}]}}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, settleFor, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "the work is the scheduled turn's")
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAReplyWithNoIDIsNotAskedAsScheduled() {
+	// A call the adapter can tie to no reply is not mistaken for the scheduled turn's.
+	peer := s.joinNativeDelegating()
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled())
+}
+
+func (s *AgentSuite) TestWorkANativeModelHandsOverInAReplyWithNoIDIsAskedAsScheduledDuringAScheduledTurn() {
+	// A call tied to no reply is not taken for the reply that answered the caller, whose ID
+	// is not known either: during a scheduled turn it is the task's.
+	peer := s.joinNativeDelegating()
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled())
+}
+
+func (s *AgentSuite) TestAToolsPictureInAScheduledNativeTurnIsLookedAtAsScheduledWhenTheCallerCutsInWhileItRuns() {
+	running := make(chan struct{}, 1)
+	release := make(chan struct{})
+	let := sync.OnceFunc(func() { close(release) })
+	s.T().Cleanup(let)
+	peer := s.joinNativeWith(func(options *Options) {
+		options.Skills.Skills = append(options.Skills.Skills, harness.Skill{Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute})
+		options.Tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+		options.ToolRunner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+			running <- struct{}{}
+			<-release
+			return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+		}}
+	})
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"photograph_room","arguments":"{}"}`)
+	select {
+	case <-running:
+	case <-time.After(settleFor):
+		s.FailNow("the tool never ran")
+	}
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	let()
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the tool's picture is the scheduled turn's")
+}
+
+func (s *AgentSuite) TestAToolsPictureAskedInTheCallersOwnNativeReplyIsNotLookedAtAsScheduled() {
+	// The scheduled turn is over when the caller speaks: a picture tool the model asks for in
+	// the reply that answers the caller is the caller's spend, not the scheduled turn's.
+	running := make(chan struct{}, 1)
+	release := make(chan struct{})
+	let := sync.OnceFunc(func() { close(release) })
+	s.T().Cleanup(let)
+	peer := s.joinNativeWith(func(options *Options) {
+		options.Skills.Skills = append(options.Skills.Skills, harness.Skill{Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute})
+		options.Tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+		options.ToolRunner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+			running <- struct{}{}
+			<-release
+			return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+		}}
+	})
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind me of my booking", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r2","call_id":"call2","name":"photograph_room","arguments":"{}"}`)
+	select {
+	case <-running:
+	case <-time.After(settleFor):
+		s.FailNow("the tool never ran")
+	}
+	let()
+	s.Eventually(func() bool { return len(s.subagent.requests()) == 1 }, time.Second, time.Millisecond)
+
+	s.Equal([]bool{false}, s.subagent.askedScheduled(), "the caller asked for this picture")
 }
 
 func (s *AgentSuite) TestNativeDelegationCancelsWorkWithoutEndingTheCall() {
@@ -432,9 +819,13 @@ func (s *AgentSuite) newLiveRetryFixture(mode liveRetryMode, tools harness.Tools
 		}
 		return session, nil
 	})
+	var ending Ender
+	if s.ender != nil {
+		ending = s.ender
+	}
 	s.joinNative(registry, Options{
 		CustomerID: "acme", STSTarget: "openai/gpt-live-1",
-		Tools: tools, ToolRunner: runner,
+		Tools: tools, ToolRunner: runner, Ender: ending,
 	})
 	return fixture
 }
@@ -834,4 +1225,191 @@ func (s *AgentSuite) TestAStopHeardDuringANativeReplyIsNotTheNextReplysWait() {
 	)
 	_, measured := turnFor(events, "next")
 	s.False(measured, "nobody was waiting on the next reply")
+}
+
+func (s *AgentSuite) TestANativeAgentHangsUpAfterTheGoodbyeItSpeaksAfterTheTool() {
+	// A speech-to-speech model may call end_call first and only say goodbye once it has the
+	// result: ending the call when the tool runs would leave the caller with silence.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	setup := s.nativeFrame(peer, "session.update")
+	s.Contains(string(setup["session"]), "end_call")
+	s.edge.holdSpeech(true)
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeFrame(peer, "conversation.item.create")
+	s.nativeFrame(peer, "response.create")
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended before the goodbye was said")
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended while the goodbye was going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+}
+
+func (s *AgentSuite) TestANativeGoodbyeTheCallerTalksOverKeepsTheCall() {
+	// A caller who cuts in on the goodbye has something more to say, and hanging up on them
+	// mid-sentence is the agent ignoring them.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeFrame(peer, "response.create")
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"cancelled","status_details":{"reason":"turn_detected"}}}`)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the goodbye was never cut")
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}
+
+func (s *AgentSuite) TestANativeCallerSpeakingOverTheGoodbyesTailKeepsTheCall() {
+	// The model reports a reply done well before its last words are heard. A caller who
+	// cuts in on that tail has something more to say, as one who cut in earlier has.
+	ender := &stubEnder{}
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.edge.holdSpeech(true)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	answer := s.nativeFrame(peer, "conversation.item.create")
+	s.Contains(string(answer["item"]), "call end_call again", "the model is never told the call can stay open")
+	s.nativeFrame(peer, "response.create")
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.nativeListening
+	}, "the caller was never heard")
+	s.edge.holdSpeech(false)
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}
+
+func (s *AgentSuite) TestANativeGoodbyeLostToASessionSwapStillEndsTheCall() {
+	// A goodbye whose session dropped mid-reply never reports its end. Waiting for it would
+	// hold the call open, and billed, which on an outbound call left in a voicemail box is
+	// until the box hangs up.
+	tools, err := harness.DefaultTools()
+	s.Require().NoError(err)
+	s.ender = &stubEnder{}
+	fixture := s.newLiveRetryFixture(liveRetryMode{}, tools, nil)
+	oldPeer := s.nextNativePeer(fixture.peers)
+	s.nativeSend(oldPeer, `{"type":"response.event","delegation_id":"reply","event":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"bye-call","name":"end_call","arguments":"{}"}}}`)
+	s.Eventually(func() bool { return countOf[ToolRan](s.events.seen()) == 1 }, settleFor, time.Millisecond)
+	s.nativeSend(oldPeer, `{"type":"session.output_audio.delta","delta":"6APQBw=="}`)
+	s.Require().Eventually(func() bool { return len(s.edge.heard()) == 1 }, settleFor, time.Millisecond)
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended before the goodbye was heard")
+
+	_ = oldPeer.conn.Close()
+
+	s.Eventually(func() bool { return s.ender.ends() == 1 }, settleFor, time.Millisecond, "the call was held open for a goodbye that was lost")
+	s.Eventually(func() bool { return countOf[Left](s.events.seen()) == 1 }, settleFor, time.Millisecond)
+}
+
+// endsTwice has the native model call end_call twice in one reply, and returns the two
+// answers it was given.
+func (s *AgentSuite) endsTwice(ender *stubEnder) (*nativePeer, []string) {
+	peer := s.joinNativeWith(func(options *Options) {
+		tools, err := harness.DefaultTools()
+		s.Require().NoError(err)
+		options.Tools = tools
+		options.Ender = ender
+	})
+	s.edge.holdSpeech(true)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call2","name":"end_call","arguments":"{}"}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	answers := []string{
+		string(s.nativeFrame(peer, "conversation.item.create")["item"]),
+		string(s.nativeFrame(peer, "conversation.item.create")["item"]),
+	}
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == "r2"
+		})
+	}, "the goodbye never finished")
+	return peer, answers
+}
+
+func (s *AgentSuite) TestASecondNativeEndCallIsToldTheCallIsAlreadyEnding() {
+	// Two hang-ups waiting on one goodbye means one of them is not the goodbye the caller's
+	// voice cancels, and it ends the call on them later.
+	ender := &stubEnder{}
+	_, answers := s.endsTwice(ender)
+
+	pending := 0
+	for _, answer := range answers {
+		if strings.Contains(answer, "already ending") {
+			pending++
+		}
+	}
+	s.Equal(1, pending, "exactly one end_call should wait on the goodbye: %v", answers)
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+	s.Equal(1, ender.ends())
+}
+
+func (s *AgentSuite) TestACallerSpeakingAfterTwoNativeEndCallsKeepsTheCall() {
+	ender := &stubEnder{}
+	peer, _ := s.endsTwice(ender)
+
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.nativeListening
+	}, "the caller was never heard")
+	s.edge.holdSpeech(false)
+
+	s.never(func() bool { return ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
 }

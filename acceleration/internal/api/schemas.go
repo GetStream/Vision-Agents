@@ -273,6 +273,7 @@ type CreateSessionRequest struct {
 	Languages            *[]string          `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
 	Llm                  *string            `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
 	MaxTokens            *int               `json:"max_tokens,omitempty"`
+	MaxToolRounds        *int               `json:"max_tool_rounds,omitempty" doc:"The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups."`
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
@@ -299,6 +300,7 @@ type CreateSessionRequest struct {
 
 func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["max_tokens"].Format = ""
+	schema.Properties["max_tool_rounds"].Format = ""
 	schema.Properties["tool_timeout_ms"].Format = ""
 	return schema
 }
@@ -539,6 +541,11 @@ func (e ImageOptionsOutputFormat) Valid() bool {
 type ImageSource struct {
 	Detail *ImageSourceDetail `json:"detail,omitempty" enum:"auto,low,high"`
 	Url    string             `json:"url" doc:"Absolute HTTP(S) URL or base64 image data URI."`
+}
+
+// AudioSource is a voice note sent with a question.
+type AudioSource struct {
+	Url string `json:"url" doc:"Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address."`
 }
 
 // ImageSourceDetail is the ImageSourceDetail schema.
@@ -802,6 +809,7 @@ type Session struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	Custom           *map[string]interface{} `json:"custom,omitempty"`
 	Description      *string                 `json:"description,omitempty"`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped."`
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
@@ -868,6 +876,14 @@ func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
 }
 
+// SessionEndReason is why a session ended.
+type SessionEndReason string
+
+func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.",
+		"agent_hangup", "transferred", "hangup", "start", "unanswered", "voicemail")
+}
+
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 type SessionMode string
 
@@ -909,9 +925,35 @@ func (*SessionCall) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.
 
 // SessionPhone The number the session acts from, which is what turns transferring on.
 type SessionPhone struct {
-	Number       string  `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
-	Vendor       *string `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
-	VendorCallId *string `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
+	Number       string            `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
+	Vendor       *string           `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
+	VendorCallId *string           `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
+	Voicemail    *SessionVoicemail `json:"voicemail,omitempty" doc:"What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it."`
+}
+
+// SessionVoicemail is what the agent does when an answering machine picks up.
+type SessionVoicemail struct {
+	Action  VoicemailAction `json:"action"`
+	Message *string         `json:"message,omitempty" maxLength:"1000" doc:"Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up."`
+}
+
+func (*SessionVoicemail) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent does when an answering machine picks up."
+	return schema
+}
+
+// VoicemailAction is what the agent does on reaching an answering machine.
+type VoicemailAction string
+
+const (
+	VoicemailActionHangUp       VoicemailAction = "hang_up"
+	VoicemailActionLeaveMessage VoicemailAction = "leave_message"
+)
+
+func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "VoicemailAction", "hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"hang_up", "leave_message")
 }
 
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

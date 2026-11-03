@@ -344,6 +344,19 @@ final class AgentResponsePage {
   };
 }
 
+final class AudioSource {
+  const AudioSource({required this.url});
+
+  factory AudioSource.fromJson(Object? value) {
+    final json = _object(value, 'AudioSource');
+    return AudioSource(url: _string(json['url'], 'AudioSource.url'));
+  }
+
+  final String url;
+
+  Map<String, Object?> toJson() => {'url': url};
+}
+
 /// What the call spent, summed over every request it made.
 final class CallUsage {
   const CallUsage({
@@ -382,6 +395,7 @@ final class CallUsage {
 
 final class CreateResponseRequest {
   const CreateResponseRequest({
+    this.audio,
     this.images,
     this.maxOutputTokens,
     this.reasoningEffort,
@@ -394,6 +408,10 @@ final class CreateResponseRequest {
   factory CreateResponseRequest.fromJson(Object? value) {
     final json = _object(value, 'CreateResponseRequest');
     return CreateResponseRequest(
+      audio: switch (json['audio']) {
+        null => null,
+        final Object value => AudioSource.fromJson(value),
+      },
       images: switch (json['images']) {
         null => null,
         final Object value => [
@@ -428,6 +446,7 @@ final class CreateResponseRequest {
     );
   }
 
+  final AudioSource? audio;
   final List<ImageSource>? images;
   final int? maxOutputTokens;
   final String? reasoningEffort;
@@ -437,6 +456,7 @@ final class CreateResponseRequest {
   final List<VideoSource>? videos;
 
   Map<String, Object?> toJson() => {
+    if (audio case final value?) 'audio': value.toJson(),
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
     'max_output_tokens': ?maxOutputTokens,
     'reasoning_effort': ?reasoningEffort,
@@ -467,6 +487,7 @@ final class CreateSessionRequest {
     this.languages,
     this.llm,
     this.maxTokens,
+    this.maxToolRounds,
     this.memory,
     this.minConfidence,
     this.modelOverwrites,
@@ -577,6 +598,10 @@ final class CreateSessionRequest {
       maxTokens: switch (json['max_tokens']) {
         null => null,
         final Object value => _int(value, 'CreateSessionRequest.max_tokens'),
+      },
+      maxToolRounds: switch (json['max_tool_rounds']) {
+        null => null,
+        final Object value => _int(value, 'CreateSessionRequest.max_tool_rounds'),
       },
       memory: switch (json['memory']) {
         null => null,
@@ -689,6 +714,7 @@ final class CreateSessionRequest {
   final List<String>? languages;
   final String? llm;
   final int? maxTokens;
+  final int? maxToolRounds;
   final SessionMemory? memory;
   final double? minConfidence;
   final ModelOverwrites? modelOverwrites;
@@ -732,6 +758,7 @@ final class CreateSessionRequest {
     'languages': ?languages,
     'llm': ?llm,
     'max_tokens': ?maxTokens,
+    'max_tool_rounds': ?maxToolRounds,
     if (memory case final value?) 'memory': value.toJson(),
     'min_confidence': ?minConfidence,
     if (modelOverwrites case final value?) 'model_overwrites': value.toJson(),
@@ -865,7 +892,14 @@ final class Greeting {
 }
 
 final class GuestUser {
-  const GuestUser({this.custom, this.expiresAt, required this.id, this.name, required this.token});
+  const GuestUser({
+    this.custom,
+    this.expiresAt,
+    required this.id,
+    this.name,
+    this.refreshSecret,
+    required this.token,
+  });
 
   factory GuestUser.fromJson(Object? value) {
     final json = _object(value, 'GuestUser');
@@ -883,6 +917,10 @@ final class GuestUser {
         null => null,
         final Object value => _string(value, 'GuestUser.name'),
       },
+      refreshSecret: switch (json['refresh_secret']) {
+        null => null,
+        final Object value => _string(value, 'GuestUser.refresh_secret'),
+      },
       token: _string(json['token'], 'GuestUser.token'),
     );
   }
@@ -891,6 +929,7 @@ final class GuestUser {
   final DateTime? expiresAt;
   final String id;
   final String? name;
+  final String? refreshSecret;
   final String token;
 
   Map<String, Object?> toJson() => {
@@ -898,12 +937,13 @@ final class GuestUser {
     if (expiresAt case final value?) 'expires_at': value.toUtc().toIso8601String(),
     'id': id,
     'name': ?name,
+    'refresh_secret': ?refreshSecret,
     'token': token,
   };
 }
 
 final class GuestUserRequest {
-  const GuestUserRequest({this.custom, this.id, this.name});
+  const GuestUserRequest({this.custom, this.id, this.name, this.refreshSecret});
 
   factory GuestUserRequest.fromJson(Object? value) {
     final json = _object(value, 'GuestUserRequest');
@@ -920,14 +960,24 @@ final class GuestUserRequest {
         null => null,
         final Object value => _string(value, 'GuestUserRequest.name'),
       },
+      refreshSecret: switch (json['refresh_secret']) {
+        null => null,
+        final Object value => _string(value, 'GuestUserRequest.refresh_secret'),
+      },
     );
   }
 
   final Map<String, Object?>? custom;
   final String? id;
   final String? name;
+  final String? refreshSecret;
 
-  Map<String, Object?> toJson() => {'custom': ?custom, 'id': ?id, 'name': ?name};
+  Map<String, Object?> toJson() => {
+    'custom': ?custom,
+    'id': ?id,
+    'name': ?name,
+    'refresh_secret': ?refreshSecret,
+  };
 }
 
 final class HistoryMessage {
@@ -1330,6 +1380,7 @@ final class Session {
     required this.createdAt,
     this.custom,
     this.description,
+    this.endReason,
     this.forkedFrom,
     required this.id,
     this.incognito,
@@ -1394,6 +1445,10 @@ final class Session {
       description: switch (json['description']) {
         null => null,
         final Object value => _string(value, 'Session.description'),
+      },
+      endReason: switch (json['end_reason']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_reason'),
       },
       forkedFrom: switch (json['forked_from']) {
         null => null,
@@ -1494,6 +1549,7 @@ final class Session {
   final DateTime createdAt;
   final Map<String, Object?>? custom;
   final String? description;
+  final String? endReason;
   final String? forkedFrom;
   final String id;
   final bool? incognito;
@@ -1532,6 +1588,7 @@ final class Session {
     'created_at': createdAt.toUtc().toIso8601String(),
     'custom': ?custom,
     'description': ?description,
+    'end_reason': ?endReason,
     'forked_from': ?forkedFrom,
     'id': id,
     'incognito': ?incognito,
@@ -1771,7 +1828,7 @@ final class SessionPage {
 
 /// The number the session acts from, which is what turns transferring on.
 final class SessionPhone {
-  const SessionPhone({required this.number, this.vendor, this.vendorCallId});
+  const SessionPhone({required this.number, this.vendor, this.vendorCallId, this.voicemail});
 
   factory SessionPhone.fromJson(Object? value) {
     final json = _object(value, 'SessionPhone');
@@ -1785,17 +1842,23 @@ final class SessionPhone {
         null => null,
         final Object value => _string(value, 'SessionPhone.vendor_call_id'),
       },
+      voicemail: switch (json['voicemail']) {
+        null => null,
+        final Object value => SessionVoicemail.fromJson(value),
+      },
     );
   }
 
   final String number;
   final String? vendor;
   final String? vendorCallId;
+  final SessionVoicemail? voicemail;
 
   Map<String, Object?> toJson() => {
     'number': number,
     'vendor': ?vendor,
     'vendor_call_id': ?vendorCallId,
+    if (voicemail case final value?) 'voicemail': value.toJson(),
   };
 }
 
@@ -1994,6 +2057,27 @@ final class SessionVideo {
   final String? source;
 
   Map<String, Object?> toJson() => {'max_frames': ?maxFrames, 'source': ?source};
+}
+
+/// What the agent does when an answering machine picks up.
+final class SessionVoicemail {
+  const SessionVoicemail({required this.action, this.message});
+
+  factory SessionVoicemail.fromJson(Object? value) {
+    final json = _object(value, 'SessionVoicemail');
+    return SessionVoicemail(
+      action: _string(json['action'], 'SessionVoicemail.action'),
+      message: switch (json['message']) {
+        null => null,
+        final Object value => _string(value, 'SessionVoicemail.message'),
+      },
+    );
+  }
+
+  final String action;
+  final String? message;
+
+  Map<String, Object?> toJson() => {'action': action, 'message': ?message};
 }
 
 final class StartSessionVoiceRequest {

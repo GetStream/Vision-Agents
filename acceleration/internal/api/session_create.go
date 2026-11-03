@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
@@ -132,6 +133,10 @@ func refuseSessionRequest(ctx context.Context, request CreateSessionRequest) (AP
 		if err := checkReturnURL(returnURL); err != nil {
 			return invalidRequest("return_url: " + err.Error()), true
 		}
+	}
+	if plan := request.Phone; plan != nil && plan.Voicemail != nil &&
+		plan.Voicemail.Action == VoicemailActionLeaveMessage && strings.TrimSpace(value(plan.Voicemail.Message)) == "" {
+		return invalidRequest("phone.voicemail.message is required to leave a message"), true
 	}
 	// A zone nobody knows is refused where it is named, rather than at the first task
 	// that would have run in it.

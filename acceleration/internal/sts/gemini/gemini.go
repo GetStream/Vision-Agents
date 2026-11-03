@@ -375,8 +375,13 @@ type STS struct {
 	usage      sts.Usage
 	carried    sts.Usage
 	// muted drops the rest of a reply the caller cut off from this side, since the API
-	// has no way to tell the model to stop.
+	// has no way to tell the model to stop. The reply stays open until the server says its
+	// turn ended, which is when its usage has come.
 	muted bool
+	// estimator fills in the usage of a reply settled with none reported, and quiet, while
+	// Close waits, is closed once no reply is open.
+	estimator *sts.Estimator
+	quiet     chan struct{}
 	// calls remembers the name each tool call was made under, which the answer has to
 	// carry back.
 	calls map[string]string
@@ -414,13 +419,24 @@ func New(settings Options) (*STS, error) {
 	}
 
 	return &STS{
-		options: settings,
-		keys:    keys,
-		logger:  logger.With("provider", ProviderName, "model", settings.Model),
-		emitter: sts.NewEmitter(sts.EmitterBuffer),
-		calls:   map[string]string{},
+		options:   settings,
+		keys:      keys,
+		logger:    logger.With("provider", ProviderName, "model", settings.Model),
+		emitter:   sts.NewEmitter(sts.EmitterBuffer),
+		calls:     map[string]string{},
+		estimator: sts.NewEstimator(audioTokensPerSecond, true),
 	}, nil
 }
+
+// audioTokensPerSecond is what a second of a reply's audio comes to in output tokens before
+// the session's own replies say. Google documents 32 tokens a second for audio a model reads
+// and nothing for the audio Live speaks, so the estimate takes less than that, erring toward
+// billing less than the vendor does.
+const audioTokensPerSecond = 25
+
+// closeGrace is how long Close waits for the server to end a reply in flight, which brings
+// the usage that bills it.
+var closeGrace = time.Second
 
 // CapabilitiesFor is what a Live model can be asked for. Every native audio model here does
 // the same things; what they take at setup they cannot be given again.
@@ -582,24 +598,25 @@ func (s *STS) UpdateCall(update sts.CallUpdate) error {
 // Prompt asks the model to speak, guided by the text.
 func (s *STS) Prompt(text string) error { return s.turnOf(text) }
 
-// Interrupt stops forwarding the reply in flight and settles it as cut off. The Live API
-// has no word for a client-side interrupt, so the model is not told: it stops of its own
-// accord when it hears the caller, which is what a barge-in sounds like to it anyway.
+// Interrupt stops forwarding the reply in flight. The Live API has no word for a client-side
+// interrupt, so the model is not told: it stops of its own accord when it hears the caller,
+// which is what a barge-in sounds like to it anyway. The reply is settled as cut off when the
+// server ends its turn, which brings what it cost.
 func (s *STS) Interrupt(int) error {
 	s.mu.Lock()
 	if s.turn != nil {
 		s.muted = true
 	}
 	s.mu.Unlock()
-	s.settleTurn(true)
 	return nil
 }
 
 // Events returns what the model heard, said and asked for.
 func (s *STS) Events() <-chan sts.Event { return s.emitter.Events() }
 
-// Close ends the session. A reply still in flight is settled as interrupted, so it is
-// billed once like every other.
+// Close ends the session. A reply still in flight is given closeGrace for the server to end
+// its turn with its usage, and is then settled as interrupted, on an estimate where none
+// came, so it is billed once like every other.
 func (s *STS) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -608,8 +625,20 @@ func (s *STS) Close() error {
 	}
 	s.closed = true
 	conn := s.conn
+	if s.turn != nil && conn != nil {
+		s.quiet = make(chan struct{})
+	}
+	quiet := s.quiet
 	s.mu.Unlock()
 
+	if quiet != nil {
+		grace := time.NewTimer(closeGrace)
+		select {
+		case <-quiet:
+		case <-grace.C:
+		}
+		grace.Stop()
+	}
 	s.settleTurn(true)
 	if conn != nil {
 		conn.Close()
@@ -914,6 +943,7 @@ func (s *STS) handleContent(server serverContent) {
 		if !muted {
 			s.finishHearing()
 			turn := s.currentTurn()
+			turn.Said(server.OutputTranscription.Text)
 			s.emitter.Send(sts.OutputTranscript{ResponseID: turn.ID, Mode: stt.ModeDelta, Text: server.OutputTranscription.Text})
 		}
 	}
@@ -934,7 +964,11 @@ func (s *STS) handleContent(server serverContent) {
 		s.carryUsage()
 	} else if server.TurnComplete {
 		s.finishHearing()
-		s.settleTurn(false)
+		// A reply muted here was cut off, whether or not the model noticed before it ended.
+		s.mu.Lock()
+		cut := s.muted
+		s.mu.Unlock()
+		s.settleTurn(cut)
 		s.unmute()
 	}
 }
@@ -1012,7 +1046,8 @@ func (s *STS) finishHearing() {
 		s.endedAt = time.Time{}
 	}
 	// A reply already open takes the stop: none that follows answers it.
-	if s.turn != nil {
+	answered := s.turn != nil
+	if answered {
 		s.turn.HeardAt(stoppedAt)
 	} else {
 		s.heardAt = stoppedAt
@@ -1023,7 +1058,7 @@ func (s *STS) finishHearing() {
 	if text != "" {
 		s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: stt.ModeFinal, Text: text})
 	}
-	s.emitter.Send(sts.SpeechStopped{Participant: participant, At: stoppedAt})
+	s.emitter.Send(sts.SpeechStopped{Participant: participant, At: stoppedAt, Answered: answered})
 }
 
 // spoke forwards the audio in a model turn. Text parts are the model's thoughts and are
@@ -1092,7 +1127,7 @@ func (s *STS) currentTurn() *sts.Turn {
 }
 
 // settleTurn closes the reply in flight, if there is one, and reports it with what the
-// server said it cost.
+// server said it cost, or an estimate from what it streamed where the server said nothing.
 func (s *STS) settleTurn(interrupted bool) {
 	s.mu.Lock()
 	turn := s.turn
@@ -1100,9 +1135,19 @@ func (s *STS) settleTurn(interrupted bool) {
 	s.turn = nil
 	s.usage = sts.Usage{}
 	s.carried = sts.Usage{}
+	quiet := s.quiet
+	s.quiet = nil
 	s.mu.Unlock()
+	if quiet != nil {
+		defer close(quiet)
+	}
 	if turn == nil {
 		return
+	}
+	if usage.Counted() {
+		s.estimator.Reported(turn, usage)
+	} else {
+		usage = s.estimator.Estimate(turn)
 	}
 	s.emitter.Send(turn.Complete(ProviderName, s.options.Model, interrupted, usage))
 }

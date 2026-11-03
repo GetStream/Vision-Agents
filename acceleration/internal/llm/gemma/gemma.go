@@ -79,11 +79,13 @@ func New(options Options) (*openaicompat.LLM, error) {
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:   ProviderName,
-		Model:      upstreamModel(options.Model),
-		StatsModel: options.Model,
-		APIKey:     options.APIKey,
-		BaseURL:    options.BaseURL,
+		// Gemma's chat template is not known to take a system turn after the first.
+		SystemTurnsAsUser: true,
+		Provider:          ProviderName,
+		Model:             upstreamModel(options.Model),
+		StatsModel:        options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
 		// The live path wants the first word, not a think-then-speak turn. The deployment
 		// also defaults thinking off; this pins it on every request so a client cannot
 		// enable it by accident.

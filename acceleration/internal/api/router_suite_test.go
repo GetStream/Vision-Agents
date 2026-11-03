@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -94,6 +96,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -266,6 +269,12 @@ type RouterSuite struct {
 	// kept apart by, so this is the only thing stopping one suite's nodes from reading
 	// another's sessions.
 	relayPrefix string
+	// redisAddr and shardRedisAddr are the addresses of the deployment's Redis, which the work
+	// bus is on, and of the one every node's relay is on.
+	redisAddr, shardRedisAddr string
+	// workRedis, set by a test about a node made again, is the client the work bus is on, in
+	// place of the suite's own.
+	workRedis rueidis.Client
 	// shard and otherShard are the shards of the suite's node and of otherNode, for a suite
 	// about shards to set before it starts the harness. Nodes in two shards have a relay
 	// each. Empty is one deployment of one shard.
@@ -297,6 +306,7 @@ type RouterSuite struct {
 	speechMu    sync.Mutex
 	newestVoice *recordingTTS
 	newestEars  *quietSTT
+	newestEdge  *silentEdge
 	// unconfiguredBuilds counts what the "unconfigured" transcriber was asked to build.
 	unconfiguredBuilds atomic.Int64
 	// noted are the "noted" models opened so far, one per session, newest last, for a test
@@ -454,7 +464,9 @@ type RouterSuite struct {
 	// own, set before it starts the harness: model instances laid over reasoningConfig, what
 	// registers their factories over the suite's stubs, a knowledge backend for each region
 	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
-	llmInstances     []routing.ProviderConfig
+	llmInstances []routing.ProviderConfig
+	// sttInstances are batch transcription instances added to the recording config.
+	sttInstances     []routing.ProviderConfig
 	llmFactories     func(*llmrouter.Registry)
 	knowledgeRegions map[string]knowledge.Backend
 	sandboxTargets   map[string]string
@@ -475,6 +487,9 @@ type RouterSuite struct {
 	// phoneVendors is the vendors the phone service opens, for a suite to set before it starts
 	// the harness. Nil is every vendor the router knows, with no credentials.
 	phoneVendors *phone.Registry
+	// phoneOnChat has the phone service place calls in the suite's Stream app, the chattest,
+	// for a suite to set before it starts the harness. Off, it has no Stream to place them in.
+	phoneOnChat bool
 	// sessionTelephony gives the suite's sessions the phone service, as cmd/router does, for a
 	// suite to set before it starts the harness. Off, a session with a number cannot open.
 	sessionTelephony bool
@@ -567,7 +582,10 @@ func (s *RouterSuite) SetupSuite() {
 		s.Require().NoError(err)
 	}
 
-	liveClient, err := live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
+	s.redisAddr, s.shardRedisAddr = redisAddr, cmp.Or(os.Getenv("ROUTER_REDIS_SHARD_ADDR"), redisAddr)
+	liveClient, err := redisready.Retry(redisAddr, func() (*live.Client, error) {
+		return live.New(live.Options{Address: redisAddr, Shard: live.Shard{Address: os.Getenv("ROUTER_REDIS_SHARD_ADDR")}})
+	})
 	s.Require().NoError(err)
 	s.live = liveClient
 	s.T().Cleanup(liveClient.Close)
@@ -598,8 +616,8 @@ func (s *RouterSuite) SetupSuite() {
 		s.stream = streamapp.NewClients(stored, streamapp.ClientsOptions{})
 	}
 	s.store.SetStreamPins(store.StreamPins{Deployment: s.apps.deployment.App, For: s.stream.Pin, Knowable: s.stream.DeploymentAppKnowable})
-	s.configs, err = appconfig.New(appconfig.Options{
-		Store: pgStore, Address: redisAddr, Logger: logger,
+	s.configs, err = redisready.Retry(redisAddr, func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: pgStore, Address: redisAddr, Logger: logger})
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.configs.Close)
@@ -699,11 +717,11 @@ func (s *RouterSuite) SetupSuite() {
 	if s.manageOff {
 		manageKey = ""
 	}
-	server, err := NewServer(Options{
+	server := s.newNode(s.shard, logger, Options{
 		Routers:   s.modalities,
+		Pricer:    s.serverPricer(logger),
 		Prices:    s.prices,
 		Streams:   streams,
-		Relay:     s.relayBus(s.shard, logger),
 		Directory: directory,
 		Sessions:  sessions,
 		Store:     pgStore,
@@ -760,7 +778,6 @@ func (s *RouterSuite) SetupSuite() {
 		SlackApps:             s.slackApps,
 		OperatorProviderApps:  s.operatorApps,
 	})
-	s.Require().NoError(err)
 	listener.Config.Handler = server.Handler()
 	listener.Start()
 	public.PublicURL = listener.URL
@@ -1010,7 +1027,7 @@ func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *
 func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logger) *dlc.Service {
 	service, err := dlc.NewService(dlc.Options{
 		Store: s.store, Registrar: s.registrar, PublicURL: "http://" + listener.Listener.Addr().String(),
-		Recorder: s.phoneRecorder, Logger: logger,
+		Recorder: s.phoneRecorder, Booker: s.gate, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.registrar10DLC = service
@@ -1091,6 +1108,19 @@ func (s *RouterSuite) ears() *quietSTT {
 	s.speechMu.Lock()
 	defer s.speechMu.Unlock()
 	return s.newestEars
+}
+
+// callerSays has somebody speak on the call the router joined last. A reply to nobody yet
+// heard is offered no tools, so a test whose model calls one has the caller speak.
+func (s *RouterSuite) callerSays(text string) {
+	before := s.ears()
+	s.speechMu.Lock()
+	edge := s.newestEdge
+	s.speechMu.Unlock()
+	caller := stt.Participant{ID: "caller", UserID: "caller"}
+	edge.inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+	s.Require().Eventually(func() bool { return s.ears() != before }, settleFor, 5*time.Millisecond, "the call never began listening")
+	s.ears().emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
 }
 
 func (s *RouterSuite) spoke(voice *recordingTTS) {
@@ -1199,6 +1229,17 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("failing", func(routing.Spec) (llmrouter.Provider, error) {
 		return &scriptedLLM{refuses: errors.New("failing: the provider is down")}, nil
 	})
+	// A model whose every request fails with the prompt injection screen's refusal, for a
+	// run whose input the screen refused: the suite routes no screen of its own.
+	reasoning.Register("screened", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{refuses: fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection)}, nil
+	})
+
+	// A model that recites what it was handed and refuses a request quoting guardedInjection
+	// as the prompt injection screen does, for a conversation past a refused turn.
+	reasoning.Register("guarded", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{recites: true, refusesQuoting: guardedInjection}, nil
+	})
 
 	// A model that is a while in the writing, for a command that has to still be running
 	// when the test asks it to stop.
@@ -1217,6 +1258,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		return &scriptedLLM{reply: "Let me check.", calls: []llm.ToolCall{{
 			ID: store.NewID(), Name: lookupOrder, Arguments: `{"order":"12"}`,
 		}}}, nil
+	})
+	// A model that says goodbye and hangs up on its first turn.
+	reasoning.Register("hanging-up", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedLLM{reply: "Goodbye.", calls: []llm.ToolCall{{ID: store.NewID(), Name: "end_call", Arguments: "{}"}}}, nil
 	})
 	// A model that reaches for a connector's tool on its first turn: echo of the binding
 	// called crm, which says back what it is given.
@@ -1274,8 +1319,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
+	recorded := recordingConfig()
+	recorded.Providers = append(recorded.Providers, s.sttInstances...)
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       recordingConfig(),
+		Config:       recorded,
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,
@@ -1337,6 +1384,44 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 // tenth of a second rather than a router's 30, so a change made in a test prices within it.
 const suitePriceReload = 100 * time.Millisecond
 
+// serverPricer is the list the suite's server prices from when the suite prices from no
+// database: the one a server builds from its routers' config, with the stand-in models it
+// leaves unpriced marked as models the deployment runs itself, as a deployment marks its own,
+// so an agent naming one is saved rather than refused for work with no price. Nil for a suite
+// pricing from the database.
+func (s *RouterSuite) serverPricer(logger *slog.Logger) pricing.Pricer {
+	if s.prices != nil {
+		return nil
+	}
+	capabilities := routing.Config{}
+	for modality, router := range s.modalities {
+		capabilities[modality] = router.Config()
+	}
+	knowledgeBase := capabilities[routing.Knowledge]
+	for _, model := range []string{metered.KnowledgeLookup, metered.KnowledgeWrite, metered.KnowledgeStorage} {
+		knowledgeBase.Providers = append(knowledgeBase.Providers, routing.ProviderConfig{
+			Provider: newKnowledgeBase().Provider(), Model: model, Region: pricing.DefaultRegion})
+	}
+	capabilities[routing.Knowledge] = knowledgeBase
+	routed, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	unpriced := routed.Unpriced(routing.Items(capabilities))
+	for modality, config := range capabilities {
+		config.Providers = slices.Clone(config.Providers)
+		for i, provider := range config.Providers {
+			item := routing.ItemOf(modality, provider, nil)
+			config.Providers[i].Local = provider.Local || slices.ContainsFunc(unpriced, func(other pricing.Item) bool {
+				return other.Modality == item.Modality && other.Provider == item.Provider && other.Model == item.Model &&
+					other.Region == item.Region && other.BYOK == item.BYOK
+			})
+		}
+		capabilities[modality] = config
+	}
+	list, err := routing.Prices(capabilities, logger)
+	s.Require().NoError(err)
+	return list
+}
+
 // databasePrices seeds the suite's price list from the fixtures' price file laid over the
 // embedded vendor list, as a router's first start does with a file of its own (once: every
 // later start finds it seeded and adds only what it lacks), and reads it every
@@ -1347,10 +1432,13 @@ func (s *RouterSuite) databasePrices(logger *slog.Logger) *pricing.Active {
 	_, _, _, err := s.store.SyncPrices(ctx, store.PriceLoad{Entries: pricingtest.Entries(s.T()),
 		Source: pricingtest.FileName + ", " + prices.VendorFile, Release: "suite"})
 	s.Require().NoError(err)
-	fallback, err := prices.Embedded(routing.LocalItems(routing.Config{routing.LLM: reasoningConfig()}), "suite", logger)
+	reasoned := reasoningConfig()
+	reasoned.Providers = append(reasoned.Providers, s.llmInstances...)
+	local := routing.LocalItems(routing.Config{routing.LLM: reasoned})
+	fallback, err := prices.Embedded(local, "suite", logger)
 	s.Require().NoError(err)
 	return pricing.NewActive(ctx, pricing.ActiveOptions{
-		Source: s.store.PriceSource(), Fallback: fallback, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
+		Source: s.store.PriceSource(), Fallback: fallback, Local: local, Interval: suitePriceReload, RequireEntries: true, Logger: logger,
 	})
 }
 
@@ -1384,7 +1472,11 @@ func (s *RouterSuite) sessionManager(
 	}
 	var telephony *phone.Service
 	if s.sessionTelephony {
-		telephony = s.telephony(logger)
+		sealer, err := auth.NewSealer(suiteTrunkKEK)
+		s.Require().NoError(err)
+		// In the suite's Stream apps, as cmd/router's is, so what a session does to its call
+		// reaches the suite's Stream.
+		telephony = s.telephonySealedBy(sealer, phone.AppsOf(s.stream), logger)
 	}
 	sessions, err := session.NewManager(session.ManagerOptions{
 		Phone:         telephony,
@@ -1406,7 +1498,11 @@ func (s *RouterSuite) sessionManager(
 		// The policies a session's resume_history falls back to, as cmd/router passes them.
 		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
-			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+			edge := &silentEdge{inbound: make(chan agent.InboundAudio, 4)}
+			s.speechMu.Lock()
+			s.newestEdge = edge
+			s.speechMu.Unlock()
+			return edge, nil
 		},
 	})
 	s.Require().NoError(err)
@@ -1500,12 +1596,12 @@ func (s *RouterSuite) forgetPhoneVendors() {
 func (s *RouterSuite) telephony(logger *slog.Logger) *phone.Service {
 	sealer, err := auth.NewSealer(suiteTrunkKEK)
 	s.Require().NoError(err)
-	return s.telephonySealedBy(sealer, logger)
+	return s.telephonySealedBy(sealer, nil, logger)
 }
 
 // telephonySealedBy is telephony with trunk passwords sealed under sealer; nil is a
-// deployment with no keyring.
-func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger) *phone.Service {
+// deployment with no keyring. Lines are made in apps, and nowhere when it is nil.
+func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, logger *slog.Logger) *phone.Service {
 	// Every vendor the router knows is declared, and none of them has credentials: what a
 	// vendor does with a real number is its own package's suite, and what is under test
 	// here is the HTTP surface in front of them.
@@ -1516,14 +1612,20 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, logger *slog.Logger
 		registry = vendors.Registry(config)
 	}
 
+	var stream *phone.Stream
+	if s.phoneOnChat {
+		stream = phone.NewStreamFromClient(s.chat.Client)
+	}
 	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  registry,
+		Stream:    stream,
 		Store:     s.store,
 		Recorder:  s.phoneRecorder,
 		Now:       s.phoneNow,
 		Gate:      s.gate,
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
+		Apps:      apps,
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
@@ -1658,8 +1760,8 @@ func (s *RouterSuite) otherRouterSealedBy(workers *dispatch.Pool, keyring *auth.
 }
 
 // otherNodeHolding is otherRouterSealedBy with the sessions it runs, for a test that stops
-// them the way a router going down does.
-func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+// them the way a router going down does. Each of adjust changes the node's options.
+func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger, adjust ...func(*Options)) (*httptest.Server, *Server, *session.Manager) {
 	other := httptest.NewUnstartedServer(nil)
 	directory := s.nodeDirectory(other, s.otherShard, logger)
 	sessions, err := session.NewManager(session.ManagerOptions{
@@ -1681,16 +1783,14 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sessions.Shutdown() })
 
-	bus := s.relayBus(s.otherShard, logger)
 	var everyWorker *node.Workers
 	if workers != nil {
 		everyWorker = s.deploymentWorkers(workers, directory, s.workBus(logger))
 	}
-	server, err := NewServer(Options{
+	options := Options{
 		Routers:           s.modalities,
 		Streams:           s.streams,
 		Sessions:          sessions,
-		Relay:             bus,
 		Directory:         directory,
 		Dispatch:          workers,
 		Workers:           everyWorker,
@@ -1709,19 +1809,42 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		// the same database.
 		Phone:  s.router.phone,
 		Logger: logger,
-	})
-	s.Require().NoError(err)
+	}
+	for _, change := range adjust {
+		change(&options)
+	}
+	server := s.newNode(s.otherShard, logger, options)
+	// The node shares the suite's phone service, and the last node made takes its unanswered
+	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
+	s.router.phone.OnUnanswered(s.router.endUnanswered)
+	s.router.phone.OnMachine(s.router.tellMachine)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)
 	return other, server, sessions
 }
 
+// otherNodeServingFrom is otherNodeHolding whose API reads served, rather than the suite's
+// store; nil is a node with no store. Its sessions keep the suite's.
+func (s *RouterSuite) otherNodeServingFrom(served *store.Store, workers *dispatch.Pool, keyring *auth.Sealer, logger *slog.Logger) (*httptest.Server, *Server, *session.Manager) {
+	return s.otherNodeHolding(workers, keyring, logger, func(o *Options) { o.Store = served })
+}
+
 // deploymentWorkers is one node's view of the dispatch workers across the deployment.
+//
+// The workers subscribe to the bus as they are made, which is tried again as newNode's relay
+// is; a failed attempt's context is cancelled, which ends the subscriptions it left trying.
 func (s *RouterSuite) deploymentWorkers(workers *dispatch.Pool, directory *node.Directory, bus *relay.Bus) *node.Workers {
-	ctx, cancel := context.WithCancel(context.Background())
-	s.T().Cleanup(cancel)
-	everyWorker, err := node.NewWorkers(ctx, workers, directory, bus, slog.New(slog.DiscardHandler))
+	everyWorker, err := redisready.Retry(s.redisAddr, func() (*node.Workers, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		everyWorker, err := node.NewWorkers(ctx, workers, directory, bus, slog.New(slog.DiscardHandler))
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		s.T().Cleanup(cancel)
+		return everyWorker, nil
+	})
 	s.Require().NoError(err)
 	return everyWorker
 }
@@ -1744,19 +1867,44 @@ func (s *RouterSuite) nodeDirectory(listener *httptest.Server, shard string, log
 	return directory
 }
 
-// relayBus is one node's end of its shard's relay.
-func (s *RouterSuite) relayBus(shard string, logger *slog.Logger) *relay.Bus {
-	bus, err := relay.New(relay.Options{
-		Redis: s.live.ShardRedis(), Prefix: s.relayPrefix + shard, Logger: logger,
+// newNode is NewServer for one of the suite's nodes, on shard's relay.
+//
+// The node subscribes to its relay as it is made, each subscription on a Redis connection of
+// its own that rueidis gives 5 s to open, which a loaded machine can overrun. The node is then
+// made again until redisready's minute is up, each attempt with a Redis client of its own for
+// the relay, closed when the attempt fails: NewServer holds the subscriptions against the
+// process and goes on trying a failed one, so only closing the client ends what a node nobody
+// holds left subscribed, which would otherwise answer the relay beside the node that came up.
+func (s *RouterSuite) newNode(shard string, logger *slog.Logger, options Options) *Server {
+	server, err := redisready.Retry(s.shardRedisAddr, func() (*Server, error) {
+		redis, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{s.shardRedisAddr}, DisableCache: true})
+		if err != nil {
+			return nil, err
+		}
+		if options.Relay, err = relay.New(relay.Options{Redis: redis, Prefix: s.relayPrefix + shard, Logger: logger}); err != nil {
+			redis.Close()
+			return nil, err
+		}
+		server, err := NewServer(options)
+		if err != nil {
+			redis.Close()
+			return nil, err
+		}
+		s.T().Cleanup(redis.Close)
+		return server, nil
 	})
 	s.Require().NoError(err)
-	return bus
+	return server
 }
 
 // workBus is one node's end of the bus its workers take work on, which every shard shares.
 func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
+	redis := s.live.Redis()
+	if s.workRedis != nil {
+		redis = s.workRedis
+	}
 	bus, err := relay.New(relay.Options{
-		Redis: s.live.Redis(), Prefix: s.relayPrefix, Logger: logger,
+		Redis: redis, Prefix: s.relayPrefix, Logger: logger,
 	})
 	s.Require().NoError(err)
 	return bus

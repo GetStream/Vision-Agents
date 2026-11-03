@@ -5,17 +5,22 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -100,9 +105,12 @@ func (s *DataMoveSuite) SetupTest() {
 // command does, and returns the cursor their changes carry on from.
 func (s *DataMoveSuite) move(from, to string) int64 {
 	export := s.export(from)
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range export.rows {
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 	return export.cursor
@@ -111,12 +119,15 @@ func (s *DataMoveSuite) move(from, to string) int64 {
 // moveEdited is move with the rows of one table edited first, as a file the importer wrote
 // itself would carry them.
 func (s *DataMoveSuite) moveEdited(from, to, table string, edit func(map[string]any)) {
+	reservation, err := s.destination.ReserveImportedIDs(s.ctx)
+	s.Require().NoError(err)
 	for _, row := range s.export(from).rows {
 		if row.table == table {
 			edit(row.row)
 		}
 		encoded, err := json.Marshal(row.row)
 		s.Require().NoError(err)
+		s.Require().NoError(reservation.Cover(s.ctx, row.table, encoded))
 		s.Require().NoError(s.destination.ImportRow(s.ctx, to, row.table, encoded))
 	}
 }
@@ -184,6 +195,54 @@ func (s *DataMoveSuite) TestExportLeavesCredentialsBehind() {
 	for _, column := range secretColumns {
 		s.NotContains(connections[0], column, "a credential is not part of a customer's data")
 	}
+}
+
+func (s *DataMoveSuite) TestAGuestsRefreshSecretDoesNotLeaveWithThem() {
+	// It is what lets a guest come back as themselves; a moved guest is handed a new one.
+	_, hash, err := NewGuestSecret()
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Alice", RefreshSecretHash: hash}))
+
+	users := s.export("acme").of("users")
+	s.Require().Len(users, 1)
+	s.NotContains(users[0], "refresh_secret_hash", "a credential is not part of a customer's data")
+}
+
+func (s *DataMoveSuite) TestAChangeToAGuestLeavesTheirRefreshSecretBehind() {
+	// The change feed strips columns in its own trigger, apart from secretColumns.
+	s.capture("acme")
+	_, hash, err := NewGuestSecret()
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Alice", RefreshSecretHash: hash}))
+	_, next, err := NewGuestSecret()
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.SetGuestSecret(s.ctx, "acme", "guest-1", next))
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	recorded := 0
+	for _, change := range changes {
+		if change.Table != "users" {
+			continue
+		}
+		recorded++
+		s.NotContains(string(change.Payload), "refresh_secret_hash")
+	}
+	s.Equal(2, recorded, "the insert and the new secret")
+}
+
+func (s *DataMoveSuite) TestAGuestsRefreshSecretInAFileIsNotImported() {
+	// A file the importer wrote could otherwise plant a secret it knows for a guest.
+	s.Require().NoError(s.source.RecordGuest(s.ctx, &User{ID: "guest-1", CustomerID: "acme", Name: "Alice"}))
+
+	s.moveEdited("acme", "moved", "users", func(row map[string]any) {
+		row["refresh_secret_hash"] = "\\x" + hex.EncodeToString(GuestSecretHash("planted"))
+	})
+
+	var held []byte
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT refresh_secret_hash FROM users WHERE customer_id = 'moved' AND id = 'guest-1'").Scan(&held))
+	s.Empty(held)
 }
 
 func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
@@ -713,7 +772,13 @@ func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBeh
 
 // seedScheduledTask stores a task on the source in a state, claimed by a worker there, with a
 // finished run.
+// seedScheduledTask stores a task on the source with its run, and the agent config it runs
+// on, config-1, unless the source already holds that id.
 func (s *DataMoveSuite) seedScheduledTask(id, customerID, state string) {
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', ?, 'a', 'be brief') ON CONFLICT (id) DO NOTHING",
+		customerID)
+	s.Require().NoError(err)
 	next := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
 	task := &ScheduledTask{
 		ID: id, CustomerID: customerID, ConfigID: "config-1", UserID: "sam", CallerKind: "authenticated",
@@ -721,7 +786,7 @@ func (s *DataMoveSuite) seedScheduledTask(id, customerID, state string) {
 		State: state, NextRunAt: &next, CreatedBy: "api",
 	}
 	s.Require().NoError(s.source.CreateScheduledTask(s.ctx, task, 25))
-	_, err := s.source.DB().ExecContext(s.ctx,
+	_, err = s.source.DB().ExecContext(s.ctx,
 		"UPDATE scheduled_tasks SET claim_id = 'claim-1', lease_until = now() + interval '1 hour' WHERE id = ?", id)
 	s.Require().NoError(err)
 	_, err = s.source.DB().ExecContext(s.ctx, `
@@ -794,6 +859,611 @@ func (s *DataMoveSuite) TestAScheduledTaskChangeAppliedLaterArrivesPausedToo() {
 	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
 		"SELECT title FROM scheduled_tasks WHERE id = 'st-first'").Scan(&title))
 	s.Equal("Stretch more", title, "the rest of the change is applied")
+}
+
+// resume is the cut-over on the destination: what it resumed, and the campaigns left to start.
+func (s *DataMoveSuite) resume(customerID string) (int64, []string) {
+	resumed, _, _, campaigns, err := s.destination.ResumeMovedRows(s.ctx, customerID)
+	s.Require().NoError(err)
+	return resumed, campaigns
+}
+
+// movePausedOn reads whether a task on the destination carries the move's mark.
+func (s *DataMoveSuite) movePausedOn(id string) bool {
+	var marked bool
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT move_paused FROM scheduled_tasks WHERE id = ?", id).Scan(&marked))
+	return marked
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesOnlyTheTasksTheMovePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-paused", "acme", ScheduledTaskPaused)
+	s.seedScheduledTask("st-completed", "acme", ScheduledTaskCompleted)
+	s.move("acme", "moved")
+
+	resumed, _ := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	state, claim, leased, next := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskActive, state)
+	s.Empty(claim)
+	s.False(leased)
+	s.Equal(time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC), next.UTC(), "it goes on from the run the source had not delivered")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
+	s.Equal(ScheduledTaskPaused, state, "the user paused it")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-completed")
+	s.Equal(ScheduledTaskCompleted, state)
+
+	// The user pauses it here once it is theirs; a second cut-over leaves it to them.
+	task, err := s.destination.ScheduledTask(s.ctx, "moved", "st-active")
+	s.Require().NoError(err)
+	task.State = ScheduledTaskPaused
+	s.Require().NoError(s.destination.SaveScheduledTask(s.ctx, &task))
+	again, _ := s.resume("moved")
+	s.Zero(again)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestATaskTheUserPausedAtTheSourceDuringTheMoveStaysPaused() {
+	s.capture("acme")
+	s.seedScheduledTask("st-first", "acme", ScheduledTaskActive)
+	cursor := s.move("acme", "moved")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'paused' WHERE id = 'st-first'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	resumed, _ := s.resume("moved")
+
+	s.Zero(resumed)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-first")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestATaskTheUserResumedAtTheSourceDuringTheMoveIsResumedAtTheCutOver() {
+	s.capture("acme")
+	s.seedScheduledTask("st-first", "acme", ScheduledTaskPaused)
+	cursor := s.move("acme", "moved")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'active' WHERE id = 'st-first'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-first")
+	s.Require().Equal(ScheduledTaskPaused, state, "the source still delivers it")
+
+	resumed, _ := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-first")
+	s.Equal(ScheduledTaskActive, state)
+}
+
+func (s *DataMoveSuite) TestATaskPausedAtTheSourceIsNotResumedWhateverMarkItCarries() {
+	// A source that is itself a move's destination, not cut over yet, holds a paused task
+	// marked by that move. The user did not pause it, but what this move sees is paused.
+	s.seedScheduledTask("st-chained", "acme", ScheduledTaskPaused)
+	s.moveEdited("acme", "moved", "scheduled_tasks", func(row map[string]any) { row["move_paused"] = true })
+
+	resumed, _ := s.resume("moved")
+
+	s.Zero(resumed)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-chained")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// limitHere sets how many active tasks a user may hold on config-1 on the destination.
+func (s *DataMoveSuite) limitHere(limit int) {
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"UPDATE agent_configs SET scheduling = jsonb_build_object('max_tasks_per_user', ?::int) WHERE id = 'config-1'", limit)
+	s.Require().NoError(err)
+}
+
+// madeHere is an active task a user made on the destination before the cut-over.
+func (s *DataMoveSuite) madeHere(id, user, config string) {
+	next := time.Date(2026, 12, 2, 9, 0, 0, 0, time.UTC)
+	s.Require().NoError(s.destination.CreateScheduledTask(s.ctx, &ScheduledTask{
+		ID: id, CustomerID: "moved", ConfigID: config, UserID: user, CallerKind: "authenticated",
+		Title: "Hydrate", Instructions: "Remind them to drink.", StartLocal: next, Timezone: "UTC",
+		State: ScheduledTaskActive, NextRunAt: &next, CreatedBy: "api",
+	}, 100))
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesAUserOnlyUpToTheRoomTheirLimitLeaves() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, skipped, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed, "one place is left under the limit of 2")
+	s.Zero(skipped)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskActive, state, "the oldest takes the place")
+	s.False(s.movePausedOn("st-1"))
+	for _, id := range []string{"st-2", "st-3"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+		s.True(s.movePausedOn(id), "%s is still owed its resume", id)
+	}
+	held, err := s.destination.ActiveScheduledTaskCount(s.ctx, "moved", "sam", "config-1")
+	s.Require().NoError(err)
+	s.Equal(2, held)
+}
+
+// A client chooses the id of its task, so id order is not age order.
+func (s *DataMoveSuite) TestTheCutOverResumesTheOldestTaskWhateverItsId() {
+	for _, id := range []string{"st-c", "st-b", "st-a"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(2), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-c")
+	s.Equal(ScheduledTaskActive, state, "st-c was made first, though its id sorts last")
+	for _, id := range []string{"st-b", "st-a"} {
+		state, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(ScheduledTaskPaused, state, id)
+	}
+}
+
+// The mark kept on a task left over the limit is what lets a second cut-over resume it.
+func (s *DataMoveSuite) TestTheCutOverRunAgainResumesWhatItLeftOnceTheUserHasRoom() {
+	for _, id := range []string{"st-1", "st-2", "st-3"} {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	s.madeHere("st-here", "sam", "config-1")
+	_, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+	s.Require().NoError(err)
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-here'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-2")
+	s.Equal(ScheduledTaskActive, state, "the next oldest")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-3")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// Control: the limit is a user's on one config, and a task they paused here uses no place.
+func (s *DataMoveSuite) TestTheCutOverResumesEveryTaskThatFitsUnderTheLimit() {
+	s.seedScheduledTask("st-sam-1", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-sam-other-config", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-kim", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id = 'st-sam-other-config';
+UPDATE scheduled_tasks SET user_id = 'kim' WHERE id = 'st-kim'`)
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+	s.limitHere(2)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 2}' WHERE id = 'config-2'`)
+	s.Require().NoError(err)
+	s.madeHere("st-here", "sam", "config-1")
+	s.madeHere("st-here-other-config", "sam", "config-2")
+	s.madeHere("st-here-paused", "sam", "config-1")
+	_, err = s.destination.DB().ExecContext(s.ctx, "UPDATE scheduled_tasks SET state = 'paused' WHERE id = 'st-here-paused'")
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(3), resumed, "sam's second place on config-1, their task on the other config, and kim's")
+	s.Zero(overLimit)
+}
+
+// queriesSent records the queries a pool sends while on.
+type queriesSent struct {
+	mu      sync.Mutex
+	on      bool
+	queries []string
+}
+
+func (*queriesSent) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+
+func (q *queriesSent) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.on {
+		q.queries = append(q.queries, event.Query)
+	}
+}
+
+// matching is how many of the queries sent mention every one of words.
+func (q *queriesSent) matching(words ...string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	matched := 0
+	for _, query := range q.queries {
+		all := true
+		for _, word := range words {
+			all = all && strings.Contains(query, word)
+		}
+		if all {
+			matched++
+		}
+	}
+	return matched
+}
+
+// Each user on each config has the room their own limit leaves them, read for all of them at
+// once: one query locks the configs and one counts what every user holds on each, however
+// many users and configs the move brought.
+func (s *DataMoveSuite) TestTheCutOverReadsEveryUsersRoomOnEveryConfigInOneQueryEach() {
+	tasks := map[string][2]string{
+		"st-sam-1-a": {"sam", "config-1"}, "st-sam-1-b": {"sam", "config-1"}, "st-sam-1-c": {"sam", "config-1"},
+		"st-sam-2-a": {"sam", "config-2"}, "st-sam-2-b": {"sam", "config-2"},
+		"st-kim-1-a": {"kim", "config-1"}, "st-kim-1-b": {"kim", "config-1"},
+		"st-kim-2-a": {"kim", "config-2"},
+	}
+	// Made in id order, so each holder's "-a" task is its oldest.
+	for _, id := range slices.Sorted(maps.Keys(tasks)) {
+		s.seedScheduledTask(id, "acme", ScheduledTaskActive)
+	}
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief')")
+	s.Require().NoError(err)
+	for id, holder := range tasks {
+		_, err := s.source.DB().ExecContext(s.ctx,
+			"UPDATE scheduled_tasks SET user_id = ?, config_id = ? WHERE id = ?", holder[0], holder[1], id)
+		s.Require().NoError(err)
+	}
+	s.move("acme", "moved")
+	s.limitHere(2)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		`UPDATE agent_configs SET scheduling = '{"max_tasks_per_user": 1}' WHERE id = 'config-2'`)
+	s.Require().NoError(err)
+	s.madeHere("st-here-sam-1", "sam", "config-1")
+	s.madeHere("st-here-kim-2", "kim", "config-2")
+	sent := &queriesSent{on: true}
+	s.destination.DB().AddQueryHook(sent)
+
+	resumed, skipped, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	sent.mu.Lock()
+	sent.on = false
+	sent.mu.Unlock()
+	s.Require().NoError(err)
+	s.Equal(int64(4), resumed)
+	s.Zero(skipped)
+	s.Equal(int64(4), overLimit)
+	want := map[string]string{
+		// sam has one place left of 2 on config-1, and the 1 of config-2.
+		"st-sam-1-a": ScheduledTaskActive, "st-sam-1-b": ScheduledTaskPaused, "st-sam-1-c": ScheduledTaskPaused,
+		"st-sam-2-a": ScheduledTaskActive, "st-sam-2-b": ScheduledTaskPaused,
+		// kim has both places of config-1, and none of config-2.
+		"st-kim-1-a": ScheduledTaskActive, "st-kim-1-b": ScheduledTaskActive,
+		"st-kim-2-a": ScheduledTaskPaused,
+	}
+	for id, state := range want {
+		got, _, _, _ := s.scheduledTaskOn(s.destination, id)
+		s.Equal(state, got, id)
+	}
+	s.Equal(1, sent.matching(`"agent_configs"`, "FOR SHARE"), "one query locks every config")
+	s.Equal(1, sent.matching(`"scheduled_tasks"`, "count("), "one query counts every user on every config")
+
+	sent.mu.Lock()
+	sent.on, sent.queries = true, nil
+	sent.mu.Unlock()
+	_, _, _, _, err = s.destination.ResumeMovedRows(s.ctx, "nobody")
+	s.Require().NoError(err)
+	s.Zero(sent.matching(`"agent_configs"`), "a cut-over with nothing to resume reads no config")
+	s.Zero(sent.matching("count("), "nor counts anybody's tasks")
+}
+
+// Another customer's tasks take none of this customer's room, though they name the same user
+// and config ids: no key ties a task's config to its customer.
+func (s *DataMoveSuite) TestTheCutOverCountsOnlyTheCustomersOwnTasks() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	s.limitHere(1)
+	_, err := s.destination.DB().ExecContext(s.ctx, `
+INSERT INTO scheduled_tasks (id, customer_id, config_id, user_id, caller_kind, title, instructions, start_local,
+	timezone, state, next_run_at, created_by, created_at, updated_at)
+VALUES ('st-theirs', 'other', 'config-1', 'sam', 'authenticated', 'Hydrate', 'Remind Sam to drink.', now(),
+	'UTC', 'active', now() + interval '1 day', 'api', now(), now())`)
+	s.Require().NoError(err)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Equal(int64(1), resumed)
+	s.Zero(overLimit)
+}
+
+func (s *DataMoveSuite) TestTheCutOverHoldsAConfigWithoutALimitToTheDefault() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	for i := range 25 {
+		s.madeHere(fmt.Sprintf("st-here-%d", i), "sam", "config-1")
+	}
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-1")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverResumesNothingForAUserAlreadyAboveALoweredLimit() {
+	s.seedScheduledTask("st-1", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	s.madeHere("st-here-1", "sam", "config-1")
+	s.madeHere("st-here-2", "sam", "config-1")
+	s.limitHere(1)
+
+	resumed, _, overLimit, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Equal(int64(1), overLimit)
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHerePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	// What deleting the config over the API does here.
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
+	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
+
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "every occurrence would fail on the deleted agent")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+	s.False(s.movePausedOn("st-active"), "a second cut-over has nothing of it to resume either")
+}
+
+// A repeating task the source delivers changes there each time, so the last --once imports
+// it, and marks it, again after the config was deleted here.
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigWasDeletedHereBeforeTheLastCatchUpPaused() {
+	s.capture("acme")
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	cursor := s.move("acme", "moved")
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-1"))
+	s.Require().NoError(s.destination.PauseScheduledTasksForConfig(s.ctx, "moved", "config-1"))
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE scheduled_tasks SET next_run_at = next_run_at + interval '1 day', updated_at = now() WHERE id = 'st-active'")
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+	s.Require().True(s.movePausedOn("st-active"), "the catch-up marked it again")
+
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "its config is deleted here")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+	s.False(s.movePausedOn("st-active"))
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskWhoseConfigIsAnotherCustomersHerePaused() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	// The destination holds config-1 for somebody else, so the move cannot bring it.
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-1', 'resident', 'theirs', 'be brief')")
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed, "the customer has no config-1 here to run it on")
+	s.Equal(int64(1), skipped)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// A delete in flight when the cut-over reads the config is waited for, not read past.
+func (s *DataMoveSuite) TestTheCutOverWaitsForADeleteOfTheConfigInFlight() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	deleting, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = deleting.Rollback() }()
+	_, err = deleting.ExecContext(s.ctx, "UPDATE agent_configs SET deleted_at = now() WHERE id = 'config-1'")
+	s.Require().NoError(err)
+
+	type outcome struct {
+		resumed int64
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		resumed, _, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, err}
+	}()
+	// Commit the delete once the cut-over waits on it; a cut-over that does not wait has
+	// finished by then.
+	deadline := time.Now().Add(30 * time.Second)
+	var result *outcome
+	for result == nil && time.Now().Before(deadline) {
+		select {
+		case got := <-done:
+			result = &got
+		case <-time.After(50 * time.Millisecond):
+			var waiting int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+			if waiting > 0 {
+				s.Require().NoError(deleting.Commit())
+				got := <-done
+				result = &got
+			}
+		}
+	}
+	s.Require().NotNil(result, "the cut-over neither finished nor waited")
+	s.Require().NoError(result.err)
+	s.Zero(result.resumed, "the config was deleted before the cut-over could resume its task")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskPaused, state)
+}
+
+// A task the user or its delivery changed after the cut-over read it is not resumed by what it read.
+func (s *DataMoveSuite) TestTheCutOverDoesNotResumeATaskThatChangedWhileItReadTheRest() {
+	s.seedScheduledTask("st-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-paused", "acme", ScheduledTaskActive)
+	// Two tasks on a config deleted here, which the cut-over leaves paused and unmarks
+	// unless they change meanwhile.
+	s.seedScheduledTask("st-gone-ended", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-gone-paused", "acme", ScheduledTaskActive)
+	_, err := s.source.DB().ExecContext(s.ctx, `
+INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'acme', 'b', 'be brief');
+UPDATE scheduled_tasks SET config_id = 'config-2' WHERE id IN ('st-gone-ended', 'st-gone-paused')`)
+	s.Require().NoError(err)
+	s.move("acme", "moved")
+	s.Require().NoError(s.destination.DeleteAgentConfig(s.ctx, "moved", "config-2"))
+	changing, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = changing.Rollback() }()
+	_, err = changing.ExecContext(s.ctx, `
+UPDATE scheduled_tasks SET state = 'completed' WHERE id IN ('st-ended', 'st-gone-ended');
+UPDATE scheduled_tasks SET move_paused = false WHERE id IN ('st-paused', 'st-gone-paused')`)
+	s.Require().NoError(err)
+
+	type outcome struct {
+		resumed, skipped int64
+		err              error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+		done <- outcome{resumed, skipped, err}
+	}()
+	// Commit the changes once the cut-over waits on them: it read the tasks as they were.
+	deadline := time.Now().Add(30 * time.Second)
+	var result *outcome
+	for result == nil && time.Now().Before(deadline) {
+		select {
+		case got := <-done:
+			result = &got
+		case <-time.After(50 * time.Millisecond):
+			var waiting int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'").Scan(&waiting))
+			if waiting > 0 {
+				s.Require().NoError(changing.Commit())
+				got := <-done
+				result = &got
+			}
+		}
+	}
+	s.Require().NotNil(result, "the cut-over neither finished nor waited")
+	s.Require().NoError(result.err)
+	s.Zero(result.resumed)
+	s.Zero(result.skipped, "a task that changed meanwhile was not left paused by the cut-over")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-ended")
+	s.Equal(ScheduledTaskCompleted, state)
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-paused")
+	s.Equal(ScheduledTaskPaused, state, "the user's pause, which cleared the mark, stands")
+	state, _, _, _ = s.scheduledTaskOn(s.destination, "st-gone-ended")
+	s.Equal(ScheduledTaskCompleted, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverLeavesATaskThatEndedHereAsItIs() {
+	s.seedScheduledTask("st-active", "acme", ScheduledTaskActive)
+	s.move("acme", "moved")
+	// Resumed here by hand and delivered: the mark is what the move left, the state is not.
+	_, err := s.destination.DB().ExecContext(s.ctx,
+		"UPDATE scheduled_tasks SET state = 'completed' WHERE id = 'st-active'")
+	s.Require().NoError(err)
+
+	resumed, skipped, _, _, err := s.destination.ResumeMovedRows(s.ctx, "moved")
+
+	s.Require().NoError(err)
+	s.Zero(resumed)
+	s.Zero(skipped, "it was not left paused")
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-active")
+	s.Equal(ScheduledTaskCompleted, state)
+}
+
+func (s *DataMoveSuite) TestTheCutOverIsOnlyTheCustomersOwn() {
+	s.seedScheduledTask("st-acme", "acme", ScheduledTaskActive)
+	s.seedScheduledTask("st-other", "other", ScheduledTaskActive)
+	acmeCampaign := s.seedCampaign("acme", Running)
+	otherCampaign := s.seedCampaign("other", Running)
+	s.move("acme", "moved")
+	s.move("other", "other")
+
+	resumed, campaigns := s.resume("moved")
+
+	s.Equal(int64(1), resumed)
+	s.Equal([]string{acmeCampaign}, campaigns)
+	state, _, _, _ := s.scheduledTaskOn(s.destination, "st-other")
+	s.Equal(ScheduledTaskPaused, state, "another customer's move is cut over on its own")
+	s.True(s.movePausedOn("st-other"), "and keeps its mark for it")
+	_, campaigns = s.resume("other")
+	s.Equal([]string{otherCampaign}, campaigns)
+}
+
+// seedCampaign stores a campaign on the source in a state and returns its id.
+func (s *DataMoveSuite) seedCampaign(customerID, state string) string {
+	campaign := &Campaign{CustomerID: customerID, Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
+	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
+	if state != Draft {
+		s.Require().NoError(s.source.SetCampaignState(s.ctx, customerID, campaign.ID, state))
+	}
+	return campaign.ID
+}
+
+func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() {
+	running := s.seedCampaign("acme", Running)
+	paused := s.seedCampaign("acme", Paused)
+	draft := s.seedCampaign("acme", Draft)
+	s.move("acme", "moved")
+
+	_, campaigns := s.resume("moved")
+
+	s.Equal([]string{running}, campaigns)
+	for id, want := range map[string]string{running: Paused, paused: Paused, draft: Draft} {
+		campaign, err := s.destination.Campaign(s.ctx, "moved", id)
+		s.Require().NoError(err)
+		s.Equal(want, campaign.State, "only starting it here rings anybody")
+	}
+	source, err := s.source.Campaign(s.ctx, "acme", running)
+	s.Require().NoError(err)
+	s.Equal(Running, source.State, "the deployment it left goes on ringing")
+}
+
+func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {
+	running := s.seedCampaign("acme", Running)
+	s.move("acme", "moved")
+
+	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Running))
+	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Paused))
+
+	_, campaigns := s.resume("moved")
+	s.Empty(campaigns, "the customer paused it here")
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
@@ -1215,4 +1885,323 @@ func (s *DataMoveSuite) TestADeletedRequestFromBeforeUsageIDsIsReplayedToo() {
 	rows := s.requestsByUsage()
 	s.NotContains(rows, moved["usage_id"], "found by the usage id its import made from its source id")
 	s.Contains(rows, kept.UsageID.String())
+}
+
+// drewNothing restarts the sequence behind a column, so the store has drawn nothing from it yet.
+// A truncate leaves sequences where they were, and the databases outlive a run.
+func (s *DataMoveSuite) drewNothing(store *Store, table, column string) {
+	_, err := store.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence(?, ?), 1, false)", table, column)
+	s.Require().NoError(err)
+}
+
+func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes() {
+	s.drewNothing(s.destination, "campaign_contacts", "seq")
+	campaign := &Campaign{CustomerID: "acme", Name: "renewals"}
+	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
+	// The source has handed out more places than the destination: its contacts' places are
+	// numbers the destination's sequence has not reached.
+	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('campaign_contacts', 'seq'), 1000)")
+	s.Require().NoError(err)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000001"}}))
+
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000002"}}))
+
+	contacts, err := s.destination.CampaignContacts(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+	s.Require().Len(contacts, 2)
+	s.Equal("+15550000001", contacts[0].ToNumber, "a contact added here is rung after the ones that moved")
+	s.Equal("+15550000002", contacts[1].ToNumber)
+}
+
+func (s *DataMoveSuite) TestAMovedRequestLeavesTheSequenceOfItsIDAlone() {
+	s.drewNothing(s.destination, "requests", "id")
+	s.takenRequest(s.source, 1_000_000_000)
+
+	s.move("acme", "acme")
+	usageID := uuid.Must(uuid.NewV7())
+	s.Require().NoError(s.destination.RecordRequest(s.ctx, &Request{UsageID: usageID, Modality: "stt", CustomerID: "acme",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+
+	own := s.requestsByUsage()[usageID.String()]
+	s.Require().NotNil(own)
+	s.Less(own["id"].(float64), float64(1_000_000_000), "a moved request is given an id of the destination's, so the source's is reserved nowhere")
+}
+
+// seedLog writes a log of the customer's on the source, the way the router does, and answers its id.
+func (s *DataMoveSuite) seedLog(customerID, message string) int64 {
+	entry := &AgentLog{CustomerID: customerID, Source: "agent", Severity: "info", EventType: "turn", Message: message}
+	s.Require().NoError(s.source.RecordAgentLog(s.ctx, entry))
+	return entry.ID
+}
+
+// placeHere writes an agent log onto the destination as given, id included: the way an import
+// from before AI-2445 wrote a copied one, or a log of the destination's own.
+func (s *DataMoveSuite) placeHere(row map[string]any) {
+	encoded, err := json.Marshal(row)
+	s.Require().NoError(err)
+	_, err = s.destination.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_logs SELECT * FROM jsonb_populate_record(NULL::agent_logs, ?::jsonb)", string(encoded))
+	s.Require().NoError(err)
+	// An explicit id leaves the sequence where it was, and SetupTest truncates without
+	// restarting it, so both sides draw in step: the destination's next id would be this one.
+	// A deployment that wrote the log itself has drawn past it.
+	_, err = s.destination.DB().ExecContext(s.ctx, "SELECT setval('agent_logs_id_seq', GREATEST("+
+		"(SELECT max(id) FROM agent_logs), (SELECT last_value FROM agent_logs_id_seq)))")
+	s.Require().NoError(err)
+}
+
+// exportedLog is the one agent log of acme's the source exports, as a row the test may edit.
+func (s *DataMoveSuite) exportedLog() map[string]any {
+	logs := s.export("acme").of("agent_logs")
+	s.Require().Len(logs, 1)
+	return logs[0]
+}
+
+// logsHere are a customer's agent logs on the destination: their message by id.
+func (s *DataMoveSuite) logsHere(customerID string) map[int64]string {
+	rows, err := s.destination.DB().QueryContext(s.ctx, "SELECT id, message FROM agent_logs WHERE customer_id = ?", customerID)
+	s.Require().NoError(err)
+	defer rows.Close()
+	logs := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var message string
+		s.Require().NoError(rows.Scan(&id, &message))
+		logs[id] = message
+	}
+	s.Require().NoError(rows.Err())
+	return logs
+}
+
+func (s *DataMoveSuite) TestACopiedLogWhoseIDAnotherAppHoldsHereLandsUnderANewID() {
+	id := s.seedLog("acme", "copied")
+	// The same words, which makes it no copy of acme's: it is another app's.
+	theirs := s.exportedLog()
+	theirs["customer_id"] = "resident"
+	s.placeHere(theirs)
+
+	s.move("acme", "acme")
+
+	s.Equal(map[int64]string{id: "copied"}, s.logsHere("resident"), "the other app's log is left as it was")
+	copied := s.logsHere("acme")
+	s.Require().Len(copied, 1, "the log is copied, not skipped")
+	for copiedID, message := range copied {
+		s.NotEqual(id, copiedID)
+		s.Equal("copied", message)
+	}
+}
+
+func (s *DataMoveSuite) TestACopiedLogWhoseIDTheAppHoldsHereForAnotherLogLeavesThatLog() {
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["message"] = "written here"
+	s.placeHere(own)
+
+	s.move("acme", "acme")
+
+	logs := s.logsHere("acme")
+	s.Len(logs, 2, "both the log written here and the copied one are kept")
+	s.Equal("written here", logs[id], "the log written here is not overwritten")
+	s.Contains(slices.Collect(maps.Values(logs)), "copied")
+}
+
+func (s *DataMoveSuite) TestALogHereThatDiffersOnlyInWhenItWasIngestedIsAnotherLog() {
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["ingested_at"] = "2026-10-01T00:00:00Z"
+	s.placeHere(own)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2, "two logs written at different times are two logs")
+	var ingested time.Time
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT ingested_at FROM agent_logs WHERE id = ?", id).Scan(&ingested))
+	s.True(ingested.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)), "the log written here is not overwritten")
+}
+
+func (s *DataMoveSuite) TestCopyingLogsTwiceCopiesThemOnce() {
+	s.seedLog("acme", "first")
+	s.seedLog("acme", "second")
+
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	s.ElementsMatch([]string{"first", "second"}, slices.Collect(maps.Values(s.logsHere("acme"))))
+}
+
+func (s *DataMoveSuite) TestALogCopiedUnderItsSourceIDBeforeIsNotCopiedAgain() {
+	id := s.seedLog("acme", "copied")
+	s.placeHere(s.exportedLog())
+
+	s.move("acme", "acme")
+
+	s.Equal(map[int64]string{id: "copied"}, s.logsHere("acme"))
+}
+
+func (s *DataMoveSuite) TestALogCopiedFromAnotherSourceLogIsNotTakenForThisOne() {
+	id := s.seedLog("acme", "copied")
+	// The same words under this id, copied here from another log of the source's: the source
+	// wrote the same log twice.
+	twin := s.exportedLog()
+	twin["source_id"] = id + 1
+	s.placeHere(twin)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2)
+}
+
+func (s *DataMoveSuite) TestAReplayedLogIsWrittenOnce() {
+	s.capture("acme")
+	cursor := s.move("acme", "acme")
+	s.seedLog("acme", "after the copy")
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+	s.move("acme", "acme")
+
+	s.ElementsMatch([]string{"after the copy"}, slices.Collect(maps.Values(s.logsHere("acme"))))
+}
+
+func (s *DataMoveSuite) TestAReplayedDeleteOfALogRemovesItsCopyAndNotTheLogHoldingItsID() {
+	s.capture("acme")
+	id := s.seedLog("acme", "copied")
+	own := s.exportedLog()
+	own["message"] = "written here"
+	s.placeHere(own)
+	cursor := s.move("acme", "acme")
+
+	_, err := s.source.DB().ExecContext(s.ctx, "DELETE FROM agent_logs WHERE id = ?", id)
+	s.Require().NoError(err)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	s.Equal(map[int64]string{id: "written here"}, s.logsHere("acme"))
+}
+
+func (s *DataMoveSuite) TestACopiedLogIsNumberedUnderTheLockItsAppsLogsAreNumberedUnder() {
+	s.seedLog("acme", "copied")
+	encoded, err := json.Marshal(s.exportedLog())
+	s.Require().NoError(err)
+	// A log of acme's being written here, holding the lock RecordAgentLog takes.
+	writing, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	defer func() { _ = writing.Rollback() }()
+	_, err = writing.ExecContext(s.ctx, "SELECT pg_advisory_xact_lock(hashtextextended('acme', 731))")
+	s.Require().NoError(err)
+
+	imported := make(chan error, 1)
+	go func() { imported <- s.destination.ImportRow(s.ctx, "acme", "agent_logs", encoded) }()
+
+	s.Eventually(func() bool {
+		var waiting bool
+		s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT EXISTS (SELECT 1 FROM pg_locks"+
+			" WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))").Scan(&waiting))
+		return waiting
+	}, 10*time.Second, 10*time.Millisecond, "the copy waits for the log being written")
+	s.Empty(s.logsHere("acme"))
+	s.Require().NoError(writing.Commit())
+	select {
+	case err := <-imported:
+		s.Require().NoError(err)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the copy did not land once the log being written was")
+	}
+	s.Len(s.logsHere("acme"), 1)
+}
+
+func (s *DataMoveSuite) TestTheSameLogUnderAnotherIDHereIsNotTakenForACopy() {
+	id := s.seedLog("acme", "copied")
+	// Written here the same, but never copied from this log: a copy kept the source's id.
+	same := s.exportedLog()
+	same["id"] = id + 1000
+	s.placeHere(same)
+
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 2)
+}
+
+func (s *DataMoveSuite) TestMigrateBuildsTheIndexCopiedLogsAreKnownByAgain() {
+	// As somebody dropping it by hand, or a CONCURRENTLY build that failed, leaves it.
+	_, err := s.destination.DB().ExecContext(s.ctx, "DROP INDEX CONCURRENTLY agent_logs_source_idx")
+	s.Require().NoError(err)
+	s.seedLog("acme", "copied")
+
+	s.Require().NoError(s.destination.Migrate(s.ctx))
+	s.move("acme", "acme")
+	s.move("acme", "acme")
+
+	s.Len(s.logsHere("acme"), 1)
+}
+
+func (s *DataMoveSuite) TestACopiedRequestOfAnAgentIsLoggedHereOnlyByItsCopiedLog() {
+	// With one database, the trigger on requests logs a request of an agent where it is written.
+	s.Require().NoError(s.source.RecordRequest(s.ctx, &Request{Modality: "stt", CustomerID: "acme", AgentID: "agent",
+		Provider: "deepgram", Model: "flux", StartedAt: time.Now().UTC(), Success: true}))
+	logged := s.export("acme").of("agent_logs")
+	s.Require().Len(logged, 1, "the source logged the request")
+
+	s.move("acme", "acme")
+
+	s.Equal([]string{logged[0]["message"].(string)}, slices.Collect(maps.Values(s.logsHere("acme"))),
+		"the request is logged once here: by the log copied with it")
+}
+
+func (s *DataMoveSuite) TestALogHereThatDiffersInAnyColumnIsAnotherLog() {
+	// Every column a copy writes but the source's id, each set apart from the copied log's.
+	differing := map[string]any{
+		"customer_id": "resident",
+		"config_id":   "another-config",
+		"agent_id":    "another-agent",
+		"session_id":  "another-session",
+		"user_id":     "another-user",
+		"source":      "system",
+		"severity":    "error",
+		"event_type":  "provider_request",
+		"message":     "written here",
+		"occurred_at": "2026-10-01T00:00:00Z",
+		"ingested_at": "2026-10-01T00:00:00Z",
+		"details":     map[string]any{"written": "here"},
+	}
+	for column, value := range differing {
+		s.Run(column, func() {
+			s.SetupTest()
+			s.seedLog("acme", "copied")
+			here := s.exportedLog()
+			s.Require().NotEqual(value, here[column], "the log here differs from the copied one")
+			here[column] = value
+			s.placeHere(here)
+
+			s.move("acme", "acme")
+
+			var logs int
+			s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM agent_logs").Scan(&logs))
+			s.Equal(2, logs, "a log here differing in %s is not the copied one", column)
+		})
+	}
+}
+
+func (s *DataMoveSuite) TestALogCopiedBackWhereItCameFromIsNotCopiedAgain() {
+	// Each deployment draws its own ids: the copy holds another id than the log it came from.
+	_, err := s.destination.DB().ExecContext(s.ctx, "SELECT setval('agent_logs_id_seq', (SELECT last_value FROM agent_logs_id_seq) + 1000)")
+	s.Require().NoError(err)
+	id := s.seedLog("acme", "original")
+	s.move("acme", "acme")
+
+	for _, row := range s.exportFrom(s.destination, "acme").of("agent_logs") {
+		s.Require().NotEqual(float64(id), row["id"], "the copy was given an id of the destination's")
+		encoded, err := json.Marshal(row)
+		s.Require().NoError(err)
+		s.Require().NoError(s.source.ImportRow(s.ctx, "acme", "agent_logs", encoded))
+	}
+
+	var logs []int64
+	s.Require().NoError(s.source.DB().NewSelect().Table("agent_logs").Column("id").Where("customer_id = 'acme'").Scan(s.ctx, &logs))
+	s.Equal([]int64{id}, logs, "the log that went away and came back is the one log it was")
 }

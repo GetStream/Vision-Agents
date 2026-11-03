@@ -59,6 +59,9 @@ func documentHandWritten(api huma.API) {
 			"and where all it had been sent is in the reply's message, when any of it had), " +
 			"`overlap_decided`, `conversation_compacted`, " +
 			"`models_changed`, `error` and `left`.\n" +
+			"An `error` frame for a turn the prompt injection screen refused carries `code` " +
+			"`prompt_injection`, and the turn's `responded` has empty text: what streamed before " +
+			"the verdict is not the answer.\n" +
 			"message_start and message_end are offsets in Unicode code points into the text of the Chat " +
 			"message the reply is written into, the one whose turn_id names the turn, from message_start up " +
 			"to message_end. They are left out where the router does not know them.\n" +
@@ -87,7 +90,8 @@ func documentHandWritten(api huma.API) {
 			"Persistent text sessions also emit `conversation_updated` with conversation_id and a " +
 			"complete message snapshot: id, request_id, question_id, role, text, state, " +
 			"response_started_at, state_started_at, finished_at, duration_ms, saved, " +
-			"persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, " +
+			"persistence_error, refused (true on a reply the prompt injection screen refused) and " +
+			"attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
 			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
 			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
@@ -122,7 +126,10 @@ func documentHandWritten(api huma.API) {
 			"persistent text sessions require this ID. A retry with the same text and images returns " +
 			"the existing IDs without invoking the model again; reuse with different content emits an " +
 			"error. Its images are data URIs, at most 8, uploaded to the conversation's channel and " +
-			"shown on the person's message. After restart an interrupted command is reported, not rerun.\n" +
+			"shown on the person's message. On a session a dispatch worker opened for a message handed " +
+			"out from a channel, that message is already there: nothing is written or uploaded for it, " +
+			"user_message_id is empty, and a reused id is answered as a duplicate even with other text " +
+			"or images. After restart an interrupted command is reported, not rerun.\n" +
 			"An `interrupt` command carrying `request_id` stops that command and emits " +
 			"`command_stopped` with its terminal receipt. A stop arriving after its command finished " +
 			"replays that command's receipt and leaves the command running now alone; an unknown " +
@@ -308,7 +315,9 @@ func documentHandWritten(api huma.API) {
 			"replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on " +
 			"`image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does " +
 			"not accept images is refused with an `error` frame naming the model and the modality, " +
-			"before anything is billed. An `interrupt` frame naming `response_ids` abandons " +
+			"before anything is billed. A response the prompt injection screen refused fails with " +
+			"an `error` frame carrying `code` `prompt_injection`, and its `complete` has status " +
+			"`failed`. An `interrupt` frame naming `response_ids` abandons " +
 			"responses still being generated, which still settle and are still billed for what they " +
 			"produced before being cut off.\n" +
 			"Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz " +
@@ -815,6 +824,25 @@ func documentHandWritten(api huma.API) {
 			"400": {Description: "The status could not be read"},
 			"404": {Description: "No placed call is waiting for its status at this token"},
 			"413": {Description: "The status is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveCallMachine",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/machine/{token}",
+		Summary:     "Receive who picked up a placed call",
+		Description: "Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated " +
+			"because the vendor is not a customer: the token made when the call was placed is the " +
+			"only proof, and it names that one call.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The report is taken"},
+			"400": {Description: "The report could not be read"},
+			"404": {Description: "No placed call is waiting at this token"},
+			"413": {Description: "The report is over 64 KiB"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -55,6 +57,10 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
+	// Dispatched holds ConversationID on the channel a message the router handed to a worker
+	// was written in, which the worker's session answers (Manager.handedOut). The person writes
+	// there themselves, so the session writes only its replies. No request sets it.
+	Dispatched bool
 	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
@@ -69,6 +75,9 @@ type Spec struct {
 	// creates, unless the caller named a call of its own. Empty while the conversation is
 	// held in writing.
 	CallID string
+	// ownCall is whether CallID is the agent:<ID> call joining created rather than one the
+	// caller named, which makes it the session's to end for everybody.
+	ownCall bool
 	// Text holds the conversation in writing: no call is joined, nothing is transcribed
 	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
 	// text session has the same skills, knowledge and tools a call would have had. Starting
@@ -250,6 +259,8 @@ type Spec struct {
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
+	// Calls is the agent config's choice of which call tools the agent is offered.
+	Calls store.AgentCalls
 	// Timezone is the end user's IANA zone for this session, from the session
 	// request. Empty resolves at tool time (the user's stored zone, then the
 	// config's default). The manager fills it in from the store when it can, so
@@ -296,6 +307,10 @@ type Spec struct {
 	Tools []harness.Tool
 	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
 	ToolTimeoutMs int
+	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
+	// answer rather than reach for another tool. Zero is the agent's default; negative is
+	// no limit.
+	MaxToolRounds int
 
 	// Backchannel murmurs while a participant is still talking, the way a person does.
 	Backchannel bool
@@ -311,6 +326,9 @@ type Spec struct {
 	Memory MemorySpec
 	// Phone attaches the session to a number, which is what turns transferring on.
 	Phone *PhoneSpec
+	// Voicemail is what the session does when the vendor says an answering machine picked
+	// up its placed call. Nil carries on as with a person.
+	Voicemail *VoicemailPlan
 
 	// CampaignID and ContactID say which piece of outbound work this call is, so a
 	// campaign can be told how its contacts went. Both are empty for a call nobody
@@ -335,6 +353,11 @@ type MemorySpec struct {
 	AppID string
 	// Filter narrows recall with the caller's own labels.
 	Filter map[string]string
+}
+
+// VoicemailPlan is the message left on an answering machine. Empty hangs up instead.
+type VoicemailPlan struct {
+	Message string
 }
 
 // PhoneSpec is the number the session acts from.
@@ -379,7 +402,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		ReviewInstructions: config.ReviewInstructions,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
-		MCPServers:         config.MCPServers,
+		MCPServers:         namedByURL(config.MCPServers),
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
@@ -392,10 +415,21 @@ func FromConfig(config store.AgentConfig) Spec {
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
+		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
+}
+
+// namedByURL is servers less any named like a catalog plugin, which is never offered or
+// logged into: a login under a catalog id would be taken for that plugin's, client and all.
+// Saving a config refuses such a name, so only one stored before the check carries it.
+func namedByURL(servers []store.MCPServer) []store.MCPServer {
+	return slices.DeleteFunc(slices.Clone(servers), func(server store.MCPServer) bool {
+		_, listed := plugins.Lookup(server.Name)
+		return listed
+	})
 }
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
@@ -457,7 +491,7 @@ func (s *Spec) Normalize() error {
 	// A voice session given no call to join holds its own, named after the session, which
 	// joining creates.
 	if !s.Text && s.CallID == "" {
-		s.CallID, s.CallType = s.ID, defaultCallType
+		s.CallID, s.CallType, s.ownCall = s.ID, defaultCallType, true
 	}
 	// A speech-to-speech model is what the conversation speaks with once voice is started,
 	// so a session held in writing keeps it rather than running it.
@@ -471,6 +505,8 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
+	case s.Native() && s.Voicemail != nil && s.Voicemail.Message != "":
+		return stack.Wrap(errors.New("session: a speech-to-speech agent cannot say a fixed voicemail message; use hang_up"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))
@@ -599,6 +635,9 @@ type Call struct {
 // agent:<ID>.
 func (s Spec) Holding(call Call) Spec {
 	s.heldCall = call
+	if call.ID != "" {
+		s.ownCall = false
+	}
 	return s
 }
 
@@ -609,8 +648,9 @@ func (s Spec) Voiced() Spec {
 		return s
 	}
 	s.Text = false
-	s.CallID, s.CallType = s.ID, defaultCallType
-	if s.heldCall.ID != "" {
+	if s.heldCall.ID == "" {
+		s.CallID, s.CallType, s.ownCall = s.ID, defaultCallType, true
+	} else {
 		s.CallID, s.CallType = s.heldCall.ID, s.heldCall.Type
 	}
 	s.heldCall = Call{}

@@ -586,6 +586,9 @@ type AgentConfig struct {
 	// Scheduling is whether the agent may schedule tasks for its users, and the
 	// defaults those tasks take. The zero value is off.
 	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
+	// Calls are the call tools the agent's phone sessions are offered: end the call, press
+	// a key, transfer. A tool never set takes its default.
+	Calls AgentCalls `bun:"calls,type:jsonb,notnull"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// VisibleTools names the tools whose steps end users see on a persistent conversation's
@@ -1028,6 +1031,62 @@ type AgentScheduling struct {
 	// session has ever named one.
 	DefaultTimezone string `json:"default_timezone,omitempty"`
 }
+
+// DefaultMaxActiveTasks is the cap on a user's active tasks when the config sets none.
+const DefaultMaxActiveTasks = 25
+
+// MaxActive is how many active tasks one user may hold on this config.
+func (a AgentScheduling) MaxActive() int {
+	if a.MaxTasksPerUser > 0 {
+		return a.MaxTasksPerUser
+	}
+	return DefaultMaxActiveTasks
+}
+
+// AgentCalls is an agent config's call tools, stored in agent_configs.calls. A nil tool
+// was never set, which is its default.
+type AgentCalls struct {
+	EndCall  *EndCallSettings  `json:"end_call,omitempty"`
+	Press    *PressSettings    `json:"press,omitempty"`
+	Transfer *TransferSettings `json:"transfer,omitempty"`
+}
+
+// EndCallSettings is the end_call tool: off unless a config turns it on.
+type EndCallSettings struct {
+	Enabled bool `json:"enabled"`
+	// When tells the agent when to end the call.
+	When string `json:"when,omitempty"`
+}
+
+// PressSettings is the tool that presses keys on the call: on unless a config turns it off.
+type PressSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
+// TransferSettings is the transfer tool: on unless a config turns it off.
+type TransferSettings struct {
+	Enabled      bool                  `json:"enabled"`
+	Destinations []TransferDestination `json:"destinations,omitempty"`
+}
+
+// TransferDestination is a number the agent may transfer a call to.
+type TransferDestination struct {
+	Name   string `json:"name"`
+	Number string `json:"number"`
+	// When tells the agent when to transfer here.
+	When string `json:"when,omitempty"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `json:"warm,omitempty"`
+}
+
+// EndCallOn is whether end_call is offered: off when never set.
+func (c AgentCalls) EndCallOn() bool { return c.EndCall != nil && c.EndCall.Enabled }
+
+// PressOn is whether press is offered: on when never set.
+func (c AgentCalls) PressOn() bool { return c.Press == nil || c.Press.Enabled }
+
+// TransferOn is whether transfer is offered: on when never set.
+func (c AgentCalls) TransferOn() bool { return c.Transfer == nil || c.Transfer.Enabled }
 
 // Lines are the channels named, by kind.
 func (c AgentChannels) Lines() map[string]string {
@@ -1897,7 +1956,10 @@ type AgentSession struct {
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
-	ClosedAt       *time.Time `bun:"closed_at"`
+	ClosedAt *time.Time `bun:"closed_at"`
+	// EndReason is why it ended (session.EndReason), empty while it runs and for one stopped
+	// by its caller.
+	EndReason      string     `bun:"end_reason,notnull"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
@@ -1971,6 +2033,9 @@ const (
 	// ResponseCancelled is one interrupted partway, which is a different thing from
 	// failing: the caller stopped it, and what it had already said still counts.
 	ResponseCancelled = "cancelled"
+	// ResponseRefused is one the prompt injection screen refused. What it was asked is kept
+	// on the row, but never handed to a model again.
+	ResponseRefused = "refused"
 )
 
 // AgentResponse is one turn the agent took in a session.
@@ -1997,6 +2062,17 @@ type Exchange struct {
 	ResponseID string
 	Said       string
 	Answer     string
+	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
+	Refused bool
+}
+
+// Reply is what one reply a conversation's transcript wrote did: its answer and tool_result
+// items, in the order they happened.
+type Reply struct {
+	Items []AgentResponseItem
+	// Refused is a response the prompt injection screen refused, whose tool results since
+	// its last answer are what the screen judged and are not to be replayed.
+	Refused bool
 }
 
 // The kinds of item a response is made of.
@@ -2109,6 +2185,10 @@ type User struct {
 	// person's conversations onto another's account.
 	ClaimedBy string     `bun:"claimed_by,nullzero"`
 	ClaimedAt *time.Time `bun:"claimed_at"`
+	// RefreshSecretHash is the SHA-256 of the refresh secret this guest was last handed
+	// (GuestSecretHash), nil for one handed none. Never sent anywhere: it is the credential
+	// that lets a guest whose token expired come back as themselves.
+	RefreshSecretHash []byte `bun:"refresh_secret_hash,nullzero" json:"-"`
 }
 
 // BusinessProfile is who an app is, written once and reused by every channel it registers

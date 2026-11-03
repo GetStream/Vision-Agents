@@ -63,6 +63,7 @@ type Directory struct {
 	workers  string
 	hosted   string
 	shards   string
+	handouts string
 	logger   *slog.Logger
 	cancel   context.CancelFunc
 
@@ -112,6 +113,7 @@ func NewDirectory(options DirectoryOptions) (*Directory, error) {
 		workers:  prefix + ":workers:",
 		hosted:   prefix + ":hosted:",
 		shards:   prefix + ":shard:",
+		handouts: prefix + ":handout:",
 		logger:   logger,
 		cancel:   cancel,
 		held:     map[string]string{},
@@ -280,6 +282,27 @@ func (d *Directory) Offers(ctx context.Context, customerID, agentID string) (map
 		offers[address] = entry.Offer
 	}
 	return offers, nil
+}
+
+// HandOut says a message written in a customer's channel cid was handed to one of its workers,
+// as entry, a JSON document the directory carries without reading, for as long as lasts. The
+// worker's session may be opened on any node, which reads it there (HandedOut).
+func (d *Directory) HandOut(ctx context.Context, customerID, cid string, entry []byte, lasts time.Duration) {
+	command := d.redis.B().Set().Key(d.handouts + customerID + ":" + cid).Value(string(entry)).Px(lasts).Build()
+	if err := d.redis.Do(ctx, command).Error(); err != nil {
+		d.logger.Warn("could not say a channel's message was handed to a worker",
+			"customer", customerID, "channel", cid, "error", err)
+	}
+}
+
+// HandedOut is what HandOut said of a customer's channel, on any node, and nil once it lapsed
+// or when nothing was.
+func (d *Directory) HandedOut(ctx context.Context, customerID, cid string) ([]byte, error) {
+	entry, err := d.redis.Do(ctx, d.redis.B().Get().Key(d.handouts+customerID+":"+cid).Build()).AsBytes()
+	if rueidis.IsRedisNil(err) {
+		return nil, nil
+	}
+	return entry, err
 }
 
 // Close stops renewing. What this node held expires rather than being given up, because

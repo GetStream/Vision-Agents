@@ -11,6 +11,7 @@ final class AgentResponseStatus: RawRepresentable, Codable, Hashable, Sendable {
     static let cancelled = AgentResponseStatus(rawValue: "cancelled")
     static let completed = AgentResponseStatus(rawValue: "completed")
     static let failed = AgentResponseStatus(rawValue: "failed")
+    static let refused = AgentResponseStatus(rawValue: "refused")
     static let running = AgentResponseStatus(rawValue: "running")
 }
 
@@ -22,7 +23,7 @@ final class AgentResponse: Sendable, Codable, JSONEncodable {
     /// What the person asked, which is the first item of every response.
     let said: String?
     let sessionId: String
-    /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+    /// cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
     let status: AgentResponseStatus
 
     init(createdAt: Date, error: String? = nil, finishedAt: Date? = nil, id: String, said: String? = nil, sessionId: String, status: AgentResponseStatus) {

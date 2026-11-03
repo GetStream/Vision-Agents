@@ -484,8 +484,14 @@ func envClient(pluginID string) Client {
 // setClientSecret authenticates a preregistered client at the token endpoint
 // (client_secret_post), which is how a provider that registers none on the fly, such as
 // Google, wants it. The secret is looked up again each time, so a rotated one is used at
-// once. A client registered on the fly is public and sends none.
+// once. A client registered on the fly is public and sends none. A server a config names by
+// URL never takes a preregistered client (StartAuthorize), so it gets no secret either, even
+// when the client id its server registered is the deployment's for a plugin of its name.
+// Its id is never a catalog one (mcp_servers names are refused as one), which tells it apart.
 func (a *Auth) setClientSecret(ctx context.Context, form url.Values, owner Owner, pluginID, clientID string) error {
+	if _, listed := Lookup(pluginID); !listed {
+		return nil
+	}
 	client, err := a.preregistered(ctx, owner, pluginID)
 	if err != nil {
 		return err

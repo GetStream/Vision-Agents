@@ -45,10 +45,11 @@ type compaction struct {
 // cache miss says nothing about whether caching pays, so it is not taken as a reason to
 // compact. Taken as one, every summary emptied the cache that started the next: a voice
 // call compacted 12 to 21 times, about every other turn, on a history of a few thousand
-// tokens.
+// tokens. A request that opened differently from the one before it, with other tools, tool
+// choice or effort, is a miss of the same kind (Harness.cold).
 func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
 	h.mu.Lock()
-	rewritten := h.measured != nil && !appendsTo(h.measured, history)
+	rewritten := h.measured != nil && !appendsTo(h.measured, history) || h.cold
 	h.measured = append([]llm.Message(nil), history...)
 	h.mu.Unlock()
 
@@ -62,8 +63,9 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 
 	prefixLength := len(history) - compactionKeepRecent
 	// What is kept starts at something the caller said. Cut mid-turn, it would open on a
-	// tool call or result without what led to it, which Gemini refuses outright.
-	for prefixLength > 0 && history[prefixLength].Role != llm.User {
+	// tool call or result without what led to it, which Gemini refuses outright, and cut
+	// at a note it would keep the note without what it was about.
+	for prefixLength > 0 && (history[prefixLength].Role != llm.User || IsNote(history[prefixLength])) {
 		prefixLength--
 	}
 	if prefixLength <= 0 {
@@ -82,7 +84,8 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 		return false, nil
 	}
 	h.compaction = &compaction{prefix: prefix}
-	// A summary a scheduled turn set off is counted as that turn is (chargedAs).
+	// A summary a turn set off is counted as that turn is: on its sender, and as scheduled
+	// when a scheduled task fired it (chargedAs).
 	charged := h.charged
 	h.mu.Unlock()
 
@@ -136,6 +139,11 @@ type transcribed struct {
 func compactionPrompt(history []llm.Message) string {
 	messages := make([]transcribed, 0, len(history))
 	for _, message := range history {
+		// A note says what the reply after it was to do, which is no part of what was said;
+		// the data ahead of it is, and stays.
+		if message.Role == llm.System && IsNote(message) {
+			continue
+		}
 		messages = append(messages, transcribed{Role: message.Role, Speaker: message.Speaker, Content: message.Content})
 	}
 	transcript, _ := json.Marshal(struct {

@@ -52,6 +52,10 @@ var ErrDestinationRefused = errors.New("phone: calls to this number are refused"
 // ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
 var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
 
+// ErrNotDialable is a number no call may be placed to: not a full E.164 number, or one refused
+// as a destination. A caller that holds a list of numbers can tell it from a failed call.
+var ErrNotDialable = errors.New("phone: not dialable")
+
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
 var premiumPrefixes = []string{"+1900", "+1976"}
@@ -60,15 +64,22 @@ var premiumPrefixes = []string{"+1900", "+1976"}
 // which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
 func Dialable(to string) error {
 	if !store.IsE164(to) {
-		return stack.Wrap(fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to))
+		return stack.Wrap(notDialable{fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to)})
 	}
 	for _, prefix := range premiumPrefixes {
 		if strings.HasPrefix(to, prefix) {
-			return stack.Wrap(fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to))
+			return stack.Wrap(notDialable{fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to)})
 		}
 	}
 	return nil
 }
+
+// notDialable marks a Dialable failure as ErrNotDialable without changing its message.
+type notDialable struct{ err error }
+
+func (e notDialable) Error() string        { return e.err.Error() }
+func (e notDialable) Unwrap() error        { return e.err }
+func (e notDialable) Is(target error) bool { return target == ErrNotDialable }
 
 // VendorError is a vendor's API refusing a request or not answering it. It carries what
 // debugging needs, so it is logged in full, and none of it is shown to a client: the path can
@@ -386,6 +397,9 @@ type Outbound struct {
 	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
 	// finds its session. It is set only on the shared path; empty sends no header.
 	CallID string
+	// MachineURL is where the vendor posts whether a person or an answering machine
+	// picked up. Empty asks for no detection.
+	MachineURL string
 	// StatusURL is where the vendor posts the call's status. Empty sends none.
 	StatusURL string
 	// Ended is told how a call through a customer's own SIP trunk ended, which only the
@@ -457,6 +471,45 @@ type CallStatus struct {
 // StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
 type StatusReader interface {
 	ReadStatus(contentType string, body []byte) (CallStatus, error)
+}
+
+// Machine is who a vendor says picked up an outbound call.
+type Machine string
+
+const (
+	MachineHuman Machine = "human"
+	// MachineGreetingEnded is an answering machine whose greeting has finished, so what is
+	// said next is recorded.
+	MachineGreetingEnded Machine = "greeting_ended"
+	// MachineFax is a fax machine, which nothing said reaches.
+	MachineFax Machine = "fax"
+	// MachineUnknown is whatever the vendor could not tell.
+	MachineUnknown Machine = "unknown"
+)
+
+// MachineReport is who a vendor says picked up. Word is the vendor's own, kept for debugging.
+type MachineReport struct {
+	Machine Machine
+	Word    string
+}
+
+// MachineDetector is a provider whose vendor can tell an answering machine from a person and
+// posts what it found to Outbound.MachineURL.
+type MachineDetector interface {
+	ReadMachine(contentType string, body []byte) (MachineReport, error)
+}
+
+// MachineOf is the Machine for the AnsweredBy word that Twilio and Telnyx TeXML both report.
+func MachineOf(answeredBy string) Machine {
+	switch answeredBy {
+	case "human":
+		return MachineHuman
+	case "machine_end_beep", "machine_end_silence", "machine_end_other":
+		return MachineGreetingEnded
+	case "fax":
+		return MachineFax
+	}
+	return MachineUnknown
 }
 
 // StreamLegOf is the provider's stream leg, per call for one that does not say.

@@ -190,7 +190,7 @@ func (s *StreamAppsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsMintedAgainInItsO
 	seen := s.guestSeenInAToken()
 
 	var guest GuestUser
-	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests",
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(seen)}, &guest))
 	s.Equal(seen, guest.Id)
 	_, inOwn := s.own.User(seen)
@@ -205,9 +205,9 @@ func (s *StreamAppsSuite) TestAGuestSeenAgainAsAGuestIsStillMintedAgain() {
 	s.signedIn(jwt.MapClaims{"user_id": seen, "role": "guest"}, auth.AuthTypeJWT, guest, seen).
 		do(http.MethodGet, "/v1/agents/calls", nil, nil)
 
-	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)})
-
-	s.Equal(http.StatusCreated, status)
+	var again GuestUser
+	s.Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)}, &again))
+	s.Equal(seen, again.Id)
 }
 
 func (s *StreamAppsSuite) TestAGuestWhoTurnsOutToBeAFullUserIsNotMintedAgain() {
@@ -220,7 +220,7 @@ func (s *StreamAppsSuite) TestAGuestWhoTurnsOutToBeAFullUserIsNotMintedAgain() {
 	s.own.PutUser(map[string]any{"id": seen, "name": "Ada Lovelace", "role": "user"})
 	s.data.signedInAs(seen).do(http.MethodGet, "/v1/agents/calls", nil, nil)
 
-	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(seen), Name: pointerTo("Mallory")})
 
 	s.Equal(http.StatusBadRequest, status)
@@ -238,9 +238,9 @@ func (s *StreamAppsSuite) TestAGuestTheBackendActsForIsStillMintedAgain() {
 	seen := s.guestSeenInAToken()
 	s.serverClient.actingFor(s.data.signedInAs(seen)).do(http.MethodGet, "/v1/agents/calls", nil, nil)
 
-	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)})
-
-	s.Equal(http.StatusCreated, status)
+	var again GuestUser
+	s.Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(seen)}, &again))
+	s.Equal(seen, again.Id)
 }
 
 func (s *StreamAppsSuite) TestAMintedGuestCallingWithTheirOwnTokenIsStillMintedAgain() {
@@ -249,9 +249,9 @@ func (s *StreamAppsSuite) TestAMintedGuestCallingWithTheirOwnTokenIsStillMintedA
 	s.Require().Equal(http.StatusCreated, s.anonymousClient.do(http.MethodPost, "/v1/agents/guests", nil, &minted))
 	s.data.signedInAs(minted.Id).do(http.MethodGet, "/v1/agents/calls", nil, nil)
 
-	status, _ := s.anonymousClient.call(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(minted.Id)})
-
-	s.Equal(http.StatusCreated, status)
+	var again GuestUser
+	s.Equal(http.StatusCreated, s.data.signedInAs(minted.Id).do(http.MethodPost, "/v1/agents/guests", GuestUserRequest{Id: pointerTo(minted.Id)}, &again))
+	s.Equal(minted.Id, again.Id)
 	held, err := s.store.Guest(context.Background(), s.customerID(), minted.Id)
 	s.Require().NoError(err, "and they stay a guest to claim")
 	s.Empty(held.ClaimedBy)

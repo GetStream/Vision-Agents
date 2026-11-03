@@ -84,6 +84,9 @@ class CreateSessionRequest:
             there is no config. These carry no schema default on purpose: a generated client that filled one in would send
             it, and a caller naming a config would silently lose the model it configured.
         max_tokens (int | Unset):
+        max_tool_rounds (int | Unset): The reply to a tool result, counted since the user last spoke, that is offered no
+            more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws
+            them, for a written conversation that chains many lookups.
         memory (SessionMemory | Unset): Who the session's memories are about. Without a user id nothing is recalled or
             stored, which is the case for a call with nobody identified on it.
         min_confidence (float | Unset): How sure the transcriber must be before the agent answers rather than checks
@@ -160,6 +163,7 @@ class CreateSessionRequest:
     languages: list[str] | Unset = UNSET
     llm: str | Unset = UNSET
     max_tokens: int | Unset = UNSET
+    max_tool_rounds: int | Unset = UNSET
     memory: SessionMemory | Unset = UNSET
     min_confidence: float | Unset = UNSET
     model_overwrites: ModelOverwrites | Unset = UNSET
@@ -240,6 +244,8 @@ class CreateSessionRequest:
         llm = self.llm
 
         max_tokens = self.max_tokens
+
+        max_tool_rounds = self.max_tool_rounds
 
         memory: dict[str, Any] | Unset = UNSET
         if not isinstance(self.memory, Unset):
@@ -341,6 +347,8 @@ class CreateSessionRequest:
             field_dict["llm"] = llm
         if max_tokens is not UNSET:
             field_dict["max_tokens"] = max_tokens
+        if max_tool_rounds is not UNSET:
+            field_dict["max_tool_rounds"] = max_tool_rounds
         if memory is not UNSET:
             field_dict["memory"] = memory
         if min_confidence is not UNSET:
@@ -471,6 +479,8 @@ class CreateSessionRequest:
 
         max_tokens = d.pop("max_tokens", UNSET)
 
+        max_tool_rounds = d.pop("max_tool_rounds", UNSET)
+
         _memory = d.pop("memory", UNSET)
         memory: SessionMemory | Unset
         if isinstance(_memory, Unset):
@@ -571,6 +581,7 @@ class CreateSessionRequest:
             languages=languages,
             llm=llm,
             max_tokens=max_tokens,
+            max_tool_rounds=max_tool_rounds,
             memory=memory,
             min_confidence=min_confidence,
             model_overwrites=model_overwrites,

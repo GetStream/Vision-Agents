@@ -417,6 +417,61 @@ func (s *TelnyxSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
 	s.NotContains(s.seen.body, "StatusCallbackMethod")
 }
 
+func (s *TelnyxSuite) TestACallWithAMachineURLAsksTelnyxForAsyncMachineDetection() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.MachineURL = "https://router.example/v1/phone/machine/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("DetectMessageEnd", s.seen.body["MachineDetection"])
+	s.Equal("Premium", s.seen.body["DetectionMode"])
+	s.Equal(true, s.seen.body["AsyncAmd"])
+	s.Equal(placing.MachineURL, s.seen.body["AsyncAmdStatusCallback"])
+	s.Equal(http.MethodPost, s.seen.body["AsyncAmdStatusCallbackMethod"])
+}
+
+func (s *TelnyxSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	for _, name := range []string{"MachineDetection", "DetectionMode", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+		s.NotContains(s.seen.body, name)
+	}
+}
+
+func (s *TelnyxSuite) TestEachAnsweredByIsWhoPickedUp() {
+	for answeredBy, machine := range map[string]phone.Machine{
+		"human":               phone.MachineHuman,
+		"machine_end_beep":    phone.MachineGreetingEnded,
+		"machine_end_silence": phone.MachineGreetingEnded,
+		"machine_end_other":   phone.MachineGreetingEnded,
+		"machine_start":       phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
+		"unknown":             phone.MachineUnknown,
+		"something_new":       phone.MachineUnknown,
+	} {
+		got, err := s.provider.ReadMachine(formType, []byte("CallSid=v3:cc-1&AnsweredBy="+answeredBy))
+		s.Require().NoError(err)
+		s.Equal(phone.MachineReport{Machine: machine, Word: answeredBy}, got, answeredBy)
+	}
+}
+
+func (s *TelnyxSuite) TestAMachineReportWithoutAnAnsweredByIsRefused() {
+	_, err := s.provider.ReadMachine(formType, []byte("CallSid=v3:cc-1"))
+
+	s.ErrorContains(err, "AnsweredBy")
+}
+
+func (s *TelnyxSuite) TestAMachineReportThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadMachine("application/json", []byte(`{"AnsweredBy":"human"}`))
+
+	s.Error(err)
+}
+
 func (s *TelnyxSuite) TestEachFinalStatusIsAnOutcome() {
 	for word, result := range map[string]phone.CallResult{
 		"completed": phone.CallCompleted,
@@ -518,15 +573,19 @@ func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
 	s.ErrorContains(err, "bridge uri is required")
 }
 
-func (s *TelnyxSuite) TestPressingDigitsActsOnTheLegWithoutEndingIt() {
-	// Telnyx sends the tones as an action on the live call, so the agent stays bridged
-	// while the menu is answered.
-	s.answer(`{"data":{"result":"ok"}}`)
+func (s *TelnyxSuite) TestPressingDigitsActsOnThePersonsLegWithoutEndingIt() {
+	// Telnyx plays the tones out of the leg named, to whoever that leg reaches. The id
+	// placing returned is the person's leg; the leg its TeXML bridged to Stream would play
+	// them to the agent. Sent as an action on the live call, so the agent stays bridged.
+	var asked []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"result":"ok"}}`))
+	}
 
 	s.Require().NoError(s.provider.SendDigits(s.ctx, "cc-1", "4123"))
 
-	s.Equal(http.MethodPost, s.seen.method)
-	s.Equal("/v2/calls/cc-1/actions/send_dtmf", s.seen.path)
+	s.Equal([]string{"POST /v2/calls/cc-1/actions/send_dtmf"}, asked)
 	s.Equal("4123", s.seen.body["digits"])
 }
 

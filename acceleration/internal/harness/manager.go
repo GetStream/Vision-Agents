@@ -78,6 +78,9 @@ type manager struct {
 	// bySkill is the live task for each skill, which is what makes a newer request for
 	// the same skill supersede the older one.
 	bySkill map[string]string
+	// cancelledTurns are the turns CancelTurn abandoned. A reply can still be streaming
+	// tags when its turn is cancelled, and what it asks for after that starts nothing.
+	cancelledTurns map[string]bool
 	// written are the skill files already put into the sandbox, by skill, so a skill's
 	// scripts are written once per version rather than before every run. They were written
 	// into the sandbox's generation; a sandbox made again holds none of them.
@@ -156,6 +159,8 @@ func newManager(
 		running:    map[string]*task{},
 		bySkill:    map[string]string{},
 		written:    map[string]map[string]string{},
+
+		cancelledTurns: map[string]bool{},
 	}
 	if subagent != nil {
 		ready := make(chan struct{})
@@ -165,8 +170,12 @@ func newManager(
 	return m
 }
 
-// Create delegates a piece of work and returns its task id. Work a scheduled turn asked
-// for, ctx marked so, is counted as that turn is (chargedAs); the work outlives it.
+// errTurnCancelled is what Create returns for a turn CancelTurn has abandoned.
+var errTurnCancelled = errors.New("harness: the turn that asked for the work was cancelled")
+
+// Create delegates a piece of work and returns its task id. Work a turn asked for is
+// counted as that turn is (chargedAs): on the sender it names, and as scheduled when a
+// scheduled task fired it. The work outlives the turn.
 //
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
@@ -183,6 +192,12 @@ func (m *manager) Create(
 	if m.closed {
 		m.mu.Unlock()
 		return "", stack.Wrap(fmt.Errorf("harness: the conversation has ended"))
+	}
+	// Checked under the lock CancelTurn takes, so a turn cancelled while its reply was
+	// still asking supersedes nothing and leaves no task behind, whichever came first.
+	if m.cancelledTurns[turnID] {
+		m.mu.Unlock()
+		return "", stack.Wrap(errTurnCancelled)
 	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
@@ -232,10 +247,13 @@ func (m *manager) Create(
 	return created.id, nil
 }
 
-// chargedAs returns ctx marked as scheduled when a scheduled task fired the turn asked
-// (llmrouter Session.charged). Nothing else of asked is kept, its cancellation least of
-// all: delegated work outlives the turn that asked for it.
+// chargedAs returns ctx marked with who sent the turn asked, and as scheduled when a
+// scheduled task fired it (llmrouter Session.charged). Nothing else of asked is kept, its
+// cancellation least of all: delegated work outlives the turn that asked for it.
 func chargedAs(ctx, asked context.Context) context.Context {
+	if sender, ok := routing.CallerFrom(asked); ok {
+		ctx = routing.WithCaller(ctx, sender)
+	}
 	if routing.ScheduledTurn(asked) {
 		ctx = routing.WithScheduledTurn(ctx)
 	}
@@ -339,6 +357,7 @@ func (m *manager) hold(running *task, stream *llm.Stream) {
 // CancelTurn abandons work whose conversational premise was superseded.
 func (m *manager) CancelTurn(turnID, reason string) {
 	m.mu.Lock()
+	m.cancelledTurns[turnID] = true
 	var abandoned []string
 	for id, running := range m.running {
 		if running.live() && running.turnID == turnID {
@@ -924,6 +943,12 @@ func HandBack(ctx context.Context, publish sandbox.Publisher, result sandbox.Res
 	}
 	for _, binding := range result.Connected {
 		said += "\n\n" + binding + justConnected
+	}
+	for _, grant := range result.Reconnect {
+		said += fmt.Sprintf("\n\nIf this code got 401 from %s, the user's %s connection is on an older version of its connector, which gives code no access: "+
+			"ask the user to reconnect %s. The reconnect takes effect only from their next session, "+
+			"so running the code again in this session will not help, even after they reconnect.",
+			strings.Join(grant.Hosts, ", "), grant.Binding, grant.Binding)
 	}
 	return said, published
 }

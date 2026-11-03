@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
@@ -56,7 +57,7 @@ func (s *OutcomeSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.redis, err = rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.redis, err = redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.redis.Close)
 }
@@ -151,6 +152,100 @@ func (s *OutcomeSuite) TestAVendorThatReportsNothingGetsNoStatusURL() {
 	s.False(call.Reports)
 }
 
+// placeDetecting places a call that asks for answering machine detection.
+func (s *OutcomeSuite) placeDetecting() Placed {
+	placed, err := s.service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123", DetectMachine: true,
+	})
+	s.Require().NoError(err)
+	return placed
+}
+
+// machineToken is the token the placed call's machine URL carries.
+func (s *OutcomeSuite) machineToken() string {
+	return strings.TrimPrefix(s.vendor.dialed.MachineURL, "https://router.example/v1/phone/machine/")
+}
+
+// told records every report the service passes to its machine hook.
+func (s *OutcomeSuite) told() *[]string {
+	var got []string
+	s.service.OnMachine(func(_ context.Context, customerID, sessionID string, machine Machine) {
+		got = append(got, customerID+" "+sessionID+" "+string(machine))
+	})
+	return &got
+}
+
+func (s *OutcomeSuite) TestACallThatAsksForDetectionIsGivenAMachineURL() {
+	placed := s.placeDetecting()
+
+	token, ok := strings.CutPrefix(s.vendor.dialed.MachineURL, "https://router.example/v1/phone/machine/")
+	s.Require().True(ok, s.vendor.dialed.MachineURL)
+	byToken, err := s.service.Outcomes().ByToken(s.ctx, token)
+	s.Require().NoError(err)
+	s.Equal(placed.CallID, byToken.CallID, "the url names this call")
+}
+
+func (s *OutcomeSuite) TestACallThatDoesNotAskForDetectionIsGivenNoMachineURL() {
+	s.place()
+
+	s.Empty(s.vendor.dialed.MachineURL)
+}
+
+func (s *OutcomeSuite) TestAVendorThatCannotDetectIsGivenNoMachineURL() {
+	s.build(silent{s.vendor}, "https://router.example")
+
+	s.placeDetecting()
+
+	s.Empty(s.vendor.dialed.MachineURL)
+}
+
+func (s *OutcomeSuite) TestWithoutAPublicURLNoMachineURLIsSent() {
+	s.build(s.vendor, "")
+
+	s.placeDetecting()
+
+	s.Empty(s.vendor.dialed.MachineURL)
+}
+
+func (s *OutcomeSuite) TestAMachineReportTellsTheHookWhoPickedUpWhichCall() {
+	told := s.told()
+	placed := s.placeDetecting()
+
+	s.Require().NoError(s.service.Machine(s.ctx, s.machineToken(), "application/x-www-form-urlencoded", []byte("machine=greeting_ended")))
+
+	s.Equal([]string{s.customer + " " + placed.CallID + " greeting_ended"}, *told)
+}
+
+func (s *OutcomeSuite) TestAMachineReportForAnUnknownTokenIsRefused() {
+	told := s.told()
+
+	for _, token := range []string{uuid.NewString(), "not-a-token", ""} {
+		err := s.service.Machine(s.ctx, token, "application/x-www-form-urlencoded", []byte("machine=human"))
+		s.ErrorIs(err, ErrUnknownStatus, token)
+	}
+	s.Empty(*told)
+}
+
+func (s *OutcomeSuite) TestAMachineReportThatCannotBeReadIsRefusedAndTellsNobody() {
+	told := s.told()
+	s.placeDetecting()
+
+	err := s.service.Machine(s.ctx, s.machineToken(), "application/x-www-form-urlencoded", []byte("nothing=here"))
+
+	s.ErrorIs(err, ErrUnreadableStatus)
+	s.Empty(*told)
+}
+
+func (s *OutcomeSuite) TestAMachineReportToACallOfAVendorThatCannotDetectIsRefused() {
+	s.placeDetecting()
+	token := s.machineToken()
+	s.build(silent{s.vendor}, "https://router.example")
+
+	err := s.service.Machine(s.ctx, token, "application/x-www-form-urlencoded", []byte("machine=human"))
+
+	s.ErrorIs(err, ErrUnknownStatus)
+}
+
 func (s *OutcomeSuite) TestADialThatFailsLeavesNoOutcome() {
 	s.vendor.err = errors.New("telnyx is having a day")
 	sessionID := uuid.NewString()
@@ -162,6 +257,39 @@ func (s *OutcomeSuite) TestADialThatFailsLeavesNoOutcome() {
 
 	_, err = s.service.Outcomes().Read(s.ctx, s.customer, sessionID)
 	s.ErrorIs(err, outcome.ErrUnknownCall)
+}
+
+func (s *OutcomeSuite) TestACallCancelledBeforeItWasSentWasNeverPlaced() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.service.Call(ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+
+	s.ErrorIs(err, ErrNotPlaced)
+	s.Empty(s.vendor.dialed.To, "the vendor was never asked")
+}
+
+func (s *OutcomeSuite) TestACallCancelledWhileTheVendorWasDialingMayHaveRung() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	s.build(&hangingUp{stub: s.vendor, cancel: cancel}, "https://router.example")
+
+	_, err := s.service.Call(ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, ErrNotPlaced, "the vendor had the request, so the phone may be ringing")
+}
+
+// hangingUp is a vendor whose dial is cut off by its caller going away mid-request.
+type hangingUp struct {
+	*stub
+	cancel context.CancelFunc
+}
+
+func (h *hangingUp) Dial(ctx context.Context, outbound Outbound) (Dialed, error) {
+	h.stub.dialed = outbound
+	h.cancel()
+	return Dialed{}, ctx.Err()
 }
 
 // placeReported places a call and returns it with the token its status URL carries.

@@ -4,6 +4,9 @@
     {"modality":"llm","provider":"anthropic","model":"claude-sonnet-5-5","region":"us","byok":true,"rates":{"cache_write_input_tokens":{"usd":2.5,"per":1000000},"cached_input_tokens":{"usd":0.1,"per":1000000},"input_tokens":{"usd":2,"per":1000000},"output_tokens":{"usd":10,"per":1000000}},"prices":{"cache_write_input_tokens":{"usd":0.25,"per":1000000},"cached_input_tokens":{"usd":0.01,"per":1000000},"input_tokens":{"usd":0.2,"per":1000000},"output_tokens":{"usd":1,"per":1000000}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"write","region":"eu","rates":{"bytes_written":{"usd":2.4,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"write","region":"eu","byok":true,"rates":{"bytes_written":{"usd":2.4,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}},"prices":{"bytes_written":{"usd":0.3,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
-    {"modality":"sandbox","provider":"daytona","model":"running","region":"eu","when":{"class":"container"},"rates":{"vcpu_seconds":{"usd":0.0605,"per":3600},"memory_gb_seconds":{"usd":0.0194,"per":3600},"disk_gb_seconds":{"usd":0.00013,"per":3600}}}
+    {"modality":"knowledge","provider":"turbopuffer","model":"lookup","region":"eu","rates":{"bytes_queried":{"usd":0,"per":1},"bytes_returned":{"usd":0,"per":1},"requests":{"usd":0.001536,"per":1000},"results":{"usd":0,"per":1}}},
+    {"modality":"knowledge","provider":"turbopuffer","model":"storage","region":"eu","rates":{"byte_hours":{"usd":0.396,"per":730000000000}}},
+    {"modality":"sandbox","provider":"daytona","model":"running","region":"eu","when":{"class":"container"},"rates":{"vcpu_seconds":{"usd":0.0605,"per":3600},"memory_gb_seconds":{"usd":0.0194,"per":3600},"disk_gb_seconds":{"usd":0.00013,"per":3600}}},
+    {"modality":"sandbox","provider":"daytona","model":"stopped","region":"eu","when":{"class":"container"},"rates":{"disk_gb_seconds":{"usd":0.00013,"per":3600}}}
   ]
 }

@@ -7,15 +7,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytona/clients/sdk-go/pkg/errors"
 	"github.com/daytona/clients/sdk-go/pkg/types"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -25,8 +29,9 @@ import (
 // LiveSuite runs the attacks of the wave's table that need Daytona's real egress, against
 // Daytona with DAYTONA_API_KEY: go test -tags daytona_live -run TestLiveSuite
 // ./internal/sandbox/daytona. Every secret holds a random canary, never a real token. Each
-// sandbox is labelled stream.env=live-test and stream.session=<prefix>_<session>, the names
-// of its secrets, so one left behind, even in Daytona's error state, is known as this run's.
+// sandbox is labelled stream.env=live-test, stream.session=<prefix>_<session>, the names of its
+// secrets, and stream.run with this run, whose sandboxes the suite deletes once it ends, those
+// in Daytona's error state included.
 //
 // Daytona scrubs a secret's value out of every response back to its placeholder
 // (https://www.daytona.io/docs/en/secrets.md, «Response scrubbing»), so an echo shows the
@@ -39,6 +44,8 @@ type LiveSuite struct {
 	ctx    context.Context
 	client *sdk.Client
 	prefix string
+	// runID labels every sandbox of this run of the suite.
+	runID string
 	// probe is the canary the oracle reads; plain one a real token looks like.
 	probe, plain string
 	// revoked has both connections give sandbox.ErrNoCredential.
@@ -50,6 +57,14 @@ func TestLiveSuite(t *testing.T) {
 		t.Skip("DAYTONA_API_KEY is not set")
 	}
 	suite.Run(t, new(LiveSuite))
+}
+
+func (s *LiveSuite) SetupSuite() {
+	s.runID = "live-" + random()
+}
+
+func (s *LiveSuite) TearDownSuite() {
+	sweepRun(s.T(), s.runID)
 }
 
 func (s *LiveSuite) SetupTest() {
@@ -66,6 +81,53 @@ func random() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// runLabel is the label a live suite puts on each sandbox it makes, with its run as the value.
+const runLabel = "stream.run"
+
+// sweepRun deletes every sandbox labelled with run, whatever its state, and fails if one is
+// left. A Close deletes only the sandbox it holds, so one that Daytona put in its error state
+// while making it is found here alone. Daytona's list leaves out only an errored sandbox already
+// being deleted (api-client-go v0.211.2 api_sandbox.go:3800, includeErroredDeleted).
+func sweepRun(t require.TestingT, run string) {
+	client, err := sdk.NewClient()
+	require.NoError(t, err)
+	// Each delete waits up to 2 minutes, as TestADeletedSandboxIsMadeAgain's does; a run makes a
+	// handful of sandboxes.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	query := &sdk.ListSandboxesQuery{Labels: map[string]string{"stream.env": "live-test", runLabel: run}}
+	var made []*sdk.Sandbox
+	for box, err := range client.ListSeq(ctx, query) {
+		require.NoError(t, err)
+		made = append(made, box)
+	}
+	for _, box := range made {
+		// The query filters on the server, so a box that does not carry the labels is not ours to
+		// delete, as the router's sweeper checks too (cmd/router/sandboxes.go, ours).
+		if box.Labels[runLabel] != run || box.Labels["stream.env"] != "live-test" {
+			t.Errorf("sandbox %s came back for run %s with labels %v, left alone", box.ID, run, box.Labels)
+			continue
+		}
+		if box.State == "error" {
+			// DeleteAndWait fails on a sandbox in the error state (sdk-go v0.211.2 sandbox.go:685,
+			// :1264-1267), and Daytona leaves a deleted errored one in it: the final list proves it gone.
+			if err := box.Delete(ctx); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+				t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
+			}
+			continue
+		}
+		if err := box.DeleteAndWait(ctx, 2*time.Minute); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+			t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
+		}
+	}
+	for box, err := range client.ListSeq(ctx, query) {
+		require.NoError(t, err)
+		if box.State != "destroyed" {
+			t.Errorf("sandbox %s of this run is left, in state %s", box.ID, box.State)
+		}
+	}
 }
 
 // box is a sandbox of session that may send PROBE_TOKEN and PLAIN_TOKEN to httpbin.org, and
@@ -88,7 +150,7 @@ func (s *LiveSuite) box(session string) *Sandbox {
 	s.Require().NoError(err)
 	box, err := New(Options{Config: sandbox.Config{AllowedDomains: []string{"httpbingo.org"}, TimeoutMs: 240_000},
 		Grants: []sandbox.Grant{grant("probe", "PROBE_TOKEN"), grant("plain", "PLAIN_TOKEN")}, Broker: broker,
-		Labels: map[string]string{"stream.env": "live-test", "stream.session": s.prefix + "_" + session}})
+		Labels: map[string]string{"stream.env": "live-test", "stream.session": s.prefix + "_" + session, runLabel: s.runID}})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = box.Close() })
 	return box

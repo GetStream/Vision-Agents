@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/uptrace/bun"
 
@@ -93,6 +95,7 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("conversation_id = EXCLUDED.conversation_id").
 		Set("state = EXCLUDED.state").
 		Set("closed_at = NULL").
+		Set("end_reason = ''").
 		Set("updated_at = EXCLUDED.updated_at").
 		// A session reopened from its row is opened without the memory it had, and what it
 		// remembered before is still in the store, so once true it stays true. Not known
@@ -162,9 +165,10 @@ func (s *Store) SessionTools(ctx context.Context, sessionID string) ([]ToolDefin
 	return stored.Tools, nil
 }
 
-// CloseSession records that a session ended. One that already ended keeps the first time: a
-// session is left once, and a second close is the same leaving reported again.
-func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error {
+// CloseSession records that a session ended, and why: empty when nothing said. One that
+// already ended keeps the first time and reason: a session is left once, and a second close
+// is the same leaving reported again.
+func (s *Store) CloseSession(ctx context.Context, id string, at time.Time, reason string) error {
 	if id == "" {
 		return errors.New("store: a session id is required")
 	}
@@ -176,6 +180,7 @@ func (s *Store) CloseSession(ctx context.Context, id string, at time.Time) error
 		Set("closed_at = ?", at).
 		Set("updated_at = ?", at).
 		Set("state = ?", SessionClosed).
+		Set("end_reason = ?", reason).
 		Where("id = ?", id).
 		Where("closed_at IS NULL").
 		Exec(ctx)
@@ -419,20 +424,18 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 		return s.QuerySessions(ctx, customerID, filter)
 	}
 
-	// websearch_to_tsquery rather than to_tsquery, because the text comes from a search
-	// box: it takes quoted phrases and bare words and never fails on punctuation, where
-	// to_tsquery would answer a syntax error to somebody who typed an apostrophe.
-	const rank = "ts_rank(searchable, websearch_to_tsquery('english', ?))"
+	words, args := searchedFor(text)
+	rank := "ts_rank(searchable, " + words + ")"
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
 		query := db.NewSelect().Model((*AgentSession)(nil)).
 			ColumnExpr("?TableColumns").
-			ColumnExpr(rank+" AS rank", text).
+			ColumnExpr(rank+" AS rank", args...).
 			Where("customer_id = ?", customerID).
-			Where("searchable @@ websearch_to_tsquery('english', ?)", text).
+			Where("searchable @@ "+words, args...).
 			Order("rank DESC", "updated_at DESC", "id DESC")
 		if after := filter.Cursor; after != nil {
 			query = query.Where("("+rank+", updated_at, id) < (?::real, ?, ?)",
-				text, after.Rank, after.UpdatedAt, after.ID)
+				append(slices.Clone(args), after.Rank, after.UpdatedAt, after.ID)...)
 		}
 		query = narrowSessions(query, filter)
 
@@ -446,6 +449,30 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 	return pageOfSessions(lists, filter, func(a, b AgentSession) int {
 		return cmp.Or(cmp.Compare(b.Rank, a.Rank), b.UpdatedAt.Compare(a.UpdatedAt), strings.Compare(b.ID, a.ID))
 	}), nil
+}
+
+// searchedFor is what a search's text asks for, as a tsquery expression and its arguments.
+//
+// websearch_to_tsquery rather than to_tsquery, because the text comes from a search box: it
+// takes quoted phrases and bare words and never fails on punctuation, where to_tsquery would
+// answer a syntax error to somebody who typed an apostrophe.
+//
+// A search box also searches as the person types, so a word at the very end is the start of
+// one and matches as a prefix: "Lis" finds "Lisbon". It is only letters and digits, which is
+// what lets it go to to_tsquery. A word followed by a space, inside a quote or excluded with a
+// minus was finished, and websearch_to_tsquery reads it as written.
+func searchedFor(text string) (string, []any) {
+	runes := []rune(text)
+	start := len(runes)
+	for start > 0 && (unicode.IsLetter(runes[start-1]) || unicode.IsDigit(runes[start-1])) {
+		start--
+	}
+	head := string(runes[:start])
+	if start == len(runes) || strings.Count(head, "\"")%2 == 1 || strings.HasSuffix(head, "-") {
+		return "websearch_to_tsquery('english', ?)", []any{text}
+	}
+	return "(websearch_to_tsquery('english', ?) && to_tsquery('english', ? || ':*'))",
+		[]any{head, string(runes[start:])}
 }
 
 // pageOfSessions merges every shard's page into one, keeping a session carried on in another
@@ -792,7 +819,8 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 	for _, response := range responses {
 		exchanges = append(exchanges, Exchange{
 			ResponseID: response.ID, Said: response.Said,
-			Answer: strings.Join(answered[response.ID], "\n\n"),
+			Answer:  strings.Join(answered[response.ID], "\n\n"),
+			Refused: response.Status == ResponseRefused,
 		})
 	}
 	return exchanges, nil
@@ -800,11 +828,11 @@ func (s *Store) Exchanges(ctx context.Context, customerID, sessionID, upTo strin
 
 // ReplyItems are what the replies a conversation's transcript wrote under these turn ids
 // did, by turn id: the answer and tool_result items of the response each one finished, in
-// the order they happened. Only the customer's own sessions on that conversation are read,
-// so a turn id copied into another transcript finds nothing, and a rewound response is
-// left out. A turn whose answer item names no turn id, as one recorded before they did,
-// finds nothing either.
-func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string][]AgentResponseItem, error) {
+// the order they happened, and whether the response was refused. Only the customer's own
+// sessions on that conversation are read, so a turn id copied into another transcript finds
+// nothing, and a rewound response is left out. A turn whose answer item names no turn id,
+// as one recorded before they did, finds nothing either.
+func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID string, turnIDs []string) (map[string]Reply, error) {
 	if customerID == "" || conversationID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
@@ -815,6 +843,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 		ResponseID string `bun:"response_id"`
 		TurnID     string `bun:"turn_id"`
 		Ordinal    int    `bun:"ordinal"`
+		Status     string `bun:"status"`
 	}
 	type found struct {
 		answers []answered
@@ -824,7 +853,7 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (found, error) {
 		var f found
 		err := db.NewSelect().TableExpr("agent_response_items AS ari").
-			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal").
+			ColumnExpr("ari.response_id, ari.payload->>'turn_id' AS turn_id, ari.ordinal, r.status").
 			Join("JOIN agent_responses AS r ON r.id = ari.response_id").
 			Join("JOIN agent_sessions AS s ON s.id = r.session_id").
 			Where("s.customer_id = ?", customerID).
@@ -865,23 +894,24 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 			byResponse[item.ResponseID] = append(byResponse[item.ResponseID], item)
 		}
 	}
-	replies := make(map[string][]AgentResponseItem, len(last))
+	replies := make(map[string]Reply, len(last))
 	for responseID, a := range last {
-		replies[a.TurnID] = byResponse[responseID]
+		replies[a.TurnID] = Reply{Items: byResponse[responseID], Refused: a.Status == ResponseRefused}
 	}
 	return replies, nil
 }
 
 // Opening is the first thing said in a customer's conversation, across every session that
-// held it, or empty when none recorded anything said.
-func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (string, error) {
+// held it, or empty when none recorded anything said. Refused says the prompt injection
+// screen refused it.
+func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (Exchange, error) {
 	if customerID == "" || conversationID == "" {
-		return "", stack.Wrap(errors.New("store: a customer and a conversation id are required"))
+		return Exchange{}, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
 	}
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentResponse, error) {
 		var first []AgentResponse
 		err := db.NewSelect().Model(&first).
-			Column("ars.said", "ars.created_at").
+			Column("ars.id", "ars.said", "ars.status", "ars.created_at").
 			Join("JOIN agent_sessions AS s ON s.id = ars.session_id").
 			Where("s.customer_id = ?", customerID).
 			Where("s.conversation_id = ?", conversationID).
@@ -894,13 +924,13 @@ func (s *Store) Opening(ctx context.Context, customerID, conversationID string) 
 		return first, err
 	})
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("store: opening: %w", err))
+		return Exchange{}, stack.Wrap(fmt.Errorf("store: opening: %w", err))
 	}
 	first := merged(lists, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) }, 1)
 	if len(first) == 0 {
-		return "", nil
+		return Exchange{}, nil
 	}
-	return first[0].Said, nil
+	return Exchange{ResponseID: first[0].ID, Said: first[0].Said, Refused: first[0].Status == ResponseRefused}, nil
 }
 
 // RewindResponses takes every response after kept out of the session's conversation.
@@ -1206,8 +1236,11 @@ func jsonbOf[V any](values map[string]V) string {
 	return string(encoded)
 }
 
+// ErrNoSession is a session that is not there: never saved, or deleted since.
+var ErrNoSession = errors.New("store: there is no session")
+
 func unknownStoredSession(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no session %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoSession, id))
 }
 
 func notAGuest(id, customerID string) error {

@@ -22,7 +22,8 @@ class AgentResponse:
         id (str):
         session_id (str):
         status (AgentResponseStatus): cancelled is a turn the caller interrupted, which is a different thing from one
-            that failed: nothing went wrong, and what had already been said still counts.
+            that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt
+            injection screen refused: a rewind or a fork carries what it asked forward as withheld.
         error (str | Unset):
         finished_at (datetime.datetime | Unset):
         said (str | Unset): What the person asked, which is the first item of every response.

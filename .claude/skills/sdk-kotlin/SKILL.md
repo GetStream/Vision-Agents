@@ -25,8 +25,9 @@ kebab-case, and the package is the reverse-DNS lower case Kotlin requires. `visi
 sits beside Stream's own `stream-video-android-*` and `stream-chat-android-*` in a dependency list
 and says which product it is.
 
-- `core` is a `com.android.library`. It holds the conversation, `session.chat(context)` and
-  `VoiceSession`, and depends on `stream-chat-android-client` and `stream-video-android-core`.
+- `core` is a `com.android.library`. It holds the conversation, `session.chat(context)`,
+  `session.channelState(context, scope)` and `VoiceSession`, and depends on
+  `stream-chat-android-client` and `stream-video-android-core`.
 - It ships no views. Apps compose Stream Chat's AI components
   (`stream-chat-android-ai-compose`), the way Swift apps compose `StreamChatAI`.
 - Stream Chat 7.15.0+ comes from `https://stream-io-repo.com`, not Maven Central;
@@ -162,7 +163,8 @@ which `sdks/kotlin/.gitignore` covers.
 
 Reject it if it:
 
-- exposes a generated type, or a Stream type anywhere but `chat()` and `VoiceSession`;
+- exposes a generated type, or a Stream type anywhere but `chat()`, `channelState()` and
+  `VoiceSession`;
 - sends a schema default the caller did not set;
 - answers tools from a collector, starts a second read loop, or replays `respond`/`tool_result`;
 - treats an unknown frame or enum value as fatal;

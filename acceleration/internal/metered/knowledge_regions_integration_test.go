@@ -132,6 +132,21 @@ func (s *MeteredSuite) TestAKnowledgeBaseIsDeletedWhereItIsKeptWhateverRegionThe
 	s.Equal("knowledge-turbopuffer-write-us", rows[1].SKU, "the delete was done, and billed, in the us")
 }
 
+func (s *MeteredSuite) TestABaseDroppedThroughOneRouterCanBeMadeAgainInAnotherRegionThroughAnother() {
+	first, _ := s.regional()
+	second, _ := s.regional()
+	s.Require().NoError(first.For(s.in(pricing.RegionUS)).Upsert(s.ctx, "docs", passage))
+
+	_, err := second.For(s.owner).Drop(s.ctx, "docs")
+	s.Require().NoError(err)
+
+	s.Require().NoError(first.For(s.in(pricing.RegionEU)).Upsert(s.ctx, "docs", passage))
+	kept, recorded, err := s.store.KnowledgePlace(s.ctx, s.owner.CustomerID, "docs")
+	s.Require().NoError(err)
+	s.True(recorded)
+	s.Equal(pricing.RegionEU, kept.Region)
+}
+
 func (s *MeteredSuite) TestARegionWithNoKnowledgeBackendIsRefusedNamingIt() {
 	server := turbopuffertest.Start(s.T())
 	backend, err := turbopuffer.New(turbopuffer.Options{APIKey: "test-key", BaseURL: server.URL, Cost: listCost})

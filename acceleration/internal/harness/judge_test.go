@@ -106,7 +106,7 @@ func (s *JudgeSuite) ruling(turn FlowTurn) Decided {
 		}
 		got = s.decided[len(s.decided)-1]
 		return got.CandidateID == turn.ID
-	}, time.Second, 5*time.Millisecond, "the judge never ruled")
+	}, settleFor, 5*time.Millisecond, "the judge never ruled")
 	return got
 }
 

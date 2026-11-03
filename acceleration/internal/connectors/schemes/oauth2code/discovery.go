@@ -43,6 +43,9 @@ type server struct {
 	// ViaResource is whether the server was found through an MCP endpoint's protected
 	// resource metadata, which is when the MCP authorization rules apply.
 	ViaResource bool
+	// ScopesSupported is that metadata's scopes_supported (RFC 9728 section 2), read only
+	// when ViaResource.
+	ScopesSupported []string
 }
 
 // discover is the manifest's endpoints first, then what metadata says for anything left.
@@ -79,6 +82,7 @@ func (s *Scheme) discover(ctx context.Context, m core.ResolvedManifest) (server,
 			d.Resource = resource.Resource
 		}
 		d.ViaResource = true
+		d.ScopesSupported = resource.ScopesSupported
 	}
 	if d.Issuer != "" {
 		metadata, err := s.authorizationServer(ctx, d.Issuer)
@@ -159,8 +163,44 @@ func (d server) checkPKCE() error {
 }
 
 type protectedResourceMetadata struct {
-	Resource             string   `json:"resource"`
-	AuthorizationServers []string `json:"authorization_servers"`
+	Resource             string     `json:"resource"`
+	AuthorizationServers []string   `json:"authorization_servers"`
+	ScopesSupported      scopesList `json:"scopes_supported"`
+}
+
+// maxScopesSupported bounds scopes_supported: the list goes into the authorize URL, the
+// sealed attempt and the connection's granted scopes, and authorization servers refuse
+// request URLs of a few KB (nginx's default request line limit is 8 KB), which a hundred
+// scope names of typical length (under 40 bytes) stay below. The 1 MiB response cap alone
+// allowed tens of thousands.
+const maxScopesSupported = 100
+
+// scopesList is scopes_supported, which RFC 9728 section 2 makes a JSON array of strings, each
+// a scope-token of RFC 6749 section 3.3 (1*NQCHAR). Any other shape reads as none, so a
+// document that breaks only this optional member is still used, as it was before the member
+// was read. A list with one entry that is no scope-token, or longer than maxScopesSupported,
+// is such a shape: its other entries could not be sent as asked, and one that holds a NUL
+// byte would fail the connection's JSONB write after the provider had granted.
+type scopesList []string
+
+func (l *scopesList) UnmarshalJSON(raw []byte) error {
+	var list []string
+	if json.Unmarshal(raw, &list) != nil || len(list) > maxScopesSupported {
+		return nil
+	}
+	if slices.ContainsFunc(list, func(scope string) bool { return !isScopeToken(scope) }) {
+		return nil
+	}
+	*l = list
+	return nil
+}
+
+// isScopeToken is RFC 6749 section 3.3's scope-token: one or more NQCHAR, which is
+// %x21 / %x23-5B / %x5D-7E, so no space, control character, quote, backslash or non-ASCII.
+func isScopeToken(scope string) bool {
+	return scope != "" && !strings.ContainsFunc(scope, func(r rune) bool {
+		return r < 0x21 || r > 0x7E || r == '"' || r == '\\'
+	})
 }
 
 // protectedResource reads RFC 9728 metadata for an MCP endpoint, at the path-inserted

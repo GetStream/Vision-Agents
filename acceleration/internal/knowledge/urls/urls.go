@@ -400,8 +400,8 @@ func (s *Service) enqueueAs(ctx context.Context, page store.KnowledgeURL, id str
 //
 // A read that failed is returned to asynq to be tried again, with the reason kept on the
 // row meanwhile. Only the last attempt marks the page failed, so a crawl that failed once
-// for a reason that passed is not reported as broken. A page removed since it was queued
-// has nothing left to read into.
+// for a reason that passed is not reported as broken. A page removed since it was queued,
+// or while it was read, has nothing left to read into.
 func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	var payload indexPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
@@ -426,6 +426,9 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	}
 	if err == nil {
 		err = s.write(ctx, owned, &page, read)
+	}
+	if errors.Is(err, errRemoved) {
+		return nil
 	}
 	last := false
 	if err != nil {
@@ -465,7 +468,21 @@ func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *stor
 	if len(passages) == 0 {
 		return fmt.Errorf("urls: there is nothing to read at %s", page.URL)
 	}
+	// A read takes long enough for the page, or its whole knowledge base, to be removed
+	// meanwhile, and passages written for it then would bring both back. The page is looked
+	// for again once written, since it can go between the look and the write.
+	if err := s.kept(ctx, page); err != nil {
+		return err
+	}
 	if err := writer.Upsert(ctx, page.Namespace, passages); err != nil {
+		return err
+	}
+	if err := s.kept(ctx, page); errors.Is(err, errRemoved) {
+		if taken := writer.Delete(ctx, page.Namespace, ingest.IDs(page.URL, 0, len(passages))); taken != nil {
+			return fmt.Errorf("urls: take back what was read for a page removed meanwhile: %w", taken)
+		}
+		return err
+	} else if err != nil {
 		return err
 	}
 	// A page that got shorter would otherwise leave its old tail behind, still findable
@@ -482,6 +499,19 @@ func (s *Service) write(ctx context.Context, writer knowledge.Writer, page *stor
 	page.Passages = len(passages)
 	page.LastIndexedAt = &indexed
 	return nil
+}
+
+// errRemoved ends a read of a page removed while it was read: there is no row left to
+// record it on.
+var errRemoved = errors.New("urls: the page was removed while it was read")
+
+// kept is errRemoved once the page is no longer subscribed to.
+func (s *Service) kept(ctx context.Context, page *store.KnowledgeURL) error {
+	_, err := s.store.KnowledgeURL(ctx, page.CustomerID, page.ID)
+	if errors.Is(err, store.ErrNoKnowledgeURL) {
+		return errRemoved
+	}
+	return err
 }
 
 // clean reports the url as it will be stored, or why it is not one.

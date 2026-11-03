@@ -155,9 +155,11 @@ type SessionOptions struct {
 	// spoken until Session.Voice starts it.
 	Voice bool
 
-	// AgentID is the conversation being answered, which names the channel replies are
-	// written into and is what the backend finds a running session by when somebody
-	// writes to it again. Empty answers in one of the agent's own.
+	// AgentID is the conversation being answered, and what the backend finds a running
+	// session by when somebody writes to it again. A text session opened with the agent id
+	// of a message the router handed this worker (InboundMessage.AgentID) answers in that
+	// message's channel, and writes only its replies there: the message is already in it.
+	// Any other session's replies are written into a channel of its own, agent:<session id>.
 	//
 	// A worker answering several conversations has to set it. Left empty they all join
 	// under the agent's user id, and a message arriving for one of them reaches whichever

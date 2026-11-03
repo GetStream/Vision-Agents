@@ -70,5 +70,5 @@ func newCompat(options Options) (*openaicompat.LLM, error) {
 	// image_url parts. It ignores reasoning_effort, so no effort is declared and a request
 	// naming one is refused rather than answered at the model's default.
 	capabilities := llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
-	return openaicompat.New(openaicompat.Options{Provider: ProviderName, Model: options.Model, APIKey: options.APIKey, BaseURL: options.BaseURL, Headers: headers, Capabilities: capabilities, Logger: options.Logger})
+	return openaicompat.New(openaicompat.Options{Provider: ProviderName, SystemTurnsAsUser: true, Model: options.Model, APIKey: options.APIKey, BaseURL: options.BaseURL, Headers: headers, Capabilities: capabilities, Logger: options.Logger})
 }

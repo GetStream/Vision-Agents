@@ -110,7 +110,7 @@ $client->memories->truncate('u1');          // everything remembered about one u
 
 ```
 support/
-  agent.yaml          name, models, mode, subagent, greeting {text, mode}, plugins, harness, dispatch, ...
+  agent.yaml          name, models, mode, subagent, greeting {text, mode}, connectors, harness, dispatch, ...
   instructions.md
   guardrail.md
   skills/refunds.md   frontmatter: description, deadline, capture_video

@@ -28,6 +28,10 @@ class GuestUser:
         expires_at (datetime.datetime | Unset): When the token stops working. A guest coming back after it asks for
             another.
         name (str | Unset):
+        refresh_secret (str | Unset): What this guest sends back, with their id, to be given a fresh token once this one
+            has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store
+            it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token
+            while they already hold one, which keeps working.
     """
 
     id: str
@@ -35,6 +39,7 @@ class GuestUser:
     custom: GuestUserCustom | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     name: str | Unset = UNSET
+    refresh_secret: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +57,8 @@ class GuestUser:
 
         name = self.name
 
+        refresh_secret = self.refresh_secret
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +73,8 @@ class GuestUser:
             field_dict["expires_at"] = expires_at
         if name is not UNSET:
             field_dict["name"] = name
+        if refresh_secret is not UNSET:
+            field_dict["refresh_secret"] = refresh_secret
 
         return field_dict
 
@@ -94,12 +103,15 @@ class GuestUser:
 
         name = d.pop("name", UNSET)
 
+        refresh_secret = d.pop("refresh_secret", UNSET)
+
         guest_user = cls(
             id=id,
             token=token,
             custom=custom,
             expires_at=expires_at,
             name=name,
+            refresh_secret=refresh_secret,
         )
 
         guest_user.additional_properties = d

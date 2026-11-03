@@ -87,13 +87,23 @@ type KnowledgeURL struct {
 //	      refresh_hours: 24
 //
 // Unknown keys are refused, so a misspelt one is reported rather than dropped into a
-// subscription nobody described.
+// subscription nobody described, and so is a url that is not http or https.
 func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
+	if err := k.decode(node); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(k.URL, "http://") && !strings.HasPrefix(k.URL, "https://") {
+		return fmt.Errorf("line %d: %q is not an http or https url", keyLine(node, "url"), k.URL)
+	}
+	return nil
+}
+
+func (k *KnowledgeURL) decode(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		return node.Decode(&k.URL)
 	}
 	if node.Kind != yaml.MappingNode {
-		return errors.New("a page is a url, or a mapping naming one")
+		return fmt.Errorf("line %d: a page is a url, or a mapping naming one", node.Line)
 	}
 
 	for index := 0; index+1 < len(node.Content); index += 2 {
@@ -103,7 +113,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 				return err
 			}
 			if k.RefreshHours < 1 {
-				return errors.New("refresh_hours is how many hours between reads, so it is at least 1; leave it out for never")
+				return fmt.Errorf("line %d: refresh_hours is how many hours between reads, so it is at least 1; leave it out for never", value.Line)
 			}
 			continue
 		}
@@ -111,7 +121,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 			"url": &k.URL, "title": &k.Title, "description": &k.Description,
 		}[key.Value]
 		if field == nil {
-			return fmt.Errorf("%q is not something a page says; url, title, description and refresh_hours are", key.Value)
+			return fmt.Errorf("line %d: %q is not something a page says; url, title, description and refresh_hours are", key.Line, key.Value)
 		}
 		if err := value.Decode(field); err != nil {
 			return err
@@ -184,9 +194,6 @@ type Settings struct {
 	// file lists none, which removes them. A null entry is refused: dropping it
 	// would sync an empty list and wipe the stored bindings.
 	Connectors connectorList `yaml:"connectors"`
-	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
-	// their URL, with a login when the server asks for one.
-	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
 	// Tools is how MCP server and connector tools are offered. Nil when the
 	// declaration says nothing about it.
 	Tools *ToolSettings `yaml:"tools"`
@@ -197,10 +204,13 @@ type Settings struct {
 	// Scheduling is whether the agent may schedule tasks for its users: reminders
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
-	Keyterms   []string            `yaml:"keyterms"`
-	Tags       map[string]string   `yaml:"tags"`
-	Video      *VideoSettings      `yaml:"video"`
-	Dispatch   *DispatchSettings   `yaml:"dispatch"`
+	// Calls are the tools the agent has on a phone call. A sync always sends them, with
+	// the defaults for what the file leaves out, so it replaces what the dashboard set.
+	Calls    *CallSettings     `yaml:"calls"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -272,15 +282,25 @@ func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 		}
 	}
 	if c.Name == "" {
-		return errors.New("a connector needs a name")
+		return fmt.Errorf("line %d: a connector needs a name", node.Line)
 	}
 	if c.Tools != nil && len(*c.Tools) == 0 {
-		return fmt.Errorf("connector %q: tools: [] grants nothing; leave tools out for every tool", c.Name)
+		return fmt.Errorf("line %d: connector %q: tools: [] grants nothing; leave tools out for every tool", keyLine(node, "tools"), c.Name)
 	}
 	if c.Connection != nil && *c.Connection == "" {
-		return fmt.Errorf("connector %q: connection must be a connection id or label", c.Name)
+		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", keyLine(node, "connection"), c.Name)
 	}
 	return nil
+}
+
+// keyLine is the line of a mapping's key, or the mapping's own line when it has none.
+func keyLine(node *yaml.Node, name string) int {
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == name {
+			return node.Content[index].Line
+		}
+	}
+	return node.Line
 }
 
 // connectorList is the connectors list. yaml.v3 drops a null element of a plain
@@ -289,12 +309,12 @@ type connectorList []ConnectorSettings
 
 func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.SequenceNode {
-		return errors.New("connectors must be a list")
+		return fmt.Errorf("line %d: connectors must be a list", node.Line)
 	}
 	items := make(connectorList, 0, len(node.Content))
 	for _, item := range node.Content {
 		if item.ShortTag() == "!!null" {
-			return errors.New("a connector needs a name")
+			return fmt.Errorf("line %d: a connector needs a name", item.Line)
 		}
 		var entry ConnectorSettings
 		if err := item.Decode(&entry); err != nil {
@@ -304,20 +324,6 @@ func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
 	}
 	*c = items
 	return nil
-}
-
-// MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
-// as <name>__<tool>.
-type MCPServerSettings struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"url"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	Tools []string `yaml:"tools"`
-	// Scopes are what the server's OAuth login asks for. Empty asks for what the server
-	// advertises. Without User, the app logs in once, on the dashboard.
-	Scopes []string `yaml:"scopes"`
-	// User has each end user log in with their own account, in the conversation.
-	User bool `yaml:"user"`
 }
 
 // ChannelsSettings are the lines an agent answers on outside Stream Chat.
@@ -342,6 +348,44 @@ type SchedulingSettings struct {
 	// DefaultTimezone is the IANA zone a task takes when neither the user nor
 	// their session has ever named one.
 	DefaultTimezone string `yaml:"default_timezone"`
+}
+
+// CallSettings is the tools an agent on a phone call is offered.
+type CallSettings struct {
+	// EndCall lets the agent hang up. Off unless turned on.
+	EndCall *EndCallSettings `yaml:"end_call"`
+	// Press lets the agent press keys, to get through a menu. On unless turned off.
+	Press *CallToolSettings `yaml:"press"`
+	// Transfer lets the agent hand the call to one of its destinations. On unless turned off.
+	Transfer *TransferSettings `yaml:"transfer"`
+}
+
+// CallToolSettings is a call tool that is only on or off.
+type CallToolSettings struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// EndCallSettings is when the agent ends a call.
+type EndCallSettings struct {
+	Enabled *bool `yaml:"enabled"`
+	// When is when to hang up, in the caller's terms.
+	When string `yaml:"when"`
+}
+
+// TransferSettings is where the agent may send a call.
+type TransferSettings struct {
+	Enabled      *bool                 `yaml:"enabled"`
+	Destinations []TransferDestination `yaml:"destinations"`
+}
+
+// TransferDestination is one number the agent may transfer to.
+type TransferDestination struct {
+	Name   string `yaml:"name"`
+	Number string `yaml:"number"`
+	// When is when to transfer here, in the caller's terms.
+	When string `yaml:"when"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `yaml:"warm"`
 }
 
 // ChannelSettings is one line the agent is reachable on.
@@ -651,10 +695,13 @@ func declare(raw []byte) (Settings, error) {
 	if err := decoder.Decode(&declared); err != nil && !errors.Is(err, io.EOF) {
 		return Settings{}, err
 	}
-	if err := refuseReplaced("plugins", declared.Plugins); err != nil {
+	if err := refuseReplaced("plugins", declared.Plugins, replacedByConnectors); err != nil {
 		return Settings{}, err
 	}
-	if err := refuseReplaced("plugin_events", declared.PluginEvents); err != nil {
+	if err := refuseReplaced("plugin_events", declared.PluginEvents, replacedByConnectors); err != nil {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("mcp_servers", declared.MCPServers, replacedByCustomConnectors); err != nil {
 		return Settings{}, err
 	}
 	settings := declared.Settings
@@ -673,9 +720,6 @@ func declare(raw []byte) (Settings, error) {
 		}
 		options.timeout = timeout
 	}
-	if err := refuseConnectorAliases(settings); err != nil {
-		return Settings{}, err
-	}
 	return settings, nil
 }
 
@@ -685,31 +729,23 @@ type declaration struct {
 	Settings     `yaml:",inline"`
 	Plugins      yaml.Node `yaml:"plugins"`
 	PluginEvents yaml.Node `yaml:"plugin_events"`
+	MCPServers   yaml.Node `yaml:"mcp_servers"`
 }
+
+// What a refused key is replaced by: plugins by a catalog connector, an MCP server named
+// by URL by a custom connector made for that URL.
+const (
+	replacedByConnectors       = "plugins were replaced by connectors, so name the provider under connectors"
+	replacedByCustomConnectors = "a server named by URL is now a custom connector, so create one for its URL and name it under connectors"
+)
 
 // refuseReplaced refuses a key connectors replaced, unless it declares nothing: an empty
 // or null list was never sent, so the file syncs as it did.
-func refuseReplaced(key string, value yaml.Node) error {
+func refuseReplaced(key string, value yaml.Node, replacement string) error {
 	if value.Kind == 0 || value.Tag == "!!null" || (value.Kind == yaml.SequenceNode && len(value.Content) == 0) {
 		return nil
 	}
-	return fmt.Errorf("%s is no longer read: plugins were replaced by connectors, so name the provider under connectors", key)
-}
-
-// refuseConnectorAliases refuses an alias that is also an MCP server name. The model is
-// offered each as <name>__<tool>, so the same name would be two tools. Compared on the
-// alias, not the connector id.
-func refuseConnectorAliases(settings Settings) error {
-	servers := map[string]struct{}{}
-	for _, server := range settings.MCPServers {
-		servers[server.Name] = struct{}{}
-	}
-	for _, connector := range settings.Connectors {
-		if _, named := servers[connector.Name]; named {
-			return fmt.Errorf("%q is named under both connectors and mcp_servers", connector.Name)
-		}
-	}
-	return nil
+	return fmt.Errorf("%s is no longer read: %s", key, replacement)
 }
 
 // loadSkills reads skills/: a skill is either a markdown file, or a folder holding a
@@ -955,11 +991,6 @@ func loadKnowledgeURLs(path string) ([]KnowledgeURL, error) {
 	if err := yaml.Unmarshal(raw, &pages); err != nil {
 		return nil, fmt.Errorf("agents: %s: %w", path, err)
 	}
-	for _, page := range pages {
-		if !strings.HasPrefix(page.URL, "http://") && !strings.HasPrefix(page.URL, "https://") {
-			return nil, fmt.Errorf("agents: %s: %q is not an http or https url", path, page.URL)
-		}
-	}
 	return pages, nil
 }
 
@@ -988,29 +1019,39 @@ func loadSimulations(path string) ([]Simulation, error) {
 		if err != nil {
 			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
 		}
-		var listed []Simulation
+		// Pointers keep a null entry in its place, so entry i is node i, whose lines the
+		// errors name; a node decodes without KnownFields, so the file is read twice.
+		var listed []*Simulation
 		decoder := yaml.NewDecoder(bytes.NewReader(raw))
 		decoder.KnownFields(true)
 		if err := decoder.Decode(&listed); err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("agents: %s: %w", file, err)
 		}
+		var nodes []yaml.Node
+		if err := yaml.Unmarshal(raw, &nodes); err != nil {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
 
-		for _, simulation := range listed {
+		for index, simulation := range listed {
+			if simulation == nil {
+				continue
+			}
+			node := &nodes[index]
 			switch {
 			case simulation.Name == "":
-				return nil, fmt.Errorf("agents: %s: a simulation needs a name", file)
+				return nil, fmt.Errorf("agents: %s: line %d: a simulation needs a name", file, keyLine(node, "name"))
 			case simulation.Scenario == "":
-				return nil, fmt.Errorf("agents: %s: simulation %q needs a scenario", file, simulation.Name)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs a scenario", file, keyLine(node, "scenario"), simulation.Name)
 			case simulation.Assertion == "":
-				return nil, fmt.Errorf("agents: %s: simulation %q needs an assertion", file, simulation.Name)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs an assertion", file, keyLine(node, "assertion"), simulation.Name)
 			case simulation.Mode != "" && simulation.Mode != "text" && simulation.Mode != "audio":
-				return nil, fmt.Errorf("agents: %s: simulation %q is text or audio, not %q", file, simulation.Name, simulation.Mode)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is text or audio, not %q", file, keyLine(node, "mode"), simulation.Name, simulation.Mode)
 			}
 			if first, taken := named[simulation.Name]; taken {
-				return nil, fmt.Errorf("agents: %s: simulation %q is also declared in %s", file, simulation.Name, first)
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is also declared in %s", file, keyLine(node, "name"), simulation.Name, first)
 			}
 			named[simulation.Name] = entry.Name()
-			simulations = append(simulations, simulation)
+			simulations = append(simulations, *simulation)
 		}
 	}
 	return simulations, nil
