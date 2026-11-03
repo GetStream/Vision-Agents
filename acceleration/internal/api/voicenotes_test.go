@@ -426,6 +426,35 @@ func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnRespondIsHeardOnceAndMatchedOn
 	s.heard(since, 1)
 }
 
+// Without a request id the question is answered as one too: on respond, in a body as big as
+// createResponse takes, and on the socket.
+func (s *VoiceNotesSuite) TestAVoiceNoteWithoutARequestIDIsAskedOnRespondAndTheSocket() {
+	opened := s.noting()
+	posted, written := "big "+s.utils.uuid(), "socket "+s.utils.uuid()
+	atLimit := wavOf(posted + strings.Repeat(" ", maxInlineAudio-len(wavOf(posted))))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": "",
+		"audio": map[string]string{"url": "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
+	s.Require().Equal(http.StatusNoContent, status, "%.300s", payload)
+	s.Equal(posted, s.lastAsked(posted))
+
+	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "audio": frame{"url": s.serve(wavOf(written))}}))
+	s.Equal(written, s.lastAsked(written))
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteWithAPhotoOnTheSocketForAnAgentThatCannotSeeIsRefusedBeforeItIsHeard() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	watching := s.watching(opened)
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))
+
+	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "images": []frame{{"url": photo}},
+		"audio": frame{"url": s.serve(wavOf("look " + s.utils.uuid()))}}))
+
+	s.await(watching, "error")
+	s.heard(since, 0)
+}
+
 // Text alone is answered on respond as it was before voice notes: a 204 without a request id,
 // a receipt with one, and the text asked as sent.
 func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
