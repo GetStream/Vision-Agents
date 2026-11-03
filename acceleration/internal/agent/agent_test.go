@@ -223,6 +223,9 @@ type stubLLM struct {
 	// ignoresNone makes the model return its calls on a reply offered no tools too, as a
 	// provider or model that disregards tool choice does.
 	ignoresNone bool
+	// toolless, when set, is the reply to a request offered no tools: what the model
+	// writes once it is made to answer.
+	toolless []string
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
 	// callsUntil, when set, is the request, counted from 1, at which keepCalling stops and
@@ -339,6 +342,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	var calls []llm.ToolCall
 	// A model told to call no tool calls none, as a provider holds it to.
 	callable := len(params.Tools) > 0 && params.ToolChoice != "none" || s.ignoresNone
+	if s.toolless != nil && !(len(params.Tools) > 0 && params.ToolChoice != "none") {
+		reply = append([]string(nil), s.toolless...)
+	}
 	if len(s.asked) == max(s.callsOn, 1) ||
 		s.keepCalling && callable && (s.callsUntil == 0 || len(s.asked) < s.callsUntil) {
 		calls = append([]llm.ToolCall(nil), s.calls...)
@@ -4398,6 +4404,47 @@ func (s *AgentSuite) TestAGreetingThatCallsAToolAnywayIsNotFollowed() {
 	s.Equal("none", s.model.requests()[0].ToolChoice, "the greeting was offered tools")
 	s.Empty(s.runner.asked(), "the call on the greeting ran")
 	s.Len(s.model.requests(), 1, "the greeting was followed by another reply")
+}
+
+func (s *AgentSuite) TestAFollowUpAfterTheToolRoundsRanOutIsOfferedNoTools() {
+	// The reply made to answer hands a question to a skill; its answer is told in a
+	// follow-up. Offered tools again, that follow-up starts the rounds over, and the reply
+	// that ends them asks again: one message never stops asking the model.
+	s.delegates()
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.subagent.reply = []string{"order 12 is in the warehouse"}
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`One moment. <ask skill="think">where exactly is order 12</ask>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+2 }, "the skill's answer was never told")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+2 },
+		"the follow-up after the rounds ran out started them again")
+	s.Equal("none", s.model.requests()[maxToolRounds+1].ToolChoice, "the follow-up was offered tools")
+	s.Len(s.runner.asked(), 1)
+}
+
+func (s *AgentSuite) TestAFollowUpToAnUnknownToolAfterTheToolRoundsRanOutIsOfferedNoTools() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`One moment. <call tool="track_parcel"/>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+2 }, "the unknown tool was never corrected")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+2 },
+		"the follow-up after the rounds ran out started them again")
+	s.Equal("none", s.model.requests()[maxToolRounds+1].ToolChoice, "the follow-up was offered tools")
+	s.Len(s.runner.asked(), 1)
 }
 
 func (s *AgentSuite) TestAModelThatIgnoresToolChoiceStillHasItsFirstCallRun() {
