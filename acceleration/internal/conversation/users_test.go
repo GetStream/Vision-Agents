@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"testing"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -30,4 +31,17 @@ func TestOpeningAConversationLeavesAnExistingUserAlone(t *testing.T) {
 	require.Equal(t, "https://example.com/ada.png", employee["image"])
 	_, created := chat.User(agent)
 	require.True(t, created, "a user the app has never seen is still created")
+}
+
+func TestAChattestServerOnAReusedURLDoesNotInheritUsersKnownToAnEarlierOne(t *testing.T) {
+	// An earlier server on the same port, called with the key every chattest server used to
+	// share, had this user created. The cache outlives it, and the new server never saw them.
+	chat := chattest.NewServer(t)
+	id := "reused-" + rand.Text()
+	remember(chat.URL+"\x00test", []string{id})
+
+	require.NoError(t, CreateMissingUsers(t.Context(), chat.Client, map[string]getstream.UserRequest{id: {ID: id}}))
+
+	_, created := chat.User(id)
+	require.True(t, created, "the user was taken for known from a server that is gone")
 }
