@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -280,6 +281,18 @@ func (s *CampaignsSuite) TestAGoalIsStoredAndReturned() {
 	s.setGoal(created, "Confirm the visit for {{name}}")
 
 	s.Equal("Confirm the visit for {{name}}", s.get(created.Id).Sequence.Steps[0].Goal)
+}
+
+func (s *CampaignsSuite) TestAFullSequenceWithoutAGoalIsStillAccepted() {
+	created := s.create(map[string]any{"name": "may"})
+	var sequence map[string]any
+	raw, err := json.Marshal(created.Sequence)
+	s.Require().NoError(err)
+	s.Require().NoError(json.Unmarshal(raw, &sequence))
+	delete(sequence["steps"].([]any)[0].(map[string]any), "goal")
+
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
 }
 
 func (s *CampaignsSuite) TestAGoalOverTheLimitIsRefused() {
