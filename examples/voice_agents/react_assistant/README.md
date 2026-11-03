@@ -65,10 +65,12 @@ npm run build     # types, then the bundle
 
 ## What the page shows
 
-- **Conversations** are the router's, in the drawer the menu button opens: `sessions.query()`
-  lists this user's, `sessions.search` finds them by title, and the router titles each one as it
-  goes. They are under Today, Yesterday, This week and then their month, by when they started.
-  The list is read again each time the drawer opens. A new chat has no session until its first
+- **Conversations** are the router's, in a sidebar beside the chat that folds to a rail, or on a
+  window narrower than 768 px in the drawer the menu button opens: `sessions.query()` lists this
+  user's, `sessions.search` finds them by title, and the router titles each one as it goes. They
+  are under Today, Yesterday, This week and then their month, by when they started, with who is
+  signed in at the bottom. The list is read again when it is shown, when a new chat gets its
+  session and after each reply. A new chat has no session until its first
   message is written, and one opened but never sent is deleted again on leaving it. One that
   ended carries on when it is next asked something.
 - **Chat** is Stream's AI components (`stream-chat-react/ai-components`) over the session's

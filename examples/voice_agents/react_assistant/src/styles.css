@@ -6,6 +6,8 @@
   --border: #e3e5ea;
   --accent: #005fff;
   --danger: #d92f26;
+  --sidebar: #f7f8fa;
+  --sidebar-hover: #eaecf0;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -17,6 +19,8 @@
     --text: #eceef2;
     --muted: #9aa0ab;
     --border: #2c2f36;
+    --sidebar: #16171b;
+    --sidebar-hover: #24262c;
     color-scheme: dark;
   }
 }
@@ -42,56 +46,107 @@ button {
 
 .app {
   display: flex;
-  flex-direction: column;
   height: 100%;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .top-bar {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 56px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
 }
 
 .top-bar h1 {
   flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
-  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  /* Centred on the bar, not on what is left beside the menu button. */
-  margin-right: 40px;
+}
+
+/* On a phone the title sits between the menu and new chat buttons, as the apps have it. */
+.narrow .top-bar {
+  border-bottom: 1px solid var(--border);
+}
+
+.narrow .top-bar h1 {
+  text-align: center;
+}
+
+.wide .top-bar {
+  padding: 8px 20px;
+}
+
+.wide .top-bar h1 {
+  font-size: 1.05rem;
 }
 
 .icon-button {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
+  flex: none;
   border: none;
-  border-radius: 50%;
+  border-radius: 8px;
   background: transparent;
-  font-size: 1.1rem;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
 }
 
 .icon-button:hover {
-  background: var(--surface);
+  background: var(--sidebar-hover);
+  color: var(--text);
 }
 
 .content {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
 }
 
-/* The drawer slides over the conversation. */
+/* Beside the conversation on a wide window. */
+.sidebar {
+  width: 272px;
+  flex: none;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+/* Folded on a wide window: enough to open it again or start a conversation. */
+.sidebar-rail {
+  width: 56px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.rail-user {
+  margin-top: auto;
+}
+
+/* Over the conversation on a narrow one. */
 .drawer {
   position: fixed;
   inset: 0 auto 0 0;
-  width: min(320px, 85vw);
-  background: var(--bg);
+  width: min(300px, 85vw);
+  background: var(--sidebar);
   border-right: 1px solid var(--border);
   transform: translateX(-100%);
   transition: transform 0.2s ease;
@@ -113,43 +168,60 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px;
-  gap: 8px;
+  padding: 10px 8px 8px;
+  gap: 4px;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 6px;
+}
+
+.brand {
+  font-weight: 600;
 }
 
 .new-chat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-align: left;
-  font-weight: 600;
-  padding: 10px;
+  font-weight: 500;
+  padding: 8px 10px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
 }
 
 .new-chat:hover {
-  background: var(--surface);
+  background: var(--sidebar-hover);
 }
 
 .search {
-  padding: 8px 10px;
+  margin: 2px 2px 6px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: 8px;
+  background: var(--bg);
   color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
 }
 
 .sections {
   overflow-y: auto;
   flex: 1;
+  margin: 0 -8px;
+  padding: 0 8px;
 }
 
 .sections h3 {
-  margin: 12px 8px 4px;
+  margin: 14px 10px 4px;
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .sections ul {
@@ -166,35 +238,79 @@ button {
 
 .sections li:hover,
 .sections li.selected {
-  background: var(--surface);
-}
-
-.sections li.selected .open {
-  font-weight: 600;
+  background: var(--sidebar-hover);
 }
 
 .sections .open {
   flex: 1;
   min-width: 0;
   text-align: left;
-  padding: 8px;
+  padding: 7px 10px;
   border: none;
   background: transparent;
+  font-size: 0.9rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .sections .delete {
+  display: grid;
+  place-items: center;
   border: none;
   background: transparent;
+  color: var(--muted);
   opacity: 0;
   padding: 6px 8px;
 }
 
+.sections .delete:hover {
+  color: var(--danger);
+}
+
 .sections li:hover .delete,
+.sections li.selected .delete,
 .sections .delete:focus-visible {
   opacity: 1;
+}
+
+/* There is no hover on a phone, so the delete button stays in sight. */
+@media (hover: none) {
+  .sections .delete {
+    opacity: 1;
+  }
+}
+
+.signed-in {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.signed-in-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.signed-in-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.signed-in-id {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-empty {
+  margin: 16px 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .list-failure,
@@ -295,7 +411,8 @@ button {
   color: var(--muted);
 }
 
-/* Voice mode, over everything. */
+/* Voice mode: over everything on a narrow window, over the conversation's pane on a wide one,
+   with the sidebar and the title still beside and above it. */
 .voice-mode {
   position: fixed;
   inset: 0;
@@ -306,6 +423,11 @@ button {
   align-items: center;
   gap: 16px;
   padding: 16px;
+}
+
+.wide .voice-mode {
+  position: absolute;
+  z-index: 1;
 }
 
 .voice-top {
