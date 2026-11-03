@@ -130,6 +130,25 @@ func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsAQuestionSho
 	s.Equal(data, uploads[0].Data, "the photo uploaded is the one sent")
 }
 
+// The session socket's respond takes a photo with no text and no request id the same way.
+func (s *ResponsesAskedSuite) TestAPhotoRespondedOnTheSocketWithoutTextOrRequestIDIsShownOnThePersonsMessage() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
+	before := len(s.chat.Uploads())
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.T().Cleanup(func() { _ = watching.Close() })
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{"type": "respond", "text": "",
+		"images": []map[string]string{{"url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)}}}))
+
+	message := s.onlyPersonsMessage(opened)
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"image"`)
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1)
+	s.Equal(data, uploads[0].Data)
+}
+
 // What a photo-only question without a request id is held to is what a command's photos are:
 // a link is not taken from elsewhere, and a message shows at most 8.
 func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsHeldToACommandsRules() {

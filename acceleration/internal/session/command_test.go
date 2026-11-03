@@ -360,8 +360,9 @@ func (s *SessionSuite) TestPhotosWithoutTextAreShownOnTheMessageOfAQuestionWitho
 	s.Equal(photo.Data, uploads[0].Data)
 }
 
-// Controls, as on base: a worker's session answers what is already in its channel, and a call
-// is written by its transcript, so neither uploads the photos of a question with no text.
+// Controls, as on base: a worker's session answers what is already in its channel, a call is
+// written by its transcript, and an incognito chat keeps nothing, so none uploads the photos
+// of a question with no text.
 func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessageIsWritten() {
 	chat := chattest.NewServer(s.T())
 	service := persistent.NewForChat(chat.Client)
@@ -391,6 +392,10 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 	_, err = worker.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
 	s.Require().NoError(err)
 	_, _ = call.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	incognito, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, Incognito: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = incognito.Close() })
+	_, _ = incognito.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
 
 	s.Empty(chat.Uploads())
 }
