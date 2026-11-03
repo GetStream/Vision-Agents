@@ -335,7 +335,9 @@ export class Backend {
    * before a call rather than reading a 403 afterwards.
    */
   get serverSide(): boolean {
-    return Boolean(this.apiSecret) || (this.byCustomer && !this.isPage);
+    // A router reached by customer id is never shown the secret, so there it is what the
+    // requests say that counts: a page names its user and is that user.
+    return this.byCustomer ? !this.isPage : Boolean(this.apiSecret);
   }
 
   /**
