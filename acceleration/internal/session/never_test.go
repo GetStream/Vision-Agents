@@ -140,6 +140,7 @@ func (s *NeverSuite) TestACheckStuckPastTheGraceFailsItsTest() {
 	}, 10*time.Millisecond, time.Millisecond, 100*time.Millisecond, "it is stuck")
 
 	s.False(held)
+	s.GreaterOrEqual(time.Since(start), 110*time.Millisecond, "never gave up before waitFor and the grace")
 	s.Less(time.Since(start), 5*time.Second, "never waited on the stuck check")
 	s.Require().Len(t.messages, 1)
 	s.Contains(t.messages[0], "a check was still running 100ms after the 10ms")
