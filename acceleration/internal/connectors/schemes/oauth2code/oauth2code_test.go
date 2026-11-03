@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -655,6 +656,16 @@ func (s *OAuth2CodeSuite) TestACustomConnectorAsksForNoScopeUnlessScopesSupporte
 		"a string":      {document: map[string]any{"scopes_supported": "issues:read"}},
 		"numbers":       {document: map[string]any{"scopes_supported": []int{1, 2}}},
 		"an object":     {document: map[string]any{"scopes_supported": map[string]any{"issues:read": true}}},
+		"mixed":         {document: map[string]any{"scopes_supported": []any{"issues:read", 1}}},
+		"empty string":  {document: map[string]any{"scopes_supported": []string{"issues:read", ""}}},
+		"space":         {document: map[string]any{"scopes_supported": []string{"issues:read", "a b"}}},
+		"control char":  {document: map[string]any{"scopes_supported": []string{"issues:read", "c\u0000d"}}},
+		"newline":       {document: map[string]any{"scopes_supported": []string{"issues:read", "e\nf"}}},
+		"a quote":       {document: map[string]any{"scopes_supported": []string{"issues:read", "a\"b"}}},
+		"a backslash":   {document: map[string]any{"scopes_supported": []string{"issues:read", "a\\b"}}},
+		"non-ASCII":     {document: map[string]any{"scopes_supported": []string{"issues:read", "é"}}},
+		"over the cap":  {document: map[string]any{"scopes_supported": manyScopes(101)}},
+		"at the cap":    {document: map[string]any{"scopes_supported": manyScopes(100)}, scope: []string{strings.Join(manyScopes(100), " ")}},
 		"a list of one": {document: map[string]any{"scopes_supported": []string{"issues:read"}}, scope: []string{"issues:read"}},
 	} {
 		s.Run(name, func() {
@@ -666,6 +677,15 @@ func (s *OAuth2CodeSuite) TestACustomConnectorAsksForNoScopeUnlessScopesSupporte
 			s.Equal(tc.scope, s.query(out.AuthorizeURL)["scope"])
 		})
 	}
+}
+
+// manyScopes is n distinct valid scope names.
+func manyScopes(n int) []string {
+	scopes := make([]string, n)
+	for i := range scopes {
+		scopes[i] = "scope" + strconv.Itoa(i)
+	}
+	return scopes
 }
 
 func (s *OAuth2CodeSuite) TestACustomConnectorsOwnScopesWinOverScopesSupported() {
@@ -692,6 +712,23 @@ func (s *OAuth2CodeSuite) TestABuiltInWithoutScopesAsksForNoneWhateverItsServerS
 	query := s.query(out.AuthorizeURL)
 	s.Equal(srv.URL+"/mcp", query.Get("resource"), "found through the protected resource metadata")
 	s.NotContains(query, "scope")
+}
+
+// TestABuiltInRegistersWithoutScopesWhateverItsServerSupports is the control for the
+// registration: Sentry ships registration [dcr] with no scopes, so the registration body and
+// the authorize URL carry no scope although its server lists scopes_supported.
+func (s *OAuth2CodeSuite) TestABuiltInRegistersWithoutScopesWhateverItsServerSupports() {
+	sent := make(chan map[string]any, 1)
+	srv := s.mcpServer(map[string]any{"scopes_supported": []string{"org:read", "project:write"}}, sent)
+	resolved := s.resolve("../../providers/sentry.yaml", nil)
+	resolved.Endpoints = map[string]string{"mcp": srv.URL + "/mcp"}
+	s.Require().Equal([]core.ClientRegistrationMethod{core.ClientDCR}, resolved.Client.Registration)
+	scheme := s.scheme(srv.Client(), oauth2code.Config{})
+
+	out, err := scheme.Begin(s.ctx, core.BeginInput{Ref: s.ref, Manifest: resolved, RedirectURI: fakeprovider.RedirectURI})
+	s.Require().NoError(err)
+	s.NotContains(<-sent, "scope")
+	s.NotContains(s.query(out.AuthorizeURL), "scope")
 }
 
 // TestARegistrationForACustomConnectorAsksForTheScopesSupported: the registration asks for

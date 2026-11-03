@@ -30,7 +30,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // Name is the registry name manifests list under schemes.
@@ -216,7 +215,7 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		return core.BeginOutput{}, err
 	}
 	m := in.Manifest
-	if len(m.Scopes.List) == 0 && strings.HasPrefix(m.ConnectorID, store.CustomPrefix) {
+	if len(m.Scopes.List) == 0 && strings.HasPrefix(m.ConnectorID, core.CustomPrefix) {
 		// MCP 2025-11-25 «Scope Selection Strategy»
 		// (https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization): with
 		// no scope from a challenge, «use all scopes defined in scopes_supported from the
