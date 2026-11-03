@@ -307,6 +307,36 @@ func (s *StoreSuite) TestSearchFindsWhatTheCallerNamedIt() {
 	s.Equal("billing", stemmed[0].ID)
 }
 
+func (s *StoreSuite) TestSearchFindsAWordStillBeingTyped() {
+	s.opened("lisbon", "app", s.base, func(session *AgentSession) {
+		session.Title = "Plan a weekend trip to Lisbon"
+	})
+	s.opened("porto", "app", s.base.Add(time.Minute), func(session *AgentSession) {
+		session.Title = "Information about Porto"
+	})
+
+	// A search box searches as the person types, so the word at the end is the start of one.
+	for _, text := range []string{"Lis", "weekend tri", "Lisbon"} {
+		found, err := s.store.SearchSessions(s.ctx, "app", text, SessionFilter{})
+		s.Require().NoError(err)
+		s.Require().Len(found, 1, "searching %q", text)
+		s.Equal("lisbon", found[0].ID, "searching %q", text)
+	}
+}
+
+func (s *StoreSuite) TestSearchTakesAWordTheyMovedOnFromAsWritten() {
+	s.opened("lisbon", "app", s.base, func(session *AgentSession) {
+		session.Title = "Plan a weekend trip to Lisbon"
+	})
+
+	// Only the last word is unfinished: one followed by another, or by a space, is whole.
+	for _, text := range []string{"Lis trip", "Lis "} {
+		found, err := s.store.SearchSessions(s.ctx, "app", text, SessionFilter{})
+		s.Require().NoError(err)
+		s.Empty(found, "searching %q", text)
+	}
+}
+
 func (s *StoreSuite) TestSearchRanksTitlesAboveProjects() {
 	s.opened("named", "app", s.base, func(session *AgentSession) { session.Title = "Health check" })
 	s.opened("grouped", "app", s.base.Add(time.Minute), func(session *AgentSession) {
