@@ -61,7 +61,7 @@ const reasonInvalidPlan = "invalid_plan"
 const defaultTick = 2 * time.Second
 
 // maxCalls is how many calls one router holds at once, every one of them a conversation
-// this process runs; maxClassifying is how many transcripts one tick reads.
+// this process runs; maxClassifying is how many transcripts one router reads at once.
 const (
 	maxCalls       = 100
 	maxClassifying = 20
@@ -134,15 +134,17 @@ type Runner struct {
 	calls       context.Context
 	cancelCalls context.CancelFunc
 
-	mu       sync.Mutex
-	inFlight int
-	stop     context.CancelFunc
+	mu          sync.Mutex
+	inFlight    int
+	classifying int
+	stop        context.CancelFunc
 	// stopped closes when the ticking ends, at the stop signal or Close. Nil before Start.
 	stopped <-chan struct{}
 	closed  bool
 
 	ticking sync.WaitGroup
 	dialing sync.WaitGroup
+	reading sync.WaitGroup
 }
 
 // New validates the options and returns a Runner. It starts nothing.
@@ -225,6 +227,8 @@ func (r *Runner) Close() {
 		stop()
 	}
 	r.ticking.Wait()
+	// A reading runs under the ticking context, so it ends with it and gives its call back.
+	r.reading.Wait()
 
 	over := make(chan struct{})
 	go func() {
@@ -515,23 +519,52 @@ func (r *Runner) recover(ctx context.Context, claimed store.Claimed) error {
 	return nil
 }
 
-// classifyDue reads the outcomes of the answered calls whose transcripts should be written by
-// now, and waits for them.
+// classifyDue starts reading the outcomes of the answered calls whose transcripts should be
+// written by now, as many as this router has room for. It does not wait for them: a slow model
+// would otherwise hold up every call the tick has yet to place.
 func (r *Runner) classifyDue(ctx context.Context) {
-	claimed, err := r.store.ClaimClassifications(ctx, r.owner, r.now(), lease, maxClassifying)
+	r.mu.Lock()
+	free := maxClassifying - r.classifying
+	r.mu.Unlock()
+	if free <= 0 {
+		return
+	}
+	claimed, err := r.store.ClaimClassifications(ctx, r.owner, r.now(), lease, free)
 	if err != nil {
 		r.logger.Error("could not claim campaign calls to classify", "error", err)
 		return
 	}
-	var reading sync.WaitGroup
+	r.mu.Lock()
+	r.classifying += len(claimed)
+	r.mu.Unlock()
 	for _, one := range claimed {
-		reading.Go(func() {
-			if err := r.classify(ctx, one); err != nil && ctx.Err() == nil {
+		r.reading.Go(func() {
+			defer func() {
+				r.mu.Lock()
+				r.classifying--
+				r.mu.Unlock()
+			}()
+			err := r.classify(ctx, one)
+			switch {
+			case err == nil:
+			case ctx.Err() != nil:
+				r.release(ctx, one.Attempt)
+			default:
 				r.logger.Error("could not classify a campaign call", "attempt", one.Attempt.ID, "error", err)
 			}
 		})
 	}
-	reading.Wait()
+}
+
+// release gives back a call whose reading a shutdown cut off, so another router reads it now
+// rather than once its lease runs out.
+func (r *Runner) release(ctx context.Context, attempt store.CampaignAttempt) {
+	written, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	err := r.store.PutOffClassification(written, r.owner, attempt.ID, r.now())
+	if err != nil && !errors.Is(err, store.ErrNotLeaseHolder) {
+		r.logger.Error("could not give back a campaign call cut off mid-reading", "attempt", attempt.ID, "error", err)
+	}
 }
 
 // classify settles a contact from what was said on its answered call. A write that fails

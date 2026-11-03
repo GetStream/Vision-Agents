@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,10 +103,11 @@ func (s *RunnerSuite) single() Sequence {
 	return sequence
 }
 
-// tick runs one tick of runner and waits for the dials it started.
+// tick runs one tick of runner and waits for the dials and readings it started.
 func (s *RunnerSuite) tick(runner *Runner) {
 	runner.tick(s.ctx)
 	runner.dialing.Wait()
+	runner.reading.Wait()
 }
 
 func (s *RunnerSuite) contact(campaign store.Campaign, number string) (store.Contact, []store.CampaignAttempt) {
@@ -677,6 +679,64 @@ func (s *RunnerSuite) TestASpeechToSpeechConfigIsOnlyRefusedAVoicemailMessage() 
 	}
 }
 
+// answeredAndDue is a campaign whose one contact answered and whose transcript is due to be read.
+func (s *RunnerSuite) answeredAndDue() store.Campaign {
+	s.dialer.answer("+15550000001")
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	s.tick(s.runner)
+	_, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.transcripts.write(attempts[0].CallID, talked())
+	s.clock.advance(11 * time.Second)
+	return campaign
+}
+
+func (s *RunnerSuite) TestASlowClassificationDoesNotHoldUpTheTick() {
+	s.classifier.hold = make(chan struct{})
+	campaign := s.answeredAndDue()
+
+	ticked := make(chan struct{})
+	go func() {
+		s.runner.tick(s.ctx)
+		close(ticked)
+	}()
+
+	s.Eventually(func() bool {
+		select {
+		case <-ticked:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond, "the next calls are claimed while a model is still reading")
+	s.Require().Eventually(func() bool { return s.classifier.asked.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	close(s.classifier.hold)
+	s.tick(s.runner)
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.ContactCompleted, contact.Stage)
+	s.Equal(int32(1), s.classifier.asked.Load(), "a call being read is not claimed twice")
+}
+
+func (s *RunnerSuite) TestAClassificationCutOffByCloseIsFreeForAnotherRouterAtOnce() {
+	s.classifier.hold = make(chan struct{})
+	campaign := s.answeredAndDue()
+	runner, err := New(Options{
+		Store: s.store, Dialer: s.dialer, Transcripts: s.transcripts, Classifier: s.classifier,
+		Owner: "router-r", Now: s.clock.now, Tick: 10 * time.Millisecond, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(runner.Start(s.ctx))
+	s.Require().Eventually(func() bool { return s.classifier.asked.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	runner.Close()
+
+	claimed, err := s.store.ClaimClassifications(s.ctx, "router-b", s.clock.now(), lease, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1, "not left leased to a router that is gone")
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(contact.ID, claimed[0].Contact.ID)
+}
+
 func (s *RunnerSuite) TestTheLastContactCompletesTheCampaign() {
 	s.dialer.answer("+15550000001")
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
@@ -686,6 +746,8 @@ func (s *RunnerSuite) TestTheLastContactCompletesTheCampaign() {
 	_, attempts := s.contact(campaign, "+15550000001")
 	s.transcripts.write(attempts[0].CallID, talked())
 	s.clock.advance(11 * time.Second)
+	s.tick(s.runner)
+	// The outcome is read beside the tick, so the tick after it finds nobody left.
 	s.tick(s.runner)
 
 	completed := s.campaignNow(campaign)
@@ -909,11 +971,23 @@ func (t *stubTranscripts) CallTranscript(_ context.Context, _, callID string) ([
 }
 
 // stubClassifier picks outcome for every call it reads.
+// stubClassifier answers outcome. While hold is open, every call waits for it to close or for
+// its context to end.
 type stubClassifier struct {
 	outcome string
+	hold    chan struct{}
+	asked   atomic.Int32
 }
 
-func (c *stubClassifier) Classify(context.Context, store.Campaign, string, Step, []chatlog.Spoken) (string, error) {
+func (c *stubClassifier) Classify(ctx context.Context, _ store.Campaign, _ string, _ Step, _ []chatlog.Spoken) (string, error) {
+	c.asked.Add(1)
+	if c.hold != nil {
+		select {
+		case <-c.hold:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	return c.outcome, nil
 }
 
