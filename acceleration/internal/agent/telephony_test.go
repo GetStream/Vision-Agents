@@ -375,7 +375,15 @@ func (s *AgentSuite) TestAToolsPictureInATurnAScheduledTaskFiredIsLookedAtAsSche
 	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
 	s.join(true)
 	s.model.reply = []string{"Let me look."}
+	s.model.callsOn = 2
 	s.asksFor("photograph_room", "{}")
+	// Somebody has spoken, so the turn is offered the tool: with nobody heard yet a reply is
+	// offered none, and a call it returns is dropped.
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	s.Empty(s.subagent.requests())
 
 	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
 	s.Require().NoError(err)

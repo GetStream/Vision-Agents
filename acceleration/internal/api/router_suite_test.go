@@ -44,6 +44,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -305,6 +306,7 @@ type RouterSuite struct {
 	speechMu    sync.Mutex
 	newestVoice *recordingTTS
 	newestEars  *quietSTT
+	newestEdge  *silentEdge
 	// unconfiguredBuilds counts what the "unconfigured" transcriber was asked to build.
 	unconfiguredBuilds atomic.Int64
 	// noted are the "noted" models opened so far, one per session, newest last, for a test
@@ -1106,6 +1108,19 @@ func (s *RouterSuite) ears() *quietSTT {
 	return s.newestEars
 }
 
+// callerSays has somebody speak on the call the router joined last. A reply to nobody yet
+// heard is offered no tools, so a test whose model calls one has the caller speak.
+func (s *RouterSuite) callerSays(text string) {
+	before := s.ears()
+	s.speechMu.Lock()
+	edge := s.newestEdge
+	s.speechMu.Unlock()
+	caller := stt.Participant{ID: "caller", UserID: "caller"}
+	edge.inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+	s.Require().Eventually(func() bool { return s.ears() != before }, settleFor, 5*time.Millisecond, "the call never began listening")
+	s.ears().emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
+}
+
 func (s *RouterSuite) spoke(voice *recordingTTS) {
 	s.speechMu.Lock()
 	defer s.speechMu.Unlock()
@@ -1479,7 +1494,11 @@ func (s *RouterSuite) sessionManager(
 		// The policies a session's resume_history falls back to, as cmd/router passes them.
 		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
-			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
+			edge := &silentEdge{inbound: make(chan agent.InboundAudio, 4)}
+			s.speechMu.Lock()
+			s.newestEdge = edge
+			s.speechMu.Unlock()
+			return edge, nil
 		},
 	})
 	s.Require().NoError(err)
