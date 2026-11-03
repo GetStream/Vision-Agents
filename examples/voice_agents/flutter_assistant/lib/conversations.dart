@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:intl/intl.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
@@ -154,7 +155,9 @@ class _ConversationListState extends State<ConversationList> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final spacing = context.streamSpacing;
     final conversations = widget.conversations;
     return SafeArea(
       child: ListenableBuilder(
@@ -164,33 +167,20 @@ class _ConversationListState extends State<ConversationList> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              InkWell(
+              StreamListTile(
+                leading: Icon(context.streamIcons.edit),
+                title: const Text('New chat'),
+                titleTextStyle: text.bodyEmphasis.copyWith(color: colors.textPrimary),
                 onTap: widget.onNew,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    spacing: 8,
-                    children: [
-                      const Icon(Icons.edit_square),
-                      Text(
-                        'New chat',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TextField(
+                padding: EdgeInsets.symmetric(horizontal: spacing.md),
+                child: StreamTextInput(
                   controller: _search,
                   onChanged: _searchChanged,
                   textInputAction: TextInputAction.search,
-                  decoration: const InputDecoration(
-                    hintText: 'Search conversations',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
+                  leading: Icon(context.streamIcons.search),
+                  hintText: 'Search conversations',
                 ),
               ),
               Expanded(
@@ -200,12 +190,15 @@ class _ConversationListState extends State<ConversationList> {
                     children: [
                       for (final section in sections) ...[
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                          padding: EdgeInsets.fromLTRB(
+                            spacing.md,
+                            spacing.md,
+                            spacing.md,
+                            spacing.xxs,
+                          ),
                           child: Text(
                             section.title,
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
+                            style: text.captionEmphasis.copyWith(color: colors.textSecondary),
                           ),
                         ),
                         for (final session in section.items)
@@ -218,12 +211,10 @@ class _ConversationListState extends State<ConversationList> {
                       ],
                       if (conversations.failure case final failure?)
                         Padding(
-                          padding: const EdgeInsets.all(16),
+                          padding: EdgeInsets.all(spacing.md),
                           child: Text(
                             failure,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.error,
-                            ),
+                            style: text.captionDefault.copyWith(color: colors.accentError),
                           ),
                         ),
                     ],
@@ -254,23 +245,24 @@ class _ConversationRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
     return Dismissible(
       key: ValueKey(session.id),
       direction: DismissDirection.endToStart,
       onDismissed: (_) => onDelete(),
       background: Container(
-        color: Colors.red,
+        color: colors.accentError,
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: const Text('Delete', style: TextStyle(color: Colors.white)),
+        padding: EdgeInsets.symmetric(horizontal: context.streamSpacing.md),
+        child: Text('Delete', style: text.bodyEmphasis.copyWith(color: colors.textOnAccent)),
       ),
-      child: ListTile(
-        title: Text(
-          session.displayTitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal),
+      child: StreamListTile(
+        title: Text(session.displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+        titleTextStyle: (isSelected ? text.bodyEmphasis : text.bodyDefault).copyWith(
+          color: colors.textPrimary,
         ),
+        selected: isSelected,
         onTap: onOpen,
       ),
     );

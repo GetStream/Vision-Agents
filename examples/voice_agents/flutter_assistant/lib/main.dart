@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:flutter/services.dart';
 
 import 'assistant.dart';
@@ -19,12 +20,22 @@ class AssistantApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Stream's blue, which the voice glow and the composer take as the accent.
-    const seed = Color(0xFF005FFF);
+    // Stream's design system, which Stream's AI components are built on: its colors, text
+    // styles and icons, in light and dark.
+    final light = StreamTheme.light();
+    final dark = StreamTheme.dark();
     return MaterialApp(
       title: 'Juno',
-      theme: ThemeData(colorSchemeSeed: seed),
-      darkTheme: ThemeData(colorSchemeSeed: seed, brightness: Brightness.dark),
+      theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: light.colorScheme.backgroundApp,
+        extensions: [light],
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: dark.colorScheme.backgroundApp,
+        extensions: [dark],
+      ),
       home: Assistant.streamApiKey.isEmpty
           ? const _NoKey()
           : const _LocalNetwork(child: RootScreen()),
@@ -69,16 +80,15 @@ class _RootScreenState extends State<RootScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       key: _scaffold,
-      appBar: AppBar(
-        centerTitle: true,
-        titleTextStyle: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-        leading: IconButton(
+      appBar: StreamAppBar(
+        leading: StreamButton.icon(
+          style: .secondary,
+          type: .ghost,
           tooltip: 'Conversations',
           onPressed: () => _scaffold.currentState?.openDrawer(),
-          icon: const Icon(Icons.menu),
+          icon: Icon(context.streamIcons.menu),
         ),
         title: ListenableBuilder(
           listenable: _conversations,
@@ -91,6 +101,7 @@ class _RootScreenState extends State<RootScreen> {
         ),
       ),
       drawer: Drawer(
+        backgroundColor: context.streamColorScheme.backgroundApp,
         child: ConversationList(
           conversations: _conversations,
           selected: _selected,
@@ -159,10 +170,10 @@ class _LocalNetworkState extends State<_LocalNetwork> {
     future: _allowed,
     builder: (context, answer) => switch (answer.data) {
       true => widget.child,
-      false => const Scaffold(
+      false => Scaffold(
         body: Center(
           child: Notice(
-            icon: Icons.wifi_off,
+            icon: context.streamIcons.lowBandwidthFill,
             title: 'No local network access',
             message:
                 'The router runs on your Mac, which the app reaches over the local network. '
@@ -180,10 +191,10 @@ class _NoKey extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Juno')),
-    body: const Center(
+    appBar: StreamAppBar(title: const Text('Juno')),
+    body: Center(
       child: Notice(
-        icon: Icons.key_outlined,
+        icon: context.streamIcons.lock,
         title: 'No Stream key yet',
         message: "Run with --dart-define=STREAM_API_KEY=<the router's STREAM_API_KEY>.",
       ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 /// What a caption says, and whether the person said it.
@@ -147,7 +148,7 @@ class CaptionView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.bodyLarge;
+    final style = context.streamTextTheme.bodyEmphasis;
     // Two lines' room whether or not a caption is up, so the glow never moves.
     return SizedBox(
       height: 72,
@@ -167,9 +168,8 @@ class CaptionView extends StatelessWidget {
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final textStyle = style?.copyWith(
+                final textStyle = style.copyWith(
                   color: Colors.white,
-                  fontWeight: FontWeight.w500,
                   fontStyle: caption?.isPerson ?? false ? FontStyle.italic : FontStyle.normal,
                 );
                 return Text(

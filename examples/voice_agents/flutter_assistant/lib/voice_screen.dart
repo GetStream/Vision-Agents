@@ -288,7 +288,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final voiceState = voice?.state.value;
     final call = voiceState?.call;
     final presence = _presence;
-    final theme = Theme.of(context);
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
     final request = widget.chat.session.approvals.value.firstOrNull;
     final failure = _failure ?? voiceState?.failure?.toString() ?? _trouble;
 
@@ -301,14 +302,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Align(
                 alignment: Alignment.centerRight,
-                child: IconButton(
+                child: StreamButton.icon(
+                  style: .secondary,
+                  type: .outline,
                   tooltip: 'Back to chat',
                   onPressed: _close,
-                  style: IconButton.styleFrom(
-                    backgroundColor: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
-                    padding: const EdgeInsets.all(12),
-                  ),
-                  icon: const Icon(Icons.close),
+                  icon: Icon(context.streamIcons.xmark),
                 ),
               ),
             ),
@@ -341,9 +340,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                           child: Text(
                             presence.status,
                             key: ValueKey(presence.status),
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
+                            style: text.bodyEmphasis.copyWith(color: colors.textSecondary),
                           ),
                         ),
                       ],
@@ -369,7 +366,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 child: Text(
                   failure,
                   textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
+                  style: text.captionDefault.copyWith(color: colors.accentError),
                 ),
               ),
             if (voice != null)
@@ -401,9 +398,9 @@ class _CameraPreview extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.all(context.streamRadius.xl),
           child: ColoredBox(
-            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
+            color: context.streamColorScheme.backgroundSurfaceSubtle,
             child: SizedBox(
               height: 260,
               width: double.infinity,
@@ -436,41 +433,38 @@ class _CallControls extends StatelessWidget {
   final VoidCallback onCamera;
   final VoidCallback onHangUp;
 
-  static const _size = Size.square(64);
-
   @override
   Widget build(BuildContext context) {
     final state = voice.state.value;
     final muted = state.isMuted;
     final camera = state.isCameraEnabled;
+    final icons = context.streamIcons;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       spacing: 24,
       children: [
-        IconButton.filledTonal(
-          iconSize: 28,
-          style: IconButton.styleFrom(fixedSize: _size),
+        StreamButton.icon(
+          style: .secondary,
+          size: .large,
+          isSelected: camera,
           tooltip: camera ? 'Stop showing Juno' : 'Show Juno the camera',
           onPressed: state.isJoined ? onCamera : null,
-          icon: Icon(camera ? Icons.videocam : Icons.videocam_off),
+          icon: Icon(camera ? icons.videoFill : icons.videoOffFill),
         ),
-        IconButton.filledTonal(
-          iconSize: 28,
-          style: IconButton.styleFrom(fixedSize: _size),
+        StreamButton.icon(
+          style: .secondary,
+          size: .large,
+          isSelected: muted,
           tooltip: muted ? 'Unmute' : 'Mute',
           onPressed: state.isJoined ? () => voice.setMuted(!muted) : null,
-          icon: Icon(muted ? Icons.mic_off : Icons.mic),
+          icon: Icon(muted ? icons.voiceOffFill : icons.voiceFill),
         ),
-        IconButton.filled(
-          iconSize: 28,
+        StreamButton.icon(
+          style: .destructive,
+          size: .large,
           tooltip: 'Hang up',
-          style: IconButton.styleFrom(
-            fixedSize: _size,
-            backgroundColor: Colors.red,
-            foregroundColor: Colors.white,
-          ),
           onPressed: onHangUp,
-          icon: const Icon(Icons.call_end),
+          icon: Icon(icons.phoneDownFill),
         ),
       ],
     );

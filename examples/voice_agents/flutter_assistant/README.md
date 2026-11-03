@@ -127,6 +127,10 @@ swift_assistant's `go run ./configure` again, which binds both:
   takes none yet. The composer floats over the bottom
   of the conversation, which fades away under it, and its options sheet has **Think harder**,
   which asks with a higher `reasoning_effort`.
+- The app is drawn in Stream's design system (`stream_core_flutter`, which
+  `stream_chat_flutter_ai` is built on and re-exports): `StreamTheme` in light and dark,
+  `StreamAppBar`, `StreamButton`, `StreamListTile` and `StreamTextInput` in the drawer, and
+  `StreamIcons`. The composer's slots are registered with `streamAIComponentBuilders`.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across,
   turned the way the camera held them, and inline as JPEG data URIs (`photos.dart`). The question
   shows them at once; the router uploads them to the conversation's channel and writes them on

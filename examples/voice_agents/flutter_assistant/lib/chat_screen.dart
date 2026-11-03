@@ -39,11 +39,12 @@ class _ChatScreenState extends State<ChatScreen> {
     'What should I cook tonight?',
   ];
 
-  static const _thinkHarder = ChatOption(
+  static final _thinkHarder = ChatOption(
     id: 'think_harder',
     text: 'Think harder',
     description: 'More time to reason before answering',
-    icon: Icons.psychology_outlined,
+    // Core has no thinking glyph; its bolt reads as "more effort".
+    icon: StreamIcons().bolt,
   );
 
   AgentChat? _chat;
@@ -71,7 +72,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// conversation keeps its latest message clear of.
   var _barHeight = 0.0;
 
-  final _composer = ChatComposerController(chatOptions: const [_thinkHarder], maxAttachments: 10);
+  final _composer = ChatComposerController(chatOptions: [_thinkHarder], maxAttachments: 10);
 
   /// The answers to the tools that ask first, and to the sign-ins the agent's connectors wait
   /// for, as the person signed in here.
@@ -95,10 +96,30 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
   );
 
-  /// Stream's components, with what the person can do under each finished reply.
+  /// Stream's components: what the person can do under each finished reply, and the composer
+  /// with the way into voice mode beside the message box. Its button and its field float over
+  /// the conversation, so they are frosted rather than filled.
   ///
   /// Made once, since new builders rebuild every component that reads them.
-  late final _components = AIComponentBuilders(replyActions: _replyActions);
+  late final _components = StreamComponentBuilders(
+    extensions: streamAIComponentBuilders(
+      replyActions: _replyActions,
+      composerLeading: (context, props) => _Frosted(
+        shape: const CircleBorder(),
+        child: ComposerAttachmentButton(props: props),
+      ),
+      composerInput: (context, props) => _Frosted(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(context.streamRadius.xxxl)),
+        child: ChatComposerInput(props: props),
+      ),
+      composerTrailing: (context, props) => StreamButton.icon(
+        tooltip: 'Talk to Juno',
+        onPressed: _talk,
+        // Core has no waveform glyph.
+        icon: const Icon(Icons.graphic_eq),
+      ),
+    ),
+  );
 
   @override
   void initState() {
@@ -280,7 +301,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final chat = _chat;
     final workingOn = chat?.workingOn;
     final isWelcoming = (chat?.messages.isEmpty ?? true) && _asking == null;
-    return AIComponentFactory(
+    return StreamComponentFactory(
       builders: _components,
       child: Stack(
         children: [
@@ -333,8 +354,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// The starters, why asking failed, and the composer, over the bottom of the conversation,
   /// which fades away under them rather than ending at a bar.
   Widget _composerBar(AgentChat? chat, {required bool isWelcoming}) {
-    final theme = Theme.of(context);
-    final surface = theme.colorScheme.surface;
+    final colors = context.streamColorScheme;
+    final surface = colors.backgroundApp;
     final failure =
         _failure ??
         chat?.failure ??
@@ -366,7 +387,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     child: Text(
                       failure,
-                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
+                      style: context.streamTextTheme.captionDefault.copyWith(
+                        color: colors.accentError,
+                      ),
                     ),
                   ),
                 ),
@@ -375,12 +398,11 @@ class _ChatScreenState extends State<ChatScreen> {
             // frosted rather than filled.
             ComposerTheme(
               data: ComposerThemeData(
-                fillColor: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.6),
+                fillColor: colors.backgroundSurfaceStrong.withValues(alpha: 0.6),
                 borderColor: Colors.transparent,
               ),
               child: ChatComposer(
                 controller: _composer,
-                factory: _Composer(onTalk: _talk),
                 enableSpeechToText: true,
                 onSendPressed: (text, option, photos) =>
                     _send(text, photos: photos, thinkHarder: option?.id == _thinkHarder.id),
@@ -420,33 +442,6 @@ class _Asked {
   int? after;
 }
 
-/// The composer with the way into voice mode beside the message box. Its button and its field
-/// float over the conversation, so they are frosted rather than filled.
-class _Composer extends ChatComposerFactory {
-  const _Composer({required this.onTalk});
-
-  final VoidCallback onTalk;
-
-  @override
-  Widget? buildLeading(BuildContext context, ChatComposerLeadingProps props) {
-    final button = super.buildLeading(context, props);
-    return button == null ? null : _Frosted(shape: const CircleBorder(), child: button);
-  }
-
-  @override
-  Widget buildInput(BuildContext context, ChatComposerInputProps props) => _Frosted(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-    child: super.buildInput(context, props),
-  );
-
-  @override
-  Widget? buildTrailing(BuildContext context, ChatComposerTrailingProps props) => IconButton.filled(
-    tooltip: 'Talk to Juno',
-    onPressed: onTalk,
-    icon: const Icon(Icons.graphic_eq),
-  );
-}
-
 /// A frosted glass that lets the conversation show through, blurred, where something floats
 /// over it.
 class _Frosted extends StatelessWidget {
@@ -468,22 +463,24 @@ class _Welcome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final spacing = context.streamSpacing;
     return Padding(
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(spacing.xl),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        spacing: 8,
+        spacing: spacing.xs,
         children: [
-          Icon(Icons.auto_awesome, size: 44, color: theme.colorScheme.primary),
+          Icon(context.streamIcons.messageBubbles, size: 44, color: colors.accentPrimary),
           Text(
             _greeting,
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+            style: text.headingMd.copyWith(color: colors.textPrimary),
             textAlign: TextAlign.center,
           ),
           Text(
             'Ask me anything, show me a photo, or tap the waveform to talk.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: text.bodyDefault.copyWith(color: colors.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],
