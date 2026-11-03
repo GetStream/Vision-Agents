@@ -578,14 +578,20 @@ func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
 }
 
 func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
-	for _, body := range []map[string]any{
-		{"name": "researcher", "plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}},
-		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
+	for body, message := range map[string]string{
+		"plugins":     `plugins: "read_[*" is not a tool name or pattern`,
+		"mcp_servers": `mcp_servers: tablejourney: "read_[*" is not a tool name or pattern`,
 	} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
+		config := map[string]any{"name": "researcher"}
+		if body == "plugins" {
+			config["plugins"] = []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}
+		} else {
+			config["mcp_servers"] = []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}
+		}
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", config)
 
 		s.Equal(http.StatusBadRequest, status)
-		s.Contains(failure, "read_[*")
+		s.Equal(message, failure)
 	}
 }
 
@@ -1555,7 +1561,7 @@ func (s *ConfigsSuite) TestAToolPatternThatCannotMatchIsRefused() {
 		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "not a tool name or pattern")
+	s.Equal(`connector binding "inbox" has a tool_patterns entry that is not a tool name or pattern`, failure)
 }
 
 func (s *ConfigsSuite) TestMoreThan128ToolPatternsAreRefused() {

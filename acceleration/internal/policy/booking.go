@@ -129,7 +129,7 @@ func (e *Enforcer) Book(ctx context.Context, owner routing.Owner, micros int64) 
 // bookingRefused counts and answers a refused booking, logging why one went unchecked.
 func (e *Enforcer) bookingRefused(organization, reason string, refusal, cause error) (routing.Booked, error) {
 	bookingsRefused.WithLabelValues(reason).Inc()
-	if cause != nil && e.money.refusals.due(organization+"\x00booking_"+reason, logEvery) {
+	if cause != nil && e.money.refusals.Due(organization+"\x00booking_"+reason, logEvery) {
 		e.logger.Error("could not check an organization's credit for a purchase, so it was refused",
 			append(who(organization), "error", cause)...)
 	}

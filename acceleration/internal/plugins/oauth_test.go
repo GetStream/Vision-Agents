@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -331,8 +332,8 @@ func (s *OAuthSuite) TestALoginForSomeToolsetsIsForTheWholeServer() {
 }
 
 func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
-	s.T().Setenv("CALENDAR_MCP_CLIENT_ID", "web-client")
-	s.T().Setenv("CALENDAR_MCP_CLIENT_SECRET", "web-secret")
+	s.T().Setenv("GOOGLE_CALENDAR_MCP_CLIENT_ID", "web-client")
+	s.T().Setenv("GOOGLE_CALENDAR_MCP_CLIENT_SECRET", "web-secret")
 	var secrets []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secrets = append(secrets, r.FormValue("client_secret"))
@@ -342,13 +343,13 @@ func (s *OAuthSuite) TestTheDeploymentsOwnClientSendsItsSecret() {
 	auth := &Auth{HTTP: server.Client()}
 
 	_, err := auth.Exchange(context.Background(), Owner{}, Pending{
-		PluginID: "calendar", ClientID: "web-client", TokenEndpoint: server.URL,
+		PluginID: "google_calendar", ClientID: "web-client", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
-	_, err = auth.Refresh(context.Background(), Owner{}, "calendar", server.URL, "web-client", "ref")
+	_, err = auth.Refresh(context.Background(), Owner{}, "google_calendar", server.URL, "web-client", "ref")
 	s.Require().NoError(err)
 	_, err = auth.Exchange(context.Background(), Owner{}, Pending{
-		PluginID: "calendar", ClientID: "registered-on-the-fly", TokenEndpoint: server.URL,
+		PluginID: "google_calendar", ClientID: "registered-on-the-fly", TokenEndpoint: server.URL,
 	}, "code")
 	s.Require().NoError(err)
 
@@ -422,6 +423,132 @@ func (s *OAuthSuite) TestAServerNamedByURLNeverTakesTheDeploymentsClient() {
 		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", Scopes: []string{"read"}, ByURL: true}, "")
 
 	s.ErrorContains(err, "does not advertise dynamic client registration")
+}
+
+// The client id a server named by URL registers is whatever it answers, so it may be the
+// one the deployment holds a secret for under the server's name. The client is public all
+// the same, and the secret never goes to that server's token endpoint.
+func (s *OAuthSuite) TestAServerNamedByURLNeverGetsTheDeploymentsSecret() {
+	var secrets []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "http://" + r.Host + "/authorize",
+			TokenEndpoint:         "http://" + r.Host + "/token",
+			RegistrationEndpoint:  "http://" + r.Host + "/register",
+		})
+	})
+	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(registration{ClientID: "deployment-client"})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("deployment-client", r.FormValue("client_id"))
+		secrets = append(secrets, r.FormValue("client_secret"))
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", RefreshToken: "ref"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	s.T().Setenv("NOTES_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("NOTES_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: server.Client(), PublicURL: "https://router.example"}
+
+	pending, err := auth.StartAuthorize(context.Background(), Owner{},
+		Plugin{ID: "notes", Name: "notes", URL: server.URL + "/mcp", ByURL: true}, "")
+	s.Require().NoError(err)
+	s.Require().Equal("deployment-client", pending.ClientID)
+	_, err = auth.Exchange(context.Background(), Owner{}, pending, "code")
+	s.Require().NoError(err)
+	_, err = auth.Refresh(context.Background(), Owner{}, pending.PluginID, pending.TokenEndpoint, pending.ClientID, "ref")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"", ""}, secrets, "the exchange and the refresh both go without the secret")
+}
+
+// A Shopify shop is a host under myshopify.com: the deployment's Shopify client logs into
+// one, and its secret goes to that shop's token endpoint on the exchange and the refresh.
+func (s *OAuthSuite) TestTheDeploymentsShopifyClientLogsIntoAShopifyShop() {
+	var secrets []string
+	shop := s.shop(&secrets, new(int))
+	defer shop.Close()
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: dialing(shop), PublicURL: "https://router.example"}
+	shopify, ok := Lookup("shopify")
+	s.Require().True(ok)
+	owner := Owner{CustomerID: "c1", ConfigID: "a1"}
+
+	pending, err := auth.StartAuthorize(context.Background(), owner, shopify, "https://mystore.myshopify.com/")
+	s.Require().NoError(err)
+	s.Equal("deployment-client", pending.ClientID)
+	s.Equal("https://mystore.myshopify.com/token", pending.TokenEndpoint)
+	_, err = auth.Exchange(context.Background(), owner, pending, "code")
+	s.Require().NoError(err)
+	_, err = auth.Refresh(context.Background(), owner, pending.PluginID, pending.TokenEndpoint, pending.ClientID, "ref")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"deployment-secret", "deployment-secret"}, secrets)
+}
+
+// Any other host is no shop, so a login there is refused before a request is made, and
+// the deployment's Shopify secret never reaches it.
+func (s *OAuthSuite) TestTheShopifyPluginLogsIntoNoHostOutsideShopify() {
+	var secrets []string
+	requests := 0
+	server := s.shop(&secrets, &requests)
+	defer server.Close()
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: dialing(server), PublicURL: "https://router.example"}
+	shopify, ok := Lookup("shopify")
+	s.Require().True(ok)
+	for _, instance := range []string{
+		server.Listener.Addr().String(),
+		"https://shop.example/",
+		"mystore.myshopify.com.shop.example",
+		"mystore.myshopify.com/../shop.example",
+		"myshopify.com",
+		"-mystore.myshopify.com",
+	} {
+		_, err := auth.StartAuthorize(context.Background(), Owner{CustomerID: "c1", ConfigID: "a1"}, shopify, instance)
+		s.ErrorContains(err, "is not a Shopify instance url", instance)
+	}
+
+	s.Zero(requests, "not even discovery")
+	s.Empty(secrets)
+}
+
+// shop is a Shopify shop's MCP and OAuth server, at whatever host it is reached by, that
+// keeps the client secret each token request carries and counts every request.
+func (s *OAuthSuite) shop(secrets *[]string, requests *int) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://" + r.Host + "/authorize",
+			TokenEndpoint:         "https://" + r.Host + "/token",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		*secrets = append(*secrets, r.FormValue("client_secret"))
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", RefreshToken: "ref"})
+	})
+	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests++
+		mux.ServeHTTP(w, r)
+	}))
+}
+
+// dialing is a client of server that reaches it whatever host a request names, as if that
+// host's address were server's.
+func dialing(server *httptest.Server) *http.Client {
+	client := server.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	// The name httptest's certificate is for.
+	transport.TLSClientConfig.ServerName = "example.com"
+	client.Transport = transport
+	return client
 }
 
 func (s *OAuthSuite) TestAServerWithALoginTheRouterCanMakePassesTheCheck() {

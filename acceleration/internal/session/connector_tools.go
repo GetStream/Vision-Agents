@@ -15,7 +15,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -500,7 +499,7 @@ func toolLeftOutWhy(alias, tool string, pinned bool) string {
 const patternToolCap = 128
 
 // patternGrants lists the connection's tools, keeps those binding.ToolPatterns names
-// (plugins.Offered), and pins each unpinned match at the
+// (core.Offered), and pins each unpinned match at the
 // digest listed now. A match already pinned at another digest is left out: the schema moved,
 // and a reconnect pins again. More than patternToolCap matches keeps the first that many by
 // name and warns once. It says why the binding cannot be used when the provider cannot list
@@ -531,7 +530,7 @@ func (m *Manager) patternGrants(ctx context.Context, binding store.ConnectorBind
 	}
 	var matched []string
 	for name := range listed {
-		if plugins.Offered(patterns, name) {
+		if core.Offered(patterns, name) {
 			matched = append(matched, name)
 		}
 	}

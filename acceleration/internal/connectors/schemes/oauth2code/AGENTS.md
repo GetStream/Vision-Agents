@@ -14,6 +14,8 @@ Begin(Ref, Manifest, RedirectURI)
   PKCE       refuse a server listing methods without S256; refuse one found through RFC 9728 that lists none
   client     customer, managed, operator (ClientLookup), cimd (Config.ClientMetadataURL), dcr (RFC 7591), in
              that order, each only if client.registration names it
+  scopes     scopes.list; a custom_ definition with none found through RFC 9728 asks for the protected
+             resource metadata's scopes_supported (MCP «Scope Selection Strategy»), registration included
   URL        authorize endpoint + authorize_params + response_type, client_id, redirect_uri, state,
              code_challenge, S256, resource, scope joined by scopes.separator
   -> AuthorizeURL, State (JSON: state, verifier, redirect URI, client, issuer, token endpoint, resource,

@@ -1051,7 +1051,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}
 	go learnDeploymentApp(ctx, streamClients, logger)
-	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
 	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
 	var phoneRecorder *routing.Recorder
@@ -1534,13 +1533,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		deliveries.Start(ctx)
 		defer deliveries.Close()
 	}
-	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
-	// pinned to, read once, within the one attempt's time the deployment's own check gets.
-	go func() {
-		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
-		defer cancel()
-		server.WarnWithoutMessageHooks(attempt)
-	}()
 
 	handler := server.Handler()
 	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
