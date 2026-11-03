@@ -53,7 +53,7 @@ func (s *CampaignSuite) TestACampaignCallIsToldItsGoalThenTheBriefThenTheContact
 
 	spec := campaignSpec(config, store.Campaign{}, step, contact, phone.Placed{})
 
-	wantInOrder := []string{"You are Jean.", "This call: Confirm Ali's visit on Tuesday at 10 AM.", "- clinic: Northwind", "Speak slowly.", "How the call ends:"}
+	wantInOrder := []string{"You are Jean.", "This call: Confirm Ali's visit on Tuesday at 10 AM.\nWhen a person answers, tell them why you are calling in your first sentence.", "- clinic: Northwind", "Speak slowly.", "How the call ends:"}
 	last := -1
 	for _, want := range wantInOrder {
 		at := strings.Index(spec.Instructions, want)
@@ -72,6 +72,7 @@ func (s *CampaignSuite) TestTheClosingRuleNamesEveryOutcomeAndTellsTheAgentToEnd
 	spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, step, store.Contact{}, phone.Placed{})
 
 	s.Contains(spec.Instructions, "say a short goodbye and end the call")
+	s.True(strings.HasSuffix(spec.Instructions, "Say only the words you would speak aloud: never put a name or a label in front of them."))
 	s.Contains(spec.Instructions, "- Success: The person agreed to what the call was about")
 	s.Contains(spec.Instructions, "- Not interested: The person declined")
 	s.Contains(spec.Instructions, "- Do not call: The person asked not to be called or contacted again.")
@@ -81,5 +82,6 @@ func (s *CampaignSuite) TestACampaignWithNoGoalAddsNoGoalLineButStillTellsTheAge
 	spec := campaignSpec(store.AgentConfig{Instructions: "You are Jean."}, store.Campaign{}, DefaultSequence("config-1").First(), store.Contact{}, phone.Placed{})
 
 	s.NotContains(spec.Instructions, "This call:")
+	s.NotContains(spec.Instructions, "tell them why you are calling")
 	s.Contains(spec.Instructions, "How the call ends:")
 }

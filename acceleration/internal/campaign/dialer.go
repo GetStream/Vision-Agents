@@ -154,7 +154,7 @@ func campaignSpec(config store.AgentConfig, campaign store.Campaign, step Step, 
 	brief := Brief([]string{spec.Instructions, spec.Greeting, step.Goal}, contact.Variables)
 	var goal string
 	if step.Goal != "" {
-		goal = "This call: " + Render(step.Goal, contact.Variables)
+		goal = "This call: " + Render(step.Goal, contact.Variables) + "\nWhen a person answers, tell them why you are calling in your first sentence."
 	}
 	spec.Instructions = say(say(say(say(Render(spec.Instructions, contact.Variables), goal), brief), contact.Instructions), closing(step))
 	spec.Greeting = Render(spec.Greeting, contact.Variables)
@@ -176,5 +176,6 @@ func closing(step Step) string {
 	for _, choice := range step.Choices() {
 		fmt.Fprintf(&rule, "\n- %s: %s", strings.TrimSuffix(choice.Name, "."), choice.Description)
 	}
+	rule.WriteString("\nSay only the words you would speak aloud: never put a name or a label in front of them.")
 	return rule.String()
 }
