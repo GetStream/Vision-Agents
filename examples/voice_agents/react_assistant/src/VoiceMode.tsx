@@ -23,7 +23,8 @@ const PERSON_COLORS = ["#ff2626"];
 const NOT_JOINED = new Store<VoiceSnapshot>({ muted: false, cameraEnabled: false, status: "connecting" });
 
 /**
- * Talking to Juno, over everything, in the conversation that was open.
+ * Talking to Juno, over the conversation that was open: in its pane beside the sidebar on a wide
+ * window, over everything on a narrow one.
  *
  * What is said on the call is written into the conversation's channel, so the chat shows it once
  * voice mode is closed. The session's socket stays open the whole time and runs this page's tools,

@@ -8,16 +8,19 @@ import { AgentChat } from "./agentChat";
 import { agents, Assistant, chatClient, sessions, signIn } from "./assistant";
 import { ChatScreen, type ChatScreenDeps } from "./chatScreen";
 import { ChatView } from "./ChatView";
-import { ConversationList } from "./ConversationList";
+import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle } from "./conversations";
 import { messageOf } from "./errors";
 import { deviceTools } from "./deviceTools";
+import { MenuIcon, NewChatIcon } from "./icons";
+import { DARK, useMediaQuery, useStoredFlag, WIDE } from "./layout";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
 import { VoiceMode } from "./VoiceMode";
 
 /**
- * The conversation in front, and the ones there were in a drawer that slides over it.
+ * The conversation in front, and the ones there were in a sidebar beside it, or, on a narrow
+ * window, in a drawer that slides over it.
  *
  * There is no agent picker. Reading the configs is server-side only, so a page cannot ask which
  * agents exist; it is told which one it talks to, in `Assistant.agentName`.
@@ -57,7 +60,14 @@ export function App() {
 function Assistant_() {
   const conversations = useMemo(() => new Conversations(), []);
   const deps = useMemo(() => screenDeps(deviceTools()), []);
+  // A wide window keeps the conversations beside the chat, folded to a rail when the person
+  // chooses; a narrow one slides them over it from the menu button, as the phones do.
+  const isWide = useMediaQuery(WIDE);
+  const [isCollapsed, setCollapsed] = useStoredFlag("juno.sidebar-collapsed", false);
   const [isMenuOpen, setMenuOpen] = useState(false);
+  const isListShown = isWide ? !isCollapsed : isMenuOpen;
+  // Stream's components are light unless told otherwise, so they follow the system with the page.
+  const isDark = useMediaQuery(DARK);
   /** The conversation open, or undefined for a new one. */
   const [selected, setSelected] = useState<string | undefined>(undefined);
   // Which conversation the screen was opened for. It changes only when the person picks one, so
@@ -73,9 +83,30 @@ function Assistant_() {
   }, [screen]);
 
   useEffect(() => {
-    // The router titles a conversation as it goes, so the list is read again each time it is shown.
-    if (isMenuOpen) void conversations.reload();
-  }, [conversations, isMenuOpen]);
+    // The router titles a conversation as it goes, so the list is read again each time it is
+    // shown, and when a new conversation gets its session.
+    if (isListShown) void conversations.reload();
+  }, [conversations, isListShown, selected]);
+
+  useEffect(() => {
+    // And once each reply is written, which is when a new conversation has its title.
+    if (!chat || !isListShown) return;
+    let wasAnswering = chat.isAnswering();
+    return chat.subscribe(() => {
+      const isAnswering = chat.isAnswering();
+      if (wasAnswering && !isAnswering) void conversations.reload();
+      wasAnswering = isAnswering;
+    });
+  }, [chat, conversations, isListShown]);
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [isMenuOpen]);
 
   const show = (sessionId: string | undefined) => {
     screen.leave();
@@ -85,32 +116,57 @@ function Assistant_() {
   };
 
   const title = items.find((each) => each.id === selected);
+  const list = (
+    <ConversationList
+      conversations={conversations}
+      onClose={() => (isWide ? setCollapsed(true) : setMenuOpen(false))}
+      onDelete={(session) => {
+        void conversations.delete(session.id);
+        if (session.id === selected) show(undefined);
+      }}
+      onNew={() => show(undefined)}
+      onOpen={(session) => show(session.id)}
+      selected={selected}
+    />
+  );
 
   return (
-    <div className="app str-chat">
-      <header className="top-bar">
-        <button aria-label="Conversations" className="icon-button" onClick={() => setMenuOpen(!isMenuOpen)} type="button">
-          ☰
-        </button>
-        <h1>{title ? displayTitle(title) : "Juno"}</h1>
-      </header>
-      {isMenuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
-      <aside className={`drawer${isMenuOpen ? " open" : ""}`} inert={!isMenuOpen}>
-        <ConversationList
-          conversations={conversations}
-          onDelete={(session) => {
-            void conversations.delete(session.id);
-            if (session.id === selected) show(undefined);
-          }}
-          onNew={() => show(undefined)}
-          onOpen={(session) => show(session.id)}
-          selected={selected}
-        />
-      </aside>
-      <main className="content">
-        <ChatView key={String(screenKey(screen))} screen={screen} />
-      </main>
-      {isVoiceShown && chat && <VoiceMode chat={chat} screen={screen} />}
+    <div className={`app str-chat str-chat__theme-${isDark ? "dark" : "light"} ${isWide ? "wide" : "narrow"}`}>
+      {isWide ? (
+        isCollapsed ? (
+          <SidebarRail onExpand={() => setCollapsed(false)} onNew={() => show(undefined)} />
+        ) : (
+          <aside className="sidebar">{list}</aside>
+        )
+      ) : (
+        <>
+          {isMenuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
+          <aside className={`drawer${isMenuOpen ? " open" : ""}`} inert={!isMenuOpen}>
+            {list}
+          </aside>
+        </>
+      )}
+      <div className="main">
+        <header className="top-bar">
+          {!isWide && (
+            <button aria-label="Open sidebar" className="icon-button" onClick={() => setMenuOpen(true)} type="button">
+              <MenuIcon />
+            </button>
+          )}
+          <h1>{title ? displayTitle(title) : "Juno"}</h1>
+          {!isWide && (
+            <button aria-label="New chat" className="icon-button" onClick={() => show(undefined)} type="button">
+              <NewChatIcon />
+            </button>
+          )}
+        </header>
+        <main className="content">
+          <ChatView key={String(screenKey(screen))} screen={screen} />
+          {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
+              Picking another conversation in the sidebar hangs up, as leaving this one does. */}
+          {isVoiceShown && chat && <VoiceMode chat={chat} screen={screen} />}
+        </main>
+      </div>
     </div>
   );
 }

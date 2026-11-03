@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
+import { Avatar } from "stream-chat-react";
 
+import { Assistant } from "./assistant";
 import { displayTitle, type Conversations, type SessionRow } from "./conversations";
+import { NewChatIcon, SidebarIcon, TrashIcon } from "./icons";
 import { daySections } from "./sections";
 import { useStore } from "./store";
 
-/** The sidebar: a new conversation, a search, and the conversations there were, by day. */
+/**
+ * The sidebar: a new conversation, a search, the conversations there were, by day, and who is
+ * signed in.
+ */
 export function ConversationList({
   conversations,
   selected,
+  onClose,
   onNew,
   onOpen,
   onDelete,
@@ -15,6 +22,8 @@ export function ConversationList({
   conversations: Conversations;
   /** The conversation open beside this, or undefined for a new one. */
   selected: string | undefined;
+  /** Folds the sidebar away: to a rail on a wide window, off the side on a narrow one. */
+  onClose: () => void;
   onNew: () => void;
   onOpen: (session: SessionRow) => void;
   onDelete: (session: SessionRow) => void;
@@ -31,8 +40,14 @@ export function ConversationList({
 
   return (
     <nav className="conversation-list" aria-label="Conversations">
+      <div className="sidebar-head">
+        <button aria-label="Close sidebar" className="icon-button" onClick={onClose} title="Close sidebar" type="button">
+          <SidebarIcon />
+        </button>
+        <span className="brand">Juno</span>
+      </div>
       <button className="new-chat" onClick={onNew} type="button">
-        ✎ New chat
+        <NewChatIcon /> New chat
       </button>
       <input
         aria-label="Search conversations"
@@ -50,24 +65,62 @@ export function ConversationList({
             <ul>
               {day.items.map((session) => (
                 <li className={session.id === selected ? "selected" : undefined} key={session.id}>
-                  <button className="open" onClick={() => onOpen(session)} type="button">
+                  <button
+                    aria-current={session.id === selected ? "page" : undefined}
+                    className="open"
+                    onClick={() => onOpen(session)}
+                    type="button"
+                  >
                     {displayTitle(session)}
                   </button>
                   <button
                     aria-label={`Delete ${displayTitle(session)}`}
                     className="delete"
                     onClick={() => onDelete(session)}
+                    title="Delete"
                     type="button"
                   >
-                    🗑
+                    <TrashIcon />
                   </button>
                 </li>
               ))}
             </ul>
           </section>
         ))}
+        {search && items.length === 0 && !failure && <p className="list-empty">No conversations match “{search}”.</p>}
         {failure && <p className="list-failure">{failure}</p>}
       </div>
+      <SignedIn />
     </nav>
+  );
+}
+
+/** The sidebar folded on a wide window: open it again, start a conversation, and who is signed in. */
+export function SidebarRail({ onExpand, onNew }: { onExpand: () => void; onNew: () => void }) {
+  return (
+    <nav className="sidebar-rail" aria-label="Conversations">
+      <button aria-label="Open sidebar" className="icon-button" onClick={onExpand} title="Open sidebar" type="button">
+        <SidebarIcon />
+      </button>
+      <button aria-label="New chat" className="icon-button" onClick={onNew} title="New chat" type="button">
+        <NewChatIcon />
+      </button>
+      <div className="rail-user" title={Assistant.user.name}>
+        <Avatar size="md" userName={Assistant.user.name} />
+      </div>
+    </nav>
+  );
+}
+
+/** Who the page talks to the router as. There is no sign-in, so there is nothing to sign out of. */
+function SignedIn() {
+  return (
+    <div className="signed-in">
+      <Avatar size="md" userName={Assistant.user.name} />
+      <div className="signed-in-text">
+        <span className="signed-in-name">{Assistant.user.name}</span>
+        <span className="signed-in-id">{Assistant.user.id}</span>
+      </div>
+    </div>
   );
 }
