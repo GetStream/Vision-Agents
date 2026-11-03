@@ -205,7 +205,7 @@ func (r *Runner) run(ctx context.Context, campaign store.Campaign, config store.
 		if !found {
 			<-slots
 			calls.Wait()
-			if r.stopped(ctx, campaign) {
+			if ctx.Err() != nil || r.stopped(ctx, campaign) {
 				return
 			}
 			// Another call may have been running when the queue emptied, so this is
@@ -392,17 +392,14 @@ func (r *Runner) pending(ctx context.Context, campaignID string) (bool, error) {
 	return false, nil
 }
 
-// stopped reports whether this loop is to end without writing the campaign's state: it was
-// cancelled, or the campaign is no longer running, which is all a pause on another router
-// leaves for it. Such a loop is taken off the list. The row is read holding the list, so a
-// Start here either finds the loop gone and runs another, or has written the campaign running.
+// stopped reports whether the campaign is no longer running, which is all a pause on another
+// router leaves for the loop here, and if so takes the loop off the list without writing the
+// campaign's state. The row is read holding the list, so a Start here either finds the loop
+// gone and runs another, or has written the campaign running before it is read.
 func (r *Runner) stopped(ctx context.Context, campaign store.Campaign) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if ctx.Err() != nil {
-		return true
-	}
 	// Bounded, as Close waits on the list and cancels this loop only once it holds it.
 	reading, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
