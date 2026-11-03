@@ -322,7 +322,8 @@ func owner(spec Spec) routing.Owner {
 // vendor prices.
 const runtimeProvider = "stream"
 
-// startRuntime starts timing a session about to open, billed as what holds it: text or voice.
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice,
+// in the session's region.
 func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	mode := store.ModalityVoice
 	if spec.Text {
@@ -330,7 +331,7 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	}
 	return routing.StartSlices(routing.SliceOptions{
 		Recorder: m.runtime,
-		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode, Region: spec.Region},
 		Owner:    owner(spec),
 		Kind:     string(routing.Runtime),
 		ID:       spec.ID,
