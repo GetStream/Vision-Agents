@@ -21598,6 +21598,7 @@ paths:
       summary: Buy a number, which starts its monthly charge
   /v1/phone/numbers/{e164}:
     delete:
+      description: 'A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.'
       operationId: releasePhoneNumber
       parameters:
         - description: The number in +15551234567 form.
@@ -21629,6 +21630,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
         "503":

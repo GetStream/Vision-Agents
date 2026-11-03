@@ -1,6 +1,7 @@
 package phone
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -597,6 +598,8 @@ type stub struct {
 	// was told to take back.
 	ordered  int
 	released []string
+	// releaseErr is what a release answers, the vendor's other answers left to err.
+	releaseErr error
 	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
 	stopped []string
 	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
@@ -628,7 +631,7 @@ func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
 	s.released = append(s.released, e164)
-	return s.err
+	return cmp.Or(s.releaseErr, s.err)
 }
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
