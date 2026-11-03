@@ -277,7 +277,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
-				origin.answer(func() { s.followUpMessage(found, event) })
+				origin.answer(func() { s.followUpMessage(origin, found, event) })
 				return true
 			}
 			if found.Spec().PersistConversation {
@@ -297,7 +297,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 						ChannelType: event.ChannelType,
 						ChannelID:   event.ChannelID,
 						Custom:      customOf(event.ChannelCustom),
-						Text:        s.heardText(ctx, found.Spec(), event),
+						Text:        s.heardText(ctx, found.Spec(), origin, event),
 						Images:      event.dispatchedPhotos(),
 						MessageID:   event.Message.ID,
 						UserID:      event.Message.User.ID,
@@ -320,7 +320,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			}
 			// The answer goes back to the channel rather than in a response, so there is
 			// nothing here to wait for.
-			origin.answer(func() { s.answerMessage(found, event) })
+			origin.answer(func() { s.answerMessage(origin, found, event) })
 			return true
 		}
 	}
@@ -393,7 +393,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		// Only a worker connected here is handed it (forwardedToWorkers): with none, nothing
 		// would answer what the recording says, so it is not heard.
 		if recorded && len(s.dispatch.Workers(customerID)) > 0 {
-			message.Text = s.heardText(ctx, heardFor, event)
+			message.Text = s.heardText(ctx, heardFor, origin, event)
 		}
 		// Said before the worker has the message, so the session it opens for it finds it said.
 		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
@@ -416,9 +416,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 // handOn hands a message on with hand, which says whether it was taken. A voice recording on a
 // hook is heard off the request, as hookOrigin.answer answers one, because hearing it takes up
 // to inlineDeadline and Stream is waiting on the delivery: the hook is taken then. Anything
-// else is handed on in line, as it always was.
+// else is handed on in line, as it always was: a queued delivery too, here or on the peer it
+// was handed to, whose answer says whether something took it (answerChatInboundForPeer).
 func (s *Server) handOn(ctx context.Context, origin hookOrigin, recorded bool, hand func(context.Context) bool) bool {
-	if !recorded || origin.queued {
+	if !recorded || origin.queuedMessage != "" {
 		return hand(ctx)
 	}
 	origin.answer(func() {
@@ -453,10 +454,16 @@ func (s *Server) unopenedSpec(ctx context.Context, customerID, configID string, 
 // voice note sent with a question is (hearVoiceNote). A recording that could not be heard leaves
 // the note that says so instead, as a photo that could not be seen does (withPhotoNote), so the
 // reply says so rather than the person hearing nothing.
-func (s *Server) heardText(ctx context.Context, spec session.Spec, event messageEvent) string {
+//
+// A queued delivery's recording is heard once: what it said is kept on its row, and a try after
+// one nothing took, here or on a peer, hands that on (origin.heard).
+func (s *Server) heardText(ctx context.Context, spec session.Spec, origin hookOrigin, event messageEvent) string {
 	source, sent := event.recording()
 	if !sent {
 		return event.Message.Text
+	}
+	if origin.heard != nil {
+		return withVoiceNote(event.Message.Text, *origin.heard)
 	}
 	note, err := s.hearVoiceNote(ctx, spec, source, "")
 	if err != nil {
@@ -467,6 +474,12 @@ func (s *Server) heardText(ctx context.Context, spec session.Spec, event message
 		s.logger.Warn("could not hear the voice recording of a message",
 			"channel", event.ChannelID, "host", hostOf(source), "code", refused.Code)
 		return withPhotoNote(event.Message.Text, event.photos(), unheardRecording, unheardRecordingWithMore)
+	}
+	if origin.queuedMessage != "" {
+		if err := s.store.KeepChatInboundHeard(ctx, origin.app, origin.queuedMessage, note.Heard); err != nil {
+			s.logger.Warn("could not keep what the voice recording of a queued chat inbound message said",
+				"message", origin.queuedMessage, "stream_app", origin.app, "error", err)
+		}
 	}
 	return withVoiceNote(event.Message.Text, note.Heard)
 }
@@ -693,11 +706,11 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 // followUpMessage answers a message in the channel a running session answers for its worker
 // (session.Spec.Dispatched), once the reply it may still be writing is done, as a thread's
 // session answers one (answerClaimed).
-func (s *Server) followUpMessage(found *session.Session, event messageEvent) {
+func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	followUpID := "message_" + store.NewID()
-	text := s.heardText(ctx, found.Spec(), event)
+	text := s.heardText(ctx, found.Spec(), origin, event)
 	for {
 		err := found.FollowUp(ctx, followUpID, text, nil)
 		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
@@ -716,11 +729,11 @@ func (s *Server) followUpMessage(found *session.Session, event messageEvent) {
 // The answer is written rather than spoken. A session on a call has somebody listening to
 // it, and saying a reply to something they never said would interrupt them with an answer
 // to somebody else's question.
-func (s *Server) answerMessage(found *session.Session, event messageEvent) {
+func (s *Server) answerMessage(origin hookOrigin, found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 
-	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), s.heardText(ctx, found.Spec(), event), event)
+	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), s.heardText(ctx, found.Spec(), origin, event), event)
 	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
 			"channel", event.ChannelID, "session", found.ID(), "error", err)

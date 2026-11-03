@@ -45,6 +45,9 @@ type hookOrigin struct {
 	// queuedMessage is a queued delivery's Stream message id, here or on the peer it was handed
 	// to, whose answer settles its row first (answerOnce). Empty for a hook.
 	queuedMessage string
+	// heard is what a queued delivery's voice recording said, kept on its row by a try before
+	// (heardText). Nil until it was heard, and for a hook.
+	heard *string
 }
 
 // answer runs an answer: in line for a queued delivery, and off the request for a hook,

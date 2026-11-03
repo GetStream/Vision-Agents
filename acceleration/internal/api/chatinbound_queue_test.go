@@ -393,6 +393,65 @@ func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingIsHeardAndHandedInLine(
 	}
 }
 
+// A queued voice recording is heard once, however often nothing takes it: what it said is kept
+// on its row, and every later try, the one a worker takes included, hands that on.
+func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingNothingTookIsHeardOnceForEveryTry() {
+	since := time.Now().UTC()
+	queued := s.queue(s.recorded(s.recordingSaying("where is my order")))
+	// Connected, so the recording is heard, but taking calls alone, so nothing takes it.
+	_, releaseCalls := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{dispatch.Calls}})
+	defer releaseCalls()
+
+	for range 3 {
+		s.Require().ErrorIs(s.router.AnswerChatInbound(context.Background(), s.row(queued)), errChatInboundUnsettled)
+	}
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), s.row(queued)))
+
+	select {
+	case message := <-worker.Messages():
+		s.Equal("where is my order", message.Text)
+	default:
+		s.Fail("the answer ended before the worker had the recording")
+	}
+	s.Len(s.sttRowsSince(since), 1, "heard again on a try after one nothing took")
+}
+
+// A queued voice recording a peer could not place is answered unavailable, as a text is, so the
+// router that handed it over tries again rather than record it answered; the row is queued.
+func (s *ChatInboundQueueSuite) TestAPeerThatCouldNotPlaceAQueuedVoiceRecordingAnswersUnavailable() {
+	other := s.otherNodeDispatching(dispatch.NewPool())
+	queued := s.queue(s.recorded(s.recordingSaying("where is my order")))
+
+	answer, err := s.router.handChatInboundToPeer(context.Background(), other.Listener.Addr().String(), queuedFrom(s.row(queued)))
+
+	s.Require().NoError(err)
+	s.Equal(int32(http.StatusServiceUnavailable), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Equal(store.ChatInboundQueued, s.row(queued).State)
+}
+
+// A queued voice recording whose answer already started, on this router or another, is not
+// heard again: nothing is billed and nothing reaches the worker.
+func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingWhoseAnswerStartedIsNotHeard() {
+	since := time.Now().UTC()
+	queued := s.queue(s.recorded(s.recordingSaying("where is my order")))
+	started, err := s.store.StartChatInboundAnswer(context.Background(), suiteStreamApp, queued, time.Now())
+	s.Require().NoError(err)
+	s.Require().True(started)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+
+	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), s.row(queued)))
+
+	s.Empty(s.sttRowsSince(since), "a recording whose answer started was heard")
+	select {
+	case message := <-worker.Messages():
+		s.Failf("answered twice", "%s reached the worker", message.ChannelID)
+	default:
+	}
+}
+
 // Nobody waiting to answer is no answer: the delivery stays queued for a worker to connect.
 func (s *ChatInboundQueueSuite) TestADeliveryNobodyTookIsTriedAgain() {
 	queued := s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))
@@ -807,6 +866,23 @@ func (s *ChatInboundQueueSuite) queue(body string) string {
 	s.Require().NoError(err)
 	s.Require().True(queued)
 	return id
+}
+
+// recorded is a delivery of a voice recording at url sent alone, in a channel naming a config of
+// the suite's customer.
+func (s *ChatInboundQueueSuite) recorded(url string) string {
+	body := strings.Replace(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""),
+		`"text": "is my order on its way?"`,
+		`"text": "", "attachments": [{"type": "voiceRecording", "asset_url": "`+url+`"}]`, 1)
+	s.Require().Contains(body, `"attachments"`)
+	return body
+}
+
+// recordingSaying is the URL of a voice recording that says said, served until the test ends.
+func (s *ChatInboundQueueSuite) recordingSaying(said string) string {
+	recording := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(wavOf(said)) }))
+	s.T().Cleanup(recording.Close)
+	return recording.URL + "/note.aac"
 }
 
 // answering runs the queue's worker on the suite's router until the test ends, trying a
