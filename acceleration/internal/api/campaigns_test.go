@@ -657,20 +657,32 @@ func (s *CampaignsSuite) TestAVoicemailSettingIsStoredAndReturned() {
 	created := s.create(map[string]any{"name": "may"})
 	s.Nil(created.Sequence.Steps[0].Voicemail, "a campaign that never set it shows none")
 	sequence := created.Sequence
-	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: "Hi {{name}}, call us back."}
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionLeaveMessage, Message: "Hi {{name}}, call us back."}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
 		map[string]any{"sequence": sequence}, nil))
 
 	got := s.get(created.Id).Sequence.Steps[0].Voicemail
 	s.Require().NotNil(got)
-	s.Equal(VoicemailActionLeaveMessage, got.Action)
+	s.Equal(CampaignVoicemailActionLeaveMessage, got.Action)
 	s.Equal("Hi {{name}}, call us back.", got.Message)
+}
+
+func (s *CampaignsSuite) TestAnOffVoicemailSettingIsStoredAndReturned() {
+	created := s.create(map[string]any{"name": "may"})
+	sequence := created.Sequence
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionOff}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+
+	got := s.get(created.Id).Sequence.Steps[0].Voicemail
+	s.Require().NotNil(got)
+	s.Equal(CampaignVoicemailActionOff, got.Action)
 }
 
 func (s *CampaignsSuite) TestAVoicemailMessageOverTheLimitIsRefused() {
 	created := s.create(map[string]any{"name": "may"})
 	sequence := created.Sequence
-	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: strings.Repeat("a", 1001)}
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionLeaveMessage, Message: strings.Repeat("a", 1001)}
 
 	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
 		map[string]any{"sequence": sequence})
@@ -682,7 +694,7 @@ func (s *CampaignsSuite) TestAVoicemailMessageOverTheLimitIsRefused() {
 func (s *CampaignsSuite) TestLeavingAMessageWithoutOneIsRefusedAtLaunch() {
 	created := s.ready()
 	sequence := s.get(created.Id).Sequence
-	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage}
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionLeaveMessage}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
 		map[string]any{"sequence": sequence}, nil))
 
@@ -703,7 +715,7 @@ func (s *CampaignsSuite) TestLeavingAMessageWithASpeechToSpeechAgentIsRefusedAtL
 	s.setGoal(created, "Confirm the visit")
 	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
 	sequence := s.get(created.Id).Sequence
-	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: "Call us back."}
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionLeaveMessage, Message: "Call us back."}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
 		map[string]any{"sequence": sequence}, nil))
 
@@ -715,7 +727,7 @@ func (s *CampaignsSuite) TestLeavingAMessageWithASpeechToSpeechAgentIsRefusedAtL
 	s.Contains(string(payload), "voicemail")
 	s.Contains(string(payload), "speech-to-speech")
 
-	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionHangUp}
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: CampaignVoicemailActionHangUp}
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
 		map[string]any{"sequence": sequence}, nil))
 	s.launch(created)

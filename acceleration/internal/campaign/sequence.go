@@ -25,6 +25,7 @@ const (
 )
 
 const (
+	VoicemailOff          = "off"
 	VoicemailHangUp       = "hang_up"
 	VoicemailLeaveMessage = "leave_message"
 )
@@ -55,15 +56,18 @@ type Step struct {
 	Other      Route     `json:"other"`
 	NoResponse Route     `json:"no_response"`
 	// Voicemail is what the agent does when an answering machine picks up. A step saved
-	// before it existed has none, which hangs up.
+	// before it existed has none, which is off.
 	Voicemail VoicemailSetting `json:"voicemail,omitzero"`
 }
 
-// VoicemailSetting is Action hang_up (or empty) or leave_message, which says Message word for word.
+// VoicemailSetting is Action off (or empty), which does nothing special on a machine, hang_up,
+// or leave_message, which says Message word for word.
 type VoicemailSetting struct {
 	Action  string `json:"action,omitempty"`
 	Message string `json:"message,omitempty"`
 }
+
+func (v VoicemailSetting) off() bool { return v.Action == "" || v.Action == VoicemailOff }
 
 func (v VoicemailSetting) hangsUp() bool { return v.Action != VoicemailLeaveMessage }
 
@@ -217,9 +221,9 @@ func (st Step) validate() error {
 		}
 	}
 	switch st.Voicemail.Action {
-	case "", VoicemailHangUp, VoicemailLeaveMessage:
+	case "", VoicemailOff, VoicemailHangUp, VoicemailLeaveMessage:
 	default:
-		return fmt.Errorf("the voicemail action must be %q or %q", VoicemailHangUp, VoicemailLeaveMessage)
+		return fmt.Errorf("the voicemail action must be %q, %q or %q", VoicemailOff, VoicemailHangUp, VoicemailLeaveMessage)
 	}
 	if utf8.RuneCountInString(st.Voicemail.Message) > MaxVoicemail {
 		return fmt.Errorf("the voicemail message is longer than %d characters", MaxVoicemail)

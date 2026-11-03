@@ -525,7 +525,7 @@ func (s *Server) readyToLaunch(ctx context.Context, customerID string, draft sto
 		return campaignNotReady(err.Error())
 	}
 	if sequence.First().Voicemail.Action == campaign.VoicemailLeaveMessage && session.FromConfig(config).Native() {
-		return campaignNotReady("the voicemail cannot leave a message with a speech-to-speech agent: use hang_up, or an agent config with a speech-to-text and a voice")
+		return campaignNotReady("the voicemail cannot leave a message with a speech-to-speech agent: use off or hang_up, or an agent config with a speech-to-text and a voice")
 	}
 	hours, err := campaign.ParseCallingHours(draft.CallingHours)
 	if err != nil {
@@ -957,13 +957,13 @@ type CampaignStep struct {
 	Outcomes   []CampaignOutcome  `json:"outcomes" nullable:"false" doc:"What an answered call can end as. do_not_call is built in."`
 	Other      CampaignRoute      `json:"other" doc:"Where an answered call none of the outcomes fit leads."`
 	NoResponse CampaignRoute      `json:"no_response" doc:"Where running out of attempts leads. It ends unsuccessfully."`
-	Voicemail  *CampaignVoicemail `json:"voicemail,omitempty" required:"false" doc:"What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech."`
+	Voicemail  *CampaignVoicemail `json:"voicemail,omitempty" required:"false" doc:"What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech."`
 }
 
 // CampaignVoicemail is what a step's call does on an answering machine.
 type CampaignVoicemail struct {
-	Action  VoicemailAction `json:"action"`
-	Message string          `json:"message,omitempty" maxLength:"1000" doc:"{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces."`
+	Action  CampaignVoicemailAction `json:"action"`
+	Message string                  `json:"message,omitempty" maxLength:"1000" doc:"{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces."`
 }
 
 // CampaignAttempt is one try at reaching a contact.

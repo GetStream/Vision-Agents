@@ -236,6 +236,8 @@ func (s *SequenceSuite) TestAVoicemailActionMustBeKnownAndItsMessageShort() {
 	s.NoError(seq.Validate(), "the limit counts characters, not bytes")
 	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailHangUp}
 	s.NoError(seq.Validate())
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailOff}
+	s.NoError(seq.Validate())
 }
 
 func (s *SequenceSuite) TestLeavingAVoicemailNeedsAMessageToLaunch() {

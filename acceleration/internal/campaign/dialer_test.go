@@ -86,10 +86,26 @@ func (s *CampaignSuite) TestACampaignWithNoGoalAddsNoGoalLineButStillTellsTheAge
 	s.Contains(spec.Instructions, "How the call ends:")
 }
 
-func (s *CampaignSuite) TestACampaignCallAsksTheVendorToDetectAnAnsweringMachine() {
-	request := placing(store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001"}, store.Contact{ToNumber: "+15550000002"})
+func (s *CampaignSuite) TestAStepThatHangsUpOrLeavesAMessageAsksTheVendorToDetectAnAnsweringMachine() {
+	for _, action := range []string{VoicemailHangUp, VoicemailLeaveMessage} {
+		step := DefaultSequence("config-1").First()
+		step.Voicemail = VoicemailSetting{Action: action, Message: "Call us back."}
 
-	s.True(request.DetectMachine)
+		request := placing(store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001"}, store.Contact{ToNumber: "+15550000002"}, step)
+
+		s.True(request.DetectMachine, action)
+	}
+}
+
+func (s *CampaignSuite) TestAnOffStepAndAnOldOneDoNotAskTheVendorToDetectAnAnsweringMachine() {
+	off := DefaultSequence("config-1").First()
+	off.Voicemail = VoicemailSetting{Action: VoicemailOff}
+
+	for _, step := range []Step{off, DefaultSequence("config-1").First()} {
+		request := placing(store.Campaign{CustomerID: "customer-1"}, store.Contact{}, step)
+
+		s.False(request.DetectMachine, step.Voicemail.Action)
+	}
 }
 
 func (s *CampaignSuite) TestAStepThatLeavesAMessageSaysItWithTheContactsVariables() {
@@ -103,14 +119,23 @@ func (s *CampaignSuite) TestAStepThatLeavesAMessageSaysItWithTheContactsVariable
 	s.Equal("Hi Ali, this is Northwind about Tuesday.", spec.Voicemail.Message)
 }
 
-func (s *CampaignSuite) TestAStepThatHangsUpAndAnOldOneHangUpOnAMachine() {
+func (s *CampaignSuite) TestAStepThatHangsUpEndsTheCallOnAMachineWithNoMessage() {
 	hangUp := DefaultSequence("config-1").First()
 	hangUp.Voicemail = VoicemailSetting{Action: VoicemailHangUp, Message: "ignored"}
 
-	for _, step := range []Step{hangUp, DefaultSequence("config-1").First()} {
+	spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, hangUp, store.Contact{}, phone.Placed{})
+
+	s.Require().NotNil(spec.Voicemail)
+	s.Empty(spec.Voicemail.Message)
+}
+
+func (s *CampaignSuite) TestAnOffStepAndAnOldOneHaveNoVoicemailPlan() {
+	off := DefaultSequence("config-1").First()
+	off.Voicemail = VoicemailSetting{Action: VoicemailOff, Message: "ignored"}
+
+	for _, step := range []Step{off, DefaultSequence("config-1").First()} {
 		spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, step, store.Contact{}, phone.Placed{})
 
-		s.Require().NotNil(spec.Voicemail)
-		s.Empty(spec.Voicemail.Message)
+		s.Nil(spec.Voicemail, step.Voicemail.Action)
 	}
 }

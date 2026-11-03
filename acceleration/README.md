@@ -1740,8 +1740,10 @@ After an answered call, one model call reads the transcript and picks one of the
 outcomes, or none, which counts as `other`. `do_not_call` also opts the number out of every
 call the app makes.
 
-A step's `voicemail` says what happens when an answering machine picks up: `hang_up` (the
-default) ends the call saying nothing, and `leave_message` says the step's message, variables
+A step's `voicemail` says what happens when an answering machine picks up. `off` (the
+default, and what a step with no `voicemail` does) does nothing special: nobody is asked who
+answered, and the agent talks to a machine as to a person. `hang_up` ends the call saying
+nothing, and `leave_message` says the step's message, variables
 filled in, once the greeting ends, then hangs up. Telnyx and Twilio are asked who answered. A
 verdict they cannot make counts as a machine while nobody has spoken to the agent, and with no
 verdict at all, so does a call where nobody speaks for 40 seconds after answering. Such a dial

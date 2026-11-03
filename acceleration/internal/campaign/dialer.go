@@ -68,7 +68,7 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		return Dialed{Result: Paused, Reason: reasonSessionRefused}, nil
 	}
 
-	request := placing(dial.Campaign, dial.Contact)
+	request := placing(dial.Campaign, dial.Contact, dial.Step)
 	request.SessionID = dial.SessionID
 	placed, err := d.phone.Call(ctx, request)
 	if err != nil {
@@ -189,9 +189,11 @@ func campaignSpec(config store.AgentConfig, campaign store.Campaign, step Step, 
 	spec.Greeting = Render(spec.Greeting, contact.Variables)
 	spec.Tags = merge(spec.Tags, campaign.Tags)
 	spec.Attribution = scheduledBy(campaign)
-	spec.Voicemail = &session.VoicemailPlan{}
-	if !step.Voicemail.hangsUp() {
-		spec.Voicemail.Message = Render(step.Voicemail.Message, contact.Variables)
+	if !step.Voicemail.off() {
+		spec.Voicemail = &session.VoicemailPlan{}
+		if !step.Voicemail.hangsUp() {
+			spec.Voicemail.Message = Render(step.Voicemail.Message, contact.Variables)
+		}
 	}
 	spec.Phone = &session.PhoneSpec{
 		Number:       campaign.FromNumber,

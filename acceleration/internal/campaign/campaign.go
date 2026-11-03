@@ -693,13 +693,13 @@ func callerSpoke(said []chatlog.Spoken) bool {
 
 // placing is the call one contact is rung on. The answered leg is routed into the call of
 // the session the phone service chooses, which is opened with that id.
-func placing(campaign store.Campaign, contact store.Contact) phone.CallRequest {
+func placing(campaign store.Campaign, contact store.Contact, step Step) phone.CallRequest {
 	return phone.CallRequest{
 		Owner: routing.Owner{CustomerID: campaign.CustomerID, Attribution: scheduledBy(campaign), Tags: campaign.Tags},
 		From:  campaign.FromNumber,
 		To:    contact.ToNumber,
-		// Only a campaign cares who answered, so no other outbound call asks the vendor.
-		DetectMachine: true,
+		// Only a campaign that does something on a machine asks the vendor who answered.
+		DetectMachine: !step.Voicemail.off(),
 	}
 }
 
