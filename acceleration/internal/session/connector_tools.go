@@ -393,7 +393,8 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered = true
 		}
-		// A built-in's tools are described well enough to use without, and a server whose tools the model is not offered has nothing to advise on.
+		// A built-in's tools are described well enough to use without, and a server whose tools the
+		// model is not offered has nothing to advise on.
 		if offered && strings.HasPrefix(binding.ConnectorID, store.CustomPrefix) {
 			d.instructions = append(d.instructions, serverSaid{name: binding.Name,
 				tools: binding.Name + mcp.Separator + "*", text: toolset.Instructions()})

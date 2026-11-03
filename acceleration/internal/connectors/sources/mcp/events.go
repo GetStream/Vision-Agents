@@ -41,7 +41,7 @@ var _ core.EventSource = (*Source)(nil)
 // sub.Secret, after checking with server/discover that it offers events at all. The server
 // keys the subscription on the connection's principal, the URL, the event and its arguments,
 // so asking again with the same four refreshes it («Subscription Identity»). cursor is null:
-// delivery starts from now, as the plugin system asks.
+// delivery starts from now, as the removed plugin system asked.
 func (s *Source) Subscribe(ctx context.Context, b core.ResolvedBinding, sub core.EventSubscription) (core.EventGrant, error) {
 	client, err := s.eventsClient(ctx, b)
 	if err != nil {
@@ -131,8 +131,8 @@ func argumentsOf(arguments map[string]any) map[string]any {
 // rpcClient sends one JSON-RPC request per POST in MCP 2026-07-28's stateless form: the version
 // in the body's _meta and in MCP-Protocol-Version, the method in Mcp-Method, and no
 // initialize (fakeprovider's «Server Validation»). The official SDK's ClientSession has no call
-// for a method it does not know, so events are asked for by hand, as the plugin system's
-// client (plugins.client) asks.
+// for a method it does not know, so events are asked for by hand, as the removed plugin
+// system's client did.
 type rpcClient struct {
 	connector string
 	endpoint  string
@@ -192,7 +192,7 @@ func (c *rpcClient) call(ctx context.Context, method string, params map[string]a
 }
 
 // lastEventData is the last data line of a server-sent event stream, which is the answer a
-// server streaming one response ends with (the plugin system's sseData).
+// server streaming one response ends with (the removed plugin system's sseData).
 func lastEventData(raw []byte) []byte {
 	var last []byte
 	for _, line := range bytes.Split(raw, []byte("\n")) {

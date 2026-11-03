@@ -20,8 +20,8 @@ import (
 // MCP Events' webhook delivery as the draft describes a server's side of it:
 // https://github.com/modelcontextprotocol/experimental-ext-triggers-events,
 // docs/design-sketch-proposal.md at 6682596d («Webhook-Based Delivery», «Webhook Security»).
-// No production MCP server offers events yet (as the deleted plugin skill said, «Neither Sentry nor Google Calendar
-// offers events yet»), so this is what the router's client is tested against.
+// No production MCP server offers events yet, so this is what the router's client is tested
+// against.
 
 // EventsTTL is the lifetime the server grants a subscription, the refreshBefore it answers.
 // Synthetic: the draft leaves the grant to the server («Recommended grants»: «from a few

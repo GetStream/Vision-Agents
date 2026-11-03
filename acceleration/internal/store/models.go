@@ -1057,7 +1057,7 @@ type ChannelLine struct {
 // ChannelAccount is one app's line on a channel: the number people write to and the
 // credentials of the provider carrying it.
 //
-// It belongs to the app rather than to an agent, the way a plugin login does: the number is
+// It belongs to the app rather than to an agent, the way a removed plugin login did: the number is
 // connected once and any number of configs name it.
 type ChannelAccount struct {
 	bun.BaseModel `bun:"table:channel_accounts,alias:ca"`

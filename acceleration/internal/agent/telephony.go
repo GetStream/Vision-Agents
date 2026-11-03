@@ -357,8 +357,9 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []s
 }
 
 // routerStatuses are the statuses only the router answers a connector call it held back with
-// (internal/session: connector_login.go, step_up.go, connector_tools.go) until the person signs in or grants a scope. A tool does not use them for its own
-// results, so they count on the status alone.
+// (internal/session: connector_login.go, step_up.go, connector_tools.go) until the person signs
+// in or grants a scope. A tool does not use them for its own results, so they count on the
+// status alone.
 var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
 
 // sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
