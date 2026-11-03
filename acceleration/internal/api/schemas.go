@@ -928,13 +928,13 @@ type SessionPhone struct {
 	Number       string            `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
 	Vendor       *string           `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
 	VendorCallId *string           `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
-	Voicemail    *SessionVoicemail `json:"voicemail,omitempty" doc:"What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it."`
+	Voicemail    *SessionVoicemail `json:"voicemail,omitempty" doc:"What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. A vendor that cannot tell what picked up, or sends no report within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it."`
 }
 
 // SessionVoicemail is what the agent does when an answering machine picks up.
 type SessionVoicemail struct {
 	Action  VoicemailAction `json:"action"`
-	Message *string         `json:"message,omitempty" maxLength:"1000" doc:"Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up."`
+	Message *string         `json:"message,omitempty" maxLength:"1000" doc:"Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up."`
 }
 
 func (*SessionVoicemail) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

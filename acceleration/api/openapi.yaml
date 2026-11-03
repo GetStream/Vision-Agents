@@ -5897,7 +5897,7 @@ components:
           description: 'Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router''s own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.'
           type: object
         detect_voicemail:
-          description: Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail.
+          description: Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
           type: boolean
         from:
           description: One of the customer's own numbers, which is what the person sees.
@@ -8066,7 +8066,7 @@ components:
           type: string
         voicemail:
           $ref: '#/components/schemas/SessionVoicemail'
-          description: What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+          description: What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. A vendor that cannot tell what picked up, or sends no report within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
       required:
         - number
       type: object
@@ -8258,7 +8258,7 @@ components:
         action:
           $ref: '#/components/schemas/VoicemailAction'
         message:
-          description: Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+          description: Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
           maxLength: 1000
           type: string
       required:

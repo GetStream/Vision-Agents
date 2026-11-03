@@ -426,6 +426,7 @@ func (s *TelnyxSuite) TestACallWithAMachineURLAsksTelnyxForAsyncMachineDetection
 	s.Require().NoError(err)
 
 	s.Equal("DetectMessageEnd", s.seen.body["MachineDetection"])
+	s.Equal("Premium", s.seen.body["DetectionMode"])
 	s.Equal(true, s.seen.body["AsyncAmd"])
 	s.Equal(placing.MachineURL, s.seen.body["AsyncAmdStatusCallback"])
 	s.Equal(http.MethodPost, s.seen.body["AsyncAmdStatusCallbackMethod"])
@@ -437,7 +438,7 @@ func (s *TelnyxSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
 	_, err := s.provider.Dial(s.ctx, s.outbound())
 	s.Require().NoError(err)
 
-	for _, name := range []string{"MachineDetection", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+	for _, name := range []string{"MachineDetection", "DetectionMode", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
 		s.NotContains(s.seen.body, name)
 	}
 }
@@ -449,7 +450,7 @@ func (s *TelnyxSuite) TestEachAnsweredByIsWhoPickedUp() {
 		"machine_end_silence": phone.MachineGreetingEnded,
 		"machine_end_other":   phone.MachineGreetingEnded,
 		"machine_start":       phone.MachineUnknown,
-		"fax":                 phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
 		"unknown":             phone.MachineUnknown,
 		"something_new":       phone.MachineUnknown,
 	} {

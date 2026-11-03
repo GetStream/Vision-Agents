@@ -113,15 +113,51 @@ func (s *SessionSuite) TestAPersonPickingUpChangesNothing() {
 	s.carriesOn(created, said)
 }
 
-func (s *SessionSuite) TestAnUnknownPickUpChangesNothing() {
+func (s *SessionSuite) TestAnUnknownPickUpNobodySpokeOnHearsTheMessage() {
 	s.manages()
 	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
 	s.settles(created)
+
+	s.True(s.manager.Machine("acme", created.ID(), phone.MachineUnknown))
+
+	s.endedForVoicemail(created)
+	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
+}
+
+func (s *SessionSuite) TestAnUnknownPickUpAfterTheCallerSpokeToTheAgentChangesNothing() {
+	s.manages()
+	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
+	s.settles(created)
+	s.callerSays("who is this?")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 && !created.Busy() }, "the caller was never answered")
 	said := len(s.voice.spoken())
 
 	s.True(s.manager.Machine("acme", created.ID(), phone.MachineUnknown))
 
 	s.carriesOn(created, said)
+}
+
+func (s *SessionSuite) TestAFaxIsHungUpOnWithNothingSaid() {
+	s.manages()
+	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
+	s.settles(created)
+	said := len(s.voice.spoken())
+
+	s.True(s.manager.Machine("acme", created.ID(), phone.MachineFax))
+
+	s.endedForVoicemail(created)
+	s.Len(s.voice.spoken(), said, "something was said to the fax")
+}
+
+func (s *SessionSuite) TestACallNobodySpokeOnWithNoReportByTheBoundHearsTheMessage() {
+	wait := machineWait
+	machineWait = 4 * testTimeout
+	s.T().Cleanup(func() { machineWait = wait })
+	s.manages()
+	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
+
+	s.endedForVoicemail(created)
+	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
 }
 
 func (s *SessionSuite) TestAMachineChangesNothingForASessionWithNoVoicemailPlan() {
@@ -218,7 +254,7 @@ func (s *SessionSuite) TestAMachineReportAfterAHeldHangUpLeavesTheMessage() {
 	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
 }
 
-func (s *SessionSuite) TestAHeldHangUpGoesThroughOnceTheCheckRunsOut() {
+func (s *SessionSuite) TestAHeldHangUpLeavesTheMessageOnceTheCheckRunsOut() {
 	wait := machineWait
 	machineWait = 4 * testTimeout
 	s.T().Cleanup(func() { machineWait = wait })
@@ -226,9 +262,8 @@ func (s *SessionSuite) TestAHeldHangUpGoesThroughOnceTheCheckRunsOut() {
 
 	s.asksToHangUp(created)
 
-	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
-		"the held hang-up never went through")
-	s.Equal(EndAgentHangup, created.endReason())
+	s.endedForVoicemail(created)
+	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
 }
 
 func (s *SessionSuite) TestAHeldHangUpGoesThroughWhenAPersonPicksUp() {
@@ -244,11 +279,16 @@ func (s *SessionSuite) TestAHeldHangUpGoesThroughWhenAPersonPicksUp() {
 
 func (s *SessionSuite) TestTheCallerSpeakingToTheAgentLetsItHangUp() {
 	created := s.checksForVoicemail()
-	s.call().inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
 
-	s.ears.emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: "who is this?", Language: "en", Confidence: 1})
+	s.callerSays("who is this?")
 
 	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
 		"the agent could not hang up on a caller who spoke to it")
 	s.Equal(EndAgentHangup, created.endReason())
+}
+
+// callerSays has the phone caller say text to the agent.
+func (s *SessionSuite) callerSays(text string) {
+	s.call().inbound <- agent.InboundAudio{Participant: caller, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}}
+	s.ears.emitter.Send(stt.Transcript{Participant: caller, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
 }
