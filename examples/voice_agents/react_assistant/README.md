@@ -121,8 +121,10 @@ npm run build     # types, then the bundle
   [swift_assistant's README](../swift_assistant/README.md#gmail-and-linear) says.
 
 The page is the user `juno-owner`, Alex, as the phones are, so all three list the same
-conversations. `assistant.ts` holds the whole configuration: the router's and the backend's
-URLs, the customer id, the Stream key, the agent's name and the user.
+conversations. To be somebody else, with conversations and connected accounts of their own, set
+`VITE_USER_ID` and `VITE_USER_NAME` in `.env.local`. `assistant.ts` holds the whole
+configuration: the router's and the backend's URLs, the customer id, the Stream key, the agent's
+name and the user.
 
 ## What does not work yet
 

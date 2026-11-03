@@ -43,8 +43,15 @@ export const Assistant = {
    */
   chatModel: "xai/grok-4.7",
 
-  /** Who this page is. They are the same person the iOS and Android apps are, so all three list the same conversations. */
-  user: { id: "juno-owner", name: "Alex" },
+  /**
+   * Who this page is. By default the same person the iOS and Android apps are, so all three list
+   * the same conversations; `VITE_USER_ID` and `VITE_USER_NAME` make it somebody else, with
+   * conversations and connected accounts of their own.
+   */
+  user: {
+    id: import.meta.env.VITE_USER_ID || "juno-owner",
+    name: import.meta.env.VITE_USER_NAME || "Alex",
+  },
 } as const;
 
 /** The router, as this page's user. */
