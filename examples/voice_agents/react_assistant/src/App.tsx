@@ -4,12 +4,12 @@ import { Chat } from "stream-chat-react";
 import type { Tools } from "@stream-io/calypso";
 import { VoiceSession } from "@stream-io/calypso/video";
 
-import { AgentChat } from "./agentChat";
+import { AgentChat, PAGE_SIZE } from "./agentChat";
 import { agents, Assistant, chatClient, sessions, signIn } from "./assistant";
 import { ChatScreen, type ChatScreenDeps } from "./chatScreen";
 import { ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
-import { Conversations, displayTitle } from "./conversations";
+import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
 import { deviceTools } from "./deviceTools";
 import { MenuIcon, NewChatIcon } from "./icons";
@@ -108,10 +108,10 @@ function Assistant_() {
     return () => window.removeEventListener("keydown", close);
   }, [isMenuOpen]);
 
-  const show = (sessionId: string | undefined) => {
+  const show = (session: SessionRow | undefined) => {
     screen.leave();
-    setSelected(sessionId);
-    setScreen(new ChatScreen(sessionId, deps, setSelected));
+    setSelected(session?.id);
+    setScreen(new ChatScreen(session?.id, deps, setSelected, session?.conversation_id ?? undefined));
     setMenuOpen(false);
   };
 
@@ -125,7 +125,7 @@ function Assistant_() {
         if (session.id === selected) show(undefined);
       }}
       onNew={() => show(undefined)}
-      onOpen={(session) => show(session.id)}
+      onOpen={(session) => show(session)}
       onTheme={setTheme}
       selected={selected}
       theme={theme}
@@ -192,6 +192,13 @@ function screenDeps(tools: Tools): ChatScreenDeps {
             tools,
           });
       return AgentChat.open(session);
+    },
+    history: async (conversationId) => {
+      // The channel the session writes to, read as the page's user, who is a member of it.
+      const [type = "agent", ...rest] = conversationId.split(":");
+      const channel = chatClient.channel(type, rest.join(":"));
+      await channel.query({ messages: { limit: PAGE_SIZE }, watch: false });
+      return [...channel.state.messages];
     },
     remove: (sessionId) => sessions().delete(sessionId),
     voiceOf: (session) => VoiceSession.of(session),

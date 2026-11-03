@@ -8,7 +8,7 @@ import { Store } from "./store";
 import { workingLabel } from "./voicePresence";
 
 /** How many messages are read at a time. */
-const PAGE_SIZE = 30;
+export const PAGE_SIZE = 30;
 
 /** What the agent is doing while its reply shows nothing yet. */
 export type Activity = { kind: "thinking" } | { kind: "working"; text: string };
