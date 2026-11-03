@@ -2,6 +2,9 @@
 
 ## Features
 
+### Usage rows say where the work ran and whether on the customer's own key
+
+Every `requests` row and usage event now carries `region` and `byok`, the priced item's, whether or not an entry priced it, so spend splits by region and by the customer's own provider keys, and unpriced work, which has no SKU, still says where it ran. The organization's usage listing in the usage service shows both. Rows and events from before read empty and false. Migrations `20261207120000_requests_region_byok` (router) and `00006_usage_event_region_byok` (usage service) add the columns with constant defaults, rewriting no row (AI-2187).
 ### A session's runtime is priced in its region
 
 Runtime rows (`modality: runtime`) are now priced by the entry of the session's region: an `eu` agent's time is priced by `runtime/stream/*` in `eu`, never by the `us` one. A price list with no `eu` runtime entries leaves an `eu` session's time unpriced, so add them, free or priced, before an `eu` agent opens a session (AI-2187).

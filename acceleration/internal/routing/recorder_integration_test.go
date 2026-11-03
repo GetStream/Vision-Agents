@@ -406,6 +406,8 @@ func (s *RecorderSuite) TestARowOfABYOKInstanceCarriesTheBYOKSKUAndCostsTheOpera
 	plain := s.recordedAt(list, priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
 
 	s.Equal("llm-vendor-priced-us-byok", row.SKU)
+	s.True(row.BYOK)
+	s.False(plain.BYOK)
 	s.EqualValues(640, row.CostMicros, "a fifth of the 3,200 the vendor bills the customer")
 	s.Zero(row.BaseCostMicros)
 	s.True(row.Billable)
@@ -424,6 +426,7 @@ func (s *RecorderSuite) TestARowOfAnEUInstanceWithNoEUPriceIsUnpriced() {
 
 	s.Zero(row.CostMicros)
 	s.Empty(row.SKU)
+	s.Equal(pricing.RegionEU, row.Region, "unpriced work still says where it ran")
 	s.True(row.Billable)
 }
 
@@ -435,6 +438,7 @@ func (s *RecorderSuite) TestARowWithNoPriceNamesNone() {
 	s.Empty(row.PriceVersion)
 	s.Empty(row.SKU)
 	s.Zero(row.BaseCostMicros)
+	s.Equal(pricing.DefaultRegion, row.Region, "an instance naming no region runs in the default")
 }
 
 func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsResoldAtTheFactor() {
