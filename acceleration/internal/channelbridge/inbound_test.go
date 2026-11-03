@@ -37,9 +37,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
-// chatKey is the api key the suite's Stream clients call chattest with.
-const chatKey = "test"
-
 // InboundSuite is the worker that writes queued inbound messages, against Postgres and the
 // suite's Stream Chat (chattest): what it writes once, what it writes again, what it gives up,
 // and how it starts and stops.
@@ -95,7 +92,7 @@ func (s *InboundSuite) TearDownSuite() {
 func (s *InboundSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.stream = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: chatKey, Secret: "secret", BaseURL: s.chat.URL,
+		APIKey: s.chat.Key, Secret: "secret", BaseURL: s.chat.URL,
 	}), streamapp.ClientsOptions{})
 	s.logs = &syncBuffer{}
 	s.customer = "customer-" + uuid.NewString()
@@ -655,7 +652,7 @@ func (s *InboundSuite) TestAWorkerWithNothingQueuedCallsNoStreamChat() {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	s.Empty(s.chat.Requests(chatKey))
+	s.Empty(s.chat.Requests(s.chat.Key))
 }
 
 // With nothing queued a worker looks again a lease later, not at the poll.
@@ -1010,7 +1007,7 @@ func (s *InboundSuite) answerWhere(matches func(path string) bool, status int, b
 	}))
 	s.T().Cleanup(front.Close)
 	s.stream = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: chatKey, Secret: "secret", BaseURL: front.URL,
+		APIKey: s.chat.Key, Secret: "secret", BaseURL: front.URL,
 	}), streamapp.ClientsOptions{})
 }
 
@@ -1033,7 +1030,7 @@ func (s *InboundSuite) emptyQueue() {
 // asked is how many requests the suite's Stream Chat had about a channel.
 func (s *InboundSuite) asked(channelID string) int {
 	count := 0
-	for _, request := range s.chat.Requests(chatKey) {
+	for _, request := range s.chat.Requests(s.chat.Key) {
 		if strings.Contains(request.Path, "/"+channelID) {
 			count++
 		}
@@ -1088,7 +1085,7 @@ func (s *InboundSuite) rows(thread store.ChannelThread) int {
 // when channelID is empty.
 func (s *InboundSuite) writes(channelID string) int {
 	count := 0
-	for _, request := range s.chat.Requests(chatKey) {
+	for _, request := range s.chat.Requests(s.chat.Key) {
 		if channelID == "" && strings.HasSuffix(request.Path, "/message") || channelID != "" && strings.HasSuffix(request.Path, "/"+channelID+"/message") {
 			count++
 		}

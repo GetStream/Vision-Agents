@@ -9,7 +9,8 @@ namespace GetStream\VisionAgents\Generated;
 /**
  * Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the
  * caller to a person; hangup, the caller left; start, nobody joined the call in time;
- * unanswered, the call placed was never answered.
+ * unanswered, the call placed was never answered; voicemail, an answering machine picked up
+ * the call placed, and the agent left its message or hung up.
  */
 enum SessionEndReason: string
 {
@@ -18,4 +19,5 @@ enum SessionEndReason: string
     case Hangup = 'hangup';
     case Start = 'start';
     case Unanswered = 'unanswered';
+    case Voicemail = 'voicemail';
 }

@@ -528,7 +528,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
-		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
@@ -657,18 +656,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
-	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
-	tools = append(tools, pluginTools...)
-	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
+	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
+	// connectors replaced them, and a save refuses them.
+	spec.ServerInstructions = serverInstructions(nil, nil, connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
-	if mcp != nil || len(unconnected) > 0 {
-		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
-	}
-	if mcp != nil {
-		created.closers = append(created.closers, mcp.Close)
-	}
 	// A session opened without a zone runs in its user's stored one, so the agent's
 	// clock line tells the day, and the scheduling tools read dates, in the zone its
 	// tasks will run in.
@@ -680,7 +672,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// A user with no zone of their own is in the config's default one, the zone a task they
 	// scheduled would take, so the agent's clock line and the scheduling tools agree.
 	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
-	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// The scheduling tools are offered inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
 	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
@@ -688,13 +680,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		scheduling.next = runner
 		runner = scheduling
 	}
-	if own := m.userPlugins(spec, runner); own != nil {
-		tools = append(tools, plugins.UserTools(own.offered)...)
-		runner = own
-		created.closers = append(created.closers, own.Close)
-	}
 	// The dispatcher goes in front, so the names it opened are its own whatever else the
-	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	// session offers.
 	if connectors != nil {
 		if err := connectorCollision(connectorTools, tools); err != nil {
 			return nil, err
@@ -709,7 +696,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	if spec.ProgressiveTools {
-		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+		tools, runner = progressively(tools, connectorTools, runner)
 	}
 
 	var toolStarted func(agent.ToolStarted)
@@ -743,6 +730,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
 	created.end = func(reason EndReason) { m.end(created, reason) }
+	created.machine.unreported = func() {
+		m.Machine(OwnerOf(created.Spec()).CustomerID, created.id, phone.MachineUnknown)
+	}
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -1524,19 +1514,19 @@ func (m *Manager) end(found *Session, reason EndReason) {
 	found.abandon()
 }
 
-// hangUp ends found for its agent hanging up. It closes as Close does, so the goodbye is not
-// cut short, and in the background: the agent hangs up from inside its own tool call, and
-// closing the session waits for the agent.
-func (m *Manager) hangUp(found *Session) {
+// hangUp ends found for its agent hanging up, or reason. It closes as Close does, so the
+// goodbye is not cut short, and in the background: the agent hangs up from inside its own
+// tool call, and closing the session waits for the agent.
+func (m *Manager) hangUp(found *Session, reason EndReason) {
 	done, held := m.take(found)
 	if !held {
 		return
 	}
-	found.noteEnd(EndAgentHangup)
+	found.noteEnd(reason)
 	go func() {
 		defer done()
 		m.release(found.id)
-		m.logger.Info("ending the session", "session", found.id, "reason", EndAgentHangup)
+		m.logger.Info("ending the session", "session", found.id, "reason", reason)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("could not close the session its agent hung up", "session", found.id, "error", err)
 		}
@@ -1577,6 +1567,76 @@ func (m *Manager) EndUnanswered(customerID, id string) bool {
 	}
 	return true
 }
+
+// voicemailWithin bounds leaving a voicemail: a message of up to 1,000 characters takes
+// about a minute to say.
+const voicemailWithin = 2 * time.Minute
+
+// Machine acts on the vendor saying what picked up the customer's placed call id, reporting
+// whether this node holds its session. A session whose plan is to leave a voicemail leaves it,
+// or hangs up, once an answering machine's greeting has ended. It does the same when the
+// vendor could not tell while the caller has said nothing to the agent: a vendor calls some
+// mobile voicemail boxes unknown. A fax is hung up on. A person carries on.
+// The message is left in the background, as it takes a while to say.
+func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID != customerID || spec.Phone == nil || spec.Voicemail == nil {
+		return true
+	}
+	if machine == phone.MachineHuman {
+		found.checked(true)
+		return true
+	}
+	// A hang-up the agent asked for meanwhile would cut the message off. A check already over
+	// heard the caller speak to the agent, so a report that could not tell is a person.
+	if !found.checked(false) && machine != phone.MachineGreetingEnded {
+		return true
+	}
+	message := spec.Voicemail.Message
+	if machine == phone.MachineFax {
+		message = ""
+	}
+	// Vendors retry a report: only the first one to reach a session still running leaves the message.
+	if found.endsFor(EndVoicemail) {
+		go m.leaveVoicemail(found, spec, message)
+	}
+	return true
+}
+
+// leaveVoicemail says message to the answering machine, waits for it to be heard out and
+// hangs up. A session that began closing meanwhile, its call hung up, is left to close.
+func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
+	if message != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
+		// Whatever the agent was saying to the greeting is not for the recording.
+		found.Interrupt()
+		if err := found.Say(ctx, message); err != nil && !found.closingNow() {
+			m.logger.Warn("could not leave a voicemail", "session", found.id, "error", err)
+		} else if err := found.current().Finish(ctx); err != nil && !found.closingNow() {
+			m.logger.Warn("hung up on an answering machine before the voicemail was heard out",
+				"session", found.id, "error", err)
+		}
+		cancel()
+	}
+	// Leaving the call alone would leave the machine recording until it gives up.
+	if spec.Phone.Number != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		if err := m.options.Phone.EndCall(ctx, spec.CustomerID, spec.StreamApp, spec.CallType, spec.CallID); err != nil {
+			m.logger.Warn("could not end the call of a voicemail left", "session", found.id, "error", err)
+		}
+		cancel()
+	}
+	m.hangUp(found, EndVoicemail)
+}
+
+// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.

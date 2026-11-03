@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -448,16 +447,18 @@ func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
 
 	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost, s.respond(opened), map[string]any{"text": plain}, nil))
 	s.Equal(plain, s.lastAsked(plain))
-	// The first answer may still be being written, and a follow-up is refused until it is.
+	// The model is asked before its reply has finished, and a session takes one question at
+	// a time, so the next waits for it as a client does: the same request again until the
+	// session takes it.
 	var status int
 	var payload []byte
 	s.Require().Eventually(func() bool {
 		status, payload = s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"request_id": command, "text": kept})
-		return status != http.StatusBadRequest || !strings.Contains(string(payload), conversation.ErrResponseRunning.Error())
-	}, 5*time.Second, 10*time.Millisecond)
-	s.Require().Equal(http.StatusOK, status, "%s", payload)
+		return status != http.StatusBadRequest || !strings.Contains(string(payload), "a response is already running")
+	}, settleFor, 50*time.Millisecond, "the session never took the second question")
+	s.Require().Equal(http.StatusOK, status, "%.300s", payload)
 	var receipt CommandReceipt
-	s.Require().NoError(json.Unmarshal(payload, &receipt))
+	s.Require().NoError(json.Unmarshal(payload, &receipt), "%.300s", payload)
 	s.Equal(command, receipt.RequestId)
 	s.Equal(kept, s.lastAsked(kept))
 	s.heard(since, 0)

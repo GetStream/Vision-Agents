@@ -644,6 +644,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.phone != nil {
 		server.phone.OnUnanswered(server.endUnanswered)
+		server.phone.OnMachine(server.tellMachine)
 	}
 	return server, nil
 }
@@ -707,6 +708,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
 	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
+	mux.HandleFunc("POST "+machinePeerPath, s.tellMachineForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
@@ -714,13 +716,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
+	mux.HandleFunc("POST /v1/phone/machine/{token}", s.receiveCallMachine)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
-	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
@@ -734,8 +736,6 @@ func (s *Server) Handler() http.Handler {
 			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
 		}
 	}
-	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
-	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
@@ -1044,7 +1044,7 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 // a path that spells it differently.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
-// before there is a caller to classify — the health check and the plugin redirect, where
+// before there is a caller to classify — the health check and the consent callback, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations := specifiedOperations(document)

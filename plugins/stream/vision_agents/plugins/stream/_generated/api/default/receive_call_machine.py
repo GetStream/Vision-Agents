@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -11,13 +11,13 @@ from ...types import Response
 
 
 def _get_kwargs(
-    plugin_id: str,
+    token: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/plugins/{plugin_id}/logo".format(
-            plugin_id=quote(str(plugin_id), safe=""),
+        "method": "post",
+        "url": "/v1/phone/machine/{token}".format(
+            token=quote(str(token), safe=""),
         ),
     }
 
@@ -26,11 +26,22 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | None:
-    if response.status_code == 404:
-        response_404 = ErrorResponse.from_dict(response.json())
+) -> Any | ErrorResponse | None:
+    if response.status_code == 204:
+        response_204 = cast(Any, None)
+        return response_204
 
+    if response.status_code == 400:
+        response_400 = cast(Any, None)
+        return response_400
+
+    if response.status_code == 404:
+        response_404 = cast(Any, None)
         return response_404
+
+    if response.status_code == 413:
+        response_413 = cast(Any, None)
+        return response_413
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
@@ -45,7 +56,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse]:
+) -> Response[Any | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -55,30 +66,29 @@ def _build_response(
 
 
 def sync_detailed(
-    plugin_id: str,
+    token: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse]:
-    """A plugin's logo
+) -> Response[Any | ErrorResponse]:
+    """Receive who picked up a placed call
 
-     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
-    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
-    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
-    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+     Where the vendor that placed a call posts whether a person or an answering machine picked up.
+    Unauthenticated because the vendor is not a customer: the token made when the call was placed is the
+    only proof, and it names that one call.
 
     Args:
-        plugin_id (str):
+        token (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        plugin_id=plugin_id,
+        token=token,
     )
 
     response = client.get_httpx_client().request(
@@ -89,59 +99,57 @@ def sync_detailed(
 
 
 def sync(
-    plugin_id: str,
+    token: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | None:
-    """A plugin's logo
+) -> Any | ErrorResponse | None:
+    """Receive who picked up a placed call
 
-     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
-    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
-    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
-    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+     Where the vendor that placed a call posts whether a person or an answering machine picked up.
+    Unauthenticated because the vendor is not a customer: the token made when the call was placed is the
+    only proof, and it names that one call.
 
     Args:
-        plugin_id (str):
+        token (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse
+        Any | ErrorResponse
     """
 
     return sync_detailed(
-        plugin_id=plugin_id,
+        token=token,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    plugin_id: str,
+    token: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[ErrorResponse]:
-    """A plugin's logo
+) -> Response[Any | ErrorResponse]:
+    """Receive who picked up a placed call
 
-     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
-    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
-    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
-    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+     Where the vendor that placed a call posts whether a person or an answering machine picked up.
+    Unauthenticated because the vendor is not a customer: the token made when the call was placed is the
+    only proof, and it names that one call.
 
     Args:
-        plugin_id (str):
+        token (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse]
+        Response[Any | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
-        plugin_id=plugin_id,
+        token=token,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -150,31 +158,30 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    plugin_id: str,
+    token: str,
     *,
     client: AuthenticatedClient | Client,
-) -> ErrorResponse | None:
-    """A plugin's logo
+) -> Any | ErrorResponse | None:
+    """Receive who picked up a placed call
 
-     Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show
-    which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an
-    `<img>` in a chat client or a browser, which has no credential of this API's to send, and because
-    the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
+     Where the vendor that placed a call posts whether a person or an answering machine picked up.
+    Unauthenticated because the vendor is not a customer: the token made when the call was placed is the
+    only proof, and it names that one call.
 
     Args:
-        plugin_id (str):
+        token (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse
+        Any | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
-            plugin_id=plugin_id,
+            token=token,
             client=client,
         )
     ).parsed

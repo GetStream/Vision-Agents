@@ -793,10 +793,10 @@ func (s *AppsSuite) TestBuyingANumberPointsTheCallHookOfTheAppItIsBoughtIn() {
 	_, err := s.service.Buy(s.ctx, s.purchase())
 
 	s.Require().NoError(err)
-	hooks := s.own.EventHooks("test")
+	hooks := s.own.EventHooks(s.own.Key)
 	s.Require().Len(hooks, 1)
 	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
-	s.Empty(s.deployment.EventHooks("test"))
+	s.Empty(s.deployment.EventHooks(s.deployment.Key))
 }
 
 func (s *AppsSuite) TestABuyWhoseHookCannotBePointedIsNotPaidFor() {
@@ -815,7 +815,7 @@ func (s *AppsSuite) TestWithoutAPublicURLABuyPointsNoHook() {
 	_, err := s.service.Buy(s.ctx, s.purchase())
 
 	s.Require().NoError(err)
-	s.Empty(s.deployment.EventHooks("test"))
+	s.Empty(s.deployment.EventHooks(s.deployment.Key))
 }
 
 func (s *AppsSuite) TestAttachingANumberPointsTheCallHookOfTheAppItIsAttachedIn() {
@@ -824,7 +824,7 @@ func (s *AppsSuite) TestAttachingANumberPointsTheCallHookOfTheAppItIsAttachedIn(
 	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 
 	s.Require().NoError(err)
-	hooks := s.own.EventHooks("test")
+	hooks := s.own.EventHooks(s.own.Key)
 	s.Require().Len(hooks, 1)
 	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
 }
@@ -833,12 +833,12 @@ func (s *AppsSuite) TestAttachingAnAttachedNumberAgainRepairsARemovedHook() {
 	s.ownApp()
 	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 	s.Require().NoError(err)
-	s.own.SetEventHooks("test")
+	s.own.SetEventHooks(s.own.Key)
 
 	_, err = s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
 
 	s.Require().NoError(err)
-	hooks := s.own.EventHooks("test")
+	hooks := s.own.EventHooks(s.own.Key)
 	s.Require().Len(hooks, 1)
 	s.Equal("https://router.example/v1/phone/hooks/stream/4242", value(hooks[0].WebhookUrl))
 }
@@ -2081,7 +2081,7 @@ func (s *AppsSuite) TestAttachingANumberOnASharedTrunkAgainChangesNothing() {
 
 func (s *AppsSuite) deploymentWrites() int {
 	var writes int
-	for _, request := range s.deployment.Requests("test") {
+	for _, request := range s.deployment.Requests(s.deployment.Key) {
 		if request.Writes() {
 			writes++
 		}

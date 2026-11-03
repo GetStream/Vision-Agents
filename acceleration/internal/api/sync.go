@@ -42,9 +42,9 @@ type SyncAgentRequest struct {
 	Subagent          *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search            *string                    `json:"search,omitempty"`
 	Greeting          *Greeting                  `json:"greeting,omitempty"`
-	Plugins           *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it."`
-	PluginEvents      *[]PluginEvent             `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives."`
-	McpServers        *[]McpServer               `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login."`
+	Plugins           *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents      *[]PluginEvent             `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers        *[]McpServer               `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Channels          *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors."`
@@ -55,7 +55,7 @@ type SyncAgentRequest struct {
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
-	Tools          *AgentTools        `json:"tools,omitempty" doc:"How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored."`
+	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
@@ -213,6 +213,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := syncComplaint(ctx, body); !ok {
 		return nil, invalidRequest(message)
 	}
+	// Before the hash is read, so a directory that still names any is refused rather than
+	// found unchanged.
+	if err := retiredComplaint(body.Plugins, body.PluginEvents, body.McpServers); err != nil {
+		return nil, err
+	}
 
 	existing, found, err := s.configs.AgentConfigByName(ctx, customerID, name)
 	if err != nil {
@@ -240,6 +245,8 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	} else {
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
+	// A stored row may still name them from before they were refused; a sync writes none.
+	config.Plugins, config.PluginEvents, config.MCPServers = nil, nil, nil
 	applySettings(&config, body)
 	// Named whatever the directory says, so the knowledge the sync writes is never written
 	// into a base kept in another region than the agent's.
@@ -247,30 +254,8 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := textSubagentComplaint(&config, body.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := mcpServersComplaint(ctx, config); !ok {
-		return nil, invalidRequest(message)
-	}
-	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
-	if !ok {
-		return nil, invalidRequest(message)
-	}
-	config.MCPServers = servers
 	warnings, message, ok := s.channelsWarnings(ctx, config)
 	if !ok {
-		return nil, invalidRequest(message)
-	}
-	unclientable, err := s.pluginClientWarnings(ctx, config)
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, unclientable...)
-	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := schedulingComplaint(config); !ok {
@@ -392,7 +377,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	config.SyncHash = hash
 
 	if found {
-		if err := s.writePatched(ctx, &config, body.Plugins == nil); err != nil {
+		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 			return nil, storeFailure(err, errAgentNameTaken)
 		}
 	} else {
@@ -402,10 +387,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	var was any
 	if found {
-		if body.Plugins == nil {
-			// The plugins were kept as stored, so a login named since the read is not this sync's change.
-			existing.Plugins = config.Plugins
-		}
 		was = agentConfigOf(existing)
 	}
 	synced := auditDiff(was, agentConfigOf(config))
@@ -431,8 +412,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditSynced, Changes: synced,
 	})
-	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(ctx, config)
 	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
 }
 
@@ -589,18 +568,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Greeting != nil {
 		config.Greeting, config.GreetingMode = greetingOf(body.Greeting)
 	}
-	if body.Plugins != nil {
-		config.Plugins = pluginEntriesOf(*body.Plugins)
-	}
 	if body.Connectors != nil {
 		config.Connectors = storedBindings(*body.Connectors)
 		config.LeftOutConnectors = leftOutOf(body.LeftOutConnectors)
-	}
-	if body.PluginEvents != nil {
-		config.PluginEvents = pluginEventsOf(body.PluginEvents)
-	}
-	if body.McpServers != nil {
-		config.MCPServers = mcpServersOf(body.McpServers)
 	}
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
 	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, body.Tools)
