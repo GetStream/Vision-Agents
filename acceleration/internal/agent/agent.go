@@ -2341,16 +2341,15 @@ func (a *Agent) turnReplayLocked() []llm.Message {
 		return replay
 	}
 	// The images go with the last message from the caller (harness.WithImages), which is
-	// the turn's unless something written in as theirs came after it.
+	// not the turn's when something written in as theirs came after it. The turn's own
+	// message is sent as its words wherever it sits, so no note stands beside the images.
 	for at := len(a.history) - 1; at >= 0; at-- {
-		if a.history[at].Role != llm.User {
+		if a.history[at].Role != llm.User || a.history[at].Content != a.turnKept {
 			continue
 		}
-		if a.history[at].Content == a.turnKept {
-			said := a.history[at]
-			said.Content = a.turnSaid
-			replay[at] = named(said)
-		}
+		said := a.history[at]
+		said.Content = a.turnSaid
+		replay[at] = named(said)
 		break
 	}
 	return replay
