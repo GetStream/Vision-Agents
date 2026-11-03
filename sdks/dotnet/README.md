@@ -145,7 +145,7 @@ dispatch
             return;
         }
         var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new AgentOptions { ConfigId = message.ConfigId }));
-        await agent.Responses.CreateAsync(message.Text);
+        await agent.Responses.CreateAsync(message.Text, [.. message.Images.Select(image => new ImageSource { Url = image.Url })]);
     });
 
 await dispatch.RunAsync(stopping);
@@ -154,7 +154,8 @@ await dispatch.RunAsync(stopping);
 `GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
 the agent that answered the first. An agent whose agent.yaml says `dispatch: {text: enabled}`
 hands what end users write to the worker with the running `SessionId` (and `RequestId`);
-`AnswerAsync` has the model answer it with the worker's credential acting for the writer, and
+`AnswerAsync` has the model answer it with the worker's credential acting for the writer,
+showing it the photos sent with it (`Images`, by URL), and
 `GetOrCreateAgentAsync` refuses such a message. The router is told each call and message is
 `done`, with the exception's message if the handler threw. `RunAsync` returns when the token
 is cancelled, after the work in hand has finished. A connection the router drops is opened
