@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { StateStore } from "stream-chat";
+import type { LocalMessage, StateStore } from "stream-chat";
 import {
   AIClientIdentity,
   AIConversation,
@@ -39,6 +39,8 @@ const THINK_HARDER: AIChatOption = {
   shortTitle: "Think",
 };
 
+const NO_MESSAGES: readonly LocalMessage[] = [];
+
 /** Followed before a conversation has a chat, so the hooks below always have a store. */
 const NO_CHAT = new Store<AgentChatSnapshot>({
   messages: [],
@@ -59,7 +61,7 @@ const NO_CHAT = new Store<AgentChatSnapshot>({
  * the agent thinks, the list shows its thinking, which the reply's first step takes over.
  */
 export function ChatView({ screen }: { screen: ChatScreen }) {
-  const { chat, pending, failure: openFailure } = useStore(screen);
+  const { chat, pending, failure: openFailure, history, isLoading } = useStore(screen);
   const state = useStore<AgentChatSnapshot>(chat ?? NO_CHAT);
   // What the agent is doing comes from the session, which the chat's store follows.
   const activity = chat?.activity();
@@ -80,17 +82,19 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
     return () => observer.disconnect();
   }, []);
 
+  // The conversation's messages read while its session opens, until the chat has them.
+  const shown = chat ? state.messages : (history ?? NO_MESSAGES);
   const messages = useMemo(
     () =>
-      state.messages.map((message) =>
+      shown.map((message) =>
         fromStreamMessage(message, { reasoningText: (id, step) => chat?.reasoning.get(id, step) }),
       ),
     // The live thinking is read through `chat.reasoning`; its version says when it grew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.messages, state.reasoningVersion, chat],
+    [shown, state.reasoningVersion, chat],
   );
 
-  const isWelcoming = state.messages.length === 0 && !pending;
+  const isWelcoming = shown.length === 0 && !pending && !isLoading;
   const failure = openFailure ?? state.failure;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -110,7 +114,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
       <AIConversation
         approver={approver}
         bottomInset={barHeight}
-        emptyContent={<Welcome />}
+        emptyContent={isLoading ? <LoadingConversation /> : <Welcome />}
         footer={activity?.kind === "working" ? <AITypingIndicator text={activity.text} /> : undefined}
         isThinking={activity?.kind === "thinking"}
         loadOlderMessages={state.hasOlderMessages && chat ? () => chat.loadOlderMessages() : undefined}
@@ -118,7 +122,8 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
         pendingMessage={pending ?? null}
         ui={ui}
         replyActions={(message) =>
-          chat ? { rating: state.ratings[message.id] ?? null, onRate: (rating) => chat.rate(message.id, rating) } : undefined
+          // Copying and sharing work on history read ahead of the chat; rating waits for the chat.
+          chat ? { rating: state.ratings[message.id] ?? null, onRate: (rating) => chat.rate(message.id, rating) } : {}
         }
       />
       {/* The conversation fades away under the composer, rather than stopping at a hairline. */}
@@ -233,6 +238,21 @@ function useApprover(chat: AgentChat | undefined): AIToolApprover | undefined {
 }
 
 /** What a new conversation shows before anything is said. */
+/** Where a conversation's messages will be, while it opens: the shape of a question and its answer. */
+function LoadingConversation() {
+  return (
+    <div aria-label="Loading the conversation" className="loading-conversation" role="status">
+      <div className="skeleton skeleton-question" />
+      <div className="skeleton skeleton-line" />
+      <div className="skeleton skeleton-line" />
+      <div className="skeleton skeleton-line short" />
+      <div className="skeleton skeleton-question narrow" />
+      <div className="skeleton skeleton-line" />
+      <div className="skeleton skeleton-line short" />
+    </div>
+  );
+}
+
 function Welcome() {
   const hour = new Date().getHours();
   const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";

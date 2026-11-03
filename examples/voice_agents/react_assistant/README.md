@@ -67,12 +67,19 @@ npm run build     # types, then the bundle
 
 ## What the page shows
 
-- **Conversations** are the router's, in the drawer the menu button opens: `sessions.query()`
-  lists this user's, `sessions.search` finds them by title, and the router titles each one as it
-  goes. They are under Today, Yesterday, This week and then their month, by when they started.
-  The list is read again each time the drawer opens. A new chat has no session until its first
-  message is written, and one opened but never sent is deleted again on leaving it. One that
-  ended carries on when it is next asked something.
+- **Conversations** are the router's, in a sidebar beside the chat that folds to a rail, or on a
+  window narrower than 768 px in the drawer the menu button opens: `sessions.query()` lists this
+  user's, `sessions.search` finds them by title, and the router titles each one as it goes. They
+  are under Today, Yesterday, This week and then their month, by when they started, with who is
+  signed in and a light or dark switch at the bottom, which follows the system until it is used.
+  The list is read again when it is shown, when a new chat gets its session and after each
+  reply. A new chat has no session until its first message is written, and one opened but never
+  sent is deleted again on leaving it. One that ended carries on when it is next asked
+  something. Picking one shows its messages from Stream at once, while its session comes back on
+  the router, which takes a couple of seconds: a question asked meanwhile shows straight away
+  and is sent when the session is ready. The open conversation is in the URL, as
+  `?conversation=<id>`, so a link or a bookmark opens it again, and Back and Forward go between
+  the conversations opened.
 - **Chat** is Stream's AI components (`stream-chat-react/ai-components`) over the session's
   channel. `AIConversation` lays it out in turns: a question moves to the top and shows at once,
   and its reply writes itself out below it, with the model's reasoning as it thinks
@@ -131,8 +138,10 @@ npm run build     # types, then the bundle
   [swift_assistant's README](../swift_assistant/README.md#gmail-and-linear) says.
 
 The page is the user `juno-owner`, Alex, as the phones are, so all three list the same
-conversations. `assistant.ts` holds the whole configuration: the router's and the backend's
-URLs, the customer id, the Stream key, the agent's name and the user.
+conversations. To be somebody else, with conversations and connected accounts of their own, set
+`VITE_USER_ID` and `VITE_USER_NAME` in `.env.local`. `assistant.ts` holds the whole
+configuration: the router's and the backend's URLs, the customer id, the Stream key, the agent's
+name and the user.
 
 ## What does not work yet
 

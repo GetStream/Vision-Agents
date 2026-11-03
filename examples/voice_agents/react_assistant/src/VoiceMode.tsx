@@ -12,6 +12,7 @@ import {
 
 import type { AgentChat } from "./agentChat";
 import { Captions, type Caption } from "./captions";
+import { CameraIcon, CameraOffIcon, CloseIcon, HangUpIcon, MicIcon, MicOffIcon } from "./icons";
 import type { ChatScreen } from "./chatScreen";
 import { Store, useSelected, useStore } from "./store";
 import { VoiceMeter } from "./voiceMeter";
@@ -23,7 +24,8 @@ const PERSON_COLORS = ["#ff2626"];
 const NOT_JOINED = new Store<VoiceSnapshot>({ muted: false, cameraEnabled: false, status: "connecting" });
 
 /**
- * Talking to Juno, over everything, in the conversation that was open.
+ * Talking to Juno, over the conversation that was open: in its pane beside the sidebar on a wide
+ * window, over everything on a narrow one.
  *
  * What is said on the call is written into the conversation's channel, so the chat shows it once
  * voice mode is closed. The session's socket stays open the whole time and runs this page's tools,
@@ -46,9 +48,15 @@ export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentCha
   const trouble = failureAt > 0 && failureAt >= voiceOpenedAt ? troubleText(failureContext) : undefined;
   const call = snapshot.call;
 
+  const root = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
+    // Escape is voice mode's own only while nothing else has the focus: beside the sidebar on a
+    // wide window it would otherwise hang up on somebody clearing the search box.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") screen.hangUp();
+      const focused = document.activeElement;
+      const isOurs = !focused || focused === document.body || root.current?.contains(focused);
+      if (event.key === "Escape" && isOurs) screen.hangUp();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -58,10 +66,16 @@ export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentCha
   const request = approvals[0];
 
   return (
-    <div className="voice-mode" role="dialog" aria-label="Talking to Juno">
+    <div aria-label="Talking to Juno" className="voice-mode" ref={root} role="dialog">
       <div className="voice-top">
-        <button aria-label="Back to chat" className="icon-button" onClick={() => screen.hangUp()} type="button">
-          ✕
+        <button
+          aria-label="Back to chat"
+          className="icon-button"
+          onClick={() => screen.hangUp()}
+          title="Back to chat"
+          type="button"
+        >
+          <CloseIcon />
         </button>
       </div>
       {call && snapshot.cameraEnabled && <CameraPreview call={call} />}
@@ -71,30 +85,59 @@ export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentCha
       {call && <RemoteAudio call={call} />}
       {voice && (
         <div className="call-controls">
-          <button
-            aria-label={snapshot.cameraEnabled ? "Stop showing Juno" : "Show Juno the camera"}
-            className="control"
+          <CallControl
             disabled={!call}
+            isOn={snapshot.cameraEnabled}
+            label={snapshot.cameraEnabled ? "Stop showing Juno" : "Show Juno the camera"}
             onClick={() => void screen.setCameraEnabled(!snapshot.cameraEnabled)}
-            type="button"
           >
-            {snapshot.cameraEnabled ? "Camera on" : "Camera off"}
-          </button>
-          <button
-            aria-label={snapshot.muted ? "Unmute" : "Mute"}
-            className="control"
+            {snapshot.cameraEnabled ? <CameraIcon /> : <CameraOffIcon />}
+          </CallControl>
+          <CallControl
             disabled={!call}
+            isOn={snapshot.muted}
+            label={snapshot.muted ? "Unmute" : "Mute"}
             onClick={() => void screen.setMuted(!snapshot.muted)}
-            type="button"
           >
-            {snapshot.muted ? "Unmute" : "Mute"}
-          </button>
-          <button aria-label="Hang up" className="control hang-up" onClick={() => screen.hangUp()} type="button">
-            Hang up
-          </button>
+            {snapshot.muted ? <MicOffIcon /> : <MicIcon />}
+          </CallControl>
+          <CallControl className="hang-up" label="Hang up" onClick={() => screen.hangUp()}>
+            <HangUpIcon />
+          </CallControl>
         </div>
       )}
     </div>
+  );
+}
+
+/** A round call button, its label shown on hover. `isOn` marks a muted microphone or a camera in use. */
+function CallControl({
+  label,
+  isOn = false,
+  disabled = false,
+  className = "",
+  onClick,
+  children,
+}: {
+  label: string;
+  isOn?: boolean;
+  disabled?: boolean;
+  className?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      aria-label={label}
+      aria-pressed={className ? undefined : isOn}
+      className={`control ${className}${isOn ? " on" : ""}`}
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
   );
 }
 
