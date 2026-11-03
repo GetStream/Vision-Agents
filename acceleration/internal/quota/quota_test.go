@@ -672,6 +672,25 @@ func (s *QuotaSuite) TestADebitIsCountedInTheCustomersBucketWhenTheUsersOwnQuota
 	}
 }
 
+func (s *QuotaSuite) TestTheWarningForAnUnreadUsersQuotaIsLoggedOncePerCustomerAWindow() {
+	var logs bytes.Buffer
+	limiter, err := New(s.redis, Limits{}, unreadSource(Quota{}), slog.New(slog.NewTextHandler(&logs, nil)))
+	s.Require().NoError(err)
+	other := s.customer + "-other"
+
+	for range 20 {
+		limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	}
+	s.Equal(1, strings.Count(logs.String(), "level=WARN"), "twenty debits of one customer log once")
+
+	limiter.Debit(s.ctx, other, s.caller, 10)
+	s.Equal(2, strings.Count(logs.String(), "level=WARN"), "another customer still logs")
+
+	spent, err := limiter.spent(s.ctx, customerKey(s.customer, s.caller.UserID, time.Now()))
+	s.Require().NoError(err)
+	s.Equal(spend{messages: 20, tokens: 200}, spent[0], "every debit is counted, though the log is throttled")
+}
+
 func (s *QuotaSuite) TestADebitStillCountsADeviceCallersAddressWhenTheUsersOwnQuotaCouldNotBeRead() {
 	limiter := s.limiterWith(Limits{}, unreadSource(Quota{}))
 

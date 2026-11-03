@@ -196,8 +196,8 @@ type Enforcer struct {
 	tiers   map[string]tierSeen
 	// now is the clock the tiers are kept by.
 	now func() time.Time
-	// userQuotaLogs throttles the line a user's own quota that cannot be read logs, per app.
-	userQuotaLogs throttle
+	// userQuotaLogs quota.Throttles the line a user's own quota that cannot be read logs, per app.
+	userQuotaLogs quota.Throttle
 
 	money money
 	// localBookings are the bookings of a router with no shared Redis.
@@ -342,7 +342,7 @@ func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, default
 	}
 	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
 	if err != nil {
-		if e.userQuotaLogs.due(customerID, time.Minute) {
+		if e.userQuotaLogs.Due(customerID, time.Minute) {
 			e.logger.Error("could not read a user's own quota, holding them to their app's",
 				"customer", customerID, "error", err)
 		}
@@ -800,26 +800,6 @@ func allowedByBoth(organization, app *[]string) []string {
 		}
 	}
 	return both
-}
-
-// throttle says whether a line keyed by key is due, at most once every every.
-type throttle struct {
-	mu   sync.Mutex
-	last map[string]time.Time
-}
-
-func (t *throttle) due(key string, every time.Duration) bool {
-	now := time.Now()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if last, ok := t.last[key]; ok && now.Sub(last) < every {
-		return false
-	}
-	if t.last == nil {
-		t.last = map[string]time.Time{}
-	}
-	t.last[key] = now
-	return true
 }
 
 // once is a throttle of one line, in Unix nanoseconds.

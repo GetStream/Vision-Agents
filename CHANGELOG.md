@@ -222,7 +222,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### A user whose own quota cannot be read is still counted
 
-When a user's own quota could not be read, what they spent was not counted at all if no app or organization limit was set, so the customer's own limit for that user lost the usage. A response is now counted in the user's bucket all the same, and one warning is logged for it. The request itself is still admitted, as before (AI-2483).
+When a user's own quota could not be read, what they spent was not counted at all if no app or organization limit was set, so the customer's own limit for that user lost the usage. A response is now counted in the user's bucket all the same, and a warning is logged for it, at most once a minute per customer. The request itself is still admitted, as before (AI-2483).
 ### A scheduled task handed to another router is billed to its own key
 
 A router that runs a scheduled task for another router, because it holds the task's conversation, now takes the task's conversation, timezone, API key and usage categories from the stored task, and the occurrence's prompt and due time from its stored run, not from what the other router sent. It refuses a hand-off that names a run that is not the task's running run. A text it sends for the task is now recorded under the task's key, user and usage categories, as on the router that claimed the task. Before, it was recorded as `job:channel_notice` with no user (AI-2421).

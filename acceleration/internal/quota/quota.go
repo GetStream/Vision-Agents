@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -177,6 +178,8 @@ type Limiter struct {
 	defaults Limits
 	source   Source
 	logger   *slog.Logger
+	// unreadLogs throttles the warning a debit logs for a user whose own quota could not be read.
+	unreadLogs Throttle
 }
 
 // New returns a Limiter counting against the quota source gives each user, or against
@@ -297,8 +300,10 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 		keys = append(keys, key)
 	}
 	if held.Unread && !customer {
-		l.logger.Warn("could not read a user's own quota, counting what they spent anyway",
-			"customer", customerID)
+		if l.unreadLogs.Due(customerID, time.Minute) {
+			l.logger.Warn("could not read a user's own quota, counting what they spent anyway",
+				"customer", customerID)
+		}
 	}
 	if !caller.ServerSide {
 		keys = append(keys, deviceKeys(customerID, caller, now)...)
@@ -488,4 +493,25 @@ func parseInt(value string) int64 {
 		return 0
 	}
 	return parsed
+}
+
+// Throttle says whether a line keyed by key is due, at most once every every.
+type Throttle struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+// Due reports whether the line keyed by key may be logged now, and counts it as logged if so.
+func (t *Throttle) Due(key string, every time.Duration) bool {
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.last[key]; ok && now.Sub(last) < every {
+		return false
+	}
+	if t.last == nil {
+		t.last = map[string]time.Time{}
+	}
+	t.last[key] = now
+	return true
 }
