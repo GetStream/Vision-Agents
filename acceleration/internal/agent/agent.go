@@ -159,6 +159,10 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// OnHeard is told of each Heard before it is sent, on the goroutine that heard the
+	// words, so its owner knows of them before the turn answering them runs, however far
+	// behind it reads Events. It must return at once.
+	OnHeard func(Heard)
 	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
 	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
 	ToolPolicy func(tool string) ToolPolicy
@@ -722,6 +726,7 @@ func New(options Options) (*Agent, error) {
 		record = agent.decisionStore.Record
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
+	agent.converse.onHeard = options.OnHeard
 	agent.turns = newTurnTracker(owner, agent.finishTurn)
 	agent.nativeMode.Store(native)
 
@@ -891,7 +896,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	// session reads its caller's lines from Responding instead.
 	typed := func() {
 		if !a.options.Text {
-			a.emitter.Send(Heard{Participant: caller, Text: text})
+			sendHeard(a.emitter, a.options.OnHeard, Heard{Participant: caller, Text: text})
 		}
 	}
 	if len(images) > 0 {

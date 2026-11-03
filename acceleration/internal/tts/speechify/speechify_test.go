@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -162,6 +165,46 @@ func (s *SpeechifySuite) TestACancelledReadIsBargeInNotAFailure() {
 
 	s.True(interrupted)
 	s.Empty(s.drain(provider), "barge-in is not an error")
+}
+
+func (s *SpeechifySuite) TestCloseSettlesAResponseStillStreaming() {
+	// A response that streams until the caller goes, so the hang-up lands mid-audio.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		for {
+			if _, err := w.Write(make([]byte, chunkBytes)); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}))
+	defer server.Close()
+	provider := s.newTTS(Options{BaseURL: server.URL})
+	s.Require().NoError(provider.Start(context.Background()))
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "a very long sentence", Final: true}))
+	s.Require().Eventually(func() bool {
+		_, ok := (<-provider.Events()).(tts.AudioChunk)
+		return ok
+	}, 5*time.Second, time.Millisecond, "audio is flowing")
+
+	s.Require().NoError(provider.Close())
+
+	var completes []tts.SynthesisComplete
+	for event := range provider.Events() {
+		if complete, ok := event.(tts.SynthesisComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1, "a response cut off by the hang-up is still billed")
+	s.Equal("u1", completes[0].SynthesisID)
+	s.EqualValues(20, completes[0].Characters, "the text Speechify was sent")
+	s.True(completes[0].Interrupted)
 }
 
 func (s *SpeechifySuite) TestCloseIsIdempotentAndClosesEvents() {

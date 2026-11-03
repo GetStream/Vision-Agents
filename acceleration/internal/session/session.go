@@ -1669,7 +1669,6 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
-		s.heardCaller(event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
