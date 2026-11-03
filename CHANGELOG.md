@@ -2,6 +2,9 @@
 
 ## Features
 
+### A voice note sent with a question is transcribed and answered
+
+`POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518).
 ### A photo sent in an agent's chat channel reaches the model
 
 A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
@@ -227,6 +230,10 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
 ## Breaking Changes
+
+### The Go SDK refuses `mcp_servers` in agent.yaml
+
+A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`agents.Load`, `agents.New`) with `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`; `mcp_servers: []` and a null `mcp_servers:` load and sync as before, and `agents.MCPServerSettings` and `Settings.MCPServers` are gone (AI-2531).
 
 ### The router no longer points its Chat message hook at itself
 
