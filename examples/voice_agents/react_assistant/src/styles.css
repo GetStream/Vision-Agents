@@ -524,24 +524,57 @@ button {
 
 .call-controls {
   display: flex;
-  gap: 16px;
-  padding-bottom: 16px;
+  gap: 12px;
+  padding: 6px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.06);
 }
 
 .control {
-  min-width: 96px;
-  height: 56px;
-  padding: 0 16px;
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 28px;
+  border-radius: 50%;
   background: var(--surface);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.control:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .control:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* A muted microphone or a camera in use: what is different from an ordinary call stands out. */
+.control.on,
+.control.on:hover:not(:disabled) {
+  background: var(--text);
+  color: var(--bg);
 }
 
 .control.hang-up {
+  width: 56px;
+  border-radius: 22px;
   background: var(--danger);
   color: white;
+}
+
+.control.hang-up:hover {
+  background: color-mix(in srgb, var(--danger) 85%, black);
 }
