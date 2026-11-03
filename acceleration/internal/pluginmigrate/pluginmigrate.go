@@ -666,7 +666,7 @@ func (m *migration) moveBinding(ctx context.Context, config store.AgentConfig, e
 	}
 	var grants []store.ToolGrant
 	for _, spec := range specs {
-		if !plugins.Offered(configured.Tools, spec.Name) {
+		if !core.Offered(configured.Tools, spec.Name) {
 			continue
 		}
 		grant := store.ToolGrant{Name: spec.Name, SchemaDigest: spec.SchemaDigest}

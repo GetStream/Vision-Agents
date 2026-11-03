@@ -22,7 +22,7 @@ Run(opts, apply)                       opts.Customer limits it to one app, opts.
   bindings plugins entry             -> fixed binding to the app's moved login
            plugins entry, user: true -> session binding
            alias = connector id = plugin id; grants = every tool a validate lists through the
-           moved login that the entry's tools allow (plugins.Offered): fixed with the digests
+           moved login that the entry's tools allow (core.Offered): fixed with the digests
            listed, session by name (each person's connection pins its own on first use, #826)
            the plugin entry is kept beside the binding; the session drops it for the binding
            (session.Spec.withoutBoundPlugins), and the API takes a binding to the plugin's own

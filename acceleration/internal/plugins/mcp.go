@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -164,7 +164,7 @@ func Open(ctx context.Context, conns []Connection, transport *http.Client) (*Run
 		}
 		runtime.clients = append(runtime.clients, opened)
 		for _, tool := range listed {
-			if !Offered(conn.Tools, tool.Name) {
+			if !core.Offered(conn.Tools, tool.Name) {
 				continue
 			}
 			prefixed := Prefix(conn.PluginID, tool.Name)
@@ -180,31 +180,6 @@ func Open(ctx context.Context, conns []Connection, transport *http.Client) (*Run
 		return nil, nil, failures
 	}
 	return runtime, tools, failures
-}
-
-// Offered reports whether a server's tool is in an allowlist of names and path.Match
-// patterns. An empty allowlist offers every tool.
-func Offered(allowed []string, tool string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	for _, pattern := range allowed {
-		if matched, _ := path.Match(pattern, tool); matched {
-			return true
-		}
-	}
-	return false
-}
-
-// CheckToolPatterns refuses an allowlist entry path.Match cannot read, which would
-// otherwise match nothing and hide a tool without saying why.
-func CheckToolPatterns(allowed []string) error {
-	for _, pattern := range allowed {
-		if _, err := path.Match(pattern, ""); err != nil {
-			return stack.Wrap(fmt.Errorf("plugins: %q is not a tool name or pattern", pattern))
-		}
-	}
-	return nil
 }
 
 func dial(ctx context.Context, conn Connection, transport *http.Client) (*client, []mcpTool, error) {

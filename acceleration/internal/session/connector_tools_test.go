@@ -584,7 +584,7 @@ func (s *AttachConnectorsSuite) TestAGrantWithADigestOpensAsBeforeAndPinsNothing
 }
 
 // TestAStarPatternOffersEveryListedTool: tool_patterns ["*"] offers every tool the connection
-// lists, the plugins rule that an allowlist of * offers each one (plugins.Offered).
+// lists, the rule that an allowlist of * offers each one (core.Offered).
 func (s *AttachConnectorsSuite) TestAStarPatternOffersEveryListedTool() {
 	alice := s.connection("alice", "primary")
 	config := s.config(withPatterns(s.chosen("crm"), "*"))

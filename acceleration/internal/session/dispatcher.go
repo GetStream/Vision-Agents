@@ -21,7 +21,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -591,7 +590,7 @@ func (d *dispatcher) recheck(ctx context.Context, r route) (store.ConnectorBindi
 	case current.ConnectorID != r.binding.ConnectorID || current.Connection.Type != r.binding.Connection.Type:
 		return refuse("the agent config binds it differently now")
 	case r.binding.ToolPatterns != nil && current.ToolPatterns != nil:
-		if !plugins.Offered(*current.ToolPatterns, r.tool) {
+		if !core.Offered(*current.ToolPatterns, r.tool) {
 			return refuse("the tool is no longer granted")
 		}
 	case !slices.Contains(current.Tools, store.ToolGrant{Name: r.tool, SchemaDigest: r.digest}):

@@ -122,6 +122,12 @@ func (s *CatalogSuite) TestAScopeTheServerDoesNotAdvertiseIsRefused() {
 	s.ErrorContains(err, `"write"`, "the read-only endpoint accepts only read")
 }
 
+func (s *CatalogSuite) TestAToolPatternThatCannotBeReadIsRefusedWithThePluginsPrefix() {
+	drive, _ := Lookup("google_drive")
+	_, err := drive.Configured(Options{Tools: []string{"read_[*"}})
+	s.EqualError(err, `plugins: "read_[*" is not a tool name or pattern`)
+}
+
 func (s *CatalogSuite) TestAPluginWithNoReadOnlyEndpointCannotBeMadeReadonly() {
 	plugin, ok := Lookup("sentry")
 	s.Require().True(ok)
