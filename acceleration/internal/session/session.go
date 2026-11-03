@@ -611,8 +611,19 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // particular answer by: its items are asked for under it. Empty when nothing is being
 // recorded -- an incognito session, or a deployment with no store -- and empty for a native
 // session, where the model decides for itself what counts as a turn. asked is what the
-// caller wants changed about this reply alone.
-func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
+// caller wants changed about this reply alone. photos are those of images the person sent,
+// rather than frames of a video: with no text they are the question, so a conversation kept
+// in Stream Chat shows them on the person's message, as a command's are (RespondCommand).
+func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM, photos ...llm.ImagePart) (string, error) {
+	// Uploaded before commandMu, as a command's photos are: a stop waits on that lock.
+	var shown []persistent.Photo
+	if text == "" && s.persisted != nil && s.spec.Text && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
+		published, err := s.persisted.PublishPhotos(ctx, photos)
+		if err != nil {
+			return "", stack.Wrap(err)
+		}
+		shown = published
+	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if err := s.current().CheckAsked(asked); err != nil {
@@ -628,7 +639,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		if s.spec.Caller.UserID != "" {
 			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
-		if err := s.persisted.Begin(text); err != nil {
+		if err := s.persisted.Begin(text, shown...); err != nil {
 			return "", stack.Wrap(err)
 		}
 	}
