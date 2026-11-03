@@ -278,6 +278,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A Muse model answers a reply that may call no tool
+
+A reply that must not call a tool (an answer after a tool result, a reply with no tools offered, a question for a colleague) was sent to Meta's API with `tool_choice: "none"`, which it refuses with a 400. Those replies now go out with no tools and no tool choice, as they already did for Ollama. A request for `required` or a named tool on a Muse model is still refused before it is sent (AI-2542).
+
 ### Respond says no cost for a voice note, as responses.create does
 
 `POST /v1/agents/sessions/{id}/respond` with a voice note answered with `X-Stream-Cost-Micros` holding only the note's transcription, while `POST /v1/agents/sessions/{id}/responses` with the same note sent no cost header. Both answer before their turn runs, so neither says a cost now; the transcription is still billed and recorded under the session. `X-Stream-Balance-Micros` is sent as before.
@@ -289,6 +293,7 @@ A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.s
 ### A GPT-Live call hung up before its last report is billed its seconds
 
 A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
+
 ### A deleted session's call still reads its transcript
 
 `GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation before its session was deleted still reads empty (AI-2473).
@@ -368,6 +373,7 @@ Moving a running session onto other models or another voice (`PATCH /v1/agents/s
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+
 ### Naming a guest's id no longer hands out a token for that guest
 
 `POST /v1/agents/guests` with an `id` gave a fresh 24-hour token for any unclaimed guest of the app to whoever asked. A page holding only the app's key was enough, and the guest's name and custom data were replaced with whatever the request sent. A guest id is no secret: it is the author of the guest's messages and a member of their channels. So anyone who shared a channel with a guest could read that guest's conversations with the agent and carry on as them.
