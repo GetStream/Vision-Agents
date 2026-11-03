@@ -8,7 +8,11 @@
 
 ### A photo sent in an agent's chat channel reaches the model
 
-A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A video or a file sent alone is still not answered (AI-2521, AI-2522).
+
+### A voice recording sent in an agent's chat channel is heard
+
+A voice recording (a `voiceRecording` or `audio` attachment) a person sends in a plain `agent` channel is now answered. The router transcribes it once per message, as it does a voice note sent with a question. The transcription is billed to the session that answers, or to the channel's agent and the person who sent it while no session runs. The recording then reaches the answering model or dispatch worker as text: what was typed, then what was said. A worker gets the transcript in `text` and needs no change. A recording that cannot be fetched or heard is answered with a short reply that the agent could not listen to it. Nothing is transcribed when no worker is connected to answer. A recording the agent shows on a message it wrote is never heard. In a thread channel (Slack, SMS) a recording alone is still not answered (AI-2570).
 
 ### A custom connector's server instructions reach the agent
 
