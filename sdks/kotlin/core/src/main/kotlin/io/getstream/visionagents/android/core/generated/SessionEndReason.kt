@@ -34,9 +34,9 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+ * Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
  *
- * Values: agent_hangup,transferred,hangup,start,unanswered,unknown_default_open_api
+ * Values: agent_hangup,transferred,hangup,start,unanswered,voicemail,unknown_default_open_api
  */
 @Serializable(with = SessionEndReasonSerializer::class)
 internal enum class SessionEndReason(val value: kotlin.String) {
@@ -55,6 +55,9 @@ internal enum class SessionEndReason(val value: kotlin.String) {
 
     @SerialName(value = "unanswered")
     unanswered("unanswered"),
+
+    @SerialName(value = "voicemail")
+    voicemail("voicemail"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");
