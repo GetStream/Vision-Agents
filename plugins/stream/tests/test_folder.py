@@ -651,19 +651,6 @@ class TestFolder:
             "list_users",
             "list_issue_statuses",
         ]
-        assert [(server.name, server.url) for server in settings.mcp_servers] == [
-            ("tablejourney", "https://tablejourney.com/mcp")
-        ]
-        assert settings.mcp_servers[0].tools == [
-            "search_places",
-            "place",
-            "dishes",
-            "plan_day",
-            "festivals",
-            "experiences",
-            "itineraries",
-            "cities",
-        ]
 
     def test_progressive_tools_are_read(self, tmp_path: Path):
         root = tmp_path / "triage"

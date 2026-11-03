@@ -35,23 +35,6 @@ connectors:
   - calendly
   - calcom
   - slack
-# Any other MCP server, by its URL. The router opens it for every conversation and offers
-# its tools as tablejourney__<tool>; tools offers only those named or matching a pattern.
-# The server says whether it needs a login: TableJourney needs none. The app connects one
-# that does once on the dashboard; with user: true, each person connects their own in the
-# chat, as for a plugin. scopes, left out, asks for what the
-# server advertises. The server has to offer dynamic client registration. A login made before
-# a change of scopes keeps what it was granted, so connect again after changing them.
-mcp_servers:
-  - name: tablejourney
-    url: https://tablejourney.com/mcp
-    tools: [search_places, place, dishes, plan_day, festivals, experiences, itineraries, cities]
-#   - name: crm
-#     url: https://crm.example.com/mcp
-#     scopes: [contacts.read]
-#   - name: notes
-#     url: https://notes.example.com/mcp
-#     user: true
 # Blender for the render skill, in the router's Daytona sandbox.
 sandbox: daytona
 sandbox_options:
