@@ -41,7 +41,11 @@ func (s *ThreadChannelSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.service = conversation.NewForChat(s.chat.Client)
 	s.T().Cleanup(s.service.Close)
+	// Under mu: Never returns at its deadline without waiting for the check it last started,
+	// so the previous test's handedOver can still be reading finished.
+	s.mu.Lock()
 	s.finished = nil
+	s.mu.Unlock()
 	s.service.OnFinishedReply(func(reply conversation.FinishedReply) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
