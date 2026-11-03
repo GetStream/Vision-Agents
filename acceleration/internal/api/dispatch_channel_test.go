@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // AI-2505: the session a dispatch worker opens to answer a message the router handed it
@@ -186,3 +189,64 @@ func (s *MessageHooksSuite) writtenAs(id, text, custom string) string {
 }`, s.channelID, s.channelID, custom, id, text)
 }
 
+// TestQueuedMessagesToAWorkersSessionAreEachAnsweredOnceInTurn: messages queued for the channel
+// a worker's session answers are answered there, each once: one written while a reply is still
+// being written once that reply is done, every later one with a follow-up of its own, and a
+// second try of one not at all.
+func (s *ChatInboundQueueSuite) TestQueuedMessagesToAWorkersSessionAreEachAnsweredOnceInTurn() {
+	ctx := context.Background()
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	config := deliveredConfig(&s.RouterSuite, s.customerID())
+	first := "is it raining in " + s.utils.uuid() + "?"
+	s.Require().NoError(s.router.AnswerChatInbound(ctx, s.writtenAndQueued(config, first)))
+	handed := s.handed(worker.Messages())
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("holding/holding-model")})
+	s.Require().Equal(chatlog.ChannelType+":"+s.channelID, value(opened.ConversationId))
+	s.holding.holds()
+	s.T().Cleanup(s.holding.answers)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Text: first}, nil))
+	s.Require().Eventually(func() bool { return s.told(first) == 1 }, settleFor, 20*time.Millisecond)
+
+	second := "and in " + s.utils.uuid() + "?"
+	queued := s.writtenAndQueued(config, second)
+	ended := make(chan error, 1)
+	go func() { ended <- s.router.AnswerChatInbound(ctx, queued) }()
+	s.Never(func() bool { return len(ended) > 0 }, dropped, 20*time.Millisecond, "gave up on a message while the reply before it was written")
+	s.holding.answers()
+	select {
+	case err := <-ended:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("the message was never answered")
+	}
+	s.Eventually(func() bool { return s.told(second) == 1 }, settleFor, 20*time.Millisecond, "the message written during a reply")
+
+	third := "and tomorrow in " + s.utils.uuid() + "?"
+	queued = s.writtenAndQueued(config, third)
+	s.Require().NoError(s.router.AnswerChatInbound(ctx, queued))
+	s.Eventually(func() bool { return s.told(third) == 1 }, settleFor, 20*time.Millisecond, "a later message")
+	s.Require().NoError(s.router.AnswerChatInbound(ctx, queued))
+	s.Never(func() bool { return s.told(third) > 1 }, dropped, 20*time.Millisecond, "one queued delivery is one answer")
+	s.False(s.reachesWorker(worker.Messages()), "a message to a running session was dispatched again")
+}
+
+// writtenAndQueued writes a person's message in the suite's channel and queues its delivery,
+// naming config, as the endpoint would.
+func (s *ChatInboundQueueSuite) writtenAndQueued(config, text string) store.ChatInbound {
+	s.writesIn(s.channelID, text)
+	return s.row(s.queue(strings.Replace(s.message(suiteStreamApp, config, ""), "is my order on its way?", text, 1)))
+}
+
+// told is how many replies the holding model was asked with text the last thing said to it.
+func (s *ChatInboundQueueSuite) told(text string) int {
+	count := 0
+	for _, asked := range s.holding.replies() {
+		said := harness.WithoutNotes(asked.Input)
+		if len(said) > 0 && said[len(said)-1].Content == text {
+			count++
+		}
+	}
+	return count
+}
