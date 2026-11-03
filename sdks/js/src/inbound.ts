@@ -104,7 +104,7 @@ function imagesOf(value: unknown): InboundImage[] {
   }
   const images: InboundImage[] = [];
   for (const entry of value) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    if (typeof entry !== "object" || entry === null) {
       continue;
     }
     const url = text(entry as Frame, "url");

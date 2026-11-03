@@ -218,7 +218,14 @@ describe("Dispatch", () => {
       ["a string, not a list", "https://cdn.example.com/a.jpg", []],
       ["entries that are not objects", ["https://cdn.example.com/a.jpg", null, 7, [{ url: "https://cdn.example.com/a.jpg" }]], []],
       ["entries with no url", [{}, { mime_type: "image/png" }, { url: "" }, { url: 7 }], []],
-      ["a type that is not text", [{ url: "https://cdn.example.com/a.jpg", mime_type: 3 }], [{ url: "https://cdn.example.com/a.jpg" }]],
+      [
+        "a type that is not text, or is empty",
+        [
+          { url: "https://cdn.example.com/a.jpg", mime_type: 3 },
+          { url: "https://cdn.example.com/b.jpg", mime_type: "" },
+        ],
+        [{ url: "https://cdn.example.com/a.jpg" }, { url: "https://cdn.example.com/b.jpg" }],
+      ],
     ];
     const written: InboundMessage[] = [];
     const dispatch = new Dispatch({ client: api }).onMessage((message) => {

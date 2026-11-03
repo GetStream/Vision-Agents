@@ -734,7 +734,7 @@ def _images_of(frame: dict[str, object]) -> list[ImageContent]:
             continue
         url = entry.get("url")
         mime = entry.get("mime_type")
-        if not isinstance(url, str) or not url:
+        if not isinstance(url, str):
             continue
         try:
             if isinstance(mime, str) and mime:

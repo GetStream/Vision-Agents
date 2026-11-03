@@ -717,8 +717,12 @@ class TestDispatch:
                     {"url": "ftp://cdn.example.com/a.jpg"},
                     {"url": "https://user:secret@cdn.example.com/a.jpg"},
                     {"url": "https://cdn.example.com/kept.jpg", "mime_type": 3},
+                    {"url": "https://cdn.example.com/also.jpg", "mime_type": ""},
                 ],
-                [("https://cdn.example.com/kept.jpg", "image/jpeg")],
+                [
+                    ("https://cdn.example.com/kept.jpg", "image/jpeg"),
+                    ("https://cdn.example.com/also.jpg", "image/jpeg"),
+                ],
             ),
         ],
         ids=[
