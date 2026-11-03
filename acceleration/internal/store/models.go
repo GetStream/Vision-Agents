@@ -2185,6 +2185,10 @@ type User struct {
 	// person's conversations onto another's account.
 	ClaimedBy string     `bun:"claimed_by,nullzero"`
 	ClaimedAt *time.Time `bun:"claimed_at"`
+	// RefreshSecretHash is the SHA-256 of the refresh secret this guest was last handed
+	// (GuestSecretHash), nil for one handed none. Never sent anywhere: it is the credential
+	// that lets a guest whose token expired come back as themselves.
+	RefreshSecretHash []byte `bun:"refresh_secret_hash,nullzero" json:"-"`
 }
 
 // BusinessProfile is who an app is, written once and reused by every channel it registers

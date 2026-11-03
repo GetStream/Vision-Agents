@@ -4203,6 +4203,9 @@ components:
           type: string
         name:
           type: string
+        refresh_secret:
+          description: 'What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest''s own token while they already hold one, which keeps working.'
+          type: string
         token:
           description: A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
           type: string
@@ -4216,10 +4219,13 @@ components:
           additionalProperties: {}
           type: object
         id:
-          description: A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+          description: 'A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app''s backend, the guest''s own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.'
           type: string
         name:
-          description: What to call them, for a transcript a person reads later.
+          description: What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
+          type: string
+        refresh_secret:
+          description: The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
           type: string
       type: object
     Harness:
@@ -5896,6 +5902,9 @@ components:
             type: string
           description: 'Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router''s own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.'
           type: object
+        detect_voicemail:
+          description: Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+          type: boolean
         from:
           description: One of the customer's own numbers, which is what the person sees.
           type: string
@@ -7960,13 +7969,14 @@ components:
         - connection_id
       type: object
     SessionEndReason:
-      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.'
+      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.'
       enum:
         - agent_hangup
         - transferred
         - hangup
         - start
         - unanswered
+        - voicemail
       type: string
     SessionFilter:
       additionalProperties: false
@@ -8060,6 +8070,9 @@ components:
         vendor_call_id:
           description: The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
           type: string
+        voicemail:
+          $ref: '#/components/schemas/SessionVoicemail'
+          description: What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
       required:
         - number
       type: object
@@ -8244,6 +8257,18 @@ components:
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
+      type: object
+    SessionVoicemail:
+      description: What the agent does when an answering machine picks up.
+      properties:
+        action:
+          $ref: '#/components/schemas/VoicemailAction'
+        message:
+          description: Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+          maxLength: 1000
+          type: string
+      required:
+        - action
       type: object
     SetNumberAgentRequest:
       properties:
@@ -10947,6 +10972,14 @@ components:
       required:
         - audio
       type: object
+    VoicemailAction:
+      description: |-
+        hang_up: end the call at once, saying nothing.
+        leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+      enum:
+        - hang_up
+        - leave_message
+      type: string
     WhatsAppProfile:
       properties:
         business_account:
@@ -15017,7 +15050,7 @@ paths:
   /v1/agents/guests:
     post:
       description: |-
-        Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+        Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
         Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
       operationId: createGuestUser
       requestBody:
@@ -21516,6 +21549,29 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a Telnyx call
+  /v1/phone/machine/{token}:
+    post:
+      description: 'Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'
+      operationId: receiveCallMachine
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The report is taken
+        "400":
+          description: The report could not be read
+        "404":
+          description: No placed call is waiting at this token
+        "413":
+          description: The report is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive who picked up a placed call
   /v1/phone/numbers:
     get:
       operationId: listPhoneNumbers

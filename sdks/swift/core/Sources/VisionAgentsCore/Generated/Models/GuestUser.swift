@@ -7,14 +7,17 @@ final class GuestUser: Sendable, Codable, JSONEncodable {
     let expiresAt: Date?
     let id: String
     let name: String?
+    /// What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    let refreshSecret: String?
     /// A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     let token: String
 
-    init(custom: [String: RawJSON]? = nil, expiresAt: Date? = nil, id: String, name: String? = nil, token: String) {
+    init(custom: [String: RawJSON]? = nil, expiresAt: Date? = nil, id: String, name: String? = nil, refreshSecret: String? = nil, token: String) {
         self.custom = custom
         self.expiresAt = expiresAt
         self.id = id
         self.name = name
+        self.refreshSecret = refreshSecret
         self.token = token
     }
 
@@ -24,6 +27,7 @@ final class GuestUser: Sendable, Codable, JSONEncodable {
         self.expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
         self.id = try container.decode(String.self, forKey: .id)
         self.name = try container.decodeIfPresent(String.self, forKey: .name)
+        self.refreshSecret = try container.decodeIfPresent(String.self, forKey: .refreshSecret)
         self.token = try container.decode(String.self, forKey: .token)
     }
 
@@ -33,6 +37,7 @@ final class GuestUser: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(expiresAt, forKey: .expiresAt)
         try container.encode(id, forKey: .id)
         try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(refreshSecret, forKey: .refreshSecret)
         try container.encode(token, forKey: .token)
     }
 
@@ -44,6 +49,7 @@ extension GuestUser: Hashable {
         lhs.expiresAt == rhs.expiresAt &&
         lhs.id == rhs.id &&
         lhs.name == rhs.name &&
+        lhs.refreshSecret == rhs.refreshSecret &&
         lhs.token == rhs.token
     }
 
@@ -52,6 +58,7 @@ extension GuestUser: Hashable {
         hasher.combine(expiresAt)
         hasher.combine(id)
         hasher.combine(name)
+        hasher.combine(refreshSecret)
         hasher.combine(token)
     }
 }

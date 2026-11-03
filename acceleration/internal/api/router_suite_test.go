@@ -1817,6 +1817,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 	// The node shares the suite's phone service, and the last node made takes its unanswered
 	// calls; a deployment's nodes each have their own, so the status path stays the suite's.
 	s.router.phone.OnUnanswered(s.router.endUnanswered)
+	s.router.phone.OnMachine(s.router.tellMachine)
 	other.Config.Handler = server.Handler()
 	other.Start()
 	s.T().Cleanup(other.Close)

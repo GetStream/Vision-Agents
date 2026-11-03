@@ -5447,6 +5447,9 @@ pub struct GuestUser {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
     ///A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     pub token: ::std::string::String,
 }
@@ -5455,12 +5458,15 @@ pub struct GuestUser {
 pub struct GuestUserRequest {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+    ///A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub id: ::std::option::Option<::std::string::String>,
-    ///What to call them, for a transcript a person reads later.
+    ///What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
@@ -7849,6 +7855,9 @@ pub struct PlaceCallRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub detect_voicemail: ::std::option::Option<bool>,
     ///One of the customer's own numbers, which is what the person sees.
     pub from: ::std::string::String,
     ///Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call.
@@ -10026,7 +10035,7 @@ pub struct SessionConnectorBinding {
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
 }
-///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -10050,6 +10059,8 @@ pub enum SessionEndReason {
     Start,
     #[serde(rename = "unanswered")]
     Unanswered,
+    #[serde(rename = "voicemail")]
+    Voicemail,
 }
 impl ::std::fmt::Display for SessionEndReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10059,6 +10070,7 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Hangup => f.write_str("hangup"),
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
+            Self::Voicemail => f.write_str("voicemail"),
         }
     }
 }
@@ -10071,6 +10083,7 @@ impl ::std::str::FromStr for SessionEndReason {
             "hangup" => Ok(Self::Hangup),
             "start" => Ok(Self::Start),
             "unanswered" => Ok(Self::Unanswered),
+            "voicemail" => Ok(Self::Voicemail),
             _ => Err("invalid value".into()),
         }
     }
@@ -10272,6 +10285,9 @@ pub struct SessionPhone {
     ///The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<SessionVoicemail>,
 }
 ///`SessionQuery`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -10738,6 +10754,14 @@ pub struct SessionVideo {
     ///Track or processor source. Omitted requires one unambiguous available source.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
+}
+///What the agent does when an answering machine picks up.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SessionVoicemail {
+    pub action: VoicemailAction,
+    ///Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
 }
 ///`SetNumberAgentRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -13787,6 +13811,58 @@ pub struct VoiceSampleRequest {
     ///What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub transcript: ::std::option::Option<::std::string::String>,
+}
+/**hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum VoicemailAction {
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+}
+impl ::std::fmt::Display for VoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+        }
+    }
+}
+impl ::std::str::FromStr for VoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`WhatsAppProfile`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

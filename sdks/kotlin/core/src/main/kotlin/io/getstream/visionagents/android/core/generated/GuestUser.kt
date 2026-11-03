@@ -41,6 +41,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param custom 
  * @param expiresAt When the token stops working. A guest coming back after it asks for another.
  * @param name 
+ * @param refreshSecret What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
  */
 @Serializable
 
@@ -61,7 +62,11 @@ internal data class GuestUser (
     val expiresAt: kotlin.String? = null,
 
     @SerialName(value = "name")
-    val name: kotlin.String? = null
+    val name: kotlin.String? = null,
+
+    /* What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working. */
+    @SerialName(value = "refresh_secret")
+    val refreshSecret: kotlin.String? = null
 
 ) {
 

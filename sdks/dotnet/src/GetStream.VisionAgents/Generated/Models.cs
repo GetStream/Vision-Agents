@@ -6200,6 +6200,12 @@ namespace GetStream.VisionAgents.Models
         public string? Name { get; set; } = default!;
 
         /// <summary>
+        /// What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refresh_secret")]
+        public string? RefreshSecret { get; set; } = default!;
+
+        /// <summary>
         /// A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("token")]
@@ -6224,16 +6230,22 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, object>? Custom { get; set; } = default!;
 
         /// <summary>
-        /// A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+        /// A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string? Id { get; set; } = default!;
 
         /// <summary>
-        /// What to call them, for a transcript a person reads later.
+        /// What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; } = default!;
+
+        /// <summary>
+        /// The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refresh_secret")]
+        public string? RefreshSecret { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8548,6 +8560,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("custom")]
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
+
+        /// <summary>
+        /// Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("detect_voicemail")]
+        public bool? DetectVoicemail { get; set; } = default!;
 
         /// <summary>
         /// One of the customer's own numbers, which is what the person sees.
@@ -11934,6 +11952,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string? VendorCallId { get; set; } = default!;
 
+        /// <summary>
+        /// What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
+        public SessionVoicemail? Voicemail { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -12205,6 +12229,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string? Source { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What the agent does when an answering machine picks up.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionVoicemail
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("action")]
+        public string Action { get; set; } = default!;
+
+        /// <summary>
+        /// Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
+        public string? Message { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

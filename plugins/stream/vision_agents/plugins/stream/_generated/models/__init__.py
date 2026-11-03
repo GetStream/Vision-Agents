@@ -456,6 +456,7 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .session_voicemail import SessionVoicemail
 from .set_number_agent_request import SetNumberAgentRequest
 from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
@@ -577,6 +578,7 @@ from .voice_providers import VoiceProviders
 from .voice_request import VoiceRequest
 from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
+from .voicemail_action import VoicemailAction
 from .whats_app_profile import WhatsAppProfile
 from .window_spend import WindowSpend
 
@@ -1031,6 +1033,7 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SessionVoicemail",
     "SetNumberAgentRequest",
     "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
@@ -1152,6 +1155,7 @@ __all__ = (
     "VoiceRequest",
     "VoiceSample",
     "VoiceSampleRequest",
+    "VoicemailAction",
     "WhatsAppProfile",
     "WindowSpend",
 )

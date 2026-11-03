@@ -1350,7 +1350,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Mint a guest so somebody can talk to an agent before signing up
-         * @description Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+         * @description Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
          *     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
          */
         readonly post: operations["createGuestUser"];
@@ -3199,6 +3199,26 @@ export type paths = {
          * @description Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
          */
         readonly post: operations["receiveTelnyxCall"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/machine/{token}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive who picked up a placed call
+         * @description Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+         */
+        readonly post: operations["receiveCallMachine"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6586,6 +6606,8 @@ export type components = {
             readonly expires_at?: string;
             readonly id: string;
             readonly name?: string;
+            /** @description What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working. */
+            readonly refresh_secret?: string;
             /** @description A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it. */
             readonly token: string;
         };
@@ -6593,10 +6615,12 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: unknown;
             };
-            /** @description A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person. */
+            /** @description A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest. */
             readonly id?: string;
-            /** @description What to call them, for a transcript a person reads later. */
+            /** @description What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them. */
             readonly name?: string;
+            /** @description The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead. */
+            readonly refresh_secret?: string;
         };
         /**
          * @description Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -7525,6 +7549,8 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: string;
             };
+            /** @description Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail. */
+            readonly detect_voicemail?: boolean;
             /** @description One of the customer's own numbers, which is what the person sees. */
             readonly from: string;
             /** @description Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call. */
@@ -8757,10 +8783,10 @@ export type components = {
             readonly name: string;
         };
         /**
-         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
          * @enum {string}
          */
-        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered";
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
@@ -8820,6 +8846,8 @@ export type components = {
             readonly vendor?: string;
             /** @description The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
             readonly vendor_call_id?: string;
+            /** @description What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it. */
+            readonly voicemail?: components["schemas"]["SessionVoicemail"];
         };
         readonly SessionQuery: {
             /** @description The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page. */
@@ -8922,6 +8950,12 @@ export type components = {
             readonly max_frames?: number;
             /** @description Track or processor source. Omitted requires one unambiguous available source. */
             readonly source?: string;
+        };
+        /** @description What the agent does when an answering machine picks up. */
+        readonly SessionVoicemail: {
+            readonly action: components["schemas"]["VoicemailAction"];
+            /** @description Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up. */
+            readonly message?: string;
         };
         readonly SetNumberAgentRequest: {
             /** @description The name of the agent config that answers the number. Give this or config_id. */
@@ -10462,6 +10496,12 @@ export type components = {
             /** Format: date-time */
             readonly updated_at?: string;
         };
+        /**
+         * @description hang_up: end the call at once, saying nothing.
+         *     leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+         * @enum {string}
+         */
+        readonly VoicemailAction: "hang_up" | "leave_message";
         readonly VoicePreview: {
             /**
              * Format: byte
@@ -17953,6 +17993,48 @@ export interface operations {
                 content?: never;
             };
             /** @description The call is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveCallMachine: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly token: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The report is taken */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report could not be read */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No placed call is waiting at this token */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report is over 64 KiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
