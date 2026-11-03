@@ -10,7 +10,7 @@
 // The deployment's default is counted in two buckets rather than one: a user id, which is the
 // honest answer to "who is this", and an address, which is the answer that still holds when a
 // backend mints a fresh user id per request. A customer's quota is counted per user, in a
-// bucket of its own, and against the address too for a device caller.
+// bucket of its own, and never against the address, which many of its users can share.
 //
 // A day is a UTC calendar day, so a new day is a new key and nothing has to be reset.
 package quota
@@ -237,9 +237,13 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 		if key := userKey(customerID, caller.UserID, now); key != "" && len(limits) > 0 {
 			buckets = append(buckets, bucket{key: key, limits: limits})
 		}
-		// An address answers for every limit, whoever set it, as it did before customers set any.
+		// An address answers for the deployment's limits only, the guard against a backend
+		// minting a fresh user id per request. Many people share one address (an office, a
+		// carrier's NAT), so a customer's quota on one user is counted for that user alone.
 		if key := addressKey(customerID, caller.IP, now); key != "" {
-			buckets = append(buckets, bucket{key: key, limits: every})
+			if limits := held.enforced(false); len(limits) > 0 {
+				buckets = append(buckets, bucket{key: key, limits: limits})
+			}
 		}
 	}
 	if len(buckets) == 0 {

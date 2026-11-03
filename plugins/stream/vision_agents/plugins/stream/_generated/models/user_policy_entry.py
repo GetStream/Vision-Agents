@@ -26,10 +26,11 @@ class UserPolicyEntry:
         quota (Quota | Unset): What one end user may spend in a UTC day. Each number is the first set of the user's own
             (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts
             everything recorded with the user: what their devices ask for and what the app's backend asks for in their name.
-            (An app's quota counted devices only before; the router's default still does.) A device is counted by its
-            address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429
-            rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of
-            organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+            (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per
+            user only, never by the address a device calls from, which many users can share; the router's default counts a
+            device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is
+            a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every
+            user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
     """
 
     updated_at: datetime.datetime
