@@ -8,6 +8,10 @@
   --danger: #d92f26;
   --sidebar: #f7f8fa;
   --sidebar-hover: #eaecf0;
+  /* One curve for everything that moves: quick to start, gentle to land. */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration: 260ms;
+  --duration-fast: 150ms;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -116,6 +120,18 @@ button {
   place-items: center;
 }
 
+.icon-button,
+.new-chat,
+.sections li,
+.sections .delete,
+.control {
+  transition:
+    background-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    opacity var(--duration-fast) ease,
+    transform var(--duration-fast) ease;
+}
+
 .icon-button:hover {
   background: var(--sidebar-hover);
   color: var(--text);
@@ -128,12 +144,26 @@ button {
   display: flex;
 }
 
-/* Beside the conversation on a wide window. */
+/* Beside the conversation on a wide window. Its width moves as it folds, and the list keeps
+   its own width meanwhile, so it slides under the edge rather than squeezing. */
 .sidebar {
   width: 272px;
   flex: none;
+  display: flex;
+  overflow: hidden;
   background: var(--sidebar);
   border-right: 1px solid var(--border);
+  transition: width var(--duration) var(--ease);
+}
+
+.sidebar.collapsed {
+  width: 56px;
+}
+
+.sidebar > .conversation-list {
+  width: 272px;
+  flex: none;
+  animation: fade-in var(--duration) var(--ease) backwards;
 }
 
 /* Folded on a wide window: enough to open it again or start a conversation. */
@@ -145,8 +175,7 @@ button {
   align-items: center;
   gap: 4px;
   padding: 10px 0 12px;
-  background: var(--sidebar);
-  border-right: 1px solid var(--border);
+  animation: fade-in var(--duration) var(--ease) backwards;
 }
 
 .rail-bottom {
@@ -161,12 +190,15 @@ button {
   background: var(--sidebar);
   border-right: 1px solid var(--border);
   transform: translateX(-100%);
-  transition: transform 0.2s ease;
+  transition:
+    transform var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
   z-index: 20;
 }
 
 .drawer.open {
   transform: none;
+  box-shadow: 8px 0 32px rgb(0 0 0 / 0.12);
 }
 
 .scrim {
@@ -174,6 +206,14 @@ button {
   inset: 0;
   background: rgb(0 0 0 / 0.3);
   z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration) var(--ease);
+}
+
+.scrim.open {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .conversation-list {
@@ -343,6 +383,8 @@ button {
   max-width: 820px;
   margin: 0 auto;
   width: 100%;
+  /* A picked conversation rises into place rather than appearing. */
+  animation: rise var(--duration) var(--ease) backwards;
 }
 
 .chat > :first-child {
@@ -438,6 +480,10 @@ button {
   padding: 16px;
 }
 
+.voice-mode {
+  animation: voice-in 320ms var(--ease) backwards;
+}
+
 .wide .voice-mode {
   position: absolute;
   z-index: 1;
@@ -523,6 +569,7 @@ button {
 }
 
 .call-controls {
+  animation: rise 360ms 80ms var(--ease) backwards;
   display: flex;
   gap: 12px;
   padding: 6px;
@@ -542,9 +589,10 @@ button {
   color: var(--text);
   display: grid;
   place-items: center;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
+}
+
+.control:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .control:hover:not(:disabled) {
@@ -577,4 +625,65 @@ button {
 
 .control.hang-up:hover {
   background: color-mix(in srgb, var(--danger) 85%, black);
+}
+
+.theme-icon {
+  display: grid;
+  animation: turn-in 360ms var(--ease) backwards;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes voice-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes turn-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+  }
+}
+
+/* The theme changes as a crossfade, where the browser offers view transitions. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease);
+}
+
+/* Somebody who asked their system for less motion gets the same page without it. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar > .conversation-list,
+  .sidebar-rail,
+  .drawer,
+  .scrim,
+  .chat,
+  .voice-mode,
+  .call-controls,
+  .theme-icon,
+  .control {
+    animation: none;
+    transition: none;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
 }

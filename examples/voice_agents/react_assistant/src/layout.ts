@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 
 /** Wide enough for the conversations to sit beside the chat rather than slide over it. */
 export const WIDE = "(min-width: 768px)";
@@ -77,7 +78,14 @@ export function useTheme(): [Theme, (theme: Theme) => void] {
   useLayoutEffect(() => applyTheme(theme), [theme]);
 
   const choose = useCallback((next: Theme) => {
-    setChosen(next);
+    // Where the browser can, the page crossfades into the other theme rather than snapping.
+    // The update has to land inside the transition's callback, hence flushSync.
+    const change = () => flushSync(() => setChosen(next));
+    if ("startViewTransition" in document) {
+      document.startViewTransition(change);
+    } else {
+      change();
+    }
     try {
       localStorage.setItem(THEME_KEY, next);
     } catch {

@@ -135,14 +135,18 @@ function Assistant_() {
   return (
     <div className={`app str-chat str-chat__theme-${theme} ${isWide ? "wide" : "narrow"}`}>
       {isWide ? (
-        isCollapsed ? (
-          <SidebarRail onExpand={() => setCollapsed(false)} onNew={() => show(undefined)} onTheme={setTheme} theme={theme} />
-        ) : (
-          <aside className="sidebar">{list}</aside>
-        )
+        // One sidebar whose width moves between the list and the rail, so folding it is seen.
+        <aside className={`sidebar${isCollapsed ? " collapsed" : ""}`}>
+          {isCollapsed ? (
+            <SidebarRail onExpand={() => setCollapsed(false)} onNew={() => show(undefined)} onTheme={setTheme} theme={theme} />
+          ) : (
+            list
+          )}
+        </aside>
       ) : (
         <>
-          {isMenuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
+          {/* Always there, so it can fade out as well as in. */}
+          <div aria-hidden className={`scrim${isMenuOpen ? " open" : ""}`} onClick={() => setMenuOpen(false)} />
           <aside className={`drawer${isMenuOpen ? " open" : ""}`} inert={!isMenuOpen}>
             {list}
           </aside>
