@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -97,6 +99,129 @@ func (s *MessageHooksSuite) TestASessionUnderAChannelNothingWasHandedOutFromKeep
 	s.Equal(chatlog.ChannelType+":"+opened.Id, value(opened.ConversationId))
 }
 
+// AI-2551: what a worker hands on from the channel is the person's message, already there.
+// Asked as a command (a request id), the session wrote it a second time, as support-operator.
+
+// TestAWorkersQuestionWithARequestIDIsNotWrittenIntoTheChannelAgain fails on base: the
+// channel holds the person's message, a copy of it ("user completed"), then the reply.
+func (s *MessageHooksSuite) TestAWorkersQuestionWithARequestIDIsNotWrittenIntoTheChannelAgain() {
+	handed := s.handedOut()
+	opened := s.workersSession(handed)
+
+	s.asked(opened.Id, handed.Text)
+
+	s.answered(handed.Text, finishedReply)
+}
+
+// TestAWorkersQuestionWithoutARequestIDIsNotWrittenIntoTheChannelAgain: a worker that sends
+// no request id was answered with the reply alone on base too (Respond). The cap it asks for
+// still reaches the model.
+func (s *MessageHooksSuite) TestAWorkersQuestionWithoutARequestIDIsNotWrittenIntoTheChannelAgain() {
+	handed := s.handedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
+
+	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, MaxOutputTokens: pointerTo(77)})
+
+	s.answered(handed.Text, finishedReply)
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], func(asked llm.ResponseParams) bool { return asked.MaxOutputTokens == 77 }),
+		"the worker's cap never reached the model")
+}
+
+// TestAWorkersRespondCommandIsNotWrittenIntoTheChannelAgain fails on base, as the response
+// with a request id does: /respond with one is the same command. Its receipt is still
+// announced as command_accepted, before the reply.
+func (s *MessageHooksSuite) TestAWorkersRespondCommandIsNotWrittenIntoTheChannelAgain() {
+	handed := s.handedOut()
+	opened := s.workersSession(handed)
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	id := s.utils.uuid()
+
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		map[string]any{"text": handed.Text, "request_id": id}, &receipt))
+	accepted, _ := s.await(watching, "command_accepted")["command"].(map[string]any)
+	s.await(watching, "responded")
+
+	s.Equal(id, accepted["request_id"])
+	s.Equal(receipt.AssistantMessageId, accepted["assistant_message_id"])
+	s.Equal(id, receipt.RequestId)
+	s.Empty(receipt.UserMessageId, "the person's message is not the session's")
+	s.NotEmpty(receipt.AssistantMessageId)
+	s.answered(handed.Text, finishedReply)
+}
+
+// TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel fails on base: the photo is
+// already on the person's message, and was uploaded again for the copy. The model is still
+// shown it, under the cap the worker asked for.
+func (s *MessageHooksSuite) TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel() {
+	handed := s.handedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+s.utils.uuid()))
+	uploaded, seen := len(s.chat.Uploads()), len(s.vision.requests())
+
+	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: photo}}, MaxOutputTokens: pointerTo(77)})
+
+	s.answered(handed.Text, finishedReply)
+	s.Empty(s.chat.Uploads()[uploaded:])
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], llm.ResponseParams.HasImage), "the model was never shown the photo")
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], func(asked llm.ResponseParams) bool { return asked.MaxOutputTokens == 77 }),
+		"the worker's cap never reached the model")
+}
+
+// TestAWorkersQuestionAskedAgainIsAnsweredOnce: the Go SDK asks after its request id once
+// its socket drops; the same id again starts no second reply and writes nothing.
+func (s *MessageHooksSuite) TestAWorkersQuestionAskedAgainIsAnsweredOnce() {
+	handed := s.handedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
+	asked := CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid())}
+	s.askedAs(opened.Id, asked)
+	s.answered(handed.Text, finishedReply)
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", asked, nil))
+
+	s.Never(func() bool { return len(s.vision.requests())-seen > 1 }, dropped, 20*time.Millisecond, "asked again, the model was asked again")
+	s.Len(s.vision.requests()[seen:], 1)
+	s.answered(handed.Text, finishedReply)
+}
+
+// TestACommandToASessionOfItsOwnStillWritesThePersonsMessage is the control: a session no
+// message was handed out for writes the question asked with a request id into its own
+// channel, under that id, by its owner or support-operator, then the reply, as on base
+// (probe in the PR's author log).
+func (s *MessageHooksSuite) TestACommandToASessionOfItsOwnStillWritesThePersonsMessage() {
+	for name, opener := range map[string]struct {
+		client *testClient
+		author string
+	}{
+		"a backend's session":   {s.serverClient, "support-operator"},
+		"an end user's session": {s.client, s.client.userID},
+	} {
+		opened := opener.client.createSession(CreateSessionRequest{AgentId: pointerTo("agent-" + s.utils.uuid()), Llm: pointerTo("en-low-latency")})
+		s.Require().Equal(chatlog.ChannelType+":"+opened.Id, value(opened.ConversationId), name)
+		watching := opener.client.opens("/v1/agents/sessions/" + opened.Id + "/events")
+		id := s.utils.uuid()
+
+		s.Require().Equal(http.StatusAccepted, opener.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+			CreateResponseRequest{Text: "is it raining in Rome?", RequestId: &id}, nil), name)
+		s.await(watching, "responded")
+
+		var written []string
+		s.Eventually(func() bool {
+			written = written[:0]
+			for _, stored := range s.chat.Stored(opened.Id) {
+				custom, _ := stored["custom"].(map[string]any)
+				metadata, _ := custom["support_message"].(map[string]any)
+				written = append(written, fmt.Sprintf("%v %v %v %v", stored["id"], stored["user_id"], metadata["role"], stored["text"]))
+			}
+			return len(written) == 2 && !s.conversations.Writing()
+		}, settleFor, 20*time.Millisecond, name)
+		s.Equal(fmt.Sprintf("%s %s user is it raining in Rome?", id, opener.author), written[0], name)
+		s.Contains(written[1], " assistant ", name)
+	}
+}
+
 // handedOut writes a message in the suite's channel, as a person in the customer's app does,
 // and returns what the customer's worker is handed for it.
 func (s *MessageHooksSuite) handedOut() dispatch.Message {
@@ -115,11 +240,24 @@ func (s *MessageHooksSuite) workersSession(handed dispatch.Message) Session {
 }
 
 // asked hands the session the message's text, as the worker does, and waits for its answer.
+// The Go SDK's Responses.Create gives a question with no photos a request id of its own.
 func (s *MessageHooksSuite) asked(session, text string) {
+	s.askedAs(session, CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())})
+}
+
+// askedAs creates the response asked on session and waits for its answer. The response names
+// the reply, which is how a worker follows it: its id is one of the session's responses.
+func (s *MessageHooksSuite) askedAs(session string, asked CreateResponseRequest) {
 	watching := s.serverClient.opens("/v1/agents/sessions/" + session + "/events")
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+session+"/responses",
-		CreateResponseRequest{Text: text}, nil))
+	var created AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+session+"/responses", asked, &created))
 	s.await(watching, "responded")
+	s.Require().NotEmpty(created.Id, "the response names no reply to follow")
+	s.Eventually(func() bool {
+		var page AgentResponsePage
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+session+"/responses", nil, &page) == http.StatusOK &&
+			slices.ContainsFunc(page.Items, func(listed AgentResponse) bool { return listed.Id == created.Id })
+	}, settleFor, 20*time.Millisecond, "the reply is not among the session's responses")
 }
 
 // finishedReply stands for an agent's finished reply in what answered reads: a session past the
