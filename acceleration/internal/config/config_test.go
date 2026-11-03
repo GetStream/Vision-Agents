@@ -1142,6 +1142,26 @@ func (s *ConfigSuite) TestARegionMappedToNothingIsRefused() {
 	s.ErrorContains(err, `got eu=""`)
 }
 
+func (s *ConfigSuite) TestTwoRegionsKeptInOneTurbopufferRegionAreRefused() {
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "us=aws-eu-central-1, eu=aws-eu-central-1")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, "keeps eu and us in one turbopuffer region, aws-eu-central-1",
+		"its knowledge bases would be listed under both, and their storage billed twice")
+}
+
+func (s *ConfigSuite) TestARegionKeptWhereTheDefaultRegionIsIsRefused() {
+	s.T().Setenv("TURBOPUFFER_REGION", "gcp-us-east4")
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "eu=gcp-us-east4")
+
+	_, _, err := Load("")
+	s.ErrorContains(err, "keeps eu and us in one turbopuffer region, gcp-us-east4")
+
+	s.T().Setenv("ROUTER_KNOWLEDGE_REGIONS", "eu=aws-eu-central-1")
+	_, _, err = Load("")
+	s.NoError(err)
+}
+
 func (s *ConfigSuite) TestATargetForARegionOfAnotherFormIsRefused() {
 	s.T().Setenv("ROUTER_CODE_SANDBOX_TARGETS", "EU=eu")
 

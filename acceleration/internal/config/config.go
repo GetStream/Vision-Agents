@@ -34,6 +34,7 @@ import (
 	"github.com/knadh/koanf/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
@@ -868,6 +869,9 @@ func (c Config) validate() error {
 			}
 		}
 	}
+	if err := c.Knowledge.validateRegions(); err != nil {
+		return err
+	}
 	switch c.Limits.Mode {
 	case LimitsEnforce, LimitsShadow, LimitsOff:
 	default:
@@ -875,6 +879,29 @@ func (c Config) validate() error {
 			LimitsEnforce, LimitsShadow, LimitsOff, c.Limits.Mode)
 	}
 	return c.validateShard()
+}
+
+// validateRegions refuses two of our regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and their storage billed
+// twice.
+func (k Knowledge) validateRegions() error {
+	mapped := maps.Clone(k.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("config: knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
 }
 
 // validateUsage refuses a usage service the router could not ship to. A token without a URL is
