@@ -11976,12 +11976,6 @@ namespace GetStream.VisionAgents.Models
     public partial class SessionRespondCommand
     {
 
-        /// <summary>
-        /// A voice note to answer, as on createResponse: transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is reported as an error and no turn starts.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("audio")]
-        public AudioSource? Audio { get; set; } = default!;
-
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 

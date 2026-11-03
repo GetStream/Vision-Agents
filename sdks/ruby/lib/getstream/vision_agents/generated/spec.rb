@@ -2790,7 +2790,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "SessionRespondCommand" => {
-          properties: %w[audio images request_id text type].freeze,
+          properties: %w[images request_id text type].freeze,
           required: %w[text type].freeze, open: false
         }.freeze,
         "SessionSettingsRequest" => {

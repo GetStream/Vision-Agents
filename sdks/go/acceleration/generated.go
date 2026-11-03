@@ -8133,7 +8133,6 @@ type SessionQuery struct {
 
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
-	Audio  *AudioSource   `json:"audio,omitempty"`
 	Images *[]ImageSource `json:"images,omitempty"`
 
 	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.

@@ -10292,9 +10292,6 @@ pub struct SessionQuery {
 ///`SessionRespondCommand`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct SessionRespondCommand {
-    ///A voice note to answer, as on createResponse: transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is reported as an error and no turn starts.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
     ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
