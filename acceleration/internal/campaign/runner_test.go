@@ -621,6 +621,27 @@ func (s *RunnerSuite) TestAStoppingRouterRingsNoContactItAlreadyClaimed() {
 	s.Empty(attempts)
 }
 
+func (s *RunnerSuite) TestADialRecordedAsTheRouterStopsIsNotPlaced() {
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	stopped, stop := context.WithCancel(s.ctx)
+	stop()
+	runner := s.newRunner("router-f")
+	s.Require().NoError(runner.Start(stopped))
+	s.Require().Eventually(runner.stopping, 5*time.Second, 10*time.Millisecond)
+	claimed, err := s.store.ClaimDueContacts(s.ctx, "router-f", s.clock.now(), lease, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	dialed, err := runner.ring(s.ctx, claimed[0].Campaign, claimed[0].Contact, s.single().First(), 1)
+	s.Require().NoError(err)
+
+	s.Equal(Canceled, dialed.Result)
+	s.Empty(s.dialer.dialed(), "nobody is rung")
+	_, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.Equal(string(Canceled), attempts[0].Result, "the dial row is ended, not left open")
+}
+
 // clock is a time the test moves by hand.
 type clock struct {
 	mu sync.Mutex

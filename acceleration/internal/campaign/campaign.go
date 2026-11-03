@@ -388,8 +388,9 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 	}
 }
 
-// stopping reports whether this router has stopped claiming work, after which it rings
-// nobody: its sessions are being ended.
+// stopping reports whether this router has stopped claiming work, after which it places no
+// new call: during the drain a call could be cut off at the drain's deadline, and after it
+// the sessions are being ended, so the person would be rung with no agent.
 func (r *Runner) stopping() bool {
 	r.mu.Lock()
 	stopped := r.stopped
@@ -413,7 +414,13 @@ func (r *Runner) ring(ctx context.Context, campaign store.Campaign, contact stor
 		return Dialed{}, err
 	}
 
-	dialed, err := r.dialer.Dial(ctx, Dial{Campaign: campaign, Contact: contact, Step: step, Number: number, SessionID: sessionID})
+	var dialed Dialed
+	var err error
+	if r.stopping() {
+		dialed.Result = Canceled
+	} else {
+		dialed, err = r.dialer.Dial(ctx, Dial{Campaign: campaign, Contact: contact, Step: step, Number: number, SessionID: sessionID})
+	}
 	if err != nil {
 		r.logger.Warn("a campaign dial failed", "campaign", campaign.ID, "contact", contact.ID, "error", err)
 		if dialed.Result == "" {

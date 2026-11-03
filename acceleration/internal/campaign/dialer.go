@@ -59,11 +59,13 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		return dialed, nil
 	}
 	if err != nil {
-		// The person is being rung with no agent to answer them, and nothing else hangs up.
+		// Ending the Stream call frees the call's own trunk and route once the call exists. It
+		// does not hang up a leg still ringing at the vendor: that needs a hang-up by vendor
+		// call id, which the phone service does not have yet.
 		hangUp, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 		defer cancel()
 		if ended := d.phone.EndCall(hangUp, dial.Campaign.CustomerID, placed.StreamApp, placed.CallType, placed.CallID); ended != nil {
-			d.logger.Error("could not hang up a campaign call with no session", "session", placed.SessionID, "error", ended)
+			d.logger.Error("could not end the Stream call of a campaign call with no session", "session", placed.SessionID, "error", ended)
 		}
 		return dialed, err
 	}
