@@ -2,14 +2,6 @@
 
 ## Features
 
-### Users behind one address each have their own quota
-
-A quota a customer set was also counted against the address a device called from, so every
-user of an app behind one IP address, an office or a carrier's NAT, shared one user's quota,
-and the refusal named a user who had not spent it. A customer's quota is now counted per user
-only. The address still answers for the router's own default limits, the guard against a
-backend minting a fresh user id per request.
-
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
