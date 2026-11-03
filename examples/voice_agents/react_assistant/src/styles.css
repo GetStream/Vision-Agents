@@ -12,6 +12,8 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --duration: 260ms;
   --duration-fast: 150ms;
+  /* How wide the conversation's column is, padding included, however wide the pane. */
+  --column: 820px;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -374,17 +376,30 @@ button {
 }
 
 /* One conversation, with the composer floating over its bottom edge. */
+/* One conversation across the whole pane, so it scrolls from anywhere in it and its scrollbar
+   is on the pane's edge, with what it says in a column down the middle. */
 .chat {
   position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  max-width: 820px;
-  margin: 0 auto;
   width: 100%;
   /* A picked conversation rises into place rather than appearing. */
   animation: rise var(--duration) var(--ease) backwards;
+}
+
+/* A gutter the scrollbar's width on both sides, so the column is centred in the pane, as the
+   composer under it is, whether or not the scrollbar takes room. */
+.chat .str-chat__ai-conversation__scroller {
+  scrollbar-gutter: stable both-edges;
+}
+
+.chat .str-chat__ai-conversation__turns,
+.chat .str-chat__ai-conversation__empty {
+  width: 100%;
+  max-width: var(--column);
+  margin-inline: auto;
 }
 
 .chat > :first-child {
@@ -392,14 +407,29 @@ button {
   min-height: 0;
 }
 
+/* Across the pane like the conversation, with the composer in the column. Only the controls
+   take the pointer, so the scrollbar under the bar's edges still scrolls. */
 .composer-bar {
   position: absolute;
   inset: auto 0 0 0;
-  padding: 24px 12px 12px;
+  padding: 24px max(12px, calc((100% - var(--column)) / 2 + 12px)) 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  pointer-events: none;
+}
+
+.composer-bar > * {
+  position: relative;
+  pointer-events: auto;
+}
+
+/* The conversation fades out under the composer, in the column it is in. */
+.composer-bar::before {
+  position: absolute;
+  inset: 0 max(0px, calc((100% - var(--column)) / 2));
   background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 85%, transparent) 30%, var(--bg));
+  content: "";
 }
 
 .failure-pill {
