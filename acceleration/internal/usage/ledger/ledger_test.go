@@ -99,7 +99,7 @@ func (s *LedgerSuite) TestAnEventIsRecordedOnce() {
 	event := usagetest.Event("o1", func(e *usage.Event) {
 		e.UserID, e.UsageCategories = "u1", []string{"team:finance", "project:x"}
 		e.AgentID, e.CallID, e.SessionID, e.Purpose, e.PriceVersion = "agent", "call", "session", "reply", "20261110_seed"
-		e.SKU = "llm-openai-gpt-5-6-luna"
+		e.SKU, e.Region, e.BYOK = "llm-openai-gpt-5-6-luna", "eu", true
 		e.Attributes, e.Tags = map[string]string{"country": "US"}, map[string]string{"env": "prod"}
 	})
 
@@ -127,6 +127,8 @@ func (s *LedgerSuite) TestAnEventFromAProducerThatNamesNoSKUIsRecorded() {
 	rows := s.stored()
 	s.Require().Len(rows, 1)
 	s.Empty(rows[0].SKU)
+	s.Empty(rows[0].Region)
+	s.False(rows[0].BYOK)
 }
 
 func (s *LedgerSuite) TestABatchSentTwiceIsRecordedOnce() {
@@ -369,5 +371,5 @@ func (s *LedgerSuite) TestMigratingAgainChangesNothing() {
 	s.Require().NoError(s.ledger.Migrate(s.ctx))
 	var version int64
 	s.Require().NoError(s.ledger.DB().QueryRowContext(s.ctx, "SELECT max(version_id) FROM goose_db_version").Scan(&version))
-	s.Equal(int64(5), version)
+	s.Equal(int64(6), version)
 }
