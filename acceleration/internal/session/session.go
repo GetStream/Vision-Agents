@@ -705,7 +705,7 @@ func (s *Session) SampleVideos(ctx context.Context, id string) (sample bool, err
 		return true, nil
 	}
 	if id == "" {
-		if !s.Voicing() && !s.spec.Dispatched && s.spec.Caller.UserID != "" {
+		if !s.Voicing() && s.spec.Caller.UserID != "" {
 			return false, stack.Wrap(errPersonalNeedsCommand)
 		}
 		return true, nil

@@ -403,6 +403,18 @@ func (s *SessionSuite) TestVideosAreSampledOnlyForAQuestionTheSessionWouldAnswer
 	sample, err = shared.SampleVideos(s.ctx, "")
 	s.Require().NoError(err)
 	s.True(sample, "a conversation with no user takes a question without a command")
+
+	unkept, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "employee-1"}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unkept.Close() })
+	sample, err = unkept.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.True(sample, "a session kept nowhere answers every question, its request id ignored")
+
+	s.Require().NoError(running.StartVoice(s.ctx, Call{}))
+	sample, err = running.SampleVideos(s.ctx, "")
+	s.Require().NoError(err)
+	s.True(sample, "a question typed into a call is heard there, without a command")
 }
 
 // A question of photos alone needs no command to be shown on the person's message (AI-2550);
