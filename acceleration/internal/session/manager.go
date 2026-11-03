@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -475,7 +476,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			spec.PersistConversation = false
 		}
 	}
-	if cid, handed := m.handedOut(spec, stream); handed {
+	if cid, handed := m.handedOut(ctx, spec, stream); handed {
 		spec.ConversationID, spec.Dispatched = cid, true
 		ctx = persistent.RouterOpensDispatched(ctx, cid)
 	}
@@ -1899,8 +1900,26 @@ func (m *Manager) PinHook(customer, cid string, app int64) {
 // its workers, from a hook of app (deployment: the deployment signed it). The text session
 // the worker opens under the channel's id answers in that channel (handedOut). A hook of a
 // registered app pins the session's app too, as PinHook does.
-func (m *Manager) HandOut(customer, cid string, app int64, deployment bool) {
+//
+// The worker opens its session with a request of its own, which any node may take, so the
+// Directory carries the hand-out to the others.
+func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool) {
 	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment})
+	if m.options.Directory == nil {
+		return
+	}
+	entry, err := json.Marshal(handOut{App: app, Deployment: deployment})
+	if err != nil {
+		m.logger.Warn("could not say a channel's message was handed to a worker", "channel", cid, "error", err)
+		return
+	}
+	m.options.Directory.HandOut(ctx, customer, cid, entry, hookPinFor)
+}
+
+// handOut is a hand-out as the Directory carries it to the other nodes, for hookPinFor.
+type handOut struct {
+	App        int64 `json:"app"`
+	Deployment bool  `json:"deployment"`
 }
 
 func (m *Manager) pin(customer, cid string, pinned hookPinned) {
@@ -1938,22 +1957,44 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // other session keeps a channel of its own, as it always has: a device or a backend acting
 // for one of its users is not the worker, and a channel of another customer or app is not
 // the one handed out.
-func (m *Manager) handedOut(spec Spec, stream streamapp.Bound) (string, bool) {
+func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (string, bool) {
 	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
 		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
 		return "", false
 	}
 	cid := streamapp.AgentChannelType + ":" + spec.AgentID
-	m.hookPinsMu.Lock()
-	pinned, ok := m.hookPins[spec.CustomerID+"\x00"+cid]
-	m.hookPinsMu.Unlock()
-	if !ok || !pinned.handedOut || time.Since(pinned.at) > hookPinFor {
+	pinned, ok := m.handOutOf(ctx, spec.CustomerID, cid)
+	if !ok {
 		return "", false
 	}
 	if pinned.deployment == stream.Identity.Registered || (!pinned.deployment && stream.Identity.StreamApp != pinned.app) {
 		return "", false
 	}
 	return cid, true
+}
+
+// handOutOf is the hand-out of a customer's channel within hookPinFor: this node's, else the
+// one another node made (HandOut).
+func (m *Manager) handOutOf(ctx context.Context, customer, cid string) (hookPinned, bool) {
+	m.hookPinsMu.Lock()
+	pinned, ok := m.hookPins[customer+"\x00"+cid]
+	m.hookPinsMu.Unlock()
+	if ok && pinned.handedOut && time.Since(pinned.at) <= hookPinFor {
+		return pinned, true
+	}
+	if m.options.Directory == nil {
+		return hookPinned{}, false
+	}
+	entry, err := m.options.Directory.HandedOut(ctx, customer, cid)
+	if err != nil {
+		m.logger.Warn("could not read whether a channel's message was handed to a worker", "channel", cid, "error", err)
+		return hookPinned{}, false
+	}
+	var handed handOut
+	if entry == nil || json.Unmarshal(entry, &handed) != nil {
+		return hookPinned{}, false
+	}
+	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true}, true
 }
 
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream

@@ -33,6 +33,19 @@ func (s *MessageHooksSuite) TestAWorkersSessionAnswersInTheChannelItWasHandedAMe
 	s.False(kept, "the session made a channel of its own")
 }
 
+// TestAWorkersSessionOpenedOnAnotherNodeAnswersInTheChannel: the worker opens its session
+// with a request of its own, which the load balancer may hand any node, not the one that
+// handed the message out. In memory alone, that node had no word of it: agent:<session id>.
+func (s *MessageHooksSuite) TestAWorkersSessionOpenedOnAnotherNodeAnswersInTheChannel() {
+	handed := s.handedOut()
+
+	opened := s.serverClient.on(s.otherNode()).createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("en-low-latency")})
+
+	s.Equal(chatlog.ChannelType+":"+s.channelID, value(opened.ConversationId))
+	_, kept := s.chat.Channel(opened.Id)
+	s.False(kept, "the session made a channel of its own")
+}
+
 // TestAMessageWrittenAgainIsAnsweredByTheSessionAlreadyAnsweringTheChannel: no second
 // dispatch, and one reply, in the channel. On base the running session took it and nothing
 // answered it.
@@ -141,12 +154,18 @@ func (s *MessageHooksSuite) inTheChannel() []string {
 // inChannel writes a person's message in the suite's channel, created by the customer's app
 // with none of the router's stamps.
 func (s *MessageHooksSuite) inChannel(text string) {
+	s.writesIn(s.channelID, text)
+}
+
+// writesIn writes a person's message in channel, created by the customer's app with none of
+// the router's stamps.
+func (s *RouterSuite) writesIn(channel, text string) {
 	ctx := context.Background()
 	person := "sam"
-	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, s.channelID,
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, channel,
 		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &person}})
 	s.Require().NoError(err)
-	_, err = s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, s.channelID,
+	_, err = s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, channel,
 		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &person}})
 	s.Require().NoError(err)
 }
@@ -166,3 +185,4 @@ func (s *MessageHooksSuite) writtenAs(id, text, custom string) string {
   "message": {"id": %q, "text": %q, "user": {"id": "sam", "name": "Sam"}}
 }`, s.channelID, s.channelID, custom, id, text)
 }
+

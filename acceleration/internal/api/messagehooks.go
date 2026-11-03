@@ -330,6 +330,8 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled
 	}
+	// Said before the worker has the message, so the session it opens for it finds it said.
+	s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	worker, err := s.dispatch.AssignMessage(customerID, message)
 	if err != nil {
 		// Somebody has written to an agent that nothing is going to answer, which is the
@@ -339,7 +341,6 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		s.unanswered(ctx, origin)
 		return false
 	}
-	s.handOut(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
 		"config", configID, "worker", worker.ID, "stream_app", origin.app)
