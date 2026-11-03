@@ -150,6 +150,29 @@ func (s *InworldSuite) TestAudioAndContextClosedSettleTheSynthesis() {
 	s.False(complete.Interrupted)
 }
 
+func (s *InworldSuite) TestCloseSettlesAnUtteranceThatNeverFinished() {
+	provider := s.primed("u1")
+	provider.active["u1"].tracker.AddText("hello")
+	pcm := audio.PcmData{Samples: make([]int16, 2400), SampleRate: DefaultSampleRate, Channels: 1}
+	provider.handleMessage(serverFrame{Result: &serverResult{
+		ContextID:  "u1",
+		AudioChunk: &serverAudio{AudioContent: base64.StdEncoding.EncodeToString(pcm.Bytes())},
+	}})
+
+	s.Require().NoError(provider.Close())
+
+	var completes []tts.SynthesisComplete
+	for _, event := range s.collect(provider, func(tts.Event) bool { return false }) {
+		if complete, ok := event.(tts.SynthesisComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1, "an utterance cut off by the hang-up is still billed")
+	s.Equal("u1", completes[0].SynthesisID)
+	s.EqualValues(5, completes[0].Characters, "the text Inworld was sent")
+	s.True(completes[0].Interrupted)
+}
+
 func (s *InworldSuite) TestAudioFromAClosedContextIsDropped() {
 	provider := s.primed("live")
 	defer provider.Close()

@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -2198,6 +2199,20 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.manages()
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
 	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+// TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion: the memory provider keeps everything
+// in the US, and an agent in eu has all its work done in eu.
+func (s *SessionSuite) TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion() {
+	s.remembers = &stubMemory{}
+	s.manages()
+
+	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Region: pricing.RegionEU, Memory: MemorySpec{UserID: "222"}})
+	s.Require().ErrorIs(err, ErrMemoryRegion)
+	s.Empty(s.remembers.scopedTo().UserID, "nothing was recalled")
+
+	created := s.joins(Spec{Region: pricing.RegionUS, Memory: MemorySpec{UserID: "222"}})
+	s.Equal("222", created.Spec().Memory.UserID)
 }
 
 func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {

@@ -295,6 +295,9 @@ components:
           type: object
         billable:
           type: boolean
+        byok:
+          description: The work ran on the organization's own provider key, so the provider bills the organization for it.
+          type: boolean
         call_id:
           type: string
         cost_micros:
@@ -320,6 +323,9 @@ components:
             format: int64
             type: integer
           type: object
+        region:
+          description: Where the work ran, such as us or eu, whether or not an entry priced it. Absent on events recorded before regions were.
+          type: string
         session_id:
           type: string
         sku:
@@ -433,6 +439,8 @@ components:
           type: integer
         billable:
           type: boolean
+        byok:
+          type: boolean
         call_id:
           type: string
         cost_micros:
@@ -462,6 +470,8 @@ components:
             format: int64
             type: integer
           type: object
+        region:
+          type: string
         session_id:
           type: string
         sku:
