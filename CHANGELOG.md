@@ -287,7 +287,7 @@ A GPT-Live session is billed by the seconds OpenAI reports, the last of them as 
 
 ### A voice note's transcription is billed to its session and agent
 
-The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region, and refused with a retryable 503 `model_failed` when that region has no batch transcription instance; before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
+The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region. When that region has no batch transcription instance for the session's languages, the note is refused before it is fetched with a 400 `not_configured`, on `responses` and on `respond`, which a client does not retry (AI-2567); before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
 
 ### Photos, voice notes and video clips are fetched under the router's own User-Agent
 

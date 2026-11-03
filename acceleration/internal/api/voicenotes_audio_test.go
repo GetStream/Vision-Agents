@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -171,6 +172,84 @@ func (s *VoiceNoteAudioSuite) TestADeploymentThatTranscribesNothingRefusesAVoice
 	s.Equal(errNoVoiceNotes, err)
 }
 
+// A batch target that resolves to nothing is not a region the deployment lacks: it is still
+// what transcribing answers, a model failure.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteWhoseBatchTargetResolvesToNothingIsAModelFailure() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	transcribing := config[routing.STT]
+	transcribing.Aliases = maps.Clone(transcribing.Aliases)
+	delete(transcribing.Aliases, "en-recorded")
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Config: transcribing, Transcribers: sttrouter.NewTranscriberRegistry()})
+	s.Require().NoError(err)
+	server := &Server{streams: &Streams{Transcriptions: recordings}}
+
+	_, err = server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme"},
+		"data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wavOf("hello")), "")
+
+	var refused APIError
+	s.Require().ErrorAs(err, &refused)
+	s.Equal(codeModelFailed, refused.Code)
+}
+
+// The batch model a note goes to is chosen by the session's languages, and so is whether its
+// region has one: the eu here hears English alone.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteInALanguageItsRegionDoesNotHearIsNotConfigured() {
+	heard := &heardTranscriber{}
+	server := &Server{streams: &Streams{Transcriptions: s.regionalRecordings(heard)}}
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("hola"))
+
+	_, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"es"}}, note, "")
+	s.Equal(errNoVoiceNotesInRegion, err)
+	s.Nil(heard.recording.Audio, "the note was never sent to a transcriber")
+
+	english, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"en"}}, note, "")
+	s.Require().NoError(err)
+	s.Equal("se oye", english.Heard)
+}
+
+// Each instance declares its own languages, and a note's region is checked against the ones
+// that speak the session's, as transcribing it will: the eu here hears German but not Spanish,
+// though both are multilingual.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsCheckedAgainstTheLanguagesOfEachInstanceInItsRegion() {
+	heard := &heardTranscriber{}
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil }, routing.OverrideRegion)
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Transcribers: transcribers, Config: routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{Provider: "deepgram", Model: "nova-3", Languages: []string{"en", "de"}, Region: "eu"},
+			{Provider: "deepgram", Model: "nova-3", Languages: []string{"en", "de", "es"}},
+		},
+		Aliases: map[string]routing.Alias{
+			"en-recorded":           {Languages: []string{"en"}, RequireRecorded: true},
+			"multilingual-recorded": {Multilingual: true, RequireRecorded: true},
+		},
+	}})
+	s.Require().NoError(err)
+	server := &Server{streams: &Streams{Transcriptions: recordings}}
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("hola"))
+
+	_, err = server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"es"}}, note, "")
+	s.Equal(errNoVoiceNotesInRegion, err, "the eu instance does not speak Spanish: not a model failure to retry")
+	s.Nil(heard.recording.Audio, "the note was never sent to a transcriber")
+
+	german, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"de"}}, note, "")
+	s.Require().NoError(err)
+	s.Equal("se oye", german.Heard)
+}
+
+// A note sent by URL to an agent whose region cannot hear it is refused before the CDN is asked.
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteByURLToARegionThatCannotHearItIsRefusedBeforeItIsFetched() {
+	heard := &heardTranscriber{}
+	server := &Server{streams: &Streams{Transcriptions: s.regionalRecordings(heard)}, imageHTTP: s.cdn.Client()}
+	s.served["/note"] = cdnFile{kind: "audio/wav", body: wavOf("hola")}
+
+	_, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", Region: "eu", LanguageHints: []string{"es"}}, s.cdn.URL+"/note", "")
+
+	s.Equal(errNoVoiceNotesInRegion, err)
+	s.Zero(s.fetches.Load(), "the note is refused before it is fetched")
+}
+
 func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsHeardInTheSessionsLanguages() {
 	heard := &heardTranscriber{}
 	server := &Server{streams: &Streams{Transcriptions: s.recordings(heard)}}
@@ -266,6 +345,24 @@ func (s *VoiceNoteAudioSuite) recordings(heard *heardTranscriber) *sttrouter.Rec
 	transcribers := sttrouter.NewTranscriberRegistry()
 	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil })
 	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Config: config[routing.STT], Transcribers: transcribers})
+	s.Require().NoError(err)
+	return recordings
+}
+
+// regionalRecordings transcribe with heard: English in the eu, and Spanish in the us alone.
+func (s *VoiceNoteAudioSuite) regionalRecordings(heard *heardTranscriber) *sttrouter.Recordings {
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil }, routing.OverrideRegion)
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Transcribers: transcribers, Config: routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{Provider: "deepgram", Model: "nova-3", Languages: []string{"en"}, Region: "eu"},
+			{Provider: "deepgram", Model: "nova-3-es", Languages: []string{"es"}},
+		},
+		Aliases: map[string]routing.Alias{
+			"en-recorded":           {Languages: []string{"en"}, RequireRecorded: true},
+			"multilingual-recorded": {Languages: []string{"es"}, RequireRecorded: true},
+		},
+	}})
 	s.Require().NoError(err)
 	return recordings
 }
