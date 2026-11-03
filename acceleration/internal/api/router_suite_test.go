@@ -464,7 +464,9 @@ type RouterSuite struct {
 	// own, set before it starts the harness: model instances laid over reasoningConfig, what
 	// registers their factories over the suite's stubs, a knowledge backend for each region
 	// beyond us, and the Daytona target of each region's sandboxes. Unset, everything is in us.
-	llmInstances     []routing.ProviderConfig
+	llmInstances []routing.ProviderConfig
+	// sttInstances are batch transcription instances added to the recording config.
+	sttInstances     []routing.ProviderConfig
 	llmFactories     func(*llmrouter.Registry)
 	knowledgeRegions map[string]knowledge.Backend
 	sandboxTargets   map[string]string
@@ -1317,8 +1319,10 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
+	recorded := recordingConfig()
+	recorded.Providers = append(recorded.Providers, s.sttInstances...)
 	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
-		Config:       recordingConfig(),
+		Config:       recorded,
 		Transcribers: transcriberRegistry(),
 		Store:        s.store,
 		Live:         s.live,

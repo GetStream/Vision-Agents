@@ -47,7 +47,8 @@ func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, h
 
 	held, recording := recordingOf(options.STT{Languages: spec.LanguageHints}, "", note.Audio)
 	transcript, _, failure := s.streams.Transcriptions.Transcribe(routing.WithAttribution(ctx, spec.Attribution),
-		sttrouter.Recording{CustomerID: spec.CustomerID, Tags: spec.Tags, AgentID: spec.AgentID, Options: held, Source: recording})
+		sttrouter.Recording{CustomerID: spec.CustomerID, Tags: spec.Tags, AgentID: spec.AgentID, CallID: spec.CallID, Region: spec.Region,
+			Options: held, Source: recording})
 	if answer, refused := moneyError(failure); refused {
 		return conversation.VoiceNote{}, answer
 	}

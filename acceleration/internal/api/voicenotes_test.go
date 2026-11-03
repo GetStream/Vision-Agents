@@ -311,6 +311,20 @@ func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToItsSessionAndAgentAsTheAnswerI
 		"the note is billed to whom its answer is")
 }
 
+func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToTheCallItWasSentIn() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model"), StartVoice: pointerTo(true)})
+	s.Require().NotEmpty(opened.CallId)
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("call " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal(opened.CallId, heard.CallID, "the transcription names the call the note was sent in")
+	answered := s.meteredRows(routing.LLM, since, 1)[0]
+	s.Equal(answered.CallID, heard.CallID, "the note is on the call its answer is")
+}
+
 func (s *VoiceNotesSuite) TestAVoiceNoteIsFetchedUnderTheRoutersName() {
 	opened := s.noting()
 	note := s.serve(wavOf("named " + s.utils.uuid()))
