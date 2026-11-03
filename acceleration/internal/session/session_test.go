@@ -375,14 +375,33 @@ type stubTranscript struct {
 	mu      sync.Mutex
 	spoken  []agent.Event
 	written []string
+	// stalled, while open, holds Record back (stall).
+	stalled chan struct{}
 }
 
 func (t *stubTranscript) Start(context.Context) error { return nil }
 
 func (t *stubTranscript) Record(event agent.Event) {
 	t.mu.Lock()
+	stalled := t.stalled
+	t.mu.Unlock()
+	if stalled != nil {
+		<-stalled
+	}
+	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.spoken = append(t.spoken, event)
+}
+
+// stall holds back every event recorded from now until release, as a store slow to write
+// them holds back the session taking its agent's events: the agent goes on meanwhile.
+func (t *stubTranscript) stall() (release func()) {
+	stalled := make(chan struct{})
+	t.mu.Lock()
+	t.stalled = stalled
+	t.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(stalled) }) }
 }
 
 func (t *stubTranscript) Reply(text string) {
