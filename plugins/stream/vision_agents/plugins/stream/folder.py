@@ -110,23 +110,6 @@ class SandboxSettings:
 
 
 @dataclass
-class MCPServerSettings:
-    """An MCP server outside the plugin catalog, which the router opens by its URL."""
-
-    name: str
-    """What its tools are prefixed with, as `<name>__<tool>`."""
-    url: str
-    tools: list[str] = field(default_factory=list)
-    """Offer only the tools matching these names or patterns such as `search_*`.
-    Empty offers every tool."""
-    scopes: list[str] = field(default_factory=list)
-    """What its OAuth login asks for. Empty asks for what the server advertises.
-    Without `user`, the app logs in once, on the dashboard."""
-    user: bool = False
-    """Each end user logs in with their own account, in the chat."""
-
-
-@dataclass
 class ChannelSettings:
     """One line the agent is reachable on."""
 
@@ -189,7 +172,7 @@ class ConnectorSettings:
 
 @dataclass
 class ToolSettings:
-    """How MCP server and connector tools are offered."""
+    """How connector tools are offered."""
 
     progressive: bool | None = None
     """Offer each tool by a summary, the first call to it returning its full description
@@ -243,12 +226,8 @@ class Settings:
     connectors: list[ConnectorSettings] | None = None
     """Connectors the agent binds. None when the file says nothing about them, which
     leaves whatever is stored; an empty list removes them."""
-    mcp_servers: list[MCPServerSettings] = field(default_factory=list)
-    """MCP servers outside the catalog, opened by the router by their URL, with a login
-    when the server asks for one."""
     tools: ToolSettings | None = None
-    """How MCP server and connector tools are offered. None when the file says nothing
-    about it."""
+    """How connector tools are offered. None when the file says nothing about it."""
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
@@ -500,7 +479,7 @@ def _declare(path: Path) -> Settings:
         elif field_name == "connectors":
             settings.connectors = _connectors(path, value)
         elif field_name == "mcp_servers":
-            settings.mcp_servers = _mcp_servers(path, value)
+            _refuse_mcp_servers(path, value)
         elif field_name == "tools":
             settings.tools = _tools(path, value)
         elif field_name == "channels":
@@ -523,7 +502,6 @@ def _declare(path: Path) -> Settings:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"
             )
-    _refuse_connector_aliases(settings)
     return settings
 
 
@@ -585,6 +563,17 @@ def _refuse_plugins(path: Path, field_name: str, value: object) -> None:
     if value is None or value == []:
         return
     raise ValueError(f"{path}: `{field_name}` is no longer supported: use `connectors`")
+
+
+def _refuse_mcp_servers(path: Path, value: object) -> None:
+    """A server named by its URL is now a custom connector, so a file still naming any
+    is refused. An empty key names none and is let through, as for `plugins`."""
+    if value is None or value == []:
+        return
+    raise ValueError(
+        f"{path}: `mcp_servers` is no longer supported: create a custom connector"
+        " for the server's URL and name it under `connectors`"
+    )
 
 
 def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
@@ -697,18 +686,6 @@ def _connector_require_approval(
     return list(raw)
 
 
-def _refuse_connector_aliases(settings: Settings) -> None:
-    """An alias is also how its tools are prefixed, so it cannot be an MCP server name."""
-    if not settings.connectors:
-        return
-    servers = {server.name for server in settings.mcp_servers}
-    for entry in settings.connectors:
-        if entry.name in servers:
-            raise ValueError(
-                f'"{entry.name}" is named under both connectors and mcp_servers'
-            )
-
-
 def _greeting(path: Path, value: object) -> GreetingSettings | None:
     if value is None:
         return None
@@ -735,33 +712,6 @@ def _tools(path: Path, value: object) -> ToolSettings | None:
     if progressive is not None and not isinstance(progressive, bool):
         raise ValueError(f"{path} should give tools progressive as true or false")
     return ToolSettings(progressive=progressive)
-
-
-def _mcp_servers(path: Path, value: object) -> list[MCPServerSettings]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError(f"{path} should give mcp_servers as a list")
-    servers = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise ValueError(f"{path} should give each of mcp_servers as a mapping")
-        extra = set(item) - {"name", "url", "tools", "scopes", "user"}
-        if extra:
-            raise ValueError(f"{path} unknown mcp_servers setting: {sorted(extra)[0]}")
-        user = item.get("user", False)
-        if not isinstance(user, bool):
-            raise ValueError(f"{path} should give mcp_servers user as true or false")
-        servers.append(
-            MCPServerSettings(
-                name=_word(item.get("name")),
-                url=_word(item.get("url")),
-                tools=_terms(path, "mcp_servers.tools", item.get("tools")),
-                scopes=_terms(path, "mcp_servers.scopes", item.get("scopes")),
-                user=user,
-            )
-        )
-    return servers
 
 
 def _channels(path: Path, value: object) -> ChannelsSettings | None:
