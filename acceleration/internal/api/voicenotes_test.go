@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -26,6 +27,8 @@ type VoiceNotesSuite struct {
 	// notes serves voice notes by path, as a CDN a chat client uploaded them to would.
 	notes  *httptest.Server
 	served sync.Map
+	// named is the User-Agent each path was fetched with.
+	named sync.Map
 }
 
 func TestVoiceNotesSuite(t *testing.T) {
@@ -37,6 +40,7 @@ func (s *VoiceNotesSuite) SetupSuite() {
 	// are served on loopback, so the suite's router fetches with a plain client.
 	s.imageHTTP = &http.Client{}
 	s.notes = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.named.Store(r.URL.Path, r.UserAgent())
 		body, ok := s.served.Load(r.URL.Path)
 		if !ok {
 			http.NotFound(w, r)
@@ -290,6 +294,81 @@ func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledUnderTheSessionsTags() {
 	s.Equal(tags["team"], rows[0].Tags["team"])
 }
 
+func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToItsSessionAndAgentAsTheAnswerIs() {
+	opened := s.noting()
+	s.Require().NotEmpty(opened.AgentId)
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("billed " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal(opened.Id, heard.SessionID, "the transcription names the session that heard the note")
+	s.Equal(opened.AgentId, heard.AgentID, "the transcription names the session's agent")
+	answered := s.answerRow(since)
+	s.Equal([]string{answered.SessionID, answered.AgentID, answered.APIKey, answered.UserID},
+		[]string{heard.SessionID, heard.AgentID, heard.APIKey, heard.UserID},
+		"the note is billed to whom its answer is")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteFromAnotherCallerIsBilledAsTheSessionsOpenerIs() {
+	opened := s.serverClient.actingFor(s.client).createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	since := time.Now().UTC()
+
+	command := s.utils.uuid()
+	status, payload := s.client.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Audio: &AudioSource{Url: s.serve(wavOf("other " + s.utils.uuid()))}})
+	s.Require().Equal(http.StatusAccepted, status, string(payload))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	answered := s.answerRow(since)
+	s.Equal(routing.CallerServer, answered.Attributes[routing.CallerAttribute], "the session was opened by a backend")
+	s.Equal(answered.Attributes[routing.CallerAttribute], heard.Attributes[routing.CallerAttribute],
+		"the note is billed as the session's opener, not as the user who sent it")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteFromAnotherUserIsBilledToTheSessionsUser() {
+	opened := s.serverClient.actingFor(s.client).createSession(
+		CreateSessionRequest{Llm: pointerTo("noted/noted-model"), Incognito: pointerTo(true)})
+	since := time.Now().UTC()
+
+	other := s.data.createUser()
+	s.Require().NotEqual(s.client.userID, other.userID)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.actingFor(other).do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("user " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	answered := s.answerRow(since)
+	s.Equal(s.client.userID, answered.UserID, "the answer is billed to the session's user")
+	s.Equal(answered.UserID, heard.UserID, "the note is billed to the session's user, not to the one who sent it")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToTheCallItWasSentIn() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model"), StartVoice: pointerTo(true)})
+	s.Require().NotEmpty(opened.CallId)
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("call " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal(opened.CallId, heard.CallID, "the transcription names the call the note was sent in")
+	answered := s.answerRow(since)
+	s.Equal(answered.CallID, heard.CallID, "the note is on the call its answer is")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsFetchedUnderTheRoutersName() {
+	opened := s.noting()
+	note := s.serve(wavOf("named " + s.utils.uuid()))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: note}}, nil))
+
+	named, fetched := s.named.Load(strings.TrimPrefix(note, s.notes.URL))
+	s.Require().True(fetched, "the note was never fetched")
+	s.Equal(egress.UserAgent, named, "a host that refuses Go's own User-Agent still serves the note")
+}
+
 func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() {
 	opened := s.noting()
 	said := "big " + s.utils.uuid()
@@ -324,6 +403,24 @@ func (s *VoiceNotesSuite) heard(since time.Time, n int) {
 // noting opens a text session on a noted model, which a test reads what it was asked from.
 func (s *VoiceNotesSuite) noting() Session {
 	return s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+}
+
+// answerRow waits for the row of the model that answered a note since then and returns it. The
+// session's other model work, naming it, writes rows of its own, so the count is not fixed.
+func (s *VoiceNotesSuite) answerRow(since time.Time) store.Request {
+	var answer store.Request
+	s.Require().Eventually(func() bool {
+		var rows []store.Request
+		err := s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ? AND modality = ? AND model = ? AND started_at >= ?", s.customerID(), string(routing.LLM), "noted-model", since).
+			Order("started_at").Scan(context.Background())
+		if err != nil || len(rows) == 0 {
+			return false
+		}
+		answer = rows[0]
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "the answer's row was never recorded")
+	return answer
 }
 
 func (s *VoiceNotesSuite) responses(opened Session) string {

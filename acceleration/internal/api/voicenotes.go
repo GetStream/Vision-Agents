@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
@@ -23,10 +24,10 @@ var (
 )
 
 // hearVoiceNote fetches the voice note at source, a URL or a data URI, and transcribes it in
-// the session's languages for its customer, under its tags. It returns the audio, for a
-// conversation kept in Stream Chat to show, and what was said in it. A note heard before, the
-// retry of a question, is fetched to be matched on and carries what was heard then rather than
-// being transcribed and billed again.
+// the session's languages for its customer and agent, under its tags and attribution, as the
+// session's own model work is. It returns the audio, for a conversation kept in Stream Chat to
+// show, and what was said in it. A note heard before, the retry of a question, is fetched to be
+// matched on and carries what was heard then rather than being transcribed and billed again.
 func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, heard string) (conversation.VoiceNote, error) {
 	if s.streams == nil || s.streams.Transcriptions == nil {
 		return conversation.VoiceNote{}, errNoVoiceNotes
@@ -45,8 +46,9 @@ func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, h
 	}
 
 	held, recording := recordingOf(options.STT{Languages: spec.LanguageHints}, "", note.Audio)
-	transcript, _, failure := s.streams.Transcriptions.Transcribe(ctx,
-		sttrouter.Recording{CustomerID: spec.CustomerID, Tags: spec.Tags, Options: held, Source: recording})
+	transcript, _, failure := s.streams.Transcriptions.Transcribe(routing.WithAttribution(ctx, spec.Attribution),
+		sttrouter.Recording{CustomerID: spec.CustomerID, Tags: spec.Tags, AgentID: spec.AgentID, CallID: spec.CallID, Region: spec.Region,
+			Options: held, Source: recording})
 	if answer, refused := moneyError(failure); refused {
 		return conversation.VoiceNote{}, answer
 	}

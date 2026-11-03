@@ -266,6 +266,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A voice note's transcription is billed to its session and agent
+
+The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region, and refused with a retryable 503 `model_failed` when that region has no batch transcription instance; before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
+
+### Photos, voice notes and video clips are fetched under the router's own User-Agent
+
+The router fetches a photo, a voice note or a video clip sent by URL with the User-Agent `vision-agents (https://github.com/GetStream/Vision-Agents)`. Before, it sent Go's `Go-http-client/1.1`, which some hosts, Wikimedia among them, answer with 403, so the photo never reached the model (AI-2546).
+
 ### A dispatched channel shows the person's first message once
 
 A dispatch worker's session on the channel a message was handed out from no longer writes a second copy of that message as `support-operator`. The copy came from the first question the worker asked with a `request_id`, which the Go SDK sends with every text-only question. Such a question is now answered with the reply alone, and the router uploads no photo again, as it already did for a question without a `request_id` and for a follow-up in the channel. Every other session still writes the question it is asked into its own channel (AI-2551).
@@ -277,6 +285,7 @@ A message with photos that a running session answers in writing is kept in the s
 ### Closing an agent no longer waits on a stuck database for every queued row
 
 Closing an agent waited for every finished turn and every judgement still queued to be recorded, each write with its own five-second limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The turn writer, the decision writer and the memory writer are each now bound by one deadline, ten seconds for the first two and twenty for the memory writer, whose calls may take ten seconds each. Rows not written by then are dropped and counted in one warning each, as rows are when a writer falls behind. A store that answers but is slow can also lose the tail of a full queue at the deadline. With a healthy database every queued row is still written (AI-2475).
+
 ### Tool rounds are bound even when a model calls a tool it was not offered
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).

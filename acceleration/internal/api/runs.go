@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -300,6 +301,7 @@ func fetchAtMost(ctx context.Context, client *http.Client, source string, limit 
 	if err != nil {
 		return nil, "", err
 	}
+	request.Header.Set("User-Agent", egress.UserAgent)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, "", err
