@@ -989,6 +989,26 @@ func (s *CallStatusSuite) TestLeavingAMessageWithNoMessageIsRefused() {
 	s.Contains(payload, "message")
 }
 
+func (s *CallStatusSuite) TestLeavingAMessageOfOnlySpacesIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("  \n\t "),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageOnASpeechToSpeechAgentIsRefused() {
+	plan := SessionVoicemail{Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental.")}
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: pointerTo(s.utils.uuid()), StartVoice: pointerTo(true), Sts: pointerTo("openai/gpt-realtime-2"),
+		Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+
+	s.Equal(http.StatusBadRequest, status, "%s", payload)
+	s.Contains(string(payload), "cannot say a fixed voicemail message")
+}
+
 func (s *CallStatusSuite) TestAVoicemailMessageOver1000CharactersIsRefused() {
 	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
 		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1001)),

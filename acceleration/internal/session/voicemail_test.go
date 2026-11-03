@@ -34,9 +34,9 @@ func (s *SessionSuite) saidText() []string {
 
 // carriesOn checks a machine report left the session running and said nothing for it.
 func (s *SessionSuite) carriesOn(created *Session, said int) {
-	time.Sleep(4 * testTimeout)
-	s.stillRuns(created)
-	s.Len(s.voice.spoken(), said, "something was said for the report")
+	s.Never(func() bool {
+		return created.State() == Ended || !s.manager.Running(created.ID()) || len(s.voice.spoken()) != said
+	}, 4*testTimeout, 5*time.Millisecond, "the report changed the conversation")
 	s.Empty(created.endReason())
 }
 
@@ -140,6 +140,17 @@ func (s *SessionSuite) TestAMachineReportForAnotherCustomersSessionChangesNothin
 	s.manager.Machine("another", created.ID(), phone.MachineGreetingEnded)
 
 	s.carriesOn(created, said)
+}
+
+func (s *SessionSuite) TestASpeechToSpeechSessionCannotBeGivenAMessageToLeave() {
+	s.manages()
+	spec := leavesVoicemail("Hi Ali, this is Northwind Dental.")
+	spec.CustomerID, spec.CallID, spec.STSTarget = "acme", "call-1", "en-low-latency"
+
+	_, err := s.manager.Create(s.ctx, spec)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "cannot say a fixed voicemail message")
 }
 
 func (s *SessionSuite) TestAMachineReportForASessionHeldElsewhereIsNotHere() {

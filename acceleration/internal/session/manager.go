@@ -1602,28 +1602,33 @@ func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
 }
 
 // leaveVoicemail says spec's message to the answering machine, waits for it to be heard out
-// and hangs up.
+// and hangs up. A session that began closing meanwhile, its call hung up, is left to close.
 func (m *Manager) leaveVoicemail(found *Session, spec Spec) {
-	ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
-	defer cancel()
-	if message := spec.Voicemail.Message; message != "" {
+	if message := spec.Voicemail.Message; message != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
 		// Whatever the agent was saying to the greeting is not for the recording.
 		found.Interrupt()
-		if err := found.Say(ctx, message); err != nil {
+		if err := found.Say(ctx, message); err != nil && !found.closingNow() {
 			m.logger.Warn("could not leave a voicemail", "session", found.id, "error", err)
-		} else if err := found.current().Finish(ctx); err != nil {
+		} else if err := found.current().Finish(ctx); err != nil && !found.closingNow() {
 			m.logger.Warn("hung up on an answering machine before the voicemail was heard out",
 				"session", found.id, "error", err)
 		}
+		cancel()
 	}
 	// Leaving the call alone would leave the machine recording until it gives up.
-	if spec.Phone.Number != "" {
+	if spec.Phone.Number != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
 		if err := m.options.Phone.EndCall(ctx, spec.CustomerID, spec.StreamApp, spec.CallType, spec.CallID); err != nil {
 			m.logger.Warn("could not end the call of a voicemail left", "session", found.id, "error", err)
 		}
+		cancel()
 	}
 	m.hangUp(found, EndVoicemail)
 }
+
+// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
