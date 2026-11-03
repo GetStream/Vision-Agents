@@ -146,6 +146,9 @@ func (s *Session) observe(run *presence, event Event) {
 		}
 		if _, ok := phone.CallerNumber(reported.Participant.UserID); ok {
 			s.callerSeen.Store(true)
+			if spec.Voicemail != nil {
+				s.answered()
+			}
 		}
 		if run.settled && s.phoneSession(spec) {
 			s.ClearTimeout()

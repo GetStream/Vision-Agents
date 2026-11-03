@@ -1590,8 +1590,12 @@ func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
 		return false
 	}
 	spec := found.Spec()
-	if machine != phone.MachineGreetingEnded || OwnerOf(spec).CustomerID != customerID ||
-		spec.Phone == nil || spec.Voicemail == nil {
+	if OwnerOf(spec).CustomerID != customerID || spec.Phone == nil || spec.Voicemail == nil {
+		return true
+	}
+	// A hang-up the agent asked for meanwhile would cut the message off.
+	found.checked(machine != phone.MachineGreetingEnded)
+	if machine != phone.MachineGreetingEnded {
 		return true
 	}
 	// Vendors retry a report: only the first one to reach a session still running leaves the message.

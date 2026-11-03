@@ -2,7 +2,7 @@ package session
 
 import "time"
 
-// endReason is why a session ended: which wait timed out, or what the agent did. It is
+// EndReason is why a session ended: which wait timed out, or what the agent did. It is
 // named in the log line and kept on the session's row.
 type EndReason string
 
