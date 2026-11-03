@@ -236,6 +236,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
+
+Creating, replacing, patching or syncing an agent config with a non-empty `plugins`, `plugin_events` or `mcp_servers` is a 400 that names what replaced it: `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors` (the same for `plugin_events`), or `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`. Left out, null or empty, a save is as before. A config read back no longer has the three fields, and a session no longer opens the plugins or MCP servers a stored config still names, nor asks for a plugin login in the conversation; its connector bindings work as before. The plugin operations (`listPlugins`, `listConfigPlugins`, `authorizePlugin`, `disconnectPlugin`, `setPluginClient`, `deletePluginClient`) and the routes `GET /v1/agents/plugins/callback`, `GET /v1/agents/plugins/{plugin_id}/logo` and `POST /v1/agents/plugins/events/{token}` are gone (404), with their methods in every generated client, and plugin events are no longer subscribed to (AI-2538).
+
 ### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
 
 `loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
@@ -296,6 +300,10 @@ The router fetches a photo, a voice note or a video clip sent by URL with the Us
 ### A dispatched channel shows the person's first message once
 
 A dispatch worker's session on the channel a message was handed out from no longer writes a second copy of that message as `support-operator`. The copy came from the first question the worker asked with a `request_id`, which the Go SDK sends with every text-only question. Such a question is now answered with the reply alone, and the router uploads no photo again, as it already did for a question without a `request_id` and for a follow-up in the channel. Every other session still writes the question it is asked into its own channel (AI-2551).
+
+### A photo sent to a session's turn stays in its history as a note
+
+A turn with photos (`POST /v1/agents/sessions/{id}/responses` with `images`, or the socket's `respond`) is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a written aside and a thread's history keep it, and a turn of photos alone as the note alone. The reply to the turn, and the replies after its tools, still get the photos with the words alone. Before, the history kept the text with no sign of the photo, and a photo alone as an empty message, so later replies did not know a photo had been sent (AI-2561).
 
 ### A photo sent to a running session's chat channel stays in its history as a note
 

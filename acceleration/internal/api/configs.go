@@ -41,6 +41,32 @@ import (
 // They are stored rather than computed, so there is nothing to serve without one.
 var errNoConfigs = notConfigured("agent configs are not available: no database configured")
 
+// errPluginsRetired, errPluginEventsRetired and errMCPServersRetired refuse a save that still
+// names what connectors replaced. A request's unknown fields are ignored (openapi.go), so
+// leaving the keys out of the schema would let an older client lose its tools with no word.
+var (
+	errPluginsRetired = invalidRequest("plugins is no longer read: plugins were replaced by connectors, " +
+		"so name the provider under connectors")
+	errPluginEventsRetired = invalidRequest("plugin_events is no longer read: plugins were replaced by " +
+		"connectors, so name the provider under connectors")
+	errMCPServersRetired = invalidRequest("mcp_servers is no longer read: a server named by URL is now a " +
+		"custom connector, so create one for its URL and name it under connectors")
+)
+
+// retiredComplaint is the refusal of a save naming any plugin, plugin event or MCP server, or
+// nil. An empty list names nothing, so a client that sends one saves as before.
+func retiredComplaint(plugins *[]PluginEntry, events *[]PluginEvent, servers *[]McpServer) error {
+	switch {
+	case plugins != nil && len(*plugins) > 0:
+		return errPluginsRetired
+	case events != nil && len(*events) > 0:
+		return errPluginEventsRetired
+	case servers != nil && len(*servers) > 0:
+		return errMCPServersRetired
+	}
+	return nil
+}
+
 // mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
 // themselves.
 const mcpBrandingTimeout = 5 * time.Second
@@ -108,6 +134,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
+	if err := retiredComplaint(request.Body.Plugins, request.Body.PluginEvents, request.Body.McpServers); err != nil {
+		return nil, err
+	}
 	if message, ok, err := s.unboundConnectors(ctx, customerID, request.Body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
@@ -118,20 +147,6 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := textSubagentComplaint(&config, request.Body.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := mcpServersComplaint(ctx, config); !ok {
-		return nil, invalidRequest(message)
-	}
-	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, nil)
-	if !ok {
-		return nil, invalidRequest(message)
-	}
-	config.MCPServers = servers
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -142,9 +157,6 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := pluginAliasComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
@@ -176,8 +188,6 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditCreated, Changes: auditDiff(nil, stored),
 	})
-	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(ctx, config)
 	return &createAgentConfigResponse{Body: stored}, nil
 }
 
@@ -213,6 +223,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := configComplaint(ctx, *request.Body); !ok {
 		return nil, invalidRequest(message)
 	}
+	if err := retiredComplaint(request.Body.Plugins, request.Body.PluginEvents, request.Body.McpServers); err != nil {
+		return nil, err
+	}
 
 	existing, err := s.configs.AgentConfig(ctx, customerID, request.Id)
 	if err != nil {
@@ -228,20 +241,6 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := textSubagentComplaint(&config, request.Body.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := mcpServersComplaint(ctx, config); !ok {
-		return nil, invalidRequest(message)
-	}
-	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, existing.MCPServers)
-	if !ok {
-		return nil, invalidRequest(message)
-	}
-	config.MCPServers = servers
 	config.ID = existing.ID
 	config.CreatedAt = existing.CreatedAt
 	// Unlike the rest of an update, bindings left out are kept rather than cleared: a client
@@ -292,9 +291,6 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
@@ -324,8 +320,6 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditUpdated, Changes: auditDiff(agentConfigOf(existing), stored),
 	})
-	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(ctx, config)
 	return &updateAgentConfigResponse{Body: stored}, nil
 }
 
@@ -1908,14 +1902,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Skills != nil {
 		config.Skills = *request.Skills
 	}
-	if request.Plugins != nil {
-		config.Plugins = pluginEntriesOf(*request.Plugins)
-	}
 	if request.Connectors != nil {
 		config.Connectors = storedBindings(*request.Connectors)
 	}
-	config.PluginEvents = pluginEventsOf(request.PluginEvents)
-	config.MCPServers = mcpServersOf(request.McpServers)
 	config.Channels = channelsOf(request.Channels)
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.VisibleTools != nil {
@@ -2031,7 +2020,6 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		skills := config.Skills
 		rendered.Skills = &skills
 	}
-	rendered.Plugins = renderedPluginEntries(config.Plugins)
 	if len(config.Connectors) > 0 {
 		bindings := bindingsOf(config.Connectors)
 		rendered.Connectors = &bindings
@@ -2045,8 +2033,6 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		}
 		rendered.LeftOutConnectors = &leftOut
 	}
-	rendered.PluginEvents = renderedPluginEvents(config.PluginEvents)
-	rendered.McpServers = renderedMCPServers(config.MCPServers)
 	rendered.Channels = renderedChannels(config.Channels)
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
@@ -2294,14 +2280,14 @@ type AgentConfigRequest struct {
 	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region."`
 	Role               *AgentRole               `json:"role,omitempty"`
 	Review             *AgentReview             `json:"review,omitempty" doc:"How a finished call under this agent is reviewed. Left out on an update, the stored instructions stay."`
-	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay."`
+	Tools              *AgentTools              `json:"tools,omitempty" doc:"How the agent is offered its connector tools. Left out on an update, the stored settings stay."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16" doc:"MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>."`
-	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
@@ -2339,9 +2325,6 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty"`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
