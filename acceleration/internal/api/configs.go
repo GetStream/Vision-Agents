@@ -735,7 +735,7 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 			return fmt.Sprintf("connector binding %q sets tool_patterns and tools, and a binding has one or the other", alias), false
 		}
 		if binding.ToolPatterns != nil {
-			if err := plugins.CheckToolPatterns(*binding.ToolPatterns); err != nil {
+			if err := core.CheckToolPatterns(*binding.ToolPatterns); err != nil {
 				return fmt.Sprintf("connector binding %q has a tool_patterns entry that is not a tool name or pattern", alias), false
 			}
 		}
@@ -758,7 +758,7 @@ func approvalComplaint(binding AgentConnectorBinding) (string, bool) {
 		return fmt.Sprintf("connector binding %q sets require_approval and sandbox, and code in the sandbox "+
 			"calls the connector's API with nobody asked", binding.Name), false
 	}
-	if err := plugins.CheckToolPatterns(binding.RequireApproval); err != nil {
+	if err := core.CheckToolPatterns(binding.RequireApproval); err != nil {
 		return fmt.Sprintf("connector binding %q has a require_approval entry that is not a tool name or pattern", binding.Name), false
 	}
 	for _, entry := range binding.RequireApproval {
@@ -938,8 +938,7 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 //   - a sandbox that may reach the network.
 //
 // Only a binding's require_approval asks a person before a call is sent; the others ask
-// nobody. It reads the config as it is about to be stored. router plugins migrate asks it
-// of a binding it adds (pluginmigrate.Options.Complaint).
+// nobody. It reads the config as it is about to be stored.
 func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitions, customerID string, config store.AgentConfig) (string, bool, error) {
 	var sensitive *store.ConnectorBinding
 	var outbound, unheld []string
@@ -1071,8 +1070,7 @@ func holdsPattern(binding store.ConnectorBinding, pattern string) bool {
 //
 // A binding to the plugin's own connector may be called what the plugin is: the session drops
 // a plugin entry whose connector a binding names (session.Spec.withoutBoundPlugins), so only
-// the binding offers the name. That is the binding router plugins migrate writes beside the
-// entry it keeps (internal/pluginmigrate), and the config stays editable (AI-994 F42).
+// the binding offers the name, and a config with both stays editable (AI-994 F42).
 func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
 	for _, binding := range config.Connectors {
 		if binding.ConnectorID != binding.Name && namesPluginEntry(config.Plugins, binding.Name) {
@@ -1595,8 +1593,8 @@ func mcpServersComplaint(ctx context.Context, config store.AgentConfig) (string,
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
 			return fmt.Sprintf("mcp_servers: %s needs an https url", server.Name), false
 		}
-		if err := plugins.CheckToolPatterns(server.Tools); err != nil {
-			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, strings.TrimPrefix(err.Error(), "plugins: ")), false
+		if err := core.CheckToolPatterns(server.Tools); err != nil {
+			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, err.Error()), false
 		}
 	}
 	// Last, since it resolves each host: the checks above cost nothing. Only the host is

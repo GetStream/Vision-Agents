@@ -98,11 +98,15 @@ type Page struct {
 	shared      bool
 	// thread is a page of a thread channel, whose people's messages are read back as user
 	// turns (messageFromThread).
-	thread    bool
-	empty     bool
-	Messages  []Message `json:"messages"`
-	Before    string    `json:"before,omitempty"`
-	Truncated bool      `json:"context_truncated"`
+	thread bool
+	// dispatched is a page of the channel a message the Router handed to a worker was written
+	// in, opened on its word (opensDispatched): the router never stamped it, so it holds no
+	// memory scope to keep, and its people's messages are read back as user turns.
+	dispatched bool
+	empty      bool
+	Messages   []Message `json:"messages"`
+	Before     string    `json:"before,omitempty"`
+	Truncated  bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -342,6 +346,36 @@ func opensThread(ctx context.Context, cid string) bool {
 	return vouched != "" && vouched == cid
 }
 
+// dispatchedOpen is the context key RouterOpensDispatched keeps its channel under.
+type dispatchedOpen struct{}
+
+// RouterOpensDispatched is ctx carrying the Router's word that cid is the channel a message it
+// handed to the customer's worker was written in, whose customer it worked out then
+// (internal/api routeArrivingMessage), and which that worker's session answers in
+// (internal/session Manager.handedOut). Such a channel is the customer's own and carries none
+// of the router's stamps, so ownedBy, which reads them, cannot place it: only a ctx from here
+// opens one, only the one channel it names, and only while it still has none of them.
+func RouterOpensDispatched(ctx context.Context, cid string) context.Context {
+	return context.WithValue(ctx, dispatchedOpen{}, cid)
+}
+
+// opensDispatched is whether ctx carries the Router's word for the channel cid
+// (RouterOpensDispatched), and the channel is one somebody wrote in that the router never
+// stamped: custom is the channel's, empty is a channel nothing was written in, which is not the
+// one the message came from.
+func opensDispatched(ctx context.Context, cid string, custom map[string]any, empty bool) bool {
+	vouched, _ := ctx.Value(dispatchedOpen{}).(string)
+	if vouched == "" || vouched != cid || empty {
+		return false
+	}
+	for _, stamp := range []string{CustomerField, "support_agent_id", "support_owner_id", "support_access", TriggerField} {
+		if _, stamped := custom[stamp]; stamped {
+			return false
+		}
+	}
+	return true
+}
+
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
 // Stream Chat: what the channel bridge sends on to the external thread.
 type FinishedReply struct {
@@ -563,7 +597,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
-		if !sameMemoryScope(page.memoryScope, scope) {
+		if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 		}
 
@@ -610,7 +644,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
-	if !sameMemoryScope(page.memoryScope, scope) {
+	if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 	}
 	if agentID == "" {
@@ -952,8 +986,11 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		return Page{}, stack.Wrap(err)
 	}
 	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
+	dispatched := false
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		return Page{}, stack.Wrap(err)
+		if dispatched = opensDispatched(ctx, cid, r.Data.Channel.Custom, len(r.Data.Messages) == 0); !dispatched {
+			return Page{}, stack.Wrap(err)
+		}
 	}
 	// A thread channel is read only for the Router's word that it opens it: a conversation id
 	// a request names reads nothing there.
@@ -976,7 +1013,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -1001,7 +1038,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			// A message written before schema v1 carries the whole message as support_message.
 			raw, ok := m.Custom["support_message"]
 			if !ok {
-				if written, ok := messageFromThread(m, p.thread); ok {
+				if written, ok := messageFromThread(m, p.thread || p.dispatched); ok {
 					p.Messages = append(p.Messages, written)
 				}
 				continue

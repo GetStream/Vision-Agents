@@ -618,6 +618,11 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	if err := s.current().CheckAsked(asked); err != nil {
 		return "", stack.Wrap(err)
 	}
+	// What a worker hands on from a channel it answers is already there, written by the
+	// person, so only the reply is (Spec.Dispatched).
+	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
+		return s.followUp(ctx, store.NewID(), text, images, asked)
+	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
 	if s.persisted != nil && s.spec.Text {
 		if s.spec.Caller.UserID != "" {
@@ -746,31 +751,38 @@ func (s *Session) chose(name, connectionID string) {
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
+	_, err := s.followUp(ctx, id, text, images, options.LLM{})
+	return err
+}
+
+// followUp is FollowUp under commandMu, with asked changing this reply alone. It returns the
+// id the turn was recorded as, as Respond does.
+func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
 	if s.persisted == nil {
-		return stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+		return "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
-		return stack.Wrap(err)
+		return "", stack.Wrap(err)
 	}
 	if receipt.Duplicate {
-		return nil
+		return "", nil
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, options.LLM{})
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		// No turn started, so a caller retrying the same id must start one, not be told
 		// it is already there.
 		s.persisted.AbandonFollowUp(receipt.CommandID)
-		return stack.Wrap(err)
+		return "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
-	if turnID != "" {
-		s.openTurn(turnID, text)
+	if turnID == "" {
+		return "", nil
 	}
-	return nil
+	return s.openTurn(turnID, text), nil
 }
 
 // FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
@@ -849,14 +861,14 @@ func (s *Session) WaitsOnCommand(id string) bool {
 	return bound
 }
 
-// Ask answers a piece of text in writing, without speaking any of it, and writes the answer
-// into the conversation.
+// Ask answers a piece of text in writing, and any images sent with it, without speaking any
+// of it, and writes the answer into the conversation.
 //
 // The answer is stored here rather than by the caller because the transcript is the
 // session's: a caller holding a session has no channel to write to, and an answer that only
 // went back over HTTP would be missing from the conversation it belongs to.
-func (s *Session) Ask(ctx context.Context, text string) (string, error) {
-	answer, err := s.current().Ask(ctx, text)
+func (s *Session) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
+	answer, err := s.current().Ask(ctx, text, images...)
 	if err != nil {
 		return "", err
 	}
@@ -1003,6 +1015,9 @@ func (s *Session) Busy() bool { return s.current().Busy() }
 
 // SeesImages reports whether the agent has something that looks at a turn's images.
 func (s *Session) SeesImages() bool { return s.current().SeesImages() }
+
+// SeesImagesInWriting reports whether Ask hands the agent's model images.
+func (s *Session) SeesImagesInWriting() bool { return s.current().SeesImagesInWriting() }
 
 // settleGap is how long the agent stays quiet, with nothing left to do, before a headless
 // conversation is taken as finished.

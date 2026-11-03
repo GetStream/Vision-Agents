@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -55,6 +57,10 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
+	// Dispatched holds ConversationID on the channel a message the router handed to a worker
+	// was written in, which the worker's session answers (Manager.handedOut). The person writes
+	// there themselves, so the session writes only its replies. No request sets it.
+	Dispatched bool
 	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
@@ -388,7 +394,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		ReviewInstructions: config.ReviewInstructions,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
-		MCPServers:         config.MCPServers,
+		MCPServers:         namedByURL(config.MCPServers),
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
@@ -406,6 +412,16 @@ func FromConfig(config store.AgentConfig) Spec {
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
+}
+
+// namedByURL is servers less any named like a catalog plugin, which is never offered or
+// logged into: a login under a catalog id would be taken for that plugin's, client and all.
+// Saving a config refuses such a name, so only one stored before the check carries it.
+func namedByURL(servers []store.MCPServer) []store.MCPServer {
+	return slices.DeleteFunc(slices.Clone(servers), func(server store.MCPServer) bool {
+		_, listed := plugins.Lookup(server.Name)
+		return listed
+	})
 }
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.

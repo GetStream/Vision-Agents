@@ -70,7 +70,7 @@ answers 400 for an id the catalog does not have, one named twice in a list, `rea
 plugin with no `readonly_url`, and a scope missing from the entry's `scopes_supported` (copy
 it from the server's `/.well-known/oauth-protected-resource`; left out, any scope goes).
 `tools`, there and on `mcp_servers`, becomes `Connection.Tools`: `Open` drops every tool
-`Offered` does not match, so it is neither listed nor owned, and `Runtime.Call` refuses it.
+`core.Offered` does not match, so it is neither listed nor owned, and `Runtime.Call` refuses it.
 The login does not remember the options it was made under, so changing them needs a fresh
 login; a user plugin whose server then refuses the old token asks again on its own.
 
