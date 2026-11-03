@@ -40,6 +40,8 @@ func TestChatInboundSuite(t *testing.T) {
 }
 
 func (s *ChatInboundSuite) SetupSuite() {
+	// Voice recordings are served on loopback, which the public-egress client refuses.
+	s.imageHTTP = &http.Client{}
 	s.chatInbounds.keys(&s.RouterSuite)
 	s.deploymentKnown = true
 	s.database = "chatinbound"
@@ -92,6 +94,39 @@ func (s *ChatInboundSuite) TestAPhotoDeliveredWithTextReachesTheWorkerOnce() {
 		s.Fail("the photo never reached the worker")
 	}
 	s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
+}
+
+// A voice recording sent alone or with text, delivered by Stream Chat and brought by the
+// webhook twice too, is heard once and handed to the worker once, as the text, then what it
+// says.
+func (s *ChatInboundSuite) TestAVoiceRecordingDeliveredAndHookedIsHeardAndHandedOnce() {
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 4})
+	defer release()
+	recording := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(wavOf("where is my order"))
+	}))
+	defer recording.Close()
+	for typed, want := range map[string]string{"": "where is my order", "Hi": "Hi\n\nwhere is my order"} {
+		since := time.Now().UTC()
+		body := strings.Replace(s.message(suiteStreamApp, s.config(s.customerID()), ""),
+			`"text": "is my order on its way?"`,
+			`"text": "`+typed+`", "attachments": [{"type": "voiceRecording", "asset_url": "`+recording.URL+`/note.aac"}]`, 1)
+		s.Require().Contains(body, `"attachments"`)
+
+		s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
+		s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", body, suiteStreamSecret))
+		s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", body, suiteStreamSecret))
+
+		select {
+		case message := <-worker.Messages():
+			s.Equal(want, message.Text, typed)
+		case <-time.After(settleFor):
+			s.Fail("the recording never reached the worker", typed)
+		}
+		s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
+		s.meteredRows(routing.STT, since, 1)
+		s.Never(func() bool { return len(s.sttRowsSince(since)) > 1 }, dropped, 10*time.Millisecond, "heard twice")
+	}
 }
 
 func (s *ChatInboundSuite) TestADeliverySignedWithTheOldKeyIsAnswered() {

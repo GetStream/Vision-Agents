@@ -717,13 +717,7 @@ func (s *Server) answerMessage(found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 
-	text := event.Message.Text
-	// A speech-to-speech agent answers only on the call (agent.Ask), so nothing it would refuse
-	// is heard.
-	if found.Mode() != "native" {
-		text = s.heardText(ctx, found.Spec(), event)
-	}
-	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), text, event)
+	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), s.heardText(ctx, found.Spec(), event), event)
 	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
 			"channel", event.ChannelID, "session", found.ID(), "error", err)
