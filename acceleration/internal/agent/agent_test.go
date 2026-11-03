@@ -861,6 +861,8 @@ type AgentSuite struct {
 	runner *stubToolRunner
 	// toolPolicy is what a test's tools ask of the agent (Options.ToolPolicy).
 	toolPolicy func(tool string) ToolPolicy
+	// onHeard is Options.OnHeard (holdsHeard).
+	onHeard func(Heard)
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
@@ -951,6 +953,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.toolPolicy = nil
+	s.onHeard = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.unified = false
@@ -1200,6 +1203,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		EndCallWhen:        s.endCallWhen,
 		ToolRunner:         running,
 		ToolPolicy:         s.toolPolicy,
+		OnHeard:            s.onHeard,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,
@@ -1721,6 +1725,97 @@ func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() 
 		"a reply to speech the agent was not meant to answer must never be heard")
 	s.Empty(harness.WithoutNotes(s.agent.History()))
 	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestEverySpeculativeReplyIsAskedForUnderItsOwnGeneration() {
+	// A speculation thrown away is forgotten on its own goroutine, possibly after the turn
+	// was asked for again under the same id, and only its generation tells the two apart.
+	s.speculates = true
+	s.join(true)
+	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
+	var generations []uint64
+	for range 2 {
+		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.agent.mu.Lock()
+		generations = append(generations, s.agent.speculations[ready.ID].turn.Generation)
+		s.agent.mu.Unlock()
+	}
+
+	s.NotZero(generations[0], "the first speculation was asked for without a generation")
+	s.NotZero(generations[1], "the second speculation was asked for without a generation")
+	s.NotEqual(generations[0], generations[1], "the replaced speculation shares its generation with the one that replaced it")
+}
+
+func (s *AgentSuite) TestADroppedSpeculationForgottenAfterTheAnswerWasAskedLeavesItsOfferAlone() {
+	s.speculates = true
+	s.join(true)
+	finish := make(chan struct{})
+	s.model.holdCompletion = finish
+	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
+	s.agent.speculate(s.agent.harness, ready, false, false)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the speculation was never asked for")
+
+	// The speculation is dropped, but reading it out to its end waits for the model, so
+	// its Forget lands only once the answer under the same id was asked for.
+	s.agent.dropSpeculation(ready.ID)
+	answer, err := s.agent.harness.Respond(s.ctx, harness.Turn{
+		ID: ready.ID, Instructions: "be brief", NoTools: true,
+		History: []llm.Message{{Role: llm.User, Content: ready.Text}},
+	})
+	s.Require().NoError(err)
+	defer answer.Close()
+	forgotten := make(chan struct{})
+	go func() {
+		s.agent.pumps.Wait()
+		close(forgotten)
+	}()
+	isClosed := func(done chan struct{}) bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	close(finish)
+	s.eventually(func() bool { return isClosed(forgotten) }, "the dropped speculation was never forgotten")
+
+	called := []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
+	s.Empty(s.agent.harness.DropUnoffered(ready.ID, called), "the speculation's Forget cleared that the answer was offered no tools")
+}
+
+func (s *AgentSuite) TestATypedTurnAfterTheCallersWereAnsweredBySpeculationsIsOfferedTools() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = []string{"Hello there."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return s.spokenText("Hello there.") }, "the reply was never spoken")
+	s.Require().Len(s.model.requests(), 1, "the reply was not the speculation adopted")
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the typed turn was never answered")
+	typed := s.model.requests()[1]
+	s.NotEqual("none", typed.ToolChoice, "a caller already spoke, so the typed turn was offered no tools")
+	s.NotEmpty(typed.Tools)
+}
+
+func (s *AgentSuite) TestATypedTurnBeforeAnyoneSpokeIsOfferedNoToolsWithSpeculationOn() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = []string{"Hello, how can I help?"}
+
+	_, err := s.agent.RespondTo(s.ctx, "greet the caller", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return s.spokenText("Hello, how can I help?") }, "the greeting was not said")
+	s.Equal("none", s.model.requests()[0].ToolChoice, "the greeting was offered tools")
 }
 
 func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {

@@ -106,6 +106,7 @@ const (
 	codeUnsyncedChanges         = "unsynced_changes"
 	codePhoneNumberNeedsAddress = "phone_number_needs_address"
 	codePhoneVendorFailed       = "phone_vendor_failed"
+	codePhoneNumberSettling     = "phone_number_settling"
 	codeTelephonySuspended      = "telephony_suspended"
 	codeTelephonyNotSuspended   = "telephony_not_suspended"
 	codeNameTaken               = "name_taken"

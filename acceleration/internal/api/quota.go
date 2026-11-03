@@ -99,10 +99,14 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 			return
 		}
 
+		// A read spends nothing, so a device that has spent its day still reads its sessions
+		// and their responses, and is told where it stands.
+		reading := (r.Method == http.MethodGet || r.Method == http.MethodHead) && !startsModelWork(r)
+
 		status, err := s.quota.Allow(r.Context(), customerID, caller)
 		quotaHeaders(w.Header(), status)
 		if err != nil {
-			if !errors.Is(err, quota.ErrExhausted) {
+			if !errors.Is(err, quota.ErrExhausted) || reading {
 				next.ServeHTTP(w, r)
 				return
 			}

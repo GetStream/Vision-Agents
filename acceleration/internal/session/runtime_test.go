@@ -76,6 +76,7 @@ func (s *RuntimeSuite) SetupSuite() {
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Region: pricing.DefaultRegion, Free: true},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVoice, Region: pricing.DefaultRegion, Rates: perMinute},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVideo, Region: pricing.DefaultRegion, Rates: perMinute},
+		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Region: pricing.RegionEU, Rates: perMinute},
 	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
@@ -98,8 +99,14 @@ func (s *RuntimeSuite) manages() {
 	s.T().Cleanup(transcriber.Close)
 
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return &stubLLM{reply: "Hello."}, nil })
-	reasoner, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: logger})
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return &stubLLM{reply: "Hello."}, nil },
+		routing.OverrideRegion)
+	// One instance in each region, so an eu session opens.
+	inRegions := stubConfig()
+	inEU := inRegions.Providers[0]
+	inEU.Region = pricing.RegionEU
+	inRegions.Providers = append(inRegions.Providers, inEU)
+	reasoner, err := llmrouter.New(llmrouter.Options{Config: inRegions, Registry: reasoning, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
 
@@ -211,6 +218,22 @@ func (s *RuntimeSuite) TestASessionRecordsRuntimeUntilItCloses() {
 		s.Equal("key-runtime", row.APIKey, "billed to whoever opened the session")
 		s.Zero(row.CostMicros, "time in writing is priced free here")
 		s.False(row.Billable, "and so is recorded without being billed")
+	}
+}
+
+func (s *RuntimeSuite) TestASessionsRuntimeIsPricedInItsRegion() {
+	s.manages()
+	created, err := s.opens(Spec{Text: true, Region: pricing.RegionEU})
+	s.Require().NoError(err)
+
+	time.Sleep(runtimeSlice)
+	s.Require().NoError(created.Close())
+
+	rows := s.runtime(created.ID())
+	s.Require().NotEmpty(rows)
+	for _, row := range rows {
+		s.Equal("runtime-stream-text-eu", row.SKU, "priced by the eu entry, not the free us one")
+		s.True(row.Billable)
 	}
 }
 

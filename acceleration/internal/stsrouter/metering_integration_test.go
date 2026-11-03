@@ -693,10 +693,9 @@ func unpriced(provider, model string) float64 {
 	return 0
 }
 
-// TestATranscriberBilledByTheSecondIsARowEvenUnpriced: whisper-1 reports the seconds it heard
-// rather than tokens, and the price list has no entry for it. The turn is still a row, of its
-// audio, counted unpriced so somebody prices it, rather than dropped.
-func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsARowEvenUnpriced() {
+// TestATranscriberBilledByTheSecondIsPricedByItsAudio: whisper-1 reports the seconds it heard
+// rather than tokens, and the turn is a row of its audio at whisper-1's rate.
+func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsPricedByItsAudio() {
 	socket := s.vendorSocket(`{"type":"session.created","session":{"id":"sess_1"}}`, map[string]string{
 		"session.update": `{"type":"session.updated","session":{"id":"sess_1"}}`,
 	})
@@ -723,8 +722,9 @@ func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsARowEvenUnpriced() {
 	s.Equal("whisper-1", rows[0].Model)
 	s.EqualValues(2_400, rows[0].AudioMs)
 	s.True(rows[0].Billable)
-	s.Zero(rows[0].CostMicros)
-	s.Equal(before+1, unpriced("openai", "whisper-1"), "billable work with no price raises the alarm")
+	s.Equal(s.priced(routing.STS, "openai/whisper-1", pricing.Quantities{pricing.AudioMs: 2_400}), rows[0].CostMicros)
+	s.Positive(rows[0].CostMicros)
+	s.Equal(before, unpriced("openai", "whisper-1"))
 }
 
 // TestRealtimeTranscriptionIsItsOwnRow plays back OpenAI writing down two caller turns, the

@@ -169,11 +169,109 @@ func (s *HarnessSuite) TestADroppedSpeculationLeavesItsNotesPending() {
 
 	s.respond("speculative", "is it done")
 	s.False(s.harness.Pending(), "the speculative reply took the answer")
-	s.harness.Forget("speculative")
+	s.harness.Forget("speculative", 0)
 
 	s.True(s.harness.Pending(), "a reply nobody heard told nobody")
 	s.respond("turn-2", "is it done")
 	s.Contains(shown(s.fast.requests()[2]), "12.63")
+}
+
+func (s *HarnessSuite) TestAForgottenSpeculationLeavesTheAnswerAskedUnderItsIdAlone() {
+	// The speculation is read out on its own goroutine, so its Forget can land after the
+	// turn was answered under the same id.
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, Generation: 1})
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
+	s.harness.Forget("turn-1", 1)
+	s.Empty(s.harness.DropUnoffered("turn-1", called), "the speculation's Forget cleared that the answer was offered no tools")
+
+	// Another speculation took the id after the one forgotten.
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history, Generation: 1})
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history, Generation: 2, NoTools: true})
+	s.harness.Forget("turn-2", 1)
+	s.Empty(s.harness.DropUnoffered("turn-2", called), "an older speculation's Forget cleared the newer one's offer")
+}
+
+func (s *HarnessSuite) TestASpeculationCancelledInCreateLeavesTheAnswerAskedUnderItsIdAlone() {
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+
+	hold := make(chan struct{})
+	s.fast.mu.Lock()
+	s.fast.holdCreate = hold
+	s.fast.mu.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	failed := make(chan error, 1)
+	go func() {
+		_, err := s.harness.Respond(ctx, Turn{ID: "turn-1", Instructions: "be brief", History: history, Generation: 1})
+		failed <- err
+	}()
+	s.eventually(func() bool { return len(s.fast.requests()) == 1 }, "the speculation was never asked")
+
+	s.fast.mu.Lock()
+	s.fast.holdCreate = nil
+	s.fast.mu.Unlock()
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
+
+	cancel()
+	s.Require().Error(<-failed, "the speculation's create did not fail")
+	s.harness.Forget("turn-1", 1)
+	s.Empty(s.harness.DropUnoffered("turn-1", called), "the speculation's failed create cleared that the answer was offered no tools")
+}
+
+func (s *HarnessSuite) TestAForgottenSpeculationAloneIsForgottenWhateverItsGeneration() {
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, Generation: 7, NoTools: true})
+	s.harness.Forget("turn-1", 7)
+	s.Equal(called, s.harness.DropUnoffered("turn-1", called), "a forgotten speculation's offer was kept")
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history})
+	s.Equal(called, s.harness.DropUnoffered("turn-1", called), "the answer asked for after it was judged on the speculation's offer")
+}
+
+func (s *HarnessSuite) TestWhatIsKeptToTellSpeculationsApartIsLetGoOfWithTheReply() {
+	s.build(true)
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+	for name, end := range map[string]func(){
+		"forgotten": func() { s.harness.Forget("turn-1", 1) },
+		"written":   func() { s.harness.Remember(llm.Response{ID: "turn-1", Status: llm.StatusCompleted}) },
+		"cut off":   func() { s.harness.Release("turn-1") },
+	} {
+		s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, Generation: 1})
+		if name != "forgotten" {
+			s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history})
+		}
+		end()
+		s.harness.mu.Lock()
+		s.Empty(s.harness.generations, "a reply %s left its id behind", name)
+		s.harness.mu.Unlock()
+	}
+}
+
+func (s *HarnessSuite) TestAForgottenSpeculationDoesNotTakeBackWhatTheAnswerUnderItsIdWasHanded() {
+	s.build(true)
+	s.settledAnswer()
+
+	history := []llm.Message{{Role: llm.User, Content: "is it done"}}
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history, Generation: 1})
+	s.False(s.harness.Pending(), "the speculative reply took the answer")
+	s.answer(Turn{ID: "turn-2", Instructions: "be brief", History: history})
+	s.Contains(shown(s.fast.requests()[2]), "12.63")
+	s.harness.Forget("turn-2", 1)
+
+	carried := s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.NotEmpty(carried, "what the answer was sent was not kept in the conversation")
+	s.False(s.harness.Pending(), "the answer was handed again after it was written")
 }
 
 func (s *HarnessSuite) TestTheSubagentIsNotHandedTheHarnessNotes() {

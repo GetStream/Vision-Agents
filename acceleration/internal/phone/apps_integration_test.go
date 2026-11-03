@@ -304,6 +304,34 @@ func (s *AppsSuite) TestAReleaseTheVendorWillNotStopKeepsTheNumber() {
 	s.Equal([]string{s.e164}, s.own.TrunkNumbers(attached.TrunkID))
 }
 
+// TestAReleaseRefusedForANumberJustBoughtSaysItIsSettling: Telnyx refused a release 4 seconds
+// after the purchase and took the same release 13 seconds later, so a refusal then is said to
+// be the vendor setting the number up, and the number is still held for the retry.
+func (s *AppsSuite) TestAReleaseRefusedForANumberJustBoughtSaysItIsSettling() {
+	s.vendor.releaseErr = &VendorError{Vendor: s.vendor.vendor, Path: "/numbers", Status: http.StatusServiceUnavailable}
+
+	err := s.service.Release(s.ctx, s.customer, s.e164)
+
+	s.ErrorIs(err, ErrNumberSettling)
+	s.ErrorAs(err, new(*VendorError), "the vendor's answer is kept for the log")
+	_, err = s.store.Number(s.ctx, s.customer, s.e164)
+	s.NoError(err, "still held, so it can be released again")
+	s.vendor.releaseErr = nil
+	s.Require().NoError(s.service.Release(s.ctx, s.customer, s.e164))
+}
+
+func (s *AppsSuite) TestAReleaseRefusedForANumberHeldAWhileIsTheVendorsFailure() {
+	s.vendor.releaseErr = &VendorError{Vendor: s.vendor.vendor, Path: "/numbers", Status: http.StatusServiceUnavailable}
+	later, err := NewService(ServiceOptions{Registry: s.registry, Store: s.store, Apps: s.apps, PublicURL: "https://router.example",
+		Now: func() time.Time { return time.Now().Add(2 * NumberSettles) }})
+	s.Require().NoError(err)
+
+	err = later.Release(s.ctx, s.customer, s.e164)
+
+	s.ErrorAs(err, new(*VendorError))
+	s.NotErrorIs(err, ErrNumberSettling)
+}
+
 func (s *AppsSuite) TestReattachingAfterRegistrationMovesTheTrunk() {
 	// The number was attached while the customer acted in the deployment's app, and is
 	// attached again once it has its own: the old trunk goes from the old app.
