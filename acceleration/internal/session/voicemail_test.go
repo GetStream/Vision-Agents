@@ -124,10 +124,14 @@ func (s *SessionSuite) TestAnUnknownPickUpNobodySpokeOnHearsTheMessage() {
 	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
 }
 
+// The report can come before the session has taken the caller's words from its agent: the
+// agent answering them is what makes the call a person's.
 func (s *SessionSuite) TestAnUnknownPickUpAfterTheCallerSpokeToTheAgentChangesNothing() {
+	s.records = &stubTranscript{}
 	s.manages()
 	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
 	s.settles(created)
+	s.T().Cleanup(s.records.stall())
 	s.callerSays("who is this?")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 && !created.Busy() }, "the caller was never answered")
 	said := len(s.voice.spoken())
@@ -285,6 +289,36 @@ func (s *SessionSuite) TestTheCallerSpeakingToTheAgentLetsItHangUp() {
 	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
 		"the agent could not hang up on a caller who spoke to it")
 	s.Equal(EndAgentHangup, created.endReason())
+}
+
+// The agent may hang up on the caller before the session has taken their words from it: the
+// hang-up is not held for the check, then dropped once the session takes them.
+func (s *SessionSuite) TestAnAgentHangingUpOnTheCallerBeforeTheSessionTookTheirWordsHangsUp() {
+	s.records = &stubTranscript{}
+	created := s.checksForVoicemail()
+	release := s.records.stall()
+	s.T().Cleanup(release)
+
+	s.callerSays("who is this?")
+	s.eventually(func() bool { return created.endReason() != "" || s.toldOf("call-1") },
+		"the agent never asked to hang up")
+	release()
+
+	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
+		"the agent could not hang up on a caller who spoke to it")
+	s.Equal(EndAgentHangup, created.endReason())
+}
+
+// toldOf reports whether the model was told what came of the tool call id.
+func (s *SessionSuite) toldOf(id string) bool {
+	for _, request := range s.model.requests() {
+		for _, message := range request.Input {
+			if message.ToolCallID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // callerSays has the phone caller say text to the agent.

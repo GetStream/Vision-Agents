@@ -748,6 +748,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
+			OnHeard:       created.heardCaller,
 			ToolPolicy:    toolPolicy,
 			Edge:          edge,
 			Text:          spec.Text,
