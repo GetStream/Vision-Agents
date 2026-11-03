@@ -663,6 +663,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	return s.openTurn(turnID, text), nil
 }
 
+// errNothingToAnswer is an answer handed on from a channel with no text and no images.
+var errNothingToAnswer = errors.New("there is nothing to answer")
+
 // errPersonalNeedsCommand is a question to a personal conversation sent without a command ID.
 var errPersonalNeedsCommand = errors.New("personal conversations require a command ID")
 
@@ -833,6 +836,11 @@ func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.Im
 func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+	}
+	// A worker from before photos were read answers a photo sent alone with no text and no
+	// images; the model has nothing to be asked, as on the HTTP answer's 400.
+	if strings.TrimSpace(text) == "" && len(images) == 0 {
+		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {

@@ -56,15 +56,15 @@ func (s *MessageHooksSuite) TestAPhotoSentAloneInAnUnlinkedThreadChannelReachesN
 	s.nothingReaches(worker, "a photo alone in an unlinked thread channel")
 }
 
-// A worker that answers a photo sent alone as the Go SDK does, with the photo's URL under a
-// request id and no text, has the model shown the photo, and the reply is written beside the
+// A worker that answers a photo sent alone as the Go SDK does, with the photo's URL and no
+// text or request id, has the model shown the photo, and the reply is written beside the
 // person's message without a copy of it or a second upload of the photo.
 func (s *MessageHooksSuite) TestAWorkersAnswerToAPhotoSentAloneShowsTheModelThePhoto() {
 	handed := s.photoAloneHandedOut()
 	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
 	uploaded, seen := len(s.chat.Uploads()), len(s.vision.requests())
 
-	s.askedAs(opened.Id, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: handed.Images[0].URL}}})
+	s.askedAs(opened.Id, CreateResponseRequest{Images: &[]ImageSource{{Url: handed.Images[0].URL}}})
 
 	s.answered("", finishedReply)
 	s.Empty(s.chat.Uploads()[uploaded:], "the photo is already on the person's message")
@@ -87,6 +87,45 @@ func (s *MessageHooksSuite) TestAnOldWorkersEmptyAnswerToAPhotoSentAloneIsRefuse
 	s.Never(func() bool { return len(s.vision.requests()) > seen || len(s.inTheChannel()) > 1 }, dropped, 10*time.Millisecond,
 		"an empty answer was asked or written")
 	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
+}
+
+// The same old worker, answering over the session's socket as its Python SDK did (a respond
+// frame with an empty text and a request id), is refused too: nothing is asked of the model,
+// no reply is written, and the worker is told on the socket that there is nothing to answer.
+func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondToAPhotoSentAloneIsRefusedAndNothingIsWritten() {
+	handed := s.photoAloneHandedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
+	socket := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events?decisions=false")
+
+	s.Require().NoError(socket.WriteJSON(frame{"type": "respond", "text": handed.Text, "request_id": s.utils.uuid()}))
+
+	deadline := time.Now().Add(5 * time.Second)
+	_ = socket.SetReadDeadline(deadline)
+	var refusal string
+	for refusal == "" {
+		var event map[string]any
+		s.Require().NoError(socket.ReadJSON(&event), "the worker was told nothing")
+		if event["type"] == "error" {
+			refusal = fmt.Sprint(event)
+		}
+	}
+	s.Contains(refusal, "there is nothing to answer")
+	s.Never(func() bool { return len(s.vision.requests()) > seen || len(s.inTheChannel()) > 1 }, dropped, 10*time.Millisecond,
+		"an empty answer was asked or written")
+	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
+}
+
+// Control, as on base: a worker answering over the socket with text, as on a photo sent with
+// text, is answered as before.
+func (s *MessageHooksSuite) TestAWorkersSocketRespondWithTextIsAnswered() {
+	handed := s.photoAloneHandedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	socket := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events?decisions=false")
+
+	s.Require().NoError(socket.WriteJSON(frame{"type": "respond", "text": "what is in it?", "request_id": s.utils.uuid()}))
+
+	s.answered("", finishedReply)
 }
 
 // Control, as on base: a message with text and nothing attached reaches the worker with no
