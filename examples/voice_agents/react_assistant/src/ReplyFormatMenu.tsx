@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Assistant } from "./assistant";
 import { messageOf } from "./errors";
@@ -38,6 +38,24 @@ export function ReplyFormatMenu() {
   const [isOpen, setOpen] = useState(false);
   const [format, setFormat] = useState<ReplyFormat | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
+  const menu = useRef<HTMLDivElement>(null);
+
+  // A tap anywhere else, or Escape, closes it, as a menu does.
+  useEffect(() => {
+    if (!isOpen) return;
+    const away = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -64,7 +82,7 @@ export function ReplyFormatMenu() {
   };
 
   return (
-    <div className="reply-format">
+    <div className="reply-format" ref={menu}>
       <button
         aria-expanded={isOpen}
         aria-label="How Juno answers"
