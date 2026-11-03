@@ -510,6 +510,8 @@ func row(modality Modality, config ProviderConfig, entry Stat) store.Request {
 		Tags:              entry.Tags,
 		Provider:          config.Provider,
 		Model:             config.Model,
+		Region:            regionOf(config),
+		BYOK:              config.BYOK,
 		StartedAt:         entry.StartedAt,
 		OperationID:       entry.OperationID,
 		Purpose:           entry.Purpose,
