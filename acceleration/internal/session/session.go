@@ -616,7 +616,7 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // in Stream Chat shows them on the person's message, as a command's are (RespondCommand).
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM, photos ...llm.ImagePart) (string, error) {
 	var shown []persistent.Photo
-	if text == "" && len(photos) > 0 && s.persisted != nil && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
+	if text == "" && s.persisted != nil && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
 		// Voice neither starts nor stops while this question holds moving, so photos uploaded
 		// for a written conversation are shown on the person's message, not left behind by a
 		// call whose transcript writes it.
