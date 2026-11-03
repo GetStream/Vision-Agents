@@ -14,6 +14,10 @@ A photo a person sends in a plain `agent` channel is now answered. A running ses
 
 A message frame's `images` reach the Rust worker as `InboundMessage.images` (`InboundImage { url, mime_type }`) and the PHP worker as `InboundMessage->images` (`InboundImage`). An entry that is not an object or has no string `url` is dropped. `Dispatch::answer` (Rust) and `Dispatch->answer()` (PHP) send them as the response's images, on the message's own request id. `create` with images still sends no request id (AI-2651).
 
+### .NET and Ruby dispatch workers show a message's photos to the model
+
+A .NET or Ruby worker reads the photos of a dispatched message (`InboundMessage.Images` in .NET, `InboundMessage#images` in Ruby, each a URL and its MIME type), and `Dispatch.AnswerAsync` / `Dispatch#answer` pass them to the model with the message's request id, as Go does. A message of text alone is answered as before, and `Responses.CreateAsync` / `responses.create` with images still send no request id (AI-2650).
+
 ### A custom connector's server instructions reach the agent
 
 The `instructions` a custom connector's MCP server (`custom_…`) sends when a session opens it are added after the agent config's own instructions, as for a server under `mcp_servers`: under a line naming the binding and its tools (`crm__*`), cut to 4000 bytes per server, and only when the session offers at least one of its tools. A built-in connector's are still left out. The instructions are read when the session opens; a binding the session opens later, after a login during the conversation, adds none (AI-2525).
