@@ -3280,7 +3280,7 @@ components:
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
-          description: What to answer, as though it had been said. Empty when audio carries the question.
+          description: What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id.
           type: string
         videos:
           description: Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.

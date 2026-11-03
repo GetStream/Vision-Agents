@@ -39,7 +39,7 @@ import kotlinx.serialization.encoding.Encoder
 /**
  * 
  *
- * @param text What to answer, as though it had been said. Empty when audio carries the question.
+ * @param text What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id.
  * @param audio 
  * @param images 
  * @param maxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -51,7 +51,7 @@ import kotlinx.serialization.encoding.Encoder
 
 internal data class CreateResponseRequest (
 
-    /* What to answer, as though it had been said. Empty when audio carries the question. */
+    /* What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id. */
     @SerialName(value = "text")
     val text: kotlin.String,
 

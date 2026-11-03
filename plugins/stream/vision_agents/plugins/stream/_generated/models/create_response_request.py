@@ -22,7 +22,8 @@ T = TypeVar("T", bound="CreateResponseRequest")
 class CreateResponseRequest:
     """
     Attributes:
-        text (str): What to answer, as though it had been said. Empty when audio carries the question.
+        text (str): What to answer, as though it had been said. May be empty when images or audio carry the question. A
+            session kept in Stream Chat takes images with no text only with a request_id.
         audio (AudioSource | Unset):
         images (list[ImageSource] | Unset):
         max_output_tokens (int | Unset): Caps this answer, reasoning included, and the replies that finish it after its

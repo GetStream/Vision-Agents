@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class AudioSource
 {
     public function __construct(
-        // Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, and a data U...
+        // Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetc...
         public string $url,
     ) {
     }

@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class CreateResponseRequest
 {
     public function __construct(
-        // What to answer, as though it had been said. Empty when audio carries the question.
+        // What to answer, as though it had been said. May be empty when images or audio carry the question. A session...
         public string $text,
         // A voice note to answer. The router transcribes it and answers what was said, after text when both are sent;...
         public ?AudioSource $audio = null,
