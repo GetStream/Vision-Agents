@@ -147,6 +147,8 @@ func (s *Session) checked(carryOut bool) {
 		s.machine.timer.Stop()
 	}
 	s.machine.mu.Unlock()
+	// Not on s.running: the hang-up closes the session, and closing waits on s.running.
+	// It returns at once on a session that began closing meanwhile.
 	if carryOut && held != nil {
 		go held()
 	}
