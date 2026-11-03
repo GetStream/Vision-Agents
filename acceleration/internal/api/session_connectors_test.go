@@ -125,6 +125,35 @@ func (s *SessionConnectorsSuite) TestABuiltInConnectorsServerInstructionsAreLeft
 	s.Equal("Be brief.", s.recordedInstructions(builtin, "Quote ticket ids whole."))
 }
 
+// TestARowStillNamingPluginsRunsItsBuiltInAndCustomBindingsAsOnBase is the control: a config
+// whose row still names a plugin, a plugin event and an MCP server, as one saved before they
+// were refused does, runs the tool of a custom and of a built-in connector's binding as the base
+// did (probe on c467ee4d6: crm__echo ran with the echo's text and no error, for each).
+func (s *SessionConnectorsSuite) TestARowStillNamingPluginsRunsItsBuiltInAndCustomBindingsAsOnBase() {
+	builtin := "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{builtin + ".yaml": {
+		Data: []byte(strings.Replace(s.manifest(), "custom_crm", builtin, 1))}}))
+	for kind, connector := range map[string]string{"custom": s.connector(), "built-in": builtin} {
+		s.Run(kind, func() {
+			mine, echo := s.connection(s.client, connector)
+			config := s.config(s.binding("crm", connector, "session", "", echo))
+			stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config)
+			s.Require().NoError(err)
+			stored.Plugins = []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}
+			stored.PluginEvents = []store.PluginEvent{{Plugin: "linear", Event: "issue.created"}}
+			stored.MCPServers = []store.MCPServer{{Name: "wwsd", URL: "https://mcp.wwsd.invalid/mcp"}}
+			s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &stored))
+
+			opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+			ran := s.toolRanOn(s.serverClient.actingFor(s.client), s.client.opens("/v1/agents/sessions/"+opened.Id+"/events"), opened.Id)
+
+			s.Equal(connectorEcho, ran["tool"])
+			s.Equal(connectorEchoText, ran["result"])
+			s.Empty(ran["error"])
+		})
+	}
+}
+
 // recordedInstructions is what the call of a session of a config told "Be brief." records the
 // agent was told, the config binding connector as crm and its server saying instructions.
 func (s *SessionConnectorsSuite) recordedInstructions(connector, instructions string) string {

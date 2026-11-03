@@ -212,7 +212,9 @@ func (s *PolicySuite) unread(change ...func(*Settings)) *Enforcer {
 }
 
 func (s *PolicySuite) TestASlowFirstReadOfTheLimitsAllowsTheSandbox() {
-	enforcer := s.unread()
+	// A minute, so the ask comes before the account has gone unread that long however slow the
+	// machine.
+	enforcer := s.unread(func(settings *Settings) { settings.MaxStale = time.Minute })
 
 	slots, err := enforcer.Sandbox(s.ctx, ownerOf(s.app), SandboxAsk{Config: sandbox.Config{Network: true}})
 

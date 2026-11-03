@@ -5,7 +5,9 @@ description: How to add an MCP plugin (a hosted MCP server like Sentry, Slack or
 
 # MCP plugins
 
-> Plugins are deprecated: connectors replace them. For new work read the `connectors` skill
+> Plugins are removed: the router refuses a config naming `plugins`, `plugin_events` or
+> `mcp_servers`, serves none of the plugin routes, and a session opens no plugin. What follows
+> describes code that is no longer reached, until it is deleted. Read the `connectors` skill
 > (connect a connector to an agent) or the `add-connector` skill (add a provider).
 
 A plugin is a hosted MCP server from the router's built-in catalog. An agent names it in

@@ -72,7 +72,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -716,6 +715,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
 	warnKnowledgeLimits(settings, logger)
+	// Checked here as well as where the backends are built, since a router that cannot build
+	// them serves without knowledge rather than failing.
+	if err := knowledgeRegionsApart(knowledgeRegions(settings.Knowledge)); err != nil {
+		return err
+	}
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -1144,23 +1148,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer campaigns.Close()
 	}
 
-	// A plugin event opens a conversation and is subscribed to from a row, so events need
-	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
-	var events *pluginevents.Service
-	if pgStore != nil && sessions != nil {
-		events, err = pluginevents.New(pluginevents.Options{
-			Store:    pgStore,
-			Sessions: sessions,
-			Auth:     pluginAuth,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		events.Start()
-		defer events.Close()
-	}
-
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
 	// path that runs it says why it cannot.
@@ -1338,7 +1325,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
-		PluginEvents:          events,
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
@@ -2090,12 +2076,9 @@ func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger 
 // gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
 // every turbopuffer region.
 func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
-	mapped := maps.Clone(settings.Regions)
-	if mapped == nil {
-		mapped = map[string]string{}
-	}
-	if _, ok := mapped[pricing.DefaultRegion]; !ok {
-		mapped[pricing.DefaultRegion] = ""
+	mapped := knowledgeRegions(settings)
+	if err := knowledgeRegionsApart(mapped); err != nil {
+		return nil, err
 	}
 	backends := make(map[string]knowledge.Backend, len(mapped))
 	for region, theirs := range mapped {
@@ -2106,6 +2089,35 @@ func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger 
 		backends[region] = backend
 	}
 	return backends, nil
+}
+
+// knowledgeRegions is each region knowledge is kept in, mapped to the turbopuffer region the
+// settings name for it, the default region always among them and empty where none is named.
+func knowledgeRegions(settings config.Knowledge) map[string]string {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	return mapped
+}
+
+// knowledgeRegionsApart refuses two regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and the storage job would
+// bill each twice.
+func knowledgeRegionsApart(mapped map[string]string) error {
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.

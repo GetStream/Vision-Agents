@@ -2,7 +2,6 @@
 package meta
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,7 +30,7 @@ type Options struct {
 	Logger          *slog.Logger
 }
 
-// LLM adds Meta's tool-choice restrictions to the shared streaming implementation.
+// LLM is the shared streaming implementation, with Meta's capabilities.
 type LLM struct {
 	*openaicompat.LLM
 }
@@ -62,6 +61,10 @@ func New(options Options) (*LLM, error) {
 		InputModalities:  []string{llm.ModalityImage},
 		// Chat Completions reports reasoning token counts, not reasoning text.
 		StreamsReasoning: false,
+		// Meta answers any other tool_choice with a 400. Listing only auto keeps a request
+		// that needs the rest refused here, and makes the harness drop the tools of a reply
+		// that must not call one instead of sending none.
+		ToolChoices: []string{"auto"},
 	}
 	if err := capabilities.Validate(llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}}); err != nil {
 		return nil, err
@@ -81,12 +84,4 @@ func New(options Options) (*LLM, error) {
 		return nil, err
 	}
 	return &LLM{LLM: provider}, nil
-}
-
-func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
-	// Do not silently weaken required/none to auto: that changes execution semantics.
-	if params.ToolChoice != "" && params.ToolChoice != "auto" {
-		return nil, stack.Wrap(fmt.Errorf("meta: tool choice %q is unsupported; use auto or omit tools", params.ToolChoice))
-	}
-	return l.LLM.Create(ctx, params)
 }

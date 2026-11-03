@@ -322,7 +322,8 @@ func owner(spec Spec) routing.Owner {
 // vendor prices.
 const runtimeProvider = "stream"
 
-// startRuntime starts timing a session about to open, billed as what holds it: text or voice.
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice,
+// in the session's region.
 func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	mode := store.ModalityVoice
 	if spec.Text {
@@ -330,7 +331,7 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	}
 	return routing.StartSlices(routing.SliceOptions{
 		Recorder: m.runtime,
-		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode, Region: spec.Region},
 		Owner:    owner(spec),
 		Kind:     string(routing.Runtime),
 		ID:       spec.ID,
@@ -463,6 +464,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if m.options.Memory == nil {
 			return nil, stack.Wrap(ErrNoMemory)
 		}
+		if cmp.Or(spec.Region, pricing.DefaultRegion) != pricing.DefaultRegion {
+			return nil, stack.Wrap(ErrMemoryRegion)
+		}
 		remembering = m.options.Memory
 	}
 
@@ -524,7 +528,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
-		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
@@ -653,18 +656,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
-	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
-	tools = append(tools, pluginTools...)
-	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
+	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
+	// connectors replaced them, and a save refuses them.
+	spec.ServerInstructions = serverInstructions(nil, nil, connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
-	if mcp != nil || len(unconnected) > 0 {
-		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
-	}
-	if mcp != nil {
-		created.closers = append(created.closers, mcp.Close)
-	}
 	// A session opened without a zone runs in its user's stored one, so the agent's
 	// clock line tells the day, and the scheduling tools read dates, in the zone its
 	// tasks will run in.
@@ -676,7 +672,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// A user with no zone of their own is in the config's default one, the zone a task they
 	// scheduled would take, so the agent's clock line and the scheduling tools agree.
 	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
-	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// The scheduling tools are offered inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
 	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
@@ -684,13 +680,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		scheduling.next = runner
 		runner = scheduling
 	}
-	if own := m.userPlugins(spec, runner); own != nil {
-		tools = append(tools, plugins.UserTools(own.offered)...)
-		runner = own
-		created.closers = append(created.closers, own.Close)
-	}
 	// The dispatcher goes in front, so the names it opened are its own whatever else the
-	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	// session offers.
 	if connectors != nil {
 		if err := connectorCollision(connectorTools, tools); err != nil {
 			return nil, err
@@ -705,7 +696,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	if spec.ProgressiveTools {
-		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+		tools, runner = progressively(tools, connectorTools, runner)
 	}
 
 	var toolStarted func(agent.ToolStarted)
@@ -761,6 +752,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
+			OnHeard:       created.heardCaller,
 			ToolPolicy:    toolPolicy,
 			Edge:          edge,
 			Text:          spec.Text,
@@ -2205,6 +2197,10 @@ var ErrSessionExists = errors.New("session: a session with that id already exist
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryRegion is memory asked for an agent kept outside the default region. The memory
+// provider keeps everything in the US, and an agent's work is done in its own region only.
+var ErrMemoryRegion = errors.New("session: memory is kept in region us only, so a session in another region cannot remember")
 
 // ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
 // answering 429. Asking again later may succeed.

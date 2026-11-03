@@ -157,25 +157,6 @@ func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
 }
 
-func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
-	result := s.sync(map[string]any{
-		"name": "concierge", "hash": "v1",
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-	})
-
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
-}
-
-func (s *SyncSuite) TestASyncNamingAPrivateMCPServerIsRefusedWithAPlainError() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
-		"name": "concierge", "hash": "v1",
-		"mcp_servers": []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
-}
-
 func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsSubagent() {
 	result := s.sync(map[string]any{
 		"name": "support", "hash": "v1", "mode": "voice", "subagent": "llm-flow",
@@ -765,32 +746,6 @@ func (s *SyncSuite) TestASyncAnswersToolPatterns() {
 	s.Equal([]string{"*"}, value(value(s.configsNamed("support")[0].Connectors)[0].ToolPatterns))
 }
 
-func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
-	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
-}
-
-// A sync that sends plugins writes them, an empty list included: only a sync that leaves them
-// out keeps the stored ones.
-func (s *SyncSuite) TestASyncSendingPluginsWritesThemAndASyncLeavingThemOutKeepsThem() {
-	stored := func() []PluginEntry { return value(s.configsNamed("support")[0].Plugins) }
-
-	s.sync(map[string]any{"name": "support", "hash": "v1", "plugins": []string{"linear"}})
-	s.Equal([]PluginEntry{{Name: "linear"}}, stored())
-
-	s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "be kind"})
-	s.Equal([]PluginEntry{{Name: "linear"}}, stored(), "a sync that leaves plugins out keeps them")
-
-	s.sync(map[string]any{"name": "support", "hash": "v3", "plugins": []string{}})
-	s.Empty(stored(), "a sync that sends an empty list takes them out")
-}
-
 // pdfSkill is a skill synced from a folder that brings a reference and a script.
 func pdfSkill() []map[string]any {
 	return []map[string]any{{
@@ -905,17 +860,17 @@ func (s *SyncSuite) TestASyncedSandboxBindingToAConnectorWithoutASandboxBlockIsR
 }
 
 // A sync stores a config as a save does, so it too refuses nessy beside an outbound tool.
-func (s *SyncSuite) TestASyncedNessyBesideAnMCPServerIsRefusedAndStoresNothing() {
+func (s *SyncSuite) TestASyncedNessyBesideANetworkedSandboxIsRefusedAndStoresNothing() {
 	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
 		"name": "athena", "hash": "v1", "connectors": []map[string]any{sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+		"sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
-		`and MCP server "tablejourney" can send data out`)
+		`and the sandbox's network access can send data out`)
 	s.Empty(s.configsNamed("athena"))
 }
 

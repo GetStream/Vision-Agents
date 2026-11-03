@@ -160,11 +160,10 @@ func (s *Session) checked(carryOut bool) bool {
 }
 
 // heardCaller ends the check once the phone caller said something the agent took as meant
-// for it, which no recording does.
-func (s *Session) heardCaller(event Event) {
-	if heard, ok := event.(agent.Heard); ok {
-		if _, onPhone := phone.CallerNumber(heard.Participant.UserID); onPhone {
-			s.checked(false)
-		}
+// for it, which no recording does. The agent calls it (agent.Options.OnHeard) before it
+// answers them: consume takes the words later, after a report or a hang-up may have come.
+func (s *Session) heardCaller(heard agent.Heard) {
+	if _, onPhone := phone.CallerNumber(heard.Participant.UserID); onPhone {
+		s.checked(false)
 	}
 }

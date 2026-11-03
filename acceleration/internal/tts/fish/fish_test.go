@@ -333,6 +333,33 @@ func (s *FishSuite) TestInterruptStopsTheAudioMidResponse() {
 	s.Less(complete.AudioDurationMs, 10_000.0, "barge-in should not bill the whole utterance")
 }
 
+func (s *FishSuite) TestCloseSettlesAResponseStillStreaming() {
+	fake := newFakeFish()
+	defer fake.server.Close()
+	fake.samples, fake.samplesPerWrite = 240_000, 2400
+	fake.pause = 20 * time.Millisecond
+	provider := s.start(fake, Options{})
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "a very long sentence", Final: true}))
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.AudioChunk)
+		return ok
+	})
+
+	s.Require().NoError(provider.Close())
+
+	var completes []tts.SynthesisComplete
+	for _, event := range s.collect(provider, func(tts.Event) bool { return false }) {
+		if complete, ok := event.(tts.SynthesisComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1, "a response cut off by the hang-up is still billed")
+	s.Equal("u1", completes[0].SynthesisID)
+	s.EqualValues(20, completes[0].Characters, "the text Fish was sent")
+	s.True(completes[0].Interrupted)
+}
+
 func (s *FishSuite) TestCloseIsIdempotentAndClosesEvents() {
 	provider := s.newTTS(Options{})
 

@@ -856,13 +856,15 @@ func stsrouterStub() (*stsrouter.Router, error) {
 	config := routing.ModalityConfig{
 		Providers: []routing.ProviderConfig{{
 			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
+			// What a session's speech-to-speech agent asks of its model (MessageHooksSuite).
+			Terms: []options.Term{options.InputTranscript, options.OutputTranscript},
 		}},
 		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
 		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
 	}
 	registry := stsrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (sts.STS, error) {
-		stub := newStubConversation(sts.Capabilities{})
+		stub := newStubConversation(sts.Capabilities{InputTranscript: true, OutputTranscript: true})
 		select {
 		case conversing <- stub:
 		default:

@@ -2,13 +2,74 @@
 
 ## Features
 
+### A personal conversation takes a video with a question
+
+`POST /v1/agents/sessions/{id}/responses` takes `videos` with a `request_id`, where it was a 400 ("a request id carries text and images, not videos"), so a session with a user can be shown a clip. The model gets the clip's frames with the question, each with the moment it was taken. The person's message shows only what they typed and their photos. A retry under the same `request_id` does not fetch or sample its videos again and does not reach the model again. Without a `request_id`, a personal conversation still refuses the question, now before any video is fetched. Go's `Responses.Create` now sends a request id with clips when no photos go with them. `VideoSource.url` names the containers it takes: MP4, MOV, 3GP, MKV and WebM (AI-2515, AI-2508).
+
+### Users behind one address each have their own quota
+
+A quota a customer set was also counted against the address a device called from, so every
+user of an app behind one IP address, an office or a carrier's NAT, shared one user's quota,
+and the refusal named a user who had not spent it. A customer's quota is now counted per user
+only. The address still answers for the router's own default limits, the guard against a
+backend minting a fresh user id per request (AI-2187).
+
+### A knowledge lookup is priced by the bytes it searched and returned
+
+A turbopuffer lookup was priced at a flat fee per request, turbopuffer's 1.28 GB query
+minimum, so a lookup over a larger base cost more than it was billed. It is now priced by the
+bytes turbopuffer billed it for searching, which include that minimum, and by the bytes it
+returned, at turbopuffer's list rates (AI-2187).
+
+### Cached speech-to-speech tokens the vendor did not split are billed at the cached rate
+
+A speech-to-speech reply whose vendor reports a cached total but no split of it by modality, such as an OpenAI-compatible realtime dialect without `cached_tokens_details`, now has the cached tokens shared out across text, audio and image in proportion, and priced at each modality's cached rate rather than its fresh one. A model with no cached rate, such as Gemini Live, keeps them at its modality rates, as Google bills them (AI-2187).
+
+### A sonar search keeps what Perplexity said it cost
+
+A search answered by a Perplexity sonar model now records the `usage.cost.total_cost` Perplexity sends, its tokens and request fee together, on the row as the vendor's cost (`vendor_cost_micros`), so the price list can be checked against it. The search is still priced by the request (AI-2187).
+
+### A user who has spent their day still reads their sessions
+
+A device caller whose daily quota is spent is no longer refused a read: `GET` of a session, its responses and the rest answer as before, with `X-Quota-Remaining: 0` and the other quota headers. Opening a session, a turn, a run and a socket are still a 429, as is any other write (AI-2187).
+
+### Releasing a number bought moments ago says to try again
+
+`DELETE /v1/phone/numbers/{e164}` answers a 409 `phone_number_settling` when the vendor refuses to give back a number bought in the last minute, which it is still setting up: Telnyx refused one 4 seconds after its purchase and took the same release 13 seconds later. The number stays held, so the same release can be sent again. Any other vendor failure is still a 503 `phone_vendor_failed`. Both are now listed on the operation (AI-2187).
+
+### A price change writes the BYOK price beside a new item
+
+`POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
+
+### Usage rows say where the work ran and whether on the customer's own key
+
+Every `requests` row and usage event now carries `region` and `byok`, the priced item's, whether or not an entry priced it, so spend splits by region and by the customer's own provider keys, and unpriced work, which has no SKU, still says where it ran. The organization's usage listing in the usage service shows both. Rows and events from before read empty and false. Migrations `20261207120000_requests_region_byok` (router) and `00006_usage_event_region_byok` (usage service) add the columns with constant defaults, rewriting no row (AI-2187).
+
+### A session's runtime is priced in its region
+
+Runtime rows (`modality: runtime`) are now priced by the entry of the session's region: an `eu` agent's time is priced by `runtime/stream/*` in `eu`, never by the `us` one. A price list with no `eu` runtime entries leaves an `eu` session's time unpriced, so add them, free or priced, before an `eu` agent opens a session (AI-2187).
+
 ### A voice note sent with a question is transcribed and answered
 
 `POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518). `POST /v1/agents/sessions/{id}/respond` takes the same `audio`, heard and refused the same way, and `text` may be empty with it. Empty text without `audio` there is now a 400 `invalid_request` ("there is nothing to answer"), as on `responses`, where it was a 400 `validation_failed` (AI-2549).
 
 ### A photo sent in an agent's chat channel reaches the model
 
-A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A video or a file sent alone is still not answered (AI-2521, AI-2522).
+
+### A voice recording sent in an agent's chat channel is heard
+
+A voice recording (a `voiceRecording` or `audio` attachment) a person sends in a plain `agent` channel is now answered. The router transcribes it once per message, as it does a voice note sent with a question. The transcription is billed to the session that answers, or to the channel's agent and the person who sent it while no session runs. The recording then reaches the answering model or dispatch worker as text: what was typed, then what was said. A worker gets the transcript in `text` and needs no change. A recording that cannot be fetched or heard is answered with a short reply that the agent could not listen to it. Nothing is transcribed when no worker is connected to answer. A recording the agent shows on a message it wrote is never heard. In a thread channel (Slack, SMS) a recording alone is still not answered (AI-2570).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is handed to a worker too, with an empty `text` and the photo in `images`; a worker on an SDK from before this answers it with an empty text, which the router refuses, so the person gets no reply, as when the photo was never handed over (AI-2652). A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+
+### Rust and PHP dispatch workers pass a message's photos to the model
+
+A message frame's `images` reach the Rust worker as `InboundMessage.images` (`InboundImage { url, mime_type }`) and the PHP worker as `InboundMessage->images` (`InboundImage`). An entry that is not an object or has no string `url` is dropped. `Dispatch::answer` (Rust) and `Dispatch->answer()` (PHP) send them as the response's images, on the message's own request id. `create` with images still sends no request id (AI-2651).
+
+### .NET and Ruby dispatch workers show a message's photos to the model
+
+A .NET or Ruby worker reads the photos of a dispatched message (`InboundMessage.Images` in .NET, `InboundMessage#images` in Ruby, each a URL and its MIME type), and `Dispatch.AnswerAsync` / `Dispatch#answer` pass them to the model with the message's request id, as Go does. A message of text alone is answered as before, and `Responses.CreateAsync` / `responses.create` with images still send no request id (AI-2650).
 
 ### A custom connector's server instructions reach the agent
 
@@ -232,6 +293,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
+
+Creating, replacing, patching or syncing an agent config with a non-empty `plugins`, `plugin_events` or `mcp_servers` is a 400 that names what replaced it: `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors` (the same for `plugin_events`), or `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`. Left out, null or empty, a save is as before. A config read back no longer has the three fields, and a session no longer opens the plugins or MCP servers a stored config still names, nor asks for a plugin login in the conversation; its connector bindings work as before. The plugin operations (`listPlugins`, `listConfigPlugins`, `authorizePlugin`, `disconnectPlugin`, `setPluginClient`, `deletePluginClient`) and the routes `GET /v1/agents/plugins/callback`, `GET /v1/agents/plugins/{plugin_id}/logo` and `POST /v1/agents/plugins/events/{token}` are gone (404), with their methods in every generated client, and plugin events are no longer subscribed to (AI-2538).
+
 ### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
 
 `loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
@@ -266,6 +331,29 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A typed message in a voice session is offered tools once the caller has spoken
+
+On a voice session where a speculative reply answered every spoken turn, a typed message was still treated as sent before anyone spoke, and its reply was offered no tools. It is now offered them, as after any other spoken turn. A speculative reply thrown away can no longer clear what was recorded for the answer asked for under the same turn id (AI-2543, AI-2541).
+### A session outside region us cannot ask for memory
+
+The memory provider (mem0, at `api.mem0.ai`) keeps everything in the US, and an agent's work is done in its own region only. A session in another region, such as an `eu` agent's, that asks for memory (`memory.user_id`) is now refused with a 400 naming the region, rather than sending what the user said to the US (AI-2187).
+
+### Two regions kept in one turbopuffer region are refused
+
+`knowledge.regions` (`ROUTER_KNOWLEDGE_REGIONS`) mapping two of the router's regions to one turbopuffer region, the default region's included (`TURBOPUFFER_REGION`, else `gcp-us-central1`), stops the router and `router usage storage` from starting. Its knowledge bases would be listed under both regions, and the hourly storage job billed each twice under different usage ids (AI-2187).
+
+### A voice session naming an unpriced backend or transcriber is refused
+
+`backend_model` (a GPT-Live session's text model) and `transcription_model` (OpenAI Realtime's transcriber) come from the caller's overwrites, and each is billed as a row of its own under that name. A name the price list does not cover was recorded at nothing. The session is now refused before the vendor is called, as a request error naming the model. `gpt-4o-transcribe` ($2.50 and $10 a million tokens in and out) and `whisper-1` ($0.006 a minute of audio) gain vendor prices, so they are accepted (AI-2187).
+
+### A Muse model answers a reply that may call no tool
+
+A reply that must not call a tool (an answer after a tool result, a reply with no tools offered, a question for a colleague) was sent to Meta's API with `tool_choice: "none"`, which it refuses with a 400. Those replies now go out with no tools and no tool choice, as they already did for Ollama. A request for `required` or a named tool on a Muse model is still refused before it is sent (AI-2542).
+
+### Respond says no cost for a voice note, as responses.create does
+
+`POST /v1/agents/sessions/{id}/respond` with a voice note answered with `X-Stream-Cost-Micros` holding only the note's transcription, while `POST /v1/agents/sessions/{id}/responses` with the same note sent no cost header. Both answer before their turn runs, so neither says a cost now; the transcription is still billed and recorded under the session. `X-Stream-Balance-Micros` is sent as before.
+
 ### A session search matches the word still being typed
 
 A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
@@ -273,9 +361,10 @@ A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.s
 ### A GPT-Live call hung up before its last report is billed its seconds
 
 A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
+
 ### A deleted session's call still reads its transcript
 
-`GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation before its session was deleted still reads empty (AI-2473).
+`GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation reads that conversation once its session is deleted, as long as it started after the router recorded the conversation on the call. An older one still reads empty (AI-2473, AI-2565).
 
 ### A photo sent with no text is answered without a request id
 
@@ -283,7 +372,7 @@ A GPT-Live session is billed by the seconds OpenAI reports, the last of them as 
 
 ### A voice note's transcription is billed to its session and agent
 
-The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region, and refused with a retryable 503 `model_failed` when that region has no batch transcription instance; before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
+The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region. When that region has no batch transcription instance for the session's languages, the note is refused before it is fetched with a 400 `not_configured`, on `responses` and on `respond`, which a client does not retry (AI-2567); before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
 
 ### Photos, voice notes and video clips are fetched under the router's own User-Agent
 
@@ -292,6 +381,10 @@ The router fetches a photo, a voice note or a video clip sent by URL with the Us
 ### A dispatched channel shows the person's first message once
 
 A dispatch worker's session on the channel a message was handed out from no longer writes a second copy of that message as `support-operator`. The copy came from the first question the worker asked with a `request_id`, which the Go SDK sends with every text-only question. Such a question is now answered with the reply alone, and the router uploads no photo again, as it already did for a question without a `request_id` and for a follow-up in the channel. Every other session still writes the question it is asked into its own channel (AI-2551).
+
+### A photo sent to a session's turn stays in its history as a note
+
+A turn with photos (`POST /v1/agents/sessions/{id}/responses` with `images`, or the socket's `respond`) is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a written aside and a thread's history keep it, and a turn of photos alone as the note alone. The reply to the turn, and the replies after its tools, still get the photos with the words alone. Before, the history kept the text with no sign of the photo, and a photo alone as an empty message, so later replies did not know a photo had been sent (AI-2561).
 
 ### A photo sent to a running session's chat channel stays in its history as a note
 
@@ -348,6 +441,7 @@ Moving a running session onto other models or another voice (`PATCH /v1/agents/s
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+
 ### Naming a guest's id no longer hands out a token for that guest
 
 `POST /v1/agents/guests` with an `id` gave a fresh 24-hour token for any unclaimed guest of the app to whoever asked. A page holding only the app's key was enough, and the guest's name and custom data were replaced with whatever the request sent. A guest id is no secret: it is the author of the guest's messages and a member of their channels. So anyone who shared a channel with a guest could read that guest's conversations with the agent and carry on as them.

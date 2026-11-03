@@ -34,6 +34,11 @@ import (
 // through several in a fraction of a second.
 const runtimeSlice = 50 * time.Millisecond
 
+// shutdownWithin is how long a shutdown may take once nothing holds it: it writes the rows
+// the sessions queued, which the recorders give up on after 15 seconds, so waiting less
+// than that fails a shutdown that is only writing them.
+const shutdownWithin = 30 * time.Second
+
 // RuntimeSuite opens sessions on a manager over Postgres and reads back what their time cost
 // and what they wrote down.
 type RuntimeSuite struct {
@@ -71,6 +76,7 @@ func (s *RuntimeSuite) SetupSuite() {
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Region: pricing.DefaultRegion, Free: true},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVoice, Region: pricing.DefaultRegion, Rates: perMinute},
 		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityVideo, Region: pricing.DefaultRegion, Rates: perMinute},
+		{Modality: string(routing.Runtime), Provider: runtimeProvider, Model: store.ModalityText, Region: pricing.RegionEU, Rates: perMinute},
 	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.Require().NoError(err)
 }
@@ -93,8 +99,14 @@ func (s *RuntimeSuite) manages() {
 	s.T().Cleanup(transcriber.Close)
 
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return &stubLLM{reply: "Hello."}, nil })
-	reasoner, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: logger})
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return &stubLLM{reply: "Hello."}, nil },
+		routing.OverrideRegion)
+	// One instance in each region, so an eu session opens.
+	inRegions := stubConfig()
+	inEU := inRegions.Providers[0]
+	inEU.Region = pricing.RegionEU
+	inRegions.Providers = append(inRegions.Providers, inEU)
+	reasoner, err := llmrouter.New(llmrouter.Options{Config: inRegions, Registry: reasoning, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
 
@@ -172,6 +184,14 @@ func modes(rows []store.Request) []string {
 	return billed
 }
 
+// rowEnd is when the slice the row records ended.
+func rowEnd(row store.Request) time.Time {
+	if row.DurationMs == nil {
+		return row.StartedAt
+	}
+	return row.StartedAt.Add(time.Duration(*row.DurationMs * float64(time.Millisecond)))
+}
+
 func totalSeconds(rows []store.Request) int64 {
 	var total int64
 	for _, row := range rows {
@@ -198,6 +218,22 @@ func (s *RuntimeSuite) TestASessionRecordsRuntimeUntilItCloses() {
 		s.Equal("key-runtime", row.APIKey, "billed to whoever opened the session")
 		s.Zero(row.CostMicros, "time in writing is priced free here")
 		s.False(row.Billable, "and so is recorded without being billed")
+	}
+}
+
+func (s *RuntimeSuite) TestASessionsRuntimeIsPricedInItsRegion() {
+	s.manages()
+	created, err := s.opens(Spec{Text: true, Region: pricing.RegionEU})
+	s.Require().NoError(err)
+
+	time.Sleep(runtimeSlice)
+	s.Require().NoError(created.Close())
+
+	rows := s.runtime(created.ID())
+	s.Require().NotEmpty(rows)
+	for _, row := range rows {
+		s.Equal("runtime-stream-text-eu", row.SKU, "priced by the eu entry, not the free us one")
+		s.True(row.Billable)
 	}
 }
 
@@ -255,16 +291,44 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 	}
 
 	down := make(chan error, 1)
-	go func() { down <- s.manager.Shutdown() }()
-	time.Sleep(4 * runtimeSlice)
-	before := len(s.written(first.ID())) + len(s.written(second.ID()))
-	time.Sleep(6 * runtimeSlice)
-	s.Equal(before, len(s.written(first.ID()))+len(s.written(second.ID())),
-		"no session goes on being billed while another one is being closed")
+	finished := make(chan struct{})
+	go func() {
+		down <- s.manager.Shutdown()
+		close(finished)
+	}()
+	// A session is halted when its own close begins, and every runtime is stopped before the
+	// first close, so a row that ends after this instant is a session billed while another
+	// is closing.
+	var closing time.Time
+	s.Require().Eventually(func() bool {
+		closing = time.Now()
+		return first.Halted() || second.Halted()
+	}, settleFor, time.Millisecond, "shutdown never began closing the sessions")
+	time.Sleep(10 * runtimeSlice)
+	// A shutdown that has already returned gave up on the speech, which it does only once
+	// finishWithin has run out, so a slow host cannot fail this.
 	select {
-	case <-down:
-		s.Fail("shutdown should still be waiting on a call that is speaking")
+	case <-finished:
+		s.Require().GreaterOrEqual(time.Since(closing), finishWithin/2, "shutdown should still be waiting on a call that is speaking")
 	default:
+	}
+
+	// Rows are queued and written to Postgres later, in the order they were queued. The marker
+	// is queued after every row the sessions made while the closing went on, so once it is
+	// written so are they, however far behind the writer is.
+	marker := "marker-" + uuid.NewString()
+	s.manager.runtime.Record(routing.ProviderConfig{Provider: runtimeProvider, Model: store.ModalityText}, routing.Stat{
+		Owner:     routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{SessionID: marker}},
+		StartedAt: time.Now().UTC(),
+		Success:   true,
+	})
+	s.Require().Eventually(func() bool { return len(s.written(marker)) > 0 }, shutdownWithin, runtimeSlice, "the writer never caught up")
+	for _, id := range []string{first.ID(), second.ID()} {
+		for _, row := range s.written(id) {
+			s.False(rowEnd(row).After(closing.Add(time.Millisecond)),
+				"no session goes on being billed while another one is being closed: %s ran until %s, closing began at %s",
+				id, rowEnd(row).Format(time.RFC3339Nano), closing.Format(time.RFC3339Nano))
+		}
 	}
 
 	for _, edge := range edges {
@@ -273,7 +337,7 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 	select {
 	case err := <-down:
 		s.Require().NoError(err)
-	case <-time.After(settleFor):
+	case <-time.After(shutdownWithin):
 		s.Fail("shutdown never finished")
 	}
 }

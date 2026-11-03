@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -374,14 +375,33 @@ type stubTranscript struct {
 	mu      sync.Mutex
 	spoken  []agent.Event
 	written []string
+	// stalled, while open, holds Record back (stall).
+	stalled chan struct{}
 }
 
 func (t *stubTranscript) Start(context.Context) error { return nil }
 
 func (t *stubTranscript) Record(event agent.Event) {
 	t.mu.Lock()
+	stalled := t.stalled
+	t.mu.Unlock()
+	if stalled != nil {
+		<-stalled
+	}
+	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.spoken = append(t.spoken, event)
+}
+
+// stall holds back every event recorded from now until release, as a store slow to write
+// them holds back the session taking its agent's events: the agent goes on meanwhile.
+func (t *stubTranscript) stall() (release func()) {
+	stalled := make(chan struct{})
+	t.mu.Lock()
+	t.stalled = stalled
+	t.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(stalled) }) }
 }
 
 func (t *stubTranscript) Reply(text string) {
@@ -2115,7 +2135,8 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 		return false
 	}, "the next turn was never asked")
 	s.False(next.HasImage(), "the picture was sent again with a later turn")
-	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
+	s.Contains(handed(next), "user: what is this\n\n[sent with a photo, not shown again]",
+		"the words that came with the picture, and that a picture came, were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
@@ -2148,11 +2169,10 @@ func awaitReply(events <-chan Event) string {
 	}
 }
 
-// TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector: a session with a plugin and
-// no connector binding. Its tools are the plugin's, its call goes through the plugin's
-// runner and its answer reaches the model, and nothing connector-shaped is said on its
-// events. Every connector hook is a no-op without a binding (AI-851).
-func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
+// TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered: a config's mcp_servers and
+// plugins are no longer read, so a session whose spec still carries them, as one of a row
+// saved before they were refused does, never reaches the server and offers none of its tools.
+func (s *SessionSuite) TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered() {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
 	server.AddTool(&mcpsdk.Tool{
 		Name: "search", Description: "Finds a note.",
@@ -2161,39 +2181,27 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
 		})
-	provider := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
+		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	var reached atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
 	defer provider.Close()
 	s.plugins = &plugins.Auth{HTTP: provider.Client()}
 	s.manages()
-	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "notes__search", Arguments: "{}"}}
 	needsLogin := false
-	created := s.joins(Spec{MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}}})
 
-	events, detach := created.Watch()
-	defer detach()
-	s.hears(created)
-	s.says(created, "find my note")
+	created := s.joins(Spec{
+		MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}},
+		Plugins:    []store.PluginEntry{{Name: "linear"}},
+	})
 
-	var ran *agent.ToolRan
-	deadline := time.After(settleFor)
-	for ran == nil {
-		select {
-		case event := <-events:
-			if _, connector := event.(ConnectorUnavailable); connector {
-				s.Fail("a session with no binding says nothing about connectors")
-			}
-			if finished, ok := event.(agent.ToolRan); ok {
-				ran = &finished
-			}
-		case <-deadline:
-			s.Require().FailNow("the plugin's tool never ran")
-		}
+	for _, tool := range created.current().Tools() {
+		s.False(strings.HasPrefix(tool, "notes__") || strings.HasPrefix(tool, "linear__"), "%s is offered", tool)
 	}
-	s.Equal("notes__search", ran.Tool)
-	s.Equal("the note", ran.Result)
-	s.NoError(ran.Err)
-	s.Contains(created.current().Tools(), "notes__search")
+	s.Zero(reached.Load(), "the server is never opened")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {
@@ -2224,6 +2232,20 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.manages()
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
 	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+// TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion: the memory provider keeps everything
+// in the US, and an agent in eu has all its work done in eu.
+func (s *SessionSuite) TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion() {
+	s.remembers = &stubMemory{}
+	s.manages()
+
+	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Region: pricing.RegionEU, Memory: MemorySpec{UserID: "222"}})
+	s.Require().ErrorIs(err, ErrMemoryRegion)
+	s.Empty(s.remembers.scopedTo().UserID, "nothing was recalled")
+
+	created := s.joins(Spec{Region: pricing.RegionUS, Memory: MemorySpec{UserID: "222"}})
+	s.Equal("222", created.Spec().Memory.UserID)
 }
 
 func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {

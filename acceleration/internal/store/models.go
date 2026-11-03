@@ -90,6 +90,10 @@ type Request struct {
 	PriceVersion string `bun:"price_version,notnull"`
 	// SKU is the priced item's, as its entry names it: empty for work no entry matched.
 	SKU string `bun:"sku,notnull"`
+	// Region and BYOK are the priced item's, whether or not an entry matched it: where the
+	// work ran, and whether on the customer's own key. Rows from before them read "" and false.
+	Region string `bun:"region,notnull"`
+	BYOK   bool   `bun:"byok,notnull"`
 	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on the
 	// row is CostMicros - BaseCostMicros.
 	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
@@ -1381,6 +1385,11 @@ type Call struct {
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
+	// ConversationID is the conversation the call was bound to when it started, as its
+	// session's row names it. It outlives that row, so a deleted session's call can still
+	// find its transcript. Empty for a call from before the column, and for one that kept
+	// no conversation.
+	ConversationID string `bun:"conversation_id,nullzero"`
 	// ConfigID names the agent config the call ran under. Empty when the caller spelled
 	// the whole spec out.
 	ConfigID   string `bun:"config_id,nullzero"`

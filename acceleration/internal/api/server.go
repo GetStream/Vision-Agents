@@ -723,7 +723,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
-	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
@@ -737,8 +736,6 @@ func (s *Server) Handler() http.Handler {
 			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
 		}
 	}
-	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
-	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
@@ -1047,7 +1044,7 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 // a path that spells it differently.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
-// before there is a caller to classify — the health check and the plugin redirect, where
+// before there is a caller to classify — the health check and the consent callback, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations := specifiedOperations(document)

@@ -36,6 +36,8 @@ type ConverseSuite struct {
 	drained sync.WaitGroup
 	mu      sync.Mutex
 	events  []Event
+	// told is every Heard the owner was told of (Options.OnHeard).
+	told []Heard
 }
 
 func TestConverseSuite(t *testing.T) {
@@ -64,9 +66,15 @@ func (s *ConverseSuite) startWithSettle(options DuplexOptions, patience, settle 
 	s.settling = newCadence(testGap, testRetry, settle, logger)
 	s.emitter = NewEmitter(eventBuffer)
 	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, patience, logger)
+	s.converse.onHeard = func(heard Heard) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.told = append(s.told, heard)
+	}
 
 	s.mu.Lock()
 	s.events = nil
+	s.told = nil
 	s.mu.Unlock()
 
 	s.drained.Add(1)
@@ -160,6 +168,7 @@ func (s *ConverseSuite) eventually(satisfied func() bool, message string) {
 	s.FailNow(message)
 }
 
+// heard is every Heard sent, each of which the owner must have been told of first.
 func (s *ConverseSuite) heard() []Heard {
 	var kept []Heard
 	for _, event := range s.seen() {
@@ -167,6 +176,11 @@ func (s *ConverseSuite) heard() []Heard {
 			kept = append(kept, typed)
 		}
 	}
+	s.mu.Lock()
+	told := s.told
+	s.mu.Unlock()
+	s.Require().GreaterOrEqual(len(told), len(kept), "a Heard was sent that the owner was not told of")
+	s.Equal(kept, append([]Heard(nil), told[:len(kept)]...), "the owner was not told of what was heard as it was sent")
 	return kept
 }
 
