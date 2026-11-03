@@ -79,8 +79,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
@@ -436,20 +434,12 @@ type RouterSuite struct {
 	publicURL    string
 	dashboardURL string
 
-	// pluginMCP is where every plugin's MCP server is reached, for a suite about plugin
-	// events to set before it starts the harness. Nil reaches the real ones.
-	pluginMCP *httptest.Server
-	// pluginHTTP is what the API reaches plugins with, for a suite whose stand-ins listen
-	// on loopback in each test. Nil is mcpTransport.
-	pluginHTTP *http.Client
 	// imageHTTP is what runs fetch their images with, for a suite whose images are served on
 	// loopback. Nil reaches only public hosts.
 	imageHTTP *http.Client
 	// callbackHTTP is what a finished recording is posted to its callback with, for a suite
 	// whose receiver listens on loopback. Nil reaches only public hosts.
 	callbackHTTP *http.Client
-	// events subscribes configs to their plugins' events.
-	events *pluginevents.Service
 
 	// channelAPI is where every channel provider is reached, for a suite about channels to
 	// set before it starts the harness. Nil reaches the real WhatsApp, Telnyx and Linq.
@@ -649,9 +639,6 @@ func (s *RouterSuite) SetupSuite() {
 	s.phoneRecorder = s.telephonyRecorder(logger)
 	sessions := s.sessionManager(streams, directory, session.Connectors{Registry: s.connectors, Transports: transports,
 		Consents: ConnectorConsents(pgStore, s.connectors, s.sealer, s.publicURL), ApprovalWait: s.approvalWait}, policies, logger)
-	// A nil client reaches public hosts alone, and every auth server here is a local one.
-	public := &plugins.Auth{HTTP: http.DefaultClient}
-	s.events = s.pluginEvents(sessions, public, logger)
 	s.inbound = s.channels(sessions, logger)
 	s.dispatch = dispatch.NewPool()
 	s.streams = streams
@@ -734,7 +721,6 @@ func (s *RouterSuite) SetupSuite() {
 		Phone:             s.telephony(logger),
 		Campaigns:         s.campaigns(sessions, logger),
 		Simulations:       s.simulations(sessions, streams, logger),
-		PluginEvents:      s.events,
 		Channels:          s.inbound,
 		DLC:               s.registrations(listener, logger),
 		Gate:              s.gate,
@@ -755,7 +741,6 @@ func (s *RouterSuite) SetupSuite() {
 		DashboardURL:       s.dashboardURL,
 		Quota:              s.limiter,
 		DataRetention:      time.Hour,
-		PluginHTTP:         s.mcpTransport(),
 		Stream:             s.stream,
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
@@ -780,7 +765,6 @@ func (s *RouterSuite) SetupSuite() {
 	})
 	listener.Config.Handler = server.Handler()
 	listener.Start()
-	public.PublicURL = listener.URL
 	s.server = listener
 	s.router = server
 	s.T().Cleanup(s.server.Close)
@@ -990,21 +974,6 @@ func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Op
 	return options
 }
 
-// pluginEvents subscribes against pluginMCP, whatever host a catalog plugin names, so a
-// suite's own server stands in for Sentry's.
-func (s *RouterSuite) pluginEvents(sessions *session.Manager, public *plugins.Auth, logger *slog.Logger) *pluginevents.Service {
-	var transport *http.Client
-	if s.pluginMCP != nil {
-		transport = s.mcpTransport()
-	}
-	service, err := pluginevents.New(pluginevents.Options{
-		Store: s.store, Sessions: sessions, Auth: public, Transport: transport, Logger: logger,
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(service.Close)
-	return service
-}
-
 // channels answers deliveries against channelAPI, whatever host a provider's API is at, so a
 // test's reply is sent to the suite's own server rather than to Meta.
 func (s *RouterSuite) channels(sessions *session.Manager, logger *slog.Logger) *channels.Service {
@@ -1064,28 +1033,6 @@ func redirected(to *httptest.Server) *http.Client {
 		}}
 	}
 	address := to.Listener.Addr().String()
-	return &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
-		},
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the suite's own server
-	}}
-}
-
-// mcpTransport reaches pluginMCP whatever host is asked for, or nothing when a suite has
-// none, so saving a config never asks a real MCP server about itself.
-func (s *RouterSuite) mcpTransport() *http.Client {
-	if s.pluginHTTP != nil {
-		return s.pluginHTTP
-	}
-	if s.pluginMCP == nil {
-		return &http.Client{Transport: &http.Transport{
-			DialContext: func(context.Context, string, string) (net.Conn, error) {
-				return nil, errors.New("tests reach no real MCP server")
-			},
-		}}
-	}
-	address := s.pluginMCP.Listener.Addr().String()
 	return &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, address)

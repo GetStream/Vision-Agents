@@ -60,13 +60,17 @@ class AgentConfigPatch:
             keyterms (list[str] | Unset):
             knowledge_namespace (str | Unset):
             llm (str | Unset):
-            mcp_servers (list[McpServer] | Unset):
+            mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
+                create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
+                nothing.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
-            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
-            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+            plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
+                provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+            plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
+                the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
             region (str | Unset): Where the agent's work is done: us or eu for now. A change naming a model with no instance
                 there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming
                 each. Example: eu.

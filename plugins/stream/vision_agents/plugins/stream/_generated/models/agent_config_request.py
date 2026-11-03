@@ -45,10 +45,10 @@ class AgentConfigRequest:
             that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
             of it is.
         connectors (list[AgentConnectorBinding] | Unset): The connectors whose tools this agent may call, each under an
-            alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an
-            update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by
-            saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a
-            connection that is not the app's own or is to another connector, is refused.
+            alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client
+            that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a
+            connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another
+            connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
         episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
@@ -69,20 +69,16 @@ class AgentConfigRequest:
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
         llm (str | Unset): The model holding the conversation.
-        mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
-            login. Their tools are offered as <name>__<tool>.
+        mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
+            create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
+            nothing.
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
             what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
             speech target and a session created from it needs no call to join.
-        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
-            events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that
-            arrives opens a text conversation of its own, as whoever's login it came through.
-        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Hosted
-            MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how
-            it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each
-            once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and
-            the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs
-            one.
+        plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
+            provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+        plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
+            the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         region (str | Unset): Where the agent's work is done: us or eu for now. Every model its sessions run, its
             knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a
             model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there

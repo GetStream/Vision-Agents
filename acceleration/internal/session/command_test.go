@@ -14,7 +14,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -567,68 +566,6 @@ func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedB
 	_, err = alice.CheckRespond(s.ctx, "stale-session-command", "", false, options.LLM{})
 
 	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
-}
-
-func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
-	s.persists()
-	running := s.commands()
-	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
-	s.Require().NoError(err)
-	s.Equal("Tell Nash a joke on Slack", s.asked())
-	slack, ok := plugins.Lookup("slack")
-	s.Require().True(ok)
-	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
-	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
-		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		receipt, err := running.Command("command-a")
-		return err == nil && receipt.State == "completed"
-	}, "the reply asking for the login should finish")
-
-	s.manager.LoginFinished("s1")
-	s.Equal("Slack is connected now. Carry on with what I asked for before you needed it.", s.asked())
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		saved := s.stored(running)
-		return len(saved) == 3 && saved[2].State == "completed"
-	}, "the conversation should carry on with a reply of its own")
-	saved := s.stored(running)
-	s.Equal([]string{"user", "assistant", "assistant"}, []string{saved[0].Role, saved[1].Role, saved[2].Role},
-		"nobody is shown having asked again")
-	s.Equal(plugins.AuthorizationConnected, saved[1].Authorizations[0].Status)
-}
-
-func (s *SessionSuite) TestALoginFinishedAfterTheWatcherLeftStillCarriesOn() {
-	s.persists()
-	running := s.commands()
-	_, detach := running.Watch()
-	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
-	s.Require().NoError(err)
-	s.Equal("Tell Nash a joke on Slack", s.asked())
-	slack, ok := plugins.Lookup("slack")
-	s.Require().True(ok)
-	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
-	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
-		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		receipt, err := running.Command("command-a")
-		return err == nil && receipt.State == "completed"
-	}, "the reply asking for the login should finish")
-
-	// The page is left while the login is made in another tab.
-	detach()
-	s.manager.LoginFinished("s1")
-	s.Equal("Slack is connected now. Carry on with what I asked for before you needed it.", s.asked())
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		saved := s.stored(running)
-		return len(saved) == 3 && saved[2].State == "completed"
-	}, "the conversation should carry on with nobody watching")
-	s.Equal(Live, running.State())
 }
 
 func (s *SessionSuite) TestAWatcherComingBackKeepsTheConversationOpen() {
