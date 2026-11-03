@@ -397,6 +397,12 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		form.Set("StatusCallbackEvent", "completed")
 		form.Set("StatusCallbackMethod", http.MethodPost)
 	}
+	if outbound.MachineURL != "" {
+		form.Set("MachineDetection", "DetectMessageEnd")
+		form.Set("AsyncAmd", "true")
+		form.Set("AsyncAmdStatusCallback", outbound.MachineURL)
+		form.Set("AsyncAmdStatusCallbackMethod", http.MethodPost)
+	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls.json", p.accountSID)
 
 	var placed call
@@ -421,6 +427,22 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 		return phone.CallStatus{}, stack.Wrap(errors.New("twilio: a call status without a CallStatus"))
 	}
 	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+}
+
+// ReadMachine reads the form Twilio posts to a call's AsyncAmdStatusCallback.
+func (p *Provider) ReadMachine(contentType string, body []byte) (phone.Machine, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return "", stack.Wrap(fmt.Errorf("twilio: a machine report is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("twilio: read a machine report: %w", err))
+	}
+	answeredBy := form.Get("AnsweredBy")
+	if answeredBy == "" {
+		return "", stack.Wrap(errors.New("twilio: a machine report without an AnsweredBy"))
+	}
+	return phone.MachineOf(answeredBy), nil
 }
 
 // finalStatuses are the CallStatus words that end a call.

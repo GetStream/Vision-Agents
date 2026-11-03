@@ -386,6 +386,9 @@ type Outbound struct {
 	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
 	// finds its session. It is set only on the shared path; empty sends no header.
 	CallID string
+	// MachineURL is where the vendor posts whether a person or an answering machine
+	// picked up. Empty asks for no detection.
+	MachineURL string
 	// StatusURL is where the vendor posts the call's status. Empty sends none.
 	StatusURL string
 	// Ended is told how a call through a customer's own SIP trunk ended, which only the
@@ -457,6 +460,35 @@ type CallStatus struct {
 // StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
 type StatusReader interface {
 	ReadStatus(contentType string, body []byte) (CallStatus, error)
+}
+
+// Machine is who a vendor says picked up an outbound call.
+type Machine string
+
+const (
+	MachineHuman Machine = "human"
+	// MachineGreetingEnded is an answering machine whose greeting has finished, so what is
+	// said next is recorded.
+	MachineGreetingEnded Machine = "greeting_ended"
+	// MachineUnknown is a fax, or whatever the vendor could not tell.
+	MachineUnknown Machine = "unknown"
+)
+
+// MachineDetector is a provider whose vendor can tell an answering machine from a person and
+// posts what it found to Outbound.MachineURL.
+type MachineDetector interface {
+	ReadMachine(contentType string, body []byte) (Machine, error)
+}
+
+// MachineOf is the Machine for the AnsweredBy word that Twilio and Telnyx TeXML both report.
+func MachineOf(answeredBy string) Machine {
+	switch answeredBy {
+	case "human":
+		return MachineHuman
+	case "machine_end_beep", "machine_end_silence", "machine_end_other":
+		return MachineGreetingEnded
+	}
+	return MachineUnknown
 }
 
 // StreamLegOf is the provider's stream leg, per call for one that does not say.

@@ -827,6 +827,25 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveCallMachine",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/machine/{token}",
+		Summary:     "Receive who picked up a placed call",
+		Description: "Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated " +
+			"because the vendor is not a customer: the token made when the call was placed is the " +
+			"only proof, and it names that one call.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The report is taken"},
+			"400": {Description: "The report could not be read"},
+			"404": {Description: "No placed call is waiting at this token"},
+			"413": {Description: "The report is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "listAgentLogs",
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/logs",
