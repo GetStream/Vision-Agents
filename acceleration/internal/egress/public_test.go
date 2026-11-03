@@ -421,6 +421,12 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 	s.Eventually(func() bool { return closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+// A generic or empty User-Agent is what hosts such as Wikimedia refuse; theirs asks for a
+// client name and a way to reach whoever runs it.
+func (s *EgressSuite) TestTheUserAgentNamesTheRouterAndWhereToReachIt() {
+	s.Regexp(`^vision-agents \(https://\S+\)$`, UserAgent)
+}
+
 func (s *EgressSuite) requireRefused(raws ...string) {
 	for _, raw := range raws {
 		s.Errorf(ValidatePublicHTTPSURL(s.T().Context(), raw), "%s should be refused", raw)

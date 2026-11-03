@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -26,6 +27,8 @@ type VoiceNotesSuite struct {
 	// notes serves voice notes by path, as a CDN a chat client uploaded them to would.
 	notes  *httptest.Server
 	served sync.Map
+	// named is the User-Agent each path was fetched with.
+	named sync.Map
 }
 
 func TestVoiceNotesSuite(t *testing.T) {
@@ -37,6 +40,7 @@ func (s *VoiceNotesSuite) SetupSuite() {
 	// are served on loopback, so the suite's router fetches with a plain client.
 	s.imageHTTP = &http.Client{}
 	s.notes = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.named.Store(r.URL.Path, r.UserAgent())
 		body, ok := s.served.Load(r.URL.Path)
 		if !ok {
 			http.NotFound(w, r)
@@ -288,6 +292,35 @@ func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledUnderTheSessionsTags() {
 
 	rows := s.meteredRows(routing.STT, since, 1)
 	s.Equal(tags["team"], rows[0].Tags["team"])
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToItsSessionAndAgentAsTheAnswerIs() {
+	opened := s.noting()
+	s.Require().NotEmpty(opened.AgentId)
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("billed " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal(opened.Id, heard.SessionID, "the transcription names the session that heard the note")
+	s.Equal(opened.AgentId, heard.AgentID, "the transcription names the session's agent")
+	answered := s.meteredRows(routing.LLM, since, 1)[0]
+	s.Equal([]string{answered.SessionID, answered.AgentID, answered.APIKey, answered.UserID},
+		[]string{heard.SessionID, heard.AgentID, heard.APIKey, heard.UserID},
+		"the note is billed to whom its answer is")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsFetchedUnderTheRoutersName() {
+	opened := s.noting()
+	note := s.serve(wavOf("named " + s.utils.uuid()))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: note}}, nil))
+
+	named, fetched := s.named.Load(strings.TrimPrefix(note, s.notes.URL))
+	s.Require().True(fetched, "the note was never fetched")
+	s.Equal(egress.UserAgent, named, "a host that refuses Go's own User-Agent still serves the note")
 }
 
 func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() {
