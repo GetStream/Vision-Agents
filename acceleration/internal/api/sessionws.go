@@ -515,7 +515,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 			return true
 		}
 		if command.CommandID != "" && found.Durable() {
-			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", images, options.LLM{}); err != nil {
+			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", images, nil, options.LLM{}); err != nil {
 				found.Report(err, "llm")
 			}
 			return true

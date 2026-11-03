@@ -175,7 +175,7 @@ func (s *SessionSuite) TestAPlainWatcherIsSentEventsAsTheyAlwaysWere() {
 func (s *SessionSuite) TestAWatcherComingBackIsToldHowTheCommandItWaitedOnEnded() {
 	s.persists()
 	running := s.commands()
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Question", "", nil, options.LLM{})
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "Question", "", nil, nil, options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("Question", s.asked())
 	_, err = running.InterruptCommand("command-a")
