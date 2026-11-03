@@ -1338,8 +1338,8 @@ func (c *Conversation) Release() {
 	c.released = time.Now()
 	c.emit = nil
 }
-func (c *Conversation) Begin(text string) error {
-	_, err := c.BeginCommand(uuid.NewString(), text, "")
+func (c *Conversation) Begin(text string, photos ...Photo) error {
+	_, err := c.BeginCommand(uuid.NewString(), text, "", photos...)
 	return err
 }
 

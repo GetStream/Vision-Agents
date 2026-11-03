@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +99,175 @@ func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextIsAQuestionTheModelIsShow
 	message := s.personsMessage(opened, command)
 	attachments, _ := json.Marshal(message["attachments"])
 	s.Contains(string(attachments), `"type":"image"`)
+}
+
+// A photo with no text is a question without a request id too, and the person's message
+// shows it as it shows a command's (AI-2550).
+func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsAQuestionShownOnThePersonsMessage() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	before, asked := len(s.chat.Uploads()), len(s.vision.requests())
+
+	var answering AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Images: &[]ImageSource{{Url: photo}}}, &answering))
+
+	s.NotEmpty(answering.Id, "a turn started")
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests()[asked:] {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the photo")
+	message := s.onlyPersonsMessage(opened)
+	s.Empty(message["text"])
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"image"`)
+	s.Contains(string(attachments), `"title":"photo-1.png"`)
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1)
+	s.Equal(data, uploads[0].Data, "the photo uploaded is the one sent")
+}
+
+// The frames of a video sent with a photo and no text are the model's alone: the person's
+// message shows the photo they sent, not stills the router cut from their clip (AI-2550).
+func (s *ResponsesAskedSuite) TestAVideoSentWithAPhotoWithoutTextShowsOnlyThePhotoOnThePersonsMessage() {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		// CI installs ffmpeg; a skip there would hide that this test never ran.
+		if os.Getenv("CI") != "" {
+			s.T().Fatal("ffmpeg is not installed, so the clip cannot be recorded")
+		}
+		s.T().Skip("ffmpeg not available to record the clip")
+	}
+	path := filepath.Join(s.T().TempDir(), "clip.mp4")
+	out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=4",
+		"-pix_fmt", "yuv420p", path).CombinedOutput()
+	s.Require().NoError(err, string(out))
+	clip, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
+	frames := 2
+	before, asked := len(s.chat.Uploads()), len(s.vision.requests())
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{
+			Images: &[]ImageSource{{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)}},
+			Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), MaxFrames: &frames}},
+		}, nil))
+
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests()[asked:] {
+			if strings.Contains(fmt.Sprint(request.Input), "video 1, ") {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the video's frames")
+	message := s.onlyPersonsMessage(opened)
+	var attachments []map[string]any
+	encoded, _ := json.Marshal(message["attachments"])
+	s.Require().NoError(json.Unmarshal(encoded, &attachments))
+	s.Require().Len(attachments, 1, "the photo alone is shown, no frame of the video")
+	s.Equal("photo-1.png", attachments[0]["title"])
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, no frame of the video")
+	s.Equal(data, uploads[0].Data)
+}
+
+// The session socket's respond takes a photo with no text and no request id the same way.
+func (s *ResponsesAskedSuite) TestAPhotoRespondedOnTheSocketWithoutTextOrRequestIDIsShownOnThePersonsMessage() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
+	before := len(s.chat.Uploads())
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.T().Cleanup(func() { _ = watching.Close() })
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{"type": "respond", "text": "",
+		"images": []map[string]string{{"url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)}}}))
+
+	message := s.onlyPersonsMessage(opened)
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"image"`)
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1)
+	s.Equal(data, uploads[0].Data)
+}
+
+// What a photo-only question without a request id is held to is what a command's photos are:
+// a link is not taken from elsewhere, and a message shows at most 8.
+func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsHeldToACommandsRules() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	photo := ImageSource{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))}
+	nine := []ImageSource{photo, photo, photo, photo, photo, photo, photo, photo, photo}
+	before := len(s.chat.Uploads())
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Images: &[]ImageSource{{Url: "https://example.com/a.png"}}})
+	s.Equal(http.StatusBadRequest, status, "a photo linked from elsewhere")
+	s.Contains(string(body), "takes photos as data URIs")
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Images: &nine})
+	s.Equal(http.StatusBadRequest, status, "more photos than a message shows")
+	s.Contains(string(body), "at most 8 photos")
+	s.Len(s.chat.Uploads()[before:], 0, "nothing refused is uploaded")
+}
+
+// Controls, each answered the same on the base (49fa88bde): a question without a request id
+// that has text is shown as typed, its photos going to the model alone, and one with nothing
+// in it is refused.
+func (s *ResponsesAskedSuite) TestAQuestionWithTextAndNoRequestIDIsShownAsTyped() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	text := "Is the drive-thru open late " + s.utils.uuid() + "?"
+	before := len(s.chat.Uploads())
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses", CreateResponseRequest{Text: text}, nil))
+	message := s.onlyPersonsMessage(opened)
+	s.Equal(text, message["text"])
+	s.Empty(message["attachments"], "a text question carries no files")
+
+	other := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	linked := "What is in this photo " + s.utils.uuid() + "?"
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+other.Id+"/responses",
+		CreateResponseRequest{Text: linked, Images: &[]ImageSource{{Url: "https://example.com/a.png"}}}, nil))
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests() {
+			if request.HasImage() && strings.Contains(fmt.Sprint(request.Input), linked) {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the linked photo")
+	s.Len(s.chat.Uploads()[before:], 0, "a question with text uploads nothing without a request id")
+
+	empty := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+empty.Id+"/responses",
+		CreateResponseRequest{})
+	s.Equal(http.StatusBadRequest, status, "a question with nothing in it")
+}
+
+// onlyPersonsMessage is the first message the person wrote in the session's channel.
+func (s *ResponsesAskedSuite) onlyPersonsMessage(opened Session) map[string]any {
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	var message map[string]any
+	s.Require().Eventually(func() bool {
+		for _, stored := range s.chat.Stored(channel) {
+			custom, _ := stored["custom"].(map[string]any)
+			if written, _ := custom["support_message"].(map[string]any); written["role"] == "user" {
+				message = stored
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the person's message was never written")
+	return message
 }
 
 // personsMessage is the message a command was written as in the session's channel.
