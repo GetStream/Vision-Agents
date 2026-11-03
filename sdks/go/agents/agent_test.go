@@ -750,29 +750,6 @@ func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
 	}
 }
 
-func TestSyncSendsTheMCPServersNamedByURL(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `mcp_servers:
-  - name: tablejourney
-    url: https://tablejourney.com/mcp
-    tools: [search_*]
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	servers := router.syncs[0].McpServers
-	if servers == nil || len(*servers) != 1 || (*servers)[0].Name != "tablejourney" || (*servers)[0].Url != "https://tablejourney.com/mcp" ||
-		(*servers)[0].Tools == nil || strings.Join(*(*servers)[0].Tools, ",") != "search_*" {
-		t.Errorf("the MCP servers went as %+v", servers)
-	}
-}
-
 func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", "tools:\n  progressive: true\n")
@@ -807,38 +784,6 @@ func TestSyncSendsHowLongToolOutputIsKept(t *testing.T) {
 	}
 }
 
-func TestSyncSendsWhoLogsIntoEachMCPServer(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `mcp_servers:
-  - name: crm
-    url: https://crm.example.com/mcp
-    scopes: [contacts.read]
-  - name: notes
-    url: https://notes.example.com/mcp
-    user: true
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	servers := router.syncs[0].McpServers
-	if servers == nil || len(*servers) != 2 {
-		t.Fatalf("the MCP servers went as %+v", servers)
-	}
-	crm, notes := (*servers)[0], (*servers)[1]
-	if crm.Scopes == nil || strings.Join(*crm.Scopes, ",") != "contacts.read" || crm.User != nil {
-		t.Errorf("the app's server went as %+v", crm)
-	}
-	if notes.User == nil || !*notes.User || notes.Scopes != nil {
-		t.Errorf("each user's server went as %+v", notes)
-	}
-}
-
 func TestAnAgentWhoseFolderNamesPluginsIsNotMade(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
 	write(t, root, "agent.yaml", "plugins: [sentry]\n")
@@ -869,6 +814,30 @@ func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
 	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"5d7a06efa5f0e215c95f81ffe13b0585","name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
+	}
+}
+
+// An empty or null mcp_servers sent no MCP servers. Its sync bodies were probed on
+// 1af941985, while the SDK still read the key.
+func TestSyncOfAnEmptyMCPServerListSendsTheBodyItSentBefore(t *testing.T) {
+	for declared, probed := range map[string]string{
+		"name: concierge\nmcp_servers: []\nconnectors:\n  - linear\n": `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"39719d1b342a09b5e9d4a6fb77832132","name":"concierge"}`,
+		"name: concierge\nmcp_servers:\nconnectors:\n  - linear\n":    `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"51634dd05c567ccc87600dbd3bd2ac5b","name":"concierge"}`,
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatalf("%q: %v", declared, err)
+		}
+
+		router.mu.Lock()
+		if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
+			t.Errorf("%q: body = %s", declared, router.syncRaw)
+		}
+		router.mu.Unlock()
 	}
 }
 
@@ -1108,11 +1077,11 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 }
 
 // controlYAML is an agent.yaml with no connectors key. Its sync body was probed on
-// 80773902 (connectors/tool-patterns), before connectors were read, and again on
-// 259da758b once it named no plugins.
+// 80773902 (connectors/tool-patterns), before connectors were read, again on
+// 259da758b once it named no plugins, and on 1af941985 once it named no MCP servers.
 // The body now also carries calls, which a sync always sends; an older router ignores it
 // (Huma's AllowAdditionalPropertiesByDefault).
-const controlYAML = "name: concierge\nllm: openai/gpt-5.6\nmcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n"
+const controlYAML = "name: concierge\nllm: openai/gpt-5.6\n"
 
 func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
@@ -1126,7 +1095,7 @@ func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"hash":"357bca9fcbc1f2902b8344437a2baecd","llm":"openai/gpt-5.6","mcp_servers":[{"name":"notes","url":"https://notes.example/mcp"}],"name":"concierge"}`
+	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"hash":"aa0b594ad264ea72935f1c74441f8155","llm":"openai/gpt-5.6","name":"concierge"}`
 	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
 		t.Errorf("body = %s", router.syncRaw)
 	}

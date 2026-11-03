@@ -45,6 +45,7 @@ from .approved_connection_tool import ApprovedConnectionTool
 from .approved_connection_tools import ApprovedConnectionTools
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .audio_source import AudioSource
 from .audit_action import AuditAction
 from .audit_change import AuditChange
 from .audit_entry import AuditEntry
@@ -625,6 +626,7 @@ __all__ = (
     "ApprovedConnectionTools",
     "AttachNumberRequest",
     "AttachedNumber",
+    "AudioSource",
     "AuditAction",
     "AuditChange",
     "AuditEntry",

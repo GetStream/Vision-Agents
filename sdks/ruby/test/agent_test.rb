@@ -568,23 +568,22 @@ class TestAgent < LocalRouterTest
     FileUtils.rm_rf(File.dirname(root))
   end
 
-  def test_sync_sends_the_greeting_harness_plugins_pages_and_simulations_the_folder_declares
+  def test_sync_sends_the_greeting_harness_pages_and_simulations_the_folder_declares
     root = folder
     File.write(File.join(root, "agent.yaml"),
-               "name: jean\ngreeting:\n  text: Bonjour\n  mode: exact\nharness: default\nplugins: [linear]\n")
+               "name: jean\ngreeting:\n  text: Bonjour\n  mode: exact\nharness: default\n")
     File.write(File.join(root, "knowledge/urls.yaml"), "- url: https://example.com/plans\n  refresh_hours: 24\n")
     FileUtils.mkdir_p(File.join(root, "simulations"))
     File.write(File.join(root, "simulations/lunch.yaml"),
                "- name: lunch\n  scenario: Order a club\n  assertion: One club\n  variations: 3\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    capture_io { VA::Agent.new(folder: root, client: client).sync }
+    VA::Agent.new(folder: root, client: client).sync
 
     request = @router.last(:post, "/v1/agents/sync").json
     assert_equal({ "text" => "Bonjour", "mode" => "exact" }, request["greeting"])
     assert_equal "default", request["harness"]
-    assert_equal ["linear"], request["plugins"]
-    %w[speed agent_plugins].each { |key| refute request.key?(key), key }
+    %w[speed agent_plugins plugins].each { |key| refute request.key?(key), key }
     assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
     assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
                  request["simulations"]
@@ -732,32 +731,37 @@ class TestAgent < LocalRouterTest
     assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
   end
 
-  def test_sync_warns_once_that_plugins_are_deprecated_and_still_sends_them
-    request = nil
-    _, warned = capture_io { request = sync_declaring("plugins: [linear, slack]\n") }
+  def test_sync_refuses_plugins_and_posts_nothing
+    error = assert_raises(VA::ConfigurationError) { sync_declaring("plugins: [linear, slack]\n") }
 
-    assert_equal ["linear", "slack"], request["plugins"]
-    assert_equal "agent.yaml plugins are deprecated: rename plugins to connectors\n", warned
+    assert error.message.end_with?("/jean/agent.yaml: plugins is no longer read: plugins were replaced by " \
+                                   "connectors, so name the provider under connectors"), error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
   end
 
-  def test_sync_does_not_warn_when_there_are_no_plugins
-    _, warned = capture_io { sync_declaring("connectors: [linear]\n") }
+  def test_sync_sends_no_plugins_for_a_key_that_names_none
+    ["plugins: []\n", "plugins:\n", "plugins: ~\n"].each do |yaml|
+      request = nil
+      _, warned = capture_io { request = sync_declaring("#{yaml}connectors: [linear]\n") }
 
-    assert_empty warned
+      refute request.key?("plugins"), yaml
+      assert_equal [{ "name" => "linear" }], request["connectors"].map { |each| each.slice("name") }, yaml
+      assert_empty warned, yaml
+    end
   end
 
-  def test_sync_warns_about_plugins_even_when_the_folder_is_unchanged
+  def test_sync_refuses_plugins_added_to_a_folder_that_was_synced_unchanged
     root = File.join(Dir.mktmpdir, "jean")
     FileUtils.mkdir_p(root)
-    File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
+    File.write(File.join(root, "agent.yaml"), "name: jean\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
-    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "jean", "id" => "cfg_1" }])
-    capture_io { VA::Agent.new(folder: root, client: client).sync }  # first sync stamps the folder
+    VA::Agent.new(folder: root, client: client).sync # stamps the folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
 
-    _, warned = capture_io { VA::Agent.new(folder: root, client: client).sync }  # second sync: unchanged
+    error = assert_raises(VA::ConfigurationError) { VA::Agent.new(folder: root, client: client).sync }
 
+    assert_includes error.message, "plugins is no longer read"
     assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
-    assert_equal "agent.yaml plugins are deprecated: rename plugins to connectors\n", warned
   ensure
     FileUtils.rm_rf(File.dirname(root))
   end
