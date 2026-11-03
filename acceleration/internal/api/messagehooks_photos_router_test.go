@@ -116,6 +116,23 @@ func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondToAPhotoSentAloneI
 	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
 }
 
+// Control, as on base (4f52691c5): a second photo sent alone to a session a worker opened for
+// the channel is followed up by the router itself, which asks the model with the text the
+// message holds, empty, and writes the reply. Only a worker's own empty respond is refused.
+func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionIsAskedAndAnswered() {
+	handed := s.photoAloneHandedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	s.Require().NotEmpty(opened.Id)
+	seen := len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
+
+	s.answered("", finishedReply)
+	asked := s.vision.requests()[seen:]
+	s.Require().Len(asked, 1, "the model was asked once")
+	s.Equal("", s.lastTurn(asked).Content)
+}
+
 // Control, as on base: a worker answering over the socket with text, as on a photo sent with
 // text, is answered as before.
 func (s *MessageHooksSuite) TestAWorkersSocketRespondWithTextIsAnswered() {
