@@ -133,6 +133,9 @@ type commandRecord struct {
 	Reply string `json:",omitempty"`
 	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
 	Files []sandbox.Attachment `json:",omitempty"`
+	// Heard is what the voice note sent with the command said, for a retry to carry rather
+	// than hear it again (CheckBegin).
+	Heard string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -152,7 +155,14 @@ const ReadBackPrefix = "st_"
 func readBack(id string) bool { return strings.HasPrefix(id, ReadBackPrefix) }
 
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// maxCommandText is the most text one command carries, in bytes.
+const maxCommandText = 1024 * 1024
+
+var errInvalidCommand = errors.New("invalid command ID or text")
+
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 // ledger is what a conversation holds in memory. Stream Chat is its durable copy: a
@@ -1163,14 +1173,14 @@ func entries(p Page) []entry {
 
 func entryOf(p Page, m Message) entry {
 	said := m.Text
-	if m.Role == "user" && len(m.Files) > 0 {
+	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
 		// A message of photos alone is the note alone.
 		if said != "" {
 			said += "\n\n"
 		}
-		said += photoNote(len(m.Files))
+		said += photoNote(photos)
 	}
 	content := said
 	var artifacts []ArtifactAttachment
@@ -1226,6 +1236,19 @@ func entryOf(p Page, m Message) entry {
 }
 
 // photoNote follows a person's words in history when they sent photos with them.
+// photosOn counts the photos on m. A voice note sent with it is not one: its text already
+// holds what was said. A thread channel's photos are read without a type, so a file is a
+// photo unless it is audio.
+func photosOn(m Message) int {
+	var photos int
+	for _, file := range m.Files {
+		if !strings.HasPrefix(file.MIME, "audio/") {
+			photos++
+		}
+	}
+	return photos
+}
+
 func photoNote(count int) string {
 	if count == 1 {
 		return "[sent with a photo, not shown again]"
@@ -1348,18 +1371,48 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	return record.CommandReceipt, nil
 }
 
+// CheckBegin refuses what BeginCommand would refuse id with a voice note for now, for a
+// caller to learn it before work it pays for: hearing the voice note. heard is what the voice
+// note of id said when it was begun, for a retry to carry rather than hear it again, and empty
+// for an id not begun. A command begun without a voice note is another question. text is
+// what was typed with it.
+func (c *Conversation) CheckBegin(id, text string) (heard string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return "", stack.Wrap(errors.New("conversation is not open"))
+	}
+	if len(text) > maxCommandText {
+		return "", stack.Wrap(errInvalidCommand)
+	}
+	if previous, ok := c.data.Commands[id]; ok {
+		if previous.Initiator != c.data.Owner {
+			return "", stack.Wrap(ErrCommandNotFound)
+		}
+		if previous.Heard == "" {
+			return "", stack.Wrap(ErrCommandConflict)
+		}
+		return previous.Heard, nil
+	}
+	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
+		return "", stack.Wrap(ErrResponseRunning)
+	}
+	return "", nil
+}
+
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored. photos are
-// what the person sent with it (PublishPhotos), which their message shows.
+// what the person sent with it (PublishPhotos), which their message shows; text may be empty
+// when there are some.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
-		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
+	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
+		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
 	}
 	digest := commandDigest(text, photos)
 	if previous, ok := c.data.Commands[id]; ok {
@@ -1392,7 +1445,13 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	record := commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	for _, photo := range photos {
+		if photo.Heard != "" {
+			record.Heard = photo.Heard
+		}
+	}
+	c.data.Commands[id] = record
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
@@ -1954,7 +2013,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
 	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
-	extra = append(extra, fileAttachments(m.Files)...)
+	extra = append(extra, fileAttachments(m.Files, m.Role == "user")...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
@@ -1970,7 +2029,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			custom["ai_generated"] = true
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
+			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})

@@ -895,7 +895,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		current, model := a.harness, a.llm
 		a.mu.Unlock()
 		if current == nil {
-			return "", stack.Wrap(errors.New("agent: not joined"))
+			return "", stack.Wrap(errNotJoined)
 		}
 		id := replyPrefix + turnStamp()
 		attached := make([]llm.ImagePart, 0, len(images))
@@ -951,6 +951,35 @@ func (a *Agent) SeesImages() bool {
 	current, model := a.harness, a.llm
 	a.mu.Unlock()
 	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
+}
+
+// CheckTurn reports what RespondTo refuses a turn for before it starts, for a caller to learn
+// it before work it pays for: an asked the model does not take (CheckAsked), an agent not
+// joined, or images with nothing that looks at them (ErrCannotSeeImages) or a speech-to-speech
+// agent, which takes none.
+func (a *Agent) CheckTurn(asked options.LLM, images bool) error {
+	if err := a.CheckAsked(asked); err != nil {
+		return err
+	}
+	if a.native() {
+		if images {
+			return stack.Wrap(errNativeTakesNoImages)
+		}
+		if a.speech() == nil {
+			return stack.Wrap(errNotJoined)
+		}
+		return nil
+	}
+	a.mu.Lock()
+	joined := a.harness != nil
+	a.mu.Unlock()
+	if !joined {
+		return stack.Wrap(errNotJoined)
+	}
+	if images && !a.SeesImages() {
+		return stack.Wrap(ErrCannotSeeImages)
+	}
+	return nil
 }
 
 // SeesImagesInWriting reports whether Ask hands images to the model: only a conversation
@@ -2097,7 +2126,7 @@ func (a *Agent) respondTurn(
 	a.mu.Lock()
 	if a.harness == nil {
 		a.mu.Unlock()
-		return stack.Wrap(errors.New("agent: not joined"))
+		return stack.Wrap(errNotJoined)
 	}
 	said := participant
 	if listened.author != "" {

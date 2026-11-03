@@ -175,8 +175,9 @@ type Responses struct {
 	pipeline *stream.Pipeline
 }
 
-// Input is something sent along with what is asked: an Image or a Clip to show the agent, the
-// RequestID it answers, or a MaxOutputTokens or ReasoningEffort for this answer alone.
+// Input is something sent along with what is asked: an Image or a Clip to show the agent, a
+// VoiceNote to answer, the RequestID it answers, or a MaxOutputTokens or ReasoningEffort for
+// this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -213,6 +214,18 @@ func (v Clip) attachTo(request *acceleration.CreateResponseRequest) {
 		source.MaxFrames = &v.MaxFrames
 	}
 	request.Videos = appended(request.Videos, source)
+}
+
+// VoiceNote is a recording of what the person asked, by HTTP(S) URL or as a base64 data URI,
+// at most 8 MiB. The router transcribes it before the agent answers, and the agent answers
+// what was said, after the text it was sent with, which may then be empty. A conversation
+// kept in Stream Chat shows it on the person's message.
+type VoiceNote struct {
+	URL string
+}
+
+func (n VoiceNote) attachTo(request *acceleration.CreateResponseRequest) {
+	request.Audio = &acceleration.AudioSource{Url: n.URL}
 }
 
 // RequestID is the request a dispatch worker was handed, passed back with the text it was
