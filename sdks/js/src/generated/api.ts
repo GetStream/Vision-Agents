@@ -2198,6 +2198,7 @@ export type paths = {
          * Ask the agent something and get a handle on the answer
          * @description The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
          *     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+         *     A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
          */
         readonly post: operations["createResponse"];
         readonly delete?: never;
@@ -4772,6 +4773,10 @@ export type components = {
             /** @description The vendor's signalling addresses, as IPs or CIDR blocks. */
             readonly allowed_ips?: readonly string[];
         };
+        readonly AudioSource: {
+            /** @description Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
+            readonly url: string;
+        };
         /**
          * @description created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
          * @enum {string}
@@ -5996,14 +6001,16 @@ export type components = {
             readonly source?: "api" | "dashboard";
         };
         readonly CreateResponseRequest: {
+            /** @description A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing. */
+            readonly audio?: components["schemas"]["AudioSource"];
             readonly images?: readonly components["schemas"]["ImageSource"][];
             /** @description Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's. */
             readonly max_output_tokens?: number;
             /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
             readonly reasoning_effort?: string;
-            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id. */
+            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. */
             readonly request_id?: string;
-            /** @description What to answer, as though it had been said. */
+            /** @description What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id. */
             readonly text: string;
             /** @description Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole. */
             readonly videos?: readonly components["schemas"]["VideoSource"][];

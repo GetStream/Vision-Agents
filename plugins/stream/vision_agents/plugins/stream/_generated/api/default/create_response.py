@@ -112,6 +112,8 @@ def sync_detailed(
     the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a
     request that waited them out would time out on anything long enough to be worth asking.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -150,6 +152,8 @@ def sync(
     the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a
     request that waited them out would time out on anything long enough to be worth asking.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -183,6 +187,8 @@ async def asyncio_detailed(
     the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a
     request that waited them out would time out on anything long enough to be worth asking.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -219,6 +225,8 @@ async def asyncio(
     the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a
     request that waited them out would time out on anything long enough to be worth asking.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.

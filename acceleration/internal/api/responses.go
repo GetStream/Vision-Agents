@@ -38,7 +38,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || request.Body.Text == "" {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0) {
 		return nil, invalidRequest("there is nothing to answer")
 	}
 
@@ -69,20 +69,34 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	}
 
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
-	var responseID string
-	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		_, responseID, err = found.RespondCommand(ctx, id, request.Body.Text, "", parts, asked)
-		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, conflict(err.Error())
+	commandID := value(request.Body.RequestId)
+	// Heard after every check that can refuse the question beforehand, since hearing it is
+	// billed. Three refusals can still come after it is heard, and the note is billed then: the
+	// transcript pushes a typed text over the 1 MiB command limit, a second turn starts between
+	// the check and the start of this one, or the note fails to upload to Chat. A retry of a
+	// question carries what its first hearing heard.
+	text := request.Body.Text
+	var notes []conversation.VoiceNote
+	if request.Body.Audio != nil {
+		heard, err := found.CheckRespond(ctx, commandID, text, len(parts) > 0, asked)
+		if err != nil {
+			return nil, refusedResponse(err)
 		}
-	} else {
-		responseID, err = found.Respond(ctx, request.Body.Text, parts, asked)
+		note, failure := s.hearVoiceNote(ctx, found.Spec(), request.Body.Audio.Url, heard)
+		if failure != nil {
+			return nil, failure
+		}
+		text, notes = withVoiceNote(text, note.Heard), []conversation.VoiceNote{note}
 	}
-	if errors.Is(err, agent.ErrCannotSeeImages) {
-		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
+
+	var responseID string
+	if commandID != "" && found.Durable() {
+		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts, asked, notes...)
+	} else {
+		responseID, err = found.Respond(ctx, text, parts, asked)
 	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedResponse(err)
 	}
 	if len(videos) > 0 {
 		found.SawVideo()
@@ -96,9 +110,20 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 			CreatedAt: found.CreatedAt()}}, nil
 	}
 
-	said := request.Body.Text
-	return &createResponseResponse{Body: AgentResponse{Id: responseID, SessionId: found.ID(), Said: &said,
+	return &createResponseResponse{Body: AgentResponse{Id: responseID, SessionId: found.ID(), Said: &text,
 		Status: AgentResponseStatusRunning, CreatedAt: time.Now().UTC()}}, nil
+}
+
+// refusedResponse is the answer to a question its session refused before the turn started.
+func refusedResponse(err error) error {
+	switch {
+	case errors.Is(err, conversation.ErrCommandConflict):
+		return conflict(err.Error())
+	case errors.Is(err, agent.ErrCannotSeeImages):
+		return notConfigured(agent.ErrCannotSeeImages.Error())
+	default:
+		return invalidRequest(err.Error())
+	}
 }
 
 // listResponses returns a session's turns, oldest first.
@@ -227,17 +252,21 @@ func (s *Server) registerResponses(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.listResponses)
 	huma.Register(api, huma.Operation{
-		OperationID: "createResponse",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/sessions/{id}/responses",
-		Summary:     "Ask the agent something and get a handle on the answer",
+		OperationID:     "createResponse",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/sessions/{id}/responses",
+		MaxBodyBytes:    maxInlineAudioBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Ask the agent something and get a handle on the answer",
 		Description: "The same thing respond does, with an id back. That is the whole difference and the " +
 			"reason this exists: respond returns nothing, so a caller that wants to follow one " +
 			"particular turn has to watch the socket and guess which events belong to it. With an id " +
 			"it can ask for that turn's items instead.\n" +
 			"It returns as soon as the turn has started, not when it has finished. A model takes " +
 			"seconds and a request that waited them out would time out on anything long enough to be " +
-			"worth asking.",
+			"worth asking.\n" +
+			"A voice note in audio is transcribed before the turn starts, and what was said is the " +
+			"question, after any text. A voice note that cannot be heard is refused and no turn starts.",
 		Extensions:    map[string]any{clientAccessibleExtension: true},
 		DefaultStatus: http.StatusAccepted,
 		Responses: map[string]*huma.Response{
@@ -406,11 +435,12 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio           *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
 	Images          *[]ImageSource `json:"images,omitempty"`
 	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
-	Text            string         `json:"text" doc:"What to answer, as though it had been said."`
+	Text            string         `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id."`
 	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
 }
 

@@ -1833,6 +1833,10 @@ module GetStream
           properties: %w[agent_config_id route_id sip_uri trunk_id].freeze,
           required: %w[route_id sip_uri trunk_id].freeze, open: false
         }.freeze,
+        "AudioSource" => {
+          properties: %w[url].freeze,
+          required: %w[url].freeze, open: false
+        }.freeze,
         "AuditChange" => {
           properties: %w[after before field].freeze,
           required: %w[field].freeze, open: false
@@ -2150,7 +2154,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[images max_output_tokens reasoning_effort request_id text videos].freeze,
+          properties: %w[audio images max_output_tokens reasoning_effort request_id text videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
