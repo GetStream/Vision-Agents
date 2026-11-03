@@ -232,6 +232,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
+
+`loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
+
 ### The Python SDK refuses `mcp_servers` in agent.yaml
 
 `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `mcp_servers`, with a `ValueError` that says to create a custom connector for the server's URL and name it under `connectors`, and never sends `mcp_servers` to the router. An empty key (`mcp_servers: []`, or the key with nothing after it) names nothing and loads. `RemoteEvent` has no `authorization_required` type and no `url` or `image_url`: only a plugin's login made it, and a connector's login is a step of the reply (AI-2532).
