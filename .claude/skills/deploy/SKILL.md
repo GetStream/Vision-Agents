@@ -131,8 +131,12 @@ test us-west1 or europe-west4, run `kubectl --context <shard context> -n acceler
 port-forward deploy/chat-accelerate-prod <port>:8080` and call the router as the app. Prod runs
 `authMode: proxy` with
 `proxyDeclaresKind: true`, so send `X-Stream-App-Id: <app>` and `Stream-Auth-Type: server`
-(`acceleration/internal/auth/auth.go`, `proxied.Authenticate`). The sandbox still reaches the
-shard's proxy on its public address.
+(`acceleration/internal/auth/auth.go`, `proxied.Authenticate`). Also send
+`X-Stream-Api-Key-Id: <the app's public key>` (`APIKeyIDHeader`, `auth.go:112-118`) and
+`X-Stream-Actor-Name: <your name>`. Without the key header, the router records the run's usage
+with no API key and raises the `unattributed` usage alert. This happened on prod us-west1 and
+europe-west4 on 2026-11-03 21:28Z (AI-2464 E2E). The sandbox still reaches the shard's proxy on
+its public address.
 
 Datadog (AI-2463, chat #20097, `infra/shards/us-east4-acceleration/datadog/sandbox_egress.tf`):
 
