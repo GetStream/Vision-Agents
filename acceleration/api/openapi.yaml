@@ -21549,6 +21549,29 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a Telnyx call
+  /v1/phone/machine/{token}:
+    post:
+      description: 'Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'
+      operationId: receiveCallMachine
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The report is taken
+        "400":
+          description: The report could not be read
+        "404":
+          description: No placed call is waiting at this token
+        "413":
+          description: The report is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive who picked up a placed call
   /v1/phone/numbers:
     get:
       operationId: listPhoneNumbers

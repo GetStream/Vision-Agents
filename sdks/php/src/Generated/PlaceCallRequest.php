@@ -17,6 +17,8 @@ final readonly class PlaceCallRequest
         // Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, s...
         /** @var array<string, string>|null */
         public ?array $custom = null,
+        // Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What th...
+        public ?bool $detectVoicemail = null,
         // Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot...
         /** @var array<string, string>|null */
         public ?array $headers = null,
@@ -40,6 +42,7 @@ final readonly class PlaceCallRequest
             from: Json::string($data, 'from'),
             to: Json::string($data, 'to'),
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
+            detectVoicemail: array_key_exists('detect_voicemail', $data) && $data['detect_voicemail'] !== null ? Json::bool($data, 'detect_voicemail') : null,
             headers: array_key_exists('headers', $data) && $data['headers'] !== null ? Json::stringMap($data, 'headers') : null,
             initialDigits: array_key_exists('initial_digits', $data) && $data['initial_digits'] !== null ? Json::string($data, 'initial_digits') : null,
             ringTimeoutSeconds: array_key_exists('ring_timeout_seconds', $data) && $data['ring_timeout_seconds'] !== null ? Json::int($data, 'ring_timeout_seconds') : null,
@@ -60,6 +63,9 @@ final readonly class PlaceCallRequest
         $out['to'] = $this->to;
         if ($this->custom !== null) {
             $out['custom'] = $this->custom;
+        }
+        if ($this->detectVoicemail !== null) {
+            $out['detect_voicemail'] = $this->detectVoicemail;
         }
         if ($this->headers !== null) {
             $out['headers'] = $this->headers;
