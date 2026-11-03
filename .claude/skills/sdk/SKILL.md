@@ -280,8 +280,8 @@ router, not wrapped by an SDK. Every SDK has moved: the `respond`, `RespondAsync
 
 The request id is the SDK's, never the caller's. responses.create generates a fresh random `request_id`
 (a UUID or 32 hex characters) for every text-only question, on every session, and sends it, so a retry
-of the same request is answered once. A question with images or clips sends none, because the router
-refuses one with media. A session not kept in Stream Chat ignores it, so an SDK never checks whether a
+of the same request is answered once. A question with images sends none, because a photo sent with a request id
+must be a data URI. A question with clips sends one (AI-2515). A session not kept in Stream Chat ignores it, so an SDK never checks whether a
 conversation is kept. No SDK exposes a `request_id` (or the old `command_id`) option on responses.create,
 and docs never mention it. The one id a caller passes on is the dispatch worker's: answering an inbound
 message sends back that message's `request_id`, through the SDK's answer helper (`client.RequestID` in Go).
