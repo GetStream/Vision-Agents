@@ -3233,7 +3233,10 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Give a number back, which stops its monthly charge */
+        /**
+         * Give a number back, which stops its monthly charge
+         * @description A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
+         */
         readonly delete: operations["releasePhoneNumber"];
         readonly options?: never;
         readonly head?: never;
@@ -18058,6 +18061,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

@@ -238,6 +238,10 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
+	if errors.Is(err, phone.ErrNumberSettling) {
+		s.logger.Info("a phone vendor refused to release a number it is still setting up", "error", err)
+		return nil, errNumberSettling
+	}
 	if err != nil {
 		return nil, phoneFailure(s.logger, err)
 	}
@@ -611,6 +615,8 @@ var (
 		"it has no key encryption key to seal their trunk passwords with.")
 	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
+	errNumberSettling = APIError{Type: ErrorTypeConflict, Code: codePhoneNumberSettling,
+		Message: "The phone vendor is still setting up this number, bought moments ago. Release it again in a minute."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
 	errCallHookUnpointed  = unavailable("this app's Stream call hook could not be pointed at this router, so its calls would not reach an agent: try again")
@@ -1027,15 +1033,19 @@ func (s *Server) registerPhone(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.buyPhoneNumber)
 	huma.Register(api, huma.Operation{
-		OperationID:   "releasePhoneNumber",
-		Method:        http.MethodDelete,
-		Path:          "/v1/phone/numbers/{e164}",
-		Summary:       "Give a number back, which stops its monthly charge",
+		OperationID: "releasePhoneNumber",
+		Method:      http.MethodDelete,
+		Path:        "/v1/phone/numbers/{e164}",
+		Summary:     "Give a number back, which stops its monthly charge",
+		Description: "A vendor still setting up a number bought in the last minute may refuse to give it " +
+			"back: that is a 409 `phone_number_settling`, and the same release goes through once it has. " +
+			"Any other vendor failure is a 503 `phone_vendor_failed`.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The number was released"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict, http.StatusServiceUnavailable},
 	}, s.releasePhoneNumber)
 	huma.Register(api, huma.Operation{
 		OperationID: "attachPhoneNumber",

@@ -13469,6 +13469,8 @@ type ClientInterface interface {
 
 	// ReleasePhoneNumber Give a number back, which stops its monthly charge
 	//
+	// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
+	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -18936,6 +18938,8 @@ func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumb
 }
 
 // ReleasePhoneNumber Give a number back, which stops its monthly charge
+//
+// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 //
 // Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -35148,6 +35152,8 @@ type ClientWithResponsesInterface interface {
 	SearchPhoneNumbersWithResponse(ctx context.Context, params *SearchPhoneNumbersParams, reqEditors ...RequestEditorFn) (*SearchPhoneNumbersResponse, error)
 
 	// ReleasePhoneNumberWithResponse Give a number back, which stops its monthly charge
+	//
+	// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -54559,6 +54565,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -54592,6 +54600,11 @@ func (r ReleasePhoneNumberResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -65599,6 +65612,8 @@ func (c *ClientWithResponses) SearchPhoneNumbersWithResponse(ctx context.Context
 }
 
 // ReleasePhoneNumberWithResponse Give a number back, which stops its monthly charge
+//
+// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -88612,6 +88627,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
