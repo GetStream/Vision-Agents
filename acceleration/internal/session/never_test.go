@@ -2,7 +2,6 @@ package session
 
 import (
 	"fmt"
-	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +17,8 @@ const neverGrace = 30 * time.Second
 
 // never fails t if condition holds at any of its checks, made every tick for waitFor. A check
 // that outlives waitFor+neverGrace fails t, so a stuck check fails its test, not the binary.
+// The check runs off the test goroutine and may outlive its test: it must return, never fail
+// the test itself (no s.Require, no FailNow), or a late failure lands on the next test.
 func never(t assert.TestingT, condition func() bool, waitFor, tick time.Duration, msgAndArgs ...any) bool {
 	if h, ok := t.(interface{ Helper() }); ok {
 		h.Helper()
@@ -47,14 +48,8 @@ func neverWithin(t assert.TestingT, condition func() bool, waitFor, tick, grace 
 		}()
 		select {
 		case <-finished:
-			select {
-			case holds := <-held:
-				if holds {
-					return assert.Fail(t, "Condition satisfied", msgAndArgs...)
-				}
-			default:
-				// The check left through FailNow, which has failed the test itself.
-				return false
+			if <-held {
+				return assert.Fail(t, "Condition satisfied", msgAndArgs...)
 			}
 		case <-limit.C:
 			return assert.Fail(t, fmt.Sprintf("a check was still running %s after the %s it was to run for", grace, waitFor), msgAndArgs...)
@@ -127,6 +122,10 @@ func (s *NeverSuite) TestTheWindowIsWaitForAndTheCheckIsMadeOncePerTick() {
 	s.LessOrEqual(checks.Load(), int32(waitFor/tick+1))
 }
 
+// graceSlack is how much later than waitFor+grace a stuck check may be reported, for a loaded host.
+// It is under the grace, so waitFor+2*grace fails the bound.
+const graceSlack = 150 * time.Millisecond
+
 // A check that blocks past the grace fails its test then, with the message, rather than holding
 // the run until go test's timeout. The check is let go when the test ends.
 func (s *NeverSuite) TestACheckStuckPastTheGraceFailsItsTest() {
@@ -137,27 +136,12 @@ func (s *NeverSuite) TestACheckStuckPastTheGraceFailsItsTest() {
 	held := neverWithin(t, func() bool {
 		<-release
 		return false
-	}, 10*time.Millisecond, time.Millisecond, 100*time.Millisecond, "it is stuck")
+	}, 10*time.Millisecond, time.Millisecond, 300*time.Millisecond, "it is stuck")
 
 	s.False(held)
-	s.GreaterOrEqual(time.Since(start), 110*time.Millisecond, "never gave up before waitFor and the grace")
-	s.Less(time.Since(start), 5*time.Second, "never waited on the stuck check")
+	s.GreaterOrEqual(time.Since(start), 310*time.Millisecond, "never gave up before waitFor and the grace")
+	s.Less(time.Since(start), 310*time.Millisecond+graceSlack, "never waited past waitFor and the grace")
 	s.Require().Len(t.messages, 1)
-	s.Contains(t.messages[0], "a check was still running 100ms after the 10ms")
+	s.Contains(t.messages[0], "a check was still running 300ms after the 10ms")
 	s.Contains(t.messages[0], "it is stuck")
-}
-
-// A check that leaves through FailNow has failed its test itself: never returns at once, rather
-// than waiting out the grace for an answer that will not come.
-func (s *NeverSuite) TestACheckThatLeavesThroughFailNowReturnsAtOnce() {
-	start := time.Now()
-	t := &failures{}
-	held := neverWithin(t, func() bool {
-		runtime.Goexit()
-		return false
-	}, time.Second, time.Millisecond, 10*time.Second)
-
-	s.False(held)
-	s.Less(time.Since(start), 2*time.Second)
-	s.Empty(t.messages)
 }
