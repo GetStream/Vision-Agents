@@ -316,7 +316,7 @@ for the first answer rather than landing on top of it.
 A message written to a running session whose agent leaves text to dispatch carries its
 `SessionID`, and `Answer` has that session's model answer it, with the photos sent with it.
 `message.Images` are those photos, as URLs to fetch, which `Respond` takes beside the text.
-A photo sent with no text is not handed to a worker.
+A photo sent with no text is handed over too, with an empty `Text`.
 
 Several workers can wait at once, in which case the router shares the work between them.
 `Capacity` is a promise about what this process can hold: a full worker is passed over
