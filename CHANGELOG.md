@@ -266,6 +266,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A GPT-Live call hung up before its last report is billed its seconds
+
+A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
 ### A deleted session's call still reads its transcript
 
 `GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation before its session was deleted still reads empty (AI-2473).
