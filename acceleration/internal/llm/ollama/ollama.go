@@ -52,13 +52,16 @@ func New(options openweights.Options) (*openaicompat.LLM, error) {
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:      ProviderName,
-		Model:         options.Model,
-		APIKey:        options.APIKey,
-		BaseURL:       options.BaseURL,
-		Capabilities:  llm.Capabilities{ToolChoices: []string{"auto"}},
-		RequestFields: requestFields,
-		Logger:        options.Logger,
+		// Ollama renders the weights' own chat template, which expects a system message
+		// only first (see openweights.Host.New), so a later one goes on the user's side.
+		SystemTurnsAsUser: true,
+		Provider:          ProviderName,
+		Model:             options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
+		Capabilities:      llm.Capabilities{ToolChoices: []string{"auto"}},
+		RequestFields:     requestFields,
+		Logger:            options.Logger,
 	})
 }
 
