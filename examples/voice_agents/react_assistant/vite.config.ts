@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 
 export default defineConfig({
   plugins: [react()],
@@ -12,6 +12,8 @@ export default defineConfig({
     host: "localhost",
     port: 5173,
     strictPort: true,
+    // The trip components are described beside the iOS app, for every platform.
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), "../swift_assistant/app/SwiftAssistant/UIComponents.json"] },
     // swift_assistant's backend answers no browser of another origin, so it is reached
     // through this server instead.
     proxy: {

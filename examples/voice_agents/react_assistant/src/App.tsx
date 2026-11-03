@@ -11,6 +11,7 @@ import { ChatView } from "./ChatView";
 import { ConversationList } from "./ConversationList";
 import { Conversations, displayTitle } from "./conversations";
 import { messageOf } from "./errors";
+import { ReplyFormatMenu } from "./ReplyFormatMenu";
 import { deviceTools } from "./deviceTools";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
@@ -93,6 +94,7 @@ function Assistant_() {
           ☰
         </button>
         <h1>{title ? displayTitle(title) : "Juno"}</h1>
+        <ReplyFormatMenu />
       </header>
       {isMenuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
       <aside className={`drawer${isMenuOpen ? " open" : ""}`} inert={!isMenuOpen}>

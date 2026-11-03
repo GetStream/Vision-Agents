@@ -47,9 +47,11 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 `http` one only on a loopback host. `VITE_ROUTER_URL` points it at another router.
 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
-suggestions, reply actions and the composer's chat options) are not in a released
-`stream-chat-react` yet. Until 14.x has them, build the package from its
-`feat/ai-components-juno` branch (`yarn install && yarn build && npm pack`) and put the tarball
+suggestions, reply actions, the composer's chat options, and the generated UI of
+`stream-chat-react/a2ui`) are not in a released `stream-chat-react` yet. Until 14.x has them,
+build the package from its `feat/ai-components-generative-ui` branch, which is
+`feat/ai-components-juno` with generated UI on top (`yarn install && yarn build && npm pack`),
+and put the tarball
 here as `vendor/stream-chat-react.tgz`, which git ignores, then run
 `npm install ./vendor/stream-chat-react.tgz`: a plain `npm install` keeps the copy it cached for
 the old tarball. The page moves to the release that has them.
@@ -79,6 +81,19 @@ npm run build     # types, then the bundle
   can copy, share and rate it; ratings stay in the page, as the router takes none yet. The
   composer floats over the bottom of the conversation, which fades away under it, and its
   options offer Think harder, which asks with a higher `reasoning_effort`.
+- **Interactive replies**: the gear in the top bar picks how Juno answers, as the iOS app's
+  settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org). It is the
+  agent's instructions, kept by swift_assistant's backend (`GET`/`PUT /reply-format`), so every
+  app answers the same way, from the next conversation on. "Plan a weekend in Ohrid" then
+  answers with a card in place of the reply's words: a map of the places with their pins
+  dropping in, Juno's calendar for those days, a tab per day of place cards with their Wikipedia
+  photos, and a form to change the plan. The map, the place cards and the calendar are the
+  page's own components (`tripComponents.tsx`), described once for every platform in
+  swift_assistant's `UIComponents.json`; the rest is A2UI's basic catalog, drawn by
+  `stream-chat-react/a2ui` on the official `@a2ui/web_core` and `@a2ui/react`. Tapping a place
+  or sending the form is the person's next question, in their words, with what they did as its
+  `uiAction`, so the agent answers with a new plan. A reply in OpenUI, which the iOS app also
+  writes, shows its words here.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across and
   inline as JPEG data URIs (`photos.ts`), turned the way the camera held them. The question shows
   them at once; the router uploads them to the conversation's channel and writes them on the

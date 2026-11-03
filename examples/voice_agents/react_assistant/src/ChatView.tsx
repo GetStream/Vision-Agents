@@ -13,12 +13,16 @@ import {
   type AIChatOption,
   type AIMessageComposerStore,
   type AIToolApprover,
+  AIUIHost,
+  aiUIActionJSON,
 } from "stream-chat-react/ai-components";
+import { createA2UIRenderer } from "stream-chat-react/a2ui";
 
 import type { AgentChat, AgentChatSnapshot } from "./agentChat";
 import { Assistant } from "./assistant";
 import type { ChatScreen } from "./chatScreen";
 import { Store, useStore } from "./store";
+import { tripComponents } from "./tripComponents";
 
 const STARTERS = [
   "What's on my calendar today?",
@@ -65,6 +69,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
   const bar = useRef<HTMLDivElement>(null);
   const [thinkHarder, setThinkHarder] = useState(false);
   const composer = useRef<StateStore<AIMessageComposerStore> | null>(null);
+  const ui = useGeneratedUI(screen);
 
   useEffect(() => {
     const element = bar.current;
@@ -110,6 +115,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
         loadOlderMessages={state.hasOlderMessages && chat ? () => chat.loadOlderMessages() : undefined}
         messages={messages}
         pendingMessage={pending ?? null}
+        ui={ui}
         replyActions={(message) =>
           chat ? { rating: state.ratings[message.id] ?? null, onRate: (rating) => chat.rate(message.id, rating) } : undefined
         }
@@ -150,6 +156,24 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
         </AIMessageComposer>
       </div>
     </div>
+  );
+}
+
+/**
+ * The UI the agent writes for a reply, in place of its text: A2UI, with the app's own trip
+ * components beside its own. What the person does in it is their next question, in their words,
+ * carrying the action, so it shows at once like anything they ask. A reply whose UI this page
+ * does not read, such as OpenUI, shows its text.
+ */
+function useGeneratedUI(screen: ChatScreen): AIUIHost {
+  return useMemo(
+    () =>
+      new AIUIHost({
+        components: tripComponents,
+        renderers: [createA2UIRenderer()],
+        send: (action) => screen.send(action.label, [], false, aiUIActionJSON(action)),
+      }),
+    [screen],
   );
 }
 

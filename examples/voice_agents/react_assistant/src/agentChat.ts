@@ -1,4 +1,4 @@
-import { LiveReasoning, type Session } from "@stream-io/calypso";
+import { LiveReasoning, type Session, type UIAction } from "@stream-io/calypso";
 import type { Channel, Event, LocalMessage } from "stream-chat";
 import type { AIMessageRating } from "stream-chat-react/ai-components";
 
@@ -89,8 +89,12 @@ export class AgentChat extends Store<AgentChatSnapshot> {
     return lastReply?.generating === true;
   }
 
-  /** Asks, with the photos picked for it and, when `thinkHarder`, more time to reason. */
-  async ask(text: string, photos: readonly File[] = [], thinkHarder = false): Promise<void> {
+  /**
+   * Asks, with the photos picked for it and, when `thinkHarder`, more time to reason. A question
+   * that is what the person did in a reply's UI carries it as `uiAction`, which the router keeps
+   * on their message and tells the model after their words.
+   */
+  async ask(text: string, photos: readonly File[] = [], thinkHarder = false, uiAction?: UIAction): Promise<void> {
     const messages = this.get().messages;
     this.update({ failure: undefined, askedAfter: messages[messages.length - 1]?.id ?? "" });
     try {
@@ -98,6 +102,7 @@ export class AgentChat extends Store<AgentChatSnapshot> {
       await this.session.responses.create(text, {
         ...(images.length > 0 ? { images } : {}),
         ...(thinkHarder ? { reasoningEffort: "high" } : {}),
+        ...(uiAction ? { uiAction } : {}),
       });
     } catch (cause) {
       this.update({ failure: messageOf(cause), askedAfter: undefined });
@@ -188,14 +193,22 @@ export function isAgentReply(message: LocalMessage): boolean {
   return message.ai_generated === true;
 }
 
-/** A reply with nothing to show yet: no text and no steps. */
+/** A reply with nothing to show yet: no text, no steps and no UI. */
 function isEmptyReply(message: LocalMessage): boolean {
-  return !message.text && !(message.attachments ?? []).some((each) => each.type === "ai_reasoning" || each.type === "ai_tool_call");
+  return (
+    !message.text &&
+    !message.ai_ui &&
+    !(message.attachments ?? []).some((each) => each.type === "ai_reasoning" || each.type === "ai_tool_call")
+  );
 }
 
 declare module "stream-chat" {
   interface CustomMessageData {
     ai_generated?: boolean;
     generating?: boolean;
+    /** The UI the agent wrote for a reply, which shows in place of its text. */
+    ai_ui?: { v?: number; format: string; version?: string; status?: string; content: unknown };
+    /** What the person did in a reply's UI, on their message that says it. */
+    ai_ui_action?: Record<string, unknown>;
   }
 }

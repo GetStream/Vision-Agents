@@ -9,8 +9,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@a2ui/react": "0.15.0",
+    "@a2ui/web_core": "0.15.0",
     "@stream-io/calypso": "file:../../../sdks/js",
     "@stream-io/video-client": "^1.64.0",
+    "leaflet": "^1.9.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "stream-chat": "^9.54.0",
@@ -18,6 +21,7 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
+    "@types/leaflet": "^1.9.20",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "@vitejs/plugin-react": "5.0.4",
