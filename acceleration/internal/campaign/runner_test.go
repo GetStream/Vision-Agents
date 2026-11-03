@@ -379,6 +379,37 @@ func (s *RunnerSuite) TestAContactClaimedJustBeforeAPauseIsNotDialed() {
 	s.Equal(s.clock.now(), contact.NextAttemptAt.UTC(), "rung as soon as the campaign resumes")
 }
 
+func (s *RunnerSuite) TestAContactStoppedJustAfterItWasClaimedIsNotDialed() {
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	claimed, err := s.store.ClaimDueContacts(s.ctx, "router-a", s.clock.now(), lease, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	s.Require().NoError(s.store.StopContact(s.ctx, campaign.ID, claimed[0].Contact.ID))
+
+	s.runner.attempt(s.ctx, claimed[0])
+
+	s.Empty(s.dialer.dialed())
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Equal(store.ContactStopped, contact.Stage)
+	s.Empty(attempts)
+}
+
+func (s *RunnerSuite) TestAContactStoppedDuringTheFirstOfADoubleDialIsNotDialedAgain() {
+	s.dialer.hold = make(chan struct{})
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+
+	s.runner.tick(s.ctx)
+	s.Require().Eventually(func() bool { return s.dialer.inFlight() == 1 }, 5*time.Second, 10*time.Millisecond)
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Require().NoError(s.store.StopContact(s.ctx, campaign.ID, contact.ID))
+	close(s.dialer.hold)
+	s.runner.dialing.Wait()
+
+	s.Len(s.dialer.dialed(), 1, "nobody is rung once they are stopped")
+	contact, _ = s.contact(campaign, "+15550000001")
+	s.Equal(store.ContactStopped, contact.Stage)
+}
+
 func (s *RunnerSuite) TestAPausedCampaignFinishesItsCallAndSchedulesTheNext() {
 	s.dialer.hold = make(chan struct{})
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
@@ -596,6 +627,26 @@ func (s *RunnerSuite) TestACampaignLeavingAMessageWithAConfigThatBecameSpeechToS
 	paused := s.campaignNow(campaign)
 	s.Equal(store.Paused, paused.State)
 	s.Equal("voicemail_needs_exact_words", paused.PausedReason)
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(0, contact.Attempt, "the attempt is unused")
+}
+
+func (s *RunnerSuite) TestACampaignWhoseSessionCouldNotOpenPausesBeforeRinging() {
+	// The phone is nil: a call placed would panic, so nobody is rung.
+	runner, err := New(Options{
+		Store: s.store, Dialer: NewPhoneDialer(nil, nil, s.store, slog.New(slog.DiscardHandler)),
+		Transcripts: s.transcripts, Classifier: s.classifier, Owner: "router-p", Now: s.clock.now, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	campaign := s.leavingAMessageWith(store.AgentConfig{VideoMaxFrames: 9}, VoicemailHangUp)
+
+	s.tick(runner)
+
+	paused := s.campaignNow(campaign)
+	s.Equal(store.Paused, paused.State, "every other contact would be refused the same session")
+	s.Equal("session_refused", paused.PausedReason)
 	contact, _ := s.contact(campaign, "+15550000001")
 	s.Equal(store.Enrolled, contact.Stage)
 	s.Equal(0, contact.Attempt, "the attempt is unused")

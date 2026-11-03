@@ -23,6 +23,14 @@ const reasonConfigMissing = "config_missing"
 // whose agent config became speech-to-speech after launch, which cannot say fixed words.
 const reasonVoicemailNeedsExactWords = "voicemail_needs_exact_words"
 
+// reasonSessionRefused pauses a campaign whose agent config makes a session that cannot open:
+// every call of it would ring somebody with no agent to talk to.
+const reasonSessionRefused = "session_refused"
+
+// reasonNoSession marks a call that rang but whose session did not open. The person was rung,
+// so the attempt counts, but a second dial would ring them into the same failure.
+const reasonNoSession = "no_session"
+
 // phoneDialer rings a contact through the phone service and puts the campaign's agent in the
 // call it rang.
 type phoneDialer struct {
@@ -52,6 +60,14 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		return Dialed{Result: Paused, Reason: reasonVoicemailNeedsExactWords}, nil
 	}
 
+	// Checked before the phone rings: a session refused after the call is placed leaves the
+	// person on a line with nobody on it.
+	opening := campaignSpec(config, dial.Campaign, dial.Step, dial.Contact, phone.Placed{SessionID: dial.SessionID})
+	if err := opening.Normalize(); err != nil {
+		d.logger.Warn("a campaign's agent config makes a session that cannot open", "campaign", dial.Campaign.ID, "error", err)
+		return Dialed{Result: Paused, Reason: reasonSessionRefused}, nil
+	}
+
 	request := placing(dial.Campaign, dial.Contact)
 	request.SessionID = dial.SessionID
 	placed, err := d.phone.Call(ctx, request)
@@ -77,6 +93,7 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		if ended := d.phone.EndCall(hangUp, dial.Campaign.CustomerID, placed.StreamApp, placed.CallType, placed.CallID); ended != nil {
 			d.logger.Error("could not end the Stream call of a campaign call with no session", "session", placed.SessionID, "error", ended)
 		}
+		dialed.Reason = reasonNoSession
 		return dialed, err
 	}
 

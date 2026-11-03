@@ -57,7 +57,7 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 		settle.Stage = store.AwaitingOutcome
 		settle.Attempt = attempt
 	case Unanswered:
-		if dial == 1 && sequence.DoubleDial {
+		if dial == 1 && sequence.DoubleDial && dialed.Reason != reasonNoSession {
 			return store.Settle{}, true
 		}
 		return unanswered(step, hours, zone, contact, started, settle), false

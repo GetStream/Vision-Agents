@@ -50,6 +50,14 @@ func (s *TransitionSuite) TestNobodyAnsweringTheFirstDialDialsAgainAtOnce() {
 	s.True(again)
 }
 
+func (s *TransitionSuite) TestAFirstDialWhoseSessionNeverOpenedUsesTheAttemptWithoutDialingAgain() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Unanswered, Reason: reasonNoSession, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+
+	s.False(again, "a second dial would ring the person into the same failure")
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt, "the person was rung")
+}
+
 func (s *TransitionSuite) TestNobodyAnsweringTheDoubleDialSchedulesTheNextAttemptAfterItsDelay() {
 	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: Unanswered, CallID: "c2", VendorCallID: "v2"}, s.at(2, 10, 0), s.at(2, 10, 3))
 	s.False(again)

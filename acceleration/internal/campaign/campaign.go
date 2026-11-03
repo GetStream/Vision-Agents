@@ -335,14 +335,12 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 		r.settle(ctx, contact, unused)
 		return
 	}
-	// The campaign was read when the contact was claimed, and may have been paused or
-	// stopped since.
-	current, err := r.store.Campaign(ctx, campaign.CustomerID, campaign.ID)
+	current, ringing, err := r.mayRing(ctx, campaign, contact)
 	if err != nil {
 		r.logger.Error("could not read a campaign before ringing", "campaign", campaign.ID, "error", err)
 		return
 	}
-	if current.State != store.Running {
+	if !ringing {
 		unused.Stage, unused.NextAttemptAt = store.Enrolled, &now
 		r.settle(ctx, contact, unused)
 		return
@@ -369,12 +367,13 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 		if again {
 			// The first dial took a while to ring out, and the campaign may have been paused
 			// or stopped meanwhile: nobody is rung again then, but the first dial rang them.
-			current, err = r.store.Campaign(ctx, current.CustomerID, current.ID)
+			var ringing bool
+			current, ringing, err = r.mayRing(ctx, current, contact)
 			if err != nil {
 				r.logger.Error("could not read a campaign before dialing again", "campaign", campaign.ID, "error", err)
 				return
 			}
-			if current.State != store.Running {
+			if !ringing {
 				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Paused}, started, r.now())
 			} else if r.stopping() {
 				// Dial 1 may have come back unanswered only because its session was ended.
@@ -386,6 +385,21 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 			return
 		}
 	}
+}
+
+// mayRing reads campaign and contact again, since either may have been paused or stopped
+// since the contact was claimed. A stopped contact settled as enrolled ends stopped.
+func (r *Runner) mayRing(ctx context.Context, campaign store.Campaign, contact store.Contact) (store.Campaign, bool, error) {
+	current, err := r.store.Campaign(ctx, campaign.CustomerID, campaign.ID)
+	if err != nil {
+		return store.Campaign{}, false, err
+	}
+	// StopContact marks a contact in a call with the reason it would end with.
+	marked, _, err := r.store.CampaignContact(ctx, campaign.ID, contact.ID)
+	if err != nil {
+		return store.Campaign{}, false, err
+	}
+	return current, current.State == store.Running && marked.Reason != store.ContactStopped, nil
 }
 
 // stopping reports whether this router has stopped claiming work, after which it places no
