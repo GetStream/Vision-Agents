@@ -120,10 +120,8 @@ connector offers every tool; `tools: []` is refused.
 connectors:
   - name: linear
     tools: [list_issues, get_issue, save_comment]
-  - name: tablejourney
-    connector: custom_tablejourney
-    connection: tablejourney
-    tools: [search_places, place, dishes]
+  - name: github
+    tools: [get_*, list_issues]
 ```
 
 A tool left out is not listed, and the router refuses to run it.
