@@ -326,6 +326,9 @@ type Spec struct {
 	Memory MemorySpec
 	// Phone attaches the session to a number, which is what turns transferring on.
 	Phone *PhoneSpec
+	// Voicemail is what the session does when the vendor says an answering machine picked
+	// up its placed call. Nil carries on as with a person.
+	Voicemail *VoicemailPlan
 
 	// CampaignID and ContactID say which piece of outbound work this call is, so a
 	// campaign can be told how its contacts went. Both are empty for a call nobody
@@ -350,6 +353,11 @@ type MemorySpec struct {
 	AppID string
 	// Filter narrows recall with the caller's own labels.
 	Filter map[string]string
+}
+
+// VoicemailPlan is the message left on an answering machine. Empty hangs up instead.
+type VoicemailPlan struct {
+	Message string
 }
 
 // PhoneSpec is the number the session acts from.
@@ -497,6 +505,8 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
+	case s.Native() && s.Voicemail != nil && s.Voicemail.Message != "":
+		return stack.Wrap(errors.New("session: a speech-to-speech agent cannot say a fixed voicemail message; use hang_up"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))

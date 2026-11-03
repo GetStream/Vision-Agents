@@ -246,15 +246,41 @@ type stubTTS struct {
 
 	mu   sync.Mutex
 	said []tts.Request
+	// holding is a line whose synthesis is not reported complete until held is closed.
+	holding string
+	held    chan struct{}
 }
 
 func (s *stubTTS) Start(context.Context) error { return nil }
 
+// holds keeps the synthesis of text going until the returned func is called.
+func (s *stubTTS) holds(text string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holding, s.held = text, make(chan struct{})
+	return sync.OnceFunc(func() { close(s.held) })
+}
+
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
+	held := s.held
+	if request.Text != s.holding {
+		held = nil
+	}
 	s.mu.Unlock()
 
+	if held != nil {
+		go func() {
+			s.emitter.Send(tts.AudioChunk{
+				SynthesisID: request.ID,
+				Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+			})
+			<-held
+			s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, AudioDurationMs: 10})
+		}()
+		return nil
+	}
 	if request.Text != "" {
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,

@@ -294,6 +294,10 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.StatusURL != "" {
 		request.StatusCallback, request.StatusCallbackMethod = outbound.StatusURL, http.MethodPost
 	}
+	if outbound.MachineURL != "" {
+		request.MachineDetection, request.DetectionMode, request.AsyncAmd = "DetectMessageEnd", "Premium", true
+		request.AsyncAmdStatusCallback, request.AsyncAmdStatusCallbackMethod = outbound.MachineURL, http.MethodPost
+	}
 
 	var placed texmlCallPlaced
 	path := "/v2/texml/calls/" + url.PathEscape(p.connectionID)
@@ -326,6 +330,22 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 		return phone.CallStatus{}, stack.Wrap(errors.New("telnyx: a call status without a CallStatus"))
 	}
 	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+}
+
+// ReadMachine reads the form Telnyx posts to a TeXML call's AsyncAmdStatusCallback.
+func (p *Provider) ReadMachine(contentType string, body []byte) (phone.MachineReport, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("telnyx: a machine report is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("telnyx: read a machine report: %w", err))
+	}
+	answeredBy := form.Get("AnsweredBy")
+	if answeredBy == "" {
+		return phone.MachineReport{}, stack.Wrap(errors.New("telnyx: a machine report without an AnsweredBy"))
+	}
+	return phone.MachineReport{Machine: phone.MachineOf(answeredBy), Word: answeredBy}, nil
 }
 
 // finalStatuses are the CallStatus words that end a call.
@@ -598,6 +618,14 @@ type texmlCall struct {
 	// StatusCallback is where Telnyx posts the call's status, as a form, once it ends.
 	StatusCallback       string `json:"StatusCallback,omitempty"`
 	StatusCallbackMethod string `json:"StatusCallbackMethod,omitempty"`
+	// MachineDetection and the four after it ask for answering machine detection that
+	// reports to AsyncAmdStatusCallback while the call goes on, as Twilio's do. DetectionMode
+	// Premium is the more accurate model: Regular calls some mobile voicemail boxes unknown.
+	MachineDetection             string `json:"MachineDetection,omitempty"`
+	DetectionMode                string `json:"DetectionMode,omitempty"`
+	AsyncAmd                     bool   `json:"AsyncAmd,omitempty"`
+	AsyncAmdStatusCallback       string `json:"AsyncAmdStatusCallback,omitempty"`
+	AsyncAmdStatusCallbackMethod string `json:"AsyncAmdStatusCallbackMethod,omitempty"`
 }
 
 // texmlCallPlaced is Telnyx's answer to a TeXML call, which has no "data" envelope.

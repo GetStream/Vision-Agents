@@ -23,6 +23,7 @@
 
 package io.getstream.visionagents.android.core.generated
 
+import io.getstream.visionagents.android.core.generated.SessionVoicemail
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -39,6 +40,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param number One of the customer's own numbers, written as +15551234567.
  * @param vendor Who carries an outbound leg.
  * @param vendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
+ * @param voicemail 
  */
 @Serializable
 
@@ -54,7 +56,10 @@ internal data class SessionPhone (
 
     /* The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
     @SerialName(value = "vendor_call_id")
-    val vendorCallId: kotlin.String? = null
+    val vendorCallId: kotlin.String? = null,
+
+    @SerialName(value = "voicemail")
+    val voicemail: SessionVoicemail? = null
 
 ) {
 

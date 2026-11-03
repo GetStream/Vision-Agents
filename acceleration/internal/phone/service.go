@@ -50,8 +50,10 @@ type Service struct {
 	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
 	// session's start timeout.
 	unanswered func(ctx context.Context, customerID, sessionID string)
-	clock      func() time.Time
-	logger     *slog.Logger
+	// machine is told who picked up a placed call.
+	machine func(ctx context.Context, customerID, sessionID string, machine Machine)
+	clock   func() time.Time
+	logger  *slog.Logger
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
@@ -919,6 +921,9 @@ type CallRequest struct {
 	// Custom is put on the Stream call, where the agent in it can read it. It is set at
 	// Stream rather than at the vendor, so every vendor can carry it.
 	Custom map[string]string
+	// DetectMachine asks the vendor to tell an answering machine from a person, when it
+	// can. The answer reaches the hook set with OnMachine.
+	DetectMachine bool
 }
 
 // errCustomKept is a call into a session whose call is already there with other custom data:
@@ -1118,6 +1123,9 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 	if reports {
 		outbound.StatusURL = s.publicURL + "/v1/phone/status/" + token
+	}
+	if _, detects := provider.(MachineDetector); detects && request.DetectMachine && s.publicURL != "" {
+		outbound.MachineURL = s.publicURL + "/v1/phone/machine/" + token
 	}
 
 	if trunk != nil {
@@ -1376,18 +1384,7 @@ var ErrUnreadableStatus = errors.New("phone: that status could not be read")
 
 // ReportStatus takes what a vendor posted to the status URL of the call token was made for.
 func (s *Service) ReportStatus(ctx context.Context, token, contentType string, body []byte) error {
-	if s.outcomes == nil {
-		return stack.Wrap(ErrUnknownStatus)
-	}
-	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
-	// database.
-	if id, err := uuid.Parse(token); err != nil || id.String() != token {
-		return stack.Wrap(ErrUnknownStatus)
-	}
-	call, err := s.outcomes.ByToken(ctx, token)
-	if errors.Is(err, outcome.ErrUnknownCall) {
-		return stack.Wrap(ErrUnknownStatus)
-	}
+	call, err := s.callOfToken(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -1405,6 +1402,56 @@ func (s *Service) ReportStatus(ctx context.Context, token, contentType string, b
 	}
 	_, err = s.report(ctx, token, status)
 	return err
+}
+
+// callOfToken is the call a vendor's post to one of its URLs is for.
+func (s *Service) callOfToken(ctx context.Context, token string) (outcome.Call, error) {
+	if s.outcomes == nil {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
+	// database.
+	if id, err := uuid.Parse(token); err != nil || id.String() != token {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	call, err := s.outcomes.ByToken(ctx, token)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	return call, err
+}
+
+// Machine takes what a vendor posted to the machine URL of the call token was made for, and
+// tells the hook set with OnMachine.
+func (s *Service) Machine(ctx context.Context, token, contentType string, body []byte) error {
+	call, err := s.callOfToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	provider, err := s.registry.Open(call.Vendor)
+	if err != nil {
+		return err
+	}
+	detector, ok := provider.(MachineDetector)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s detects no answering machines", ErrUnknownStatus, call.Vendor))
+	}
+	report, err := detector.ReadMachine(contentType, body)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrUnreadableStatus, err))
+	}
+	s.logger.Info("a vendor reported who answered", "vendor", call.Vendor, "answered_by", report.Word,
+		"machine", report.Machine, "customer", call.CustomerID, "session", call.CallID)
+	if s.machine != nil {
+		s.machine(ctx, call.CustomerID, call.CallID, report.Machine)
+	}
+	return nil
+}
+
+// OnMachine sets what is told who picked up a placed call. Called before the service is used.
+// hook is called on the vendor's request, so it must not hold up the answer.
+func (s *Service) OnMachine(hook func(ctx context.Context, customerID, sessionID string, machine Machine)) {
+	s.machine = hook
 }
 
 // report hands a vendor's status for the call token was made for to the keeper, which decides

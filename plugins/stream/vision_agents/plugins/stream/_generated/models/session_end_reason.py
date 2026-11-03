@@ -7,6 +7,7 @@ class SessionEndReason(StrEnum):
     START = "start"
     TRANSFERRED = "transferred"
     UNANSWERED = "unanswered"
+    VOICEMAIL = "voicemail"
 
     def __str__(self) -> str:
         return str(self.value)

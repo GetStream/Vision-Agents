@@ -1821,7 +1821,7 @@ final class SessionPage {
 
 /// The number the session acts from, which is what turns transferring on.
 final class SessionPhone {
-  const SessionPhone({required this.number, this.vendor, this.vendorCallId});
+  const SessionPhone({required this.number, this.vendor, this.vendorCallId, this.voicemail});
 
   factory SessionPhone.fromJson(Object? value) {
     final json = _object(value, 'SessionPhone');
@@ -1835,17 +1835,23 @@ final class SessionPhone {
         null => null,
         final Object value => _string(value, 'SessionPhone.vendor_call_id'),
       },
+      voicemail: switch (json['voicemail']) {
+        null => null,
+        final Object value => SessionVoicemail.fromJson(value),
+      },
     );
   }
 
   final String number;
   final String? vendor;
   final String? vendorCallId;
+  final SessionVoicemail? voicemail;
 
   Map<String, Object?> toJson() => {
     'number': number,
     'vendor': ?vendor,
     'vendor_call_id': ?vendorCallId,
+    if (voicemail case final value?) 'voicemail': value.toJson(),
   };
 }
 
@@ -2044,6 +2050,27 @@ final class SessionVideo {
   final String? source;
 
   Map<String, Object?> toJson() => {'max_frames': ?maxFrames, 'source': ?source};
+}
+
+/// What the agent does when an answering machine picks up.
+final class SessionVoicemail {
+  const SessionVoicemail({required this.action, this.message});
+
+  factory SessionVoicemail.fromJson(Object? value) {
+    final json = _object(value, 'SessionVoicemail');
+    return SessionVoicemail(
+      action: _string(json['action'], 'SessionVoicemail.action'),
+      message: switch (json['message']) {
+        null => null,
+        final Object value => _string(value, 'SessionVoicemail.message'),
+      },
+    );
+  }
+
+  final String action;
+  final String? message;
+
+  Map<String, Object?> toJson() => {'action': action, 'message': ?message};
 }
 
 final class StartSessionVoiceRequest {

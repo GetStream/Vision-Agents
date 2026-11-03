@@ -143,6 +143,12 @@ type Ender interface {
 	EndCall(ctx context.Context) error
 }
 
+// EndDeferred is an Ender putting the hang-up off: the call ends later by itself, and the
+// model is told Reason rather than that hanging up failed.
+type EndDeferred struct{ Reason string }
+
+func (e *EndDeferred) Error() string { return "agent: hanging up is put off: " + e.Reason }
+
 // Destination is a number the agent may hand the caller to, which the model asks for by
 // Name and never sees the Number of.
 type Destination struct {
@@ -1152,6 +1158,9 @@ func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endCallTimeout)
 	defer cancel()
 	if err := a.options.Ender.EndCall(ctx); err != nil {
+		if deferred, ok := errors.AsType[*EndDeferred](err); ok {
+			return deferred.Reason, false, nil
+		}
 		return "", false, fmt.Errorf("agent: end the call: %w", err)
 	}
 	return "You have ended the call.", true, nil

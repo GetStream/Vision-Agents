@@ -3130,6 +3130,19 @@ impl Client {
         )
         .await
     }
+    /// Receive who picked up a placed call
+    ///
+    /// `POST /v1/phone/machine/{token}` (`receiveCallMachine`).
+    pub async fn receive_call_machine(&self, token: &str) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/phone/machine/{token}", token = segment(token)),
+            None::<&()>,
+            None::<&()>,
+            "receiveCallMachine",
+        )
+        .await
+    }
     /// The numbers the calling customer holds
     ///
     /// `GET /v1/phone/numbers` (`listPhoneNumbers`).
