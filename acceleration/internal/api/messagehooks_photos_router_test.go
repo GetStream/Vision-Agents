@@ -80,6 +80,22 @@ func (s *MessageHooksSuite) TestAPhotoAloneInAChannelNobodyOwnsReachesNoWorker()
 	s.nothingReaches(worker, "a photo in a channel nobody owns")
 }
 
+// Control, as on base: a photo sent alone in a channel named as a thread channel that no thread
+// is linked to is not answered by a session running on it either: only a linked thread answers
+// a photo alone there.
+func (s *MessageHooksSuite) TestAPhotoSentAloneInAnUnlinkedThreadChannelIsNotAnsweredByASession() {
+	s.channelID = "thread-" + s.utils.uuid()
+	s.running("vision/vision-model")
+	asked := len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", "", s.photoAt("/photo.png")))
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", "is this fan broken?", s.photoAt("/photo.png")))
+
+	turn := s.askedOf(s.vision, asked)
+	s.Contains(turn.Parts[0].Text, "is this fan broken?", "only the message with text was answered")
+	s.Never(func() bool { return len(s.vision.requests()) > asked+1 }, dropped, 10*time.Millisecond, "the photo alone was answered")
+}
+
 // A photo sent with text to a running session whose agent leaves text to dispatch reaches its
 // worker with the session, by its URL, beside the text.
 func (s *MessageHooksSuite) TestAPhotoSentWithTextToADispatchSessionReachesItsWorker() {
