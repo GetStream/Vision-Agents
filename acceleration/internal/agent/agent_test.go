@@ -226,6 +226,9 @@ type stubLLM struct {
 	// toolless, when set, is the reply to a request offered no tools: what the model
 	// writes once it is made to answer.
 	toolless []string
+	// replyOn replaces the reply to one request, counted from 1, so a test can have the
+	// model write a call as text at the request it picks.
+	replyOn map[int][]string
 	// callsOn is which request, counted from 1, asks for calls when it is not the first.
 	callsOn int
 	// callsUntil, when set, is the request, counted from 1, at which keepCalling stops and
@@ -344,6 +347,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	callable := len(params.Tools) > 0 && params.ToolChoice != "none" || s.ignoresNone
 	if s.toolless != nil && !(len(params.Tools) > 0 && params.ToolChoice != "none") {
 		reply = append([]string(nil), s.toolless...)
+	}
+	if r, ok := s.replyOn[len(s.asked)]; ok {
+		reply = append([]string(nil), r...)
 	}
 	if len(s.asked) == max(s.callsOn, 1) ||
 		s.keepCalling && callable && (s.callsUntil == 0 || len(s.asked) < s.callsUntil) {
@@ -4528,6 +4534,36 @@ func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
 		s.NotEqual("none", request.ToolChoice, "round %d was made to answer", round)
 		s.NotContains(shown(request), "answer the caller now", "round %d was told to answer", round)
 	}
+}
+
+func (s *AgentSuite) TestATextFollowUpAfterManyToolRoundsIsOfferedToolsUnderANegativeLimit() {
+	s.assertFollowUpAfterManyRoundsIsOfferedTools(-1)
+}
+
+func (s *AgentSuite) TestATextFollowUpAfterManyToolRoundsIsOfferedToolsUnderAHigherLimit() {
+	s.assertFollowUpAfterManyRoundsIsOfferedTools(maxToolRounds + 4)
+}
+
+// assertFollowUpAfterManyRoundsIsOfferedTools has a reply after maxToolRounds+2 rounds write
+// a call as text, so the follow-up that runs it must still be offered tools: the limit the
+// session set is not the default one.
+func (s *AgentSuite) assertFollowUpAfterManyRoundsIsOfferedTools(limit int) {
+	s.toolRoundLimit = limit
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.keepCalling = true
+	s.model.callsUntil = maxToolRounds + 2
+	s.model.replyOn = map[int][]string{maxToolRounds + 2: {`One moment. <call tool="track_parcel"/>`}}
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) >= maxToolRounds+3 }, "the follow-up was never asked")
+	followUp := s.model.requests()[maxToolRounds+2]
+	s.NotEmpty(followUp.Tools, "the follow-up under limit %d was offered no tools", limit)
+	s.NotEqual("none", followUp.ToolChoice, "the follow-up under limit %d was made to answer", limit)
 }
 
 func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {
