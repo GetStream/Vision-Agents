@@ -3067,7 +3067,10 @@ type AgentConfig struct {
 	// LeftOutConnectors The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
-	McpServers        *[]McpServer        `json:"mcp_servers,omitempty"`
+
+	// LlmFallbacks Where a response goes, in order, when llm fails it. Absent when there are none.
+	LlmFallbacks *[]string    `json:"llm_fallbacks,omitempty"`
+	McpServers   *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
@@ -3148,12 +3151,15 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness     `json:"harness,omitempty"`
-	Instructions       *string      `json:"instructions,omitempty"`
-	Keyterms           *[]string    `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
-	Llm                *string      `json:"llm,omitempty"`
-	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
+	Harness            *Harness  `json:"harness,omitempty"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+	Llm                *string   `json:"llm,omitempty"`
+
+	// LlmFallbacks Replaces the list whole. An empty list removes it.
+	LlmFallbacks *[]string    `json:"llm_fallbacks,omitempty"`
+	McpServers   *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3247,6 +3253,9 @@ type AgentConfigRequest struct {
 
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
+
+	// LlmFallbacks Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
 
 	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
 	McpServers *[]McpServer `json:"mcp_servers,omitempty"`

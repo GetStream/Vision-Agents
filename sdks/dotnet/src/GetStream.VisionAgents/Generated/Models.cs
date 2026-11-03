@@ -363,6 +363,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
 
+        /// <summary>
+        /// Where a response goes, in order, when llm fails it. Absent when there are none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("llm_fallbacks")]
+        public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
 
@@ -524,6 +530,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
 
+        /// <summary>
+        /// Replaces the list whole. An empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("llm_fallbacks")]
+        public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
 
@@ -681,6 +693,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
+
+        /// <summary>
+        /// Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("llm_fallbacks")]
+        public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
 
         /// <summary>
         /// MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as &lt;name&gt;__&lt;tool&gt;.

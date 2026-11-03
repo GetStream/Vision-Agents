@@ -37,6 +37,9 @@ final readonly class AgentConfig
         /** @var list<LeftOutConnector>|null */
         public ?array $leftOutConnectors = null,
         public ?string $llm = null,
+        // Where a response goes, in order, when llm fails it. Absent when there are none.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         // Deprecated: use the events of a fixed binding under connectors.
@@ -98,6 +101,7 @@ final readonly class AgentConfig
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
@@ -174,6 +178,9 @@ final readonly class AgentConfig
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         if ($this->mcpServers !== null) {
             $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);

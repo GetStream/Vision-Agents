@@ -32,6 +32,9 @@ final readonly class AgentConfigPatch
         public ?array $keyterms = null,
         public ?string $knowledgeNamespace = null,
         public ?string $llm = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
@@ -89,6 +92,7 @@ final readonly class AgentConfigPatch
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
@@ -158,6 +162,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         if ($this->mcpServers !== null) {
             $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);

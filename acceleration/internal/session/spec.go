@@ -209,8 +209,11 @@ type Spec struct {
 	Navigating bool
 
 	LLMTarget string
-	STTTarget string
-	TTSTarget string
+	// LLMFallbacks are tried in order when LLMTarget fails a turn, from the config's
+	// llm_fallbacks.
+	LLMFallbacks []string
+	STTTarget    string
+	TTSTarget    string
 	// STSTarget routes one native audio model that hears and speaks for itself. Naming
 	// one makes this a native session: the agent opens that model and no transcriber,
 	// conversation model or voice, so the three targets above are left as they are.
@@ -384,6 +387,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		STSTarget:      config.STS,
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
+		LLMFallbacks:   config.LLMFallbacks,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,

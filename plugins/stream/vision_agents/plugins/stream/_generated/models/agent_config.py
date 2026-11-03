@@ -72,6 +72,8 @@ class AgentConfig:
             out, because the app has no connection by the id or label they name: an agent that runs without them until the
             connection exists and it syncs again. Only a sync writes them. Absent when there are none.
         llm (str | Unset):
+        llm_fallbacks (list[str] | Unset): Where a response goes, in order, when llm fails it. Absent when there are
+            none.
         mcp_servers (list[McpServer] | Unset):
         plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
         plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
@@ -128,6 +130,7 @@ class AgentConfig:
     knowledge_namespace: str | Unset = UNSET
     left_out_connectors: list[LeftOutConnector] | Unset = UNSET
     llm: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
     plugins: list[PluginWithOptions | str] | Unset = UNSET
@@ -213,6 +216,10 @@ class AgentConfig:
                 left_out_connectors.append(left_out_connectors_item)
 
         llm = self.llm
+
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
 
         mcp_servers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.mcp_servers, Unset):
@@ -335,6 +342,8 @@ class AgentConfig:
             field_dict["left_out_connectors"] = left_out_connectors
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
         if mcp_servers is not UNSET:
             field_dict["mcp_servers"] = mcp_servers
         if plugin_events is not UNSET:
@@ -479,6 +488,8 @@ class AgentConfig:
 
         llm = d.pop("llm", UNSET)
 
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
+
         _mcp_servers = d.pop("mcp_servers", UNSET)
         mcp_servers: list[McpServer] | Unset = UNSET
         if _mcp_servers is not UNSET:
@@ -621,6 +632,7 @@ class AgentConfig:
             knowledge_namespace=knowledge_namespace,
             left_out_connectors=left_out_connectors,
             llm=llm,
+            llm_fallbacks=llm_fallbacks,
             mcp_servers=mcp_servers,
             plugin_events=plugin_events,
             plugins=plugins,
