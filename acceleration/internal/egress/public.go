@@ -304,6 +304,14 @@ func (p policy) publicAddresses(ctx context.Context, host string) error {
 	return nil
 }
 
+// UserAgent is the router's name on what it fetches from a URL someone else gave it, such as
+// a photo or a voice note. Go's own, Go-http-client/1.1, is a library's, and some hosts refuse
+// it: Wikimedia answers 403 to a generic one and asks for "<client name>/<version> (<contact
+// information>)" (https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy).
+// The product token without a version is valid HTTP (RFC 9110 section 10.1.5), and the name is
+// the one the router gives an MCP server (connectors/sources/mcp implementation).
+const UserAgent = "vision-agents (https://github.com/GetStream/Vision-Agents)"
+
 // DialPublic opens a connection to address, a host and a port, only when every address the host
 // resolves to is public: the dial NewClient makes, for callers that carry bytes they do not read.
 func DialPublic(ctx context.Context, network, address string) (net.Conn, error) {
