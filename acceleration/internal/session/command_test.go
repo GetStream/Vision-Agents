@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -357,14 +358,14 @@ func (s *SessionSuite) TestAVoiceNoteIsRefusedBeforeItIsHeardForWhatItsCommandWo
 	s.persists()
 	running := s.commands()
 
-	_, err := running.CheckRespond(s.ctx, "", false, options.LLM{})
+	_, err := running.CheckRespond(s.ctx, "", "", false, options.LLM{})
 	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
 
 	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
 	s.Require().NoError(err)
-	_, err = running.CheckRespond(s.ctx, "command-b", false, options.LLM{})
+	_, err = running.CheckRespond(s.ctx, "command-b", "", false, options.LLM{})
 	s.ErrorIs(err, persistent.ErrResponseRunning, "a question waits for the answer running")
-	_, err = running.CheckRespond(s.ctx, "command-a", false, options.LLM{})
+	_, err = running.CheckRespond(s.ctx, "command-a", "", false, options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandConflict, "a question sent without a voice note is another than one with")
 
 	s.gated.answers(1)
@@ -372,17 +373,37 @@ func (s *SessionSuite) TestAVoiceNoteIsRefusedBeforeItIsHeardForWhatItsCommandWo
 		receipt, err := running.Command("command-a")
 		return err == nil && receipt.State == "completed"
 	}, "the first command should finish")
-	heard, err := running.CheckRespond(s.ctx, "command-v", false, options.LLM{})
+	heard, err := running.CheckRespond(s.ctx, "command-v", "", false, options.LLM{})
 	s.Require().NoError(err)
 	s.Empty(heard, "a command not begun was heard by nobody")
 	note := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("a voice note"), Heard: "the fryer leaks"}
 	_, _, err = running.RespondCommand(s.ctx, "command-v", "the fryer leaks", "", nil, options.LLM{}, note)
 	s.Require().NoError(err)
 
-	heard, err = running.CheckRespond(s.ctx, "command-v", false, options.LLM{})
+	heard, err = running.CheckRespond(s.ctx, "command-v", "", false, options.LLM{})
 	s.Require().NoError(err)
 	s.Equal("the fryer leaks", heard, "a retry carries what the first hearing heard")
 	s.gated.answers(1)
+}
+
+// A question's text longer than a command carries is refused where BeginCommand refuses it,
+// before its voice note is heard: with a command id, and as a question to a shared chat.
+func (s *SessionSuite) TestAVoiceNoteWithTextTooLongIsRefusedBeforeItIsHeard() {
+	s.persists()
+	long := strings.Repeat("a", 1024*1024+1)
+	personal := s.commands()
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+
+	_, err = personal.CheckRespond(s.ctx, "command-long", long, false, options.LLM{})
+	s.Error(err, "a command id with text too long")
+	_, err = shared.CheckRespond(s.ctx, "", long, false, options.LLM{})
+	s.Error(err, "a question to a shared chat with text too long")
+	_, err = shared.Respond(s.ctx, long, nil, options.LLM{})
+	s.Error(err, "Respond refuses it as well: the check says what the question would be refused for")
+	_, err = shared.CheckRespond(s.ctx, "", strings.Repeat("a", 1024*1024), false, options.LLM{})
+	s.NoError(err, "text of exactly the most a command carries")
 }
 
 func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedBeforeItIsHeard() {
@@ -413,7 +434,7 @@ func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedB
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = bob.Close() })
 
-	_, err = alice.CheckRespond(s.ctx, "stale-session-command", false, options.LLM{})
+	_, err = alice.CheckRespond(s.ctx, "stale-session-command", "", false, options.LLM{})
 
 	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
 }

@@ -266,6 +266,18 @@ func (s *VoiceNotesSuite) TestAVoiceNoteWithAPhotoForAnAgentThatCannotSeeIsRefus
 	s.heard(since, 0)
 }
 
+func (s *VoiceNotesSuite) TestAVoiceNoteWithTextTooLongForACommandIsRefusedBeforeItIsHeard() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command := s.utils.uuid()
+
+	status, _ := s.serverClient.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Text: strings.Repeat("a", 1024*1024+1), Audio: &AudioSource{Url: s.serve(wavOf("long " + s.utils.uuid()))}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.heard(since, 0)
+}
+
 func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledUnderTheSessionsTags() {
 	tags := map[string]string{"team": "kitchen-" + s.utils.uuid()}
 	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model"), Tags: &tags})

@@ -151,7 +151,14 @@ const ReadBackPrefix = "st_"
 func readBack(id string) bool { return strings.HasPrefix(id, ReadBackPrefix) }
 
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// maxCommandText is the most text one command carries, in bytes.
+const maxCommandText = 1024 * 1024
+
+var errInvalidCommand = errors.New("invalid command ID or text")
+
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 // ledger is what a conversation holds in memory. Stream Chat is its durable copy: a
@@ -1330,12 +1337,16 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 // CheckBegin refuses what BeginCommand would refuse id with a voice note for now, for a
 // caller to learn it before work it pays for: hearing the voice note. heard is what the voice
 // note of id said when it was begun, for a retry to carry rather than hear it again, and empty
-// for an id not begun. A command begun without a voice note is another question.
-func (c *Conversation) CheckBegin(id string) (heard string, err error) {
+// for an id not begun. A command begun without a voice note is another question. text is
+// what was typed with it.
+func (c *Conversation) CheckBegin(id, text string) (heard string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return "", stack.Wrap(errors.New("conversation is not open"))
+	}
+	if len(text) > maxCommandText {
+		return "", stack.Wrap(errInvalidCommand)
 	}
 	if previous, ok := c.data.Commands[id]; ok {
 		if previous.Initiator != c.data.Owner {
@@ -1363,8 +1374,8 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > 1024*1024 {
-		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
+	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
+		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
 	}
 	digest := commandDigest(text, photos)
 	if previous, ok := c.data.Commands[id]; ok {

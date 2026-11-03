@@ -75,7 +75,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	text := request.Body.Text
 	var notes []conversation.VoiceNote
 	if request.Body.Audio != nil {
-		heard, err := found.CheckRespond(ctx, commandID, len(parts) > 0, asked)
+		heard, err := found.CheckRespond(ctx, commandID, text, len(parts) > 0, asked)
 		if err != nil {
 			return nil, refusedResponse(err)
 		}
@@ -437,7 +437,7 @@ type CreateResponseRequest struct {
 	Images          *[]ImageSource `json:"images,omitempty"`
 	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
-	Text            string         `json:"text" doc:"What to answer, as though it had been said. Empty when audio carries the question."`
+	Text            string         `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id."`
 	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
 }
 

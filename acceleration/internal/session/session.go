@@ -647,10 +647,10 @@ var errPersonalNeedsCommand = errors.New("personal conversations require a comma
 
 // CheckRespond refuses what Respond, or RespondCommand with command id, would refuse a
 // question with a voice note for before its turn starts, for a caller to learn it before work
-// it pays for: hearing the voice note. images is whether photos go with it. heard is what the
-// voice note of a command begun before said then, for a retry to carry rather than hear it
-// again.
-func (s *Session) CheckRespond(ctx context.Context, id string, images bool, asked options.LLM) (heard string, err error) {
+// it pays for: hearing the voice note. text is what was typed with it, and images is whether
+// photos go with it. heard is what the voice note of a command begun before said then, for a
+// retry to carry rather than hear it again.
+func (s *Session) CheckRespond(ctx context.Context, id, text string, images bool, asked options.LLM) (heard string, err error) {
 	if err := s.current().CheckTurn(asked, images); err != nil {
 		return "", stack.Wrap(err)
 	}
@@ -661,7 +661,7 @@ func (s *Session) CheckRespond(ctx context.Context, id string, images bool, aske
 		if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 			return "", stack.Wrap(err)
 		}
-		heard, err := s.persisted.CheckBegin(id)
+		heard, err := s.persisted.CheckBegin(id, text)
 		return heard, stack.Wrap(err)
 	}
 	if !s.spec.Text {
@@ -670,7 +670,7 @@ func (s *Session) CheckRespond(ctx context.Context, id string, images bool, aske
 	if s.spec.Caller.UserID != "" {
 		return "", stack.Wrap(errPersonalNeedsCommand)
 	}
-	_, err = s.persisted.CheckBegin("")
+	_, err = s.persisted.CheckBegin("", text)
 	return "", stack.Wrap(err)
 }
 
