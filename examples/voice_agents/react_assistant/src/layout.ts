@@ -82,7 +82,9 @@ export function useTheme(): [Theme, (theme: Theme) => void] {
     // The update has to land inside the transition's callback, hence flushSync.
     const change = () => flushSync(() => setChosen(next));
     if ("startViewTransition" in document) {
-      document.startViewTransition(change);
+      // A transition the browser skips, in a hidden tab say, still makes the change; its `ready`
+      // rejects to say there was nothing to animate, which is not a failure here.
+      document.startViewTransition(change).ready.catch(() => undefined);
     } else {
       change();
     }
