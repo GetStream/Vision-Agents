@@ -51,7 +51,7 @@ impl Responses {
     }
 
     /// `answering` is the request id of the inbound message being answered, sent in place of a
-    /// fresh one.
+    /// fresh one, with images too: that message and its photos are already in the channel.
     pub(crate) async fn create_answering(
         &self,
         request: &types::CreateResponseRequest,
@@ -60,7 +60,7 @@ impl Responses {
         let text_only = request.images.as_ref().is_none_or(Vec::is_empty)
             && request.videos.as_ref().is_none_or(Vec::is_empty);
         let request = types::CreateResponseRequest {
-            request_id: text_only.then(|| answering.unwrap_or_else(new_request_id)),
+            request_id: answering.or_else(|| text_only.then(new_request_id)),
             ..request.clone()
         };
         let created = self

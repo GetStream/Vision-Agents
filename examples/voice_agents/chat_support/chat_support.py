@@ -20,7 +20,7 @@ async def create_agent() -> Agent:
 @dispatch.wait_for_message()
 async def inbound_message(message: acceleration.InboundMessage):
     agent = await dispatch.get_or_create_agent(message, create_agent)
-    await agent.responses.create(message.text)
+    await agent.responses.create(message.text, images=message.images)
 
 
 async def main() -> None:

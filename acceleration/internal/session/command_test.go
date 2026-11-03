@@ -312,6 +312,109 @@ func (s *SessionSuite) TestACommandsPhotoIsShownToTheModelAndOnThePersonsMessage
 	s.Len(chat.Uploads(), 1, "a retry uploads its photo no second time")
 }
 
+// A command's video frames are shown to the model with its photo, but only the photo is on the
+// person's message, and a retry sent without the frames (its videos not sampled again) is the
+// same command.
+func (s *SessionSuite) TestACommandsVideoFramesAreShownToTheModelAloneAndARetryWithoutThemIsTheSameCommand() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
+	running := s.commands()
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x02}, Caption: "video 1, 0.5s of 1.0s", Video: true}
+
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "What is this?", "", []llm.ImagePart{photo, frame}, options.LLM{})
+	s.Require().NoError(err)
+
+	var shown [][]byte
+	s.eventually(func() bool {
+		shown = nil
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				for _, part := range message.Parts {
+					if part.Image != nil {
+						shown = append(shown, part.Image.Data)
+					}
+				}
+			}
+		}
+		return len(shown) > 0
+	}, "the model was never shown the command's images")
+	s.Equal([][]byte{photo.Data, frame.Data}, shown, "the model sees the photo and the video's frame")
+	s.eventually(func() bool {
+		for _, message := range s.stored(running) {
+			if message.ID == "command-a" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the photo")
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, no frame of the video")
+	s.Equal(photo.Data, uploads[0].Data)
+
+	retry, _, err := running.RespondCommand(s.ctx, "command-a", "What is this?", "", []llm.ImagePart{photo}, options.LLM{})
+	s.Require().NoError(err, "the frames are not part of what a retry is matched on")
+	s.True(retry.Duplicate)
+	s.Len(s.model.requests(), 1, "the model is asked once")
+}
+
+// Videos are sampled only for a question its session would take: a personal conversation's
+// without a command is refused first, as is one from a caller the conversation is not theirs,
+// and a retry of a command already taken samples nothing, unless a dispatch worker's server
+// is answering it now.
+func (s *SessionSuite) TestVideosAreSampledOnlyForAQuestionTheSessionWouldAnswer() {
+	s.persists()
+	running := s.commands()
+
+	_, err := running.SampleVideos(s.ctx, "")
+	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
+	_, err = running.Respond(s.ctx, "What is in this clip?", nil, options.LLM{})
+	s.ErrorIs(err, errPersonalNeedsCommand, "which is what Respond refuses it for")
+
+	sample, err := running.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.True(sample, "a command not taken yet")
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	sample, err = running.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.False(sample, "a retry of a command already taken")
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the first command should finish")
+
+	_, err = running.AwaitCommand(s.ctx, "command-w", "Handed to a worker", "")
+	s.Require().NoError(err)
+	sample, err = running.SampleVideos(s.ctx, "command-w")
+	s.Require().NoError(err)
+	s.True(sample, "a command a dispatch worker's server answers now reaches the model")
+
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	sample, err = shared.SampleVideos(s.ctx, "")
+	s.Require().NoError(err)
+	s.True(sample, "a conversation with no user takes a question without a command")
+
+	unkept, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "employee-1"}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unkept.Close() })
+	sample, err = unkept.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.True(sample, "a session kept nowhere answers every question, its request id ignored")
+
+	s.Require().NoError(running.StartVoice(s.ctx, Call{}))
+	sample, err = running.SampleVideos(s.ctx, "")
+	s.Require().NoError(err)
+	s.True(sample, "a question typed into a call is heard there, without a command")
+}
+
 // A question of photos alone needs no command to be shown on the person's message (AI-2550);
 // the frames of a video sent with it are the model's alone, and a personal conversation still
 // takes questions by command only, uploading nothing.
@@ -892,6 +995,8 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "", nil, options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
+	_, err = bob.SampleVideos(s.ctx, "removed-command")
+	s.ErrorIs(err, persistent.ErrCommandNotFound, "a removed member's videos are not sampled")
 	_, err = bob.Command("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.InterruptCommand("bob-command")

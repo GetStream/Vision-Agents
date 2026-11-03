@@ -136,19 +136,7 @@ func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsAQuestionSho
 // The frames of a video sent with a photo and no text are the model's alone: the person's
 // message shows the photo they sent, not stills the router cut from their clip (AI-2550).
 func (s *ResponsesAskedSuite) TestAVideoSentWithAPhotoWithoutTextShowsOnlyThePhotoOnThePersonsMessage() {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		// CI installs ffmpeg; a skip there would hide that this test never ran.
-		if os.Getenv("CI") != "" {
-			s.T().Fatal("ffmpeg is not installed, so the clip cannot be recorded")
-		}
-		s.T().Skip("ffmpeg not available to record the clip")
-	}
-	path := filepath.Join(s.T().TempDir(), "clip.mp4")
-	out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=4",
-		"-pix_fmt", "yuv420p", path).CombinedOutput()
-	s.Require().NoError(err, string(out))
-	clip, err := os.ReadFile(path)
-	s.Require().NoError(err)
+	clip := s.clip()
 	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
 	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
 	frames := 2
@@ -178,6 +166,96 @@ func (s *ResponsesAskedSuite) TestAVideoSentWithAPhotoWithoutTextShowsOnlyThePho
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the photo alone is uploaded, no frame of the video")
 	s.Equal(data, uploads[0].Data)
+}
+
+// A personal conversation takes a video by command: the model is shown its frames with the
+// question, and the person's message shows the text they typed, no frame.
+func (s *ResponsesAskedSuite) TestAVideoSentWithARequestIDToAPersonalConversationIsShownToTheModel() {
+	clip := s.clip()
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	command, text := s.utils.uuid(), "What happens in this clip "+s.utils.uuid()+"?"
+	frames := 2
+	before := len(s.chat.Uploads())
+
+	var answering AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.client.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{RequestId: &command, Text: text,
+			Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), MaxFrames: &frames}}},
+		&answering))
+
+	s.NotEmpty(answering.Id, "a turn started")
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests() {
+			asked := fmt.Sprint(request.Input)
+			if strings.Contains(asked, text) && strings.Count(asked, "video 1, ") == frames {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the clip's two frames with the question")
+	message := s.personsMessage(opened, command)
+	s.Equal(text, message["text"])
+	s.Empty(message["attachments"], "no frame of the video is on the person's message")
+	s.Len(s.chat.Uploads()[before:], 0, "no frame of the video is uploaded")
+}
+
+// The retry of a video question already taken is answered from its command: its videos are not
+// fetched again, so a clip that could not be sampled now is not refused, and the model is not
+// asked twice.
+func (s *ResponsesAskedSuite) TestARetryOfAVideoQuestionDoesNotSampleItsVideosAgain() {
+	clip := s.clip()
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	command, text := s.utils.uuid(), "What happens in this clip "+s.utils.uuid()+"?"
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	asked := func() int {
+		count := 0
+		for _, request := range s.vision.requests() {
+			if strings.Contains(fmt.Sprint(request.Input), text) {
+				count++
+			}
+		}
+		return count
+	}
+	frames := 2
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
+		Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), MaxFrames: &frames}}})
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	s.Require().Eventually(func() bool { return asked() == 1 }, settleFor, 10*time.Millisecond, "the model was never asked")
+
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: text,
+		Videos: &[]VideoSource{{Url: "data:video/mp4;base64,bm90IGEgY2xpcA=="}}})
+	s.Require().Equal(http.StatusAccepted, status, "a video that is not a clip would be refused if it were sampled: %s", body)
+	var retried AgentResponse
+	s.Require().NoError(json.Unmarshal(body, &retried))
+	s.Empty(retried.Id, "a retry starts no second turn")
+	s.Never(func() bool { return asked() > 1 }, 200*time.Millisecond, 10*time.Millisecond, "the model is asked once")
+}
+
+// What a personal conversation refuses a question without a request id for is refused before
+// its video is sampled, and the limits on a response's videos hold for a command.
+func (s *ResponsesAskedSuite) TestAPersonalConversationsVideoQuestionIsRefusedBeforeItsVideoIsSampled() {
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	broken := VideoSource{Url: "data:video/mp4;base64,bm90IGEgY2xpcA=="}
+
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{Text: "What is this?", Videos: &[]VideoSource{broken}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "personal conversations require a command ID", "refused for its missing request id, not for the clip it never read")
+
+	command := s.utils.uuid()
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: "What is this?",
+		Videos: &[]VideoSource{broken, broken, broken}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "expected array length <= 2 (body.videos)")
+	tooMany := 33
+	status, _ = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: "What is this?",
+		Videos: &[]VideoSource{{Url: broken.Url, MaxFrames: &tooMany}}})
+	s.Equal(http.StatusBadRequest, status, "at most 32 frames")
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: &command, Text: "What is this?",
+		Videos: &[]VideoSource{broken}})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "video:", "a new command's video is sampled")
 }
 
 // The session socket's respond takes a photo with no text and no request id the same way.
@@ -251,6 +329,24 @@ func (s *ResponsesAskedSuite) TestAQuestionWithTextAndNoRequestIDIsShownAsTyped(
 	status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+empty.Id+"/responses",
 		CreateResponseRequest{})
 	s.Equal(http.StatusBadRequest, status, "a question with nothing in it")
+}
+
+// clip is a one-second MP4 at 4 frames a second, recorded with ffmpeg.
+func (s *ResponsesAskedSuite) clip() []byte {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		// CI installs ffmpeg; a skip there would hide that this test never ran.
+		if os.Getenv("CI") != "" {
+			s.T().Fatal("ffmpeg is not installed, so the clip cannot be recorded")
+		}
+		s.T().Skip("ffmpeg not available to record the clip")
+	}
+	path := filepath.Join(s.T().TempDir(), "clip.mp4")
+	out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=4",
+		"-pix_fmt", "yuv420p", path).CombinedOutput()
+	s.Require().NoError(err, string(out))
+	clip, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	return clip
 }
 
 // onlyPersonsMessage is the first message the person wrote in the session's channel.

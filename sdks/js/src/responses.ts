@@ -129,7 +129,7 @@ export class Responses {
    * Asks the agent something and names the turn it answers as.
    *
    * A text-only question goes with a fresh request id, so a retry of it is answered once. One
-   * with images goes without, because the router refuses a request id alongside media.
+   * with images goes without one.
    */
   create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
     return createResponse(this.client, this.sessionId, text, options);

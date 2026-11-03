@@ -95,12 +95,12 @@ module GetStream
       # Dispatch#answer's way in.
       #
       # @api private
-      # @param request_id [String] the request id of the inbound message being answered; empty
-      #   generates one.
+      # @param request_id [String] the request id of the inbound message being answered, kept
+      #   with its images. Empty generates one for a question of text alone; one with images
+      #   goes without.
       def answer(text, request_id, images: nil)
-        # The router refuses a request id on a question with media.
-        request_id = SecureRandom.hex(16) if request_id.to_s.empty?
-        request_id = nil if images.to_a.any?
+        # Only a question of text alone is given an id of its own; one with images goes without.
+        request_id = images.to_a.any? ? nil : SecureRandom.hex(16) if request_id.to_s.empty?
         created = @client.post("/v1/agents/sessions/{id}/responses",
                                path: { id: @session_id },
                                body: { text: text, images: images, request_id: request_id })

@@ -1281,7 +1281,7 @@ func (s *HarnessSuite) TestWhatAReplyWasOfferedIsNotCarriedToTheNextWithItsId() 
 	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
 
 	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
-	s.harness.Forget("turn-1")
+	s.harness.Forget("turn-1", 0)
 	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history})
 	s.Equal(called, s.harness.DropUnoffered("turn-1", called), "a forgotten reply's offer was carried to the next")
 

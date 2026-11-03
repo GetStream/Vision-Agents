@@ -79,7 +79,12 @@ type Event struct {
 	PriceVersion   string `json:"price_version,omitempty"`
 	// SKU names the priced item, the same across its price changes. Empty for work the
 	// producer priced with no entry, and on events from a producer that names none.
-	SKU       string            `json:"sku,omitempty"`
+	SKU string `json:"sku,omitempty"`
+	// Region and BYOK are the priced item's, named whether or not an entry priced it: where
+	// the work ran, such as us or eu, and whether on the customer's own key. Empty and false
+	// on events from a producer that names neither.
+	Region    string            `json:"region,omitempty"`
+	BYOK      bool              `json:"byok,omitempty"`
 	Billable  bool              `json:"billable"`
 	Success   bool              `json:"success"`
 	ErrorCode string            `json:"error_code,omitempty"`
@@ -222,7 +227,7 @@ func (e Event) nul() (string, bool) {
 		"organization_id": e.OrganizationID, "organization_tier": e.OrganizationTier, "app_id": e.AppID,
 		"api_key": e.APIKey, "user_id": e.UserID, "agent_id": e.AgentID, "call_id": e.CallID,
 		"session_id": e.SessionID, "meter": e.Meter, "provider": e.Provider, "model": e.Model,
-		"purpose": e.Purpose, "price_version": e.PriceVersion, "sku": e.SKU, "error_code": e.ErrorCode, "source": e.Source,
+		"purpose": e.Purpose, "price_version": e.PriceVersion, "sku": e.SKU, "region": e.Region, "error_code": e.ErrorCode, "source": e.Source,
 	}
 	for name, value := range fields {
 		if strings.ContainsRune(value, 0) {

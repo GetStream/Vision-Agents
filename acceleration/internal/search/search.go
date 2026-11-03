@@ -62,10 +62,16 @@ type Result struct {
 	Answer string
 	// Documents are the sources behind it, most relevant first.
 	Documents []Document
+	// VendorMicros is what the provider said the search cost it, in millionths of a dollar,
+	// where it says: Perplexity's sonar models do, for the tokens and the request together.
+	VendorMicros int64
 }
 
 // Used is one request: a search API bills by the call rather than by what it read.
 func (Result) Used() pricing.Quantities { return pricing.Quantities{pricing.Requests: 1} }
+
+// VendorCostMicros is kept beside the row to check the price list by, never to price it.
+func (r Result) VendorCostMicros() int64 { return r.VendorMicros }
 
 // Document is one source that bears on the question.
 type Document struct {

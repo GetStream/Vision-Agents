@@ -525,7 +525,7 @@ func (a *Agent) heardNative(transcript sts.InputTranscript) {
 	a.mu.Unlock()
 
 	a.logger.Debug("heard", "participant", participant.ID, "text", text)
-	a.emitter.Send(Heard{Participant: participant, Text: text, Language: transcript.Language})
+	sendHeard(a.emitter, a.options.OnHeard, Heard{Participant: participant, Text: text, Language: transcript.Language})
 }
 
 // saidNative reports what the model wrote down of itself. Deltas are what a watcher reads

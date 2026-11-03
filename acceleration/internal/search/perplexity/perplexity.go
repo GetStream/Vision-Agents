@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -200,6 +201,13 @@ type completionResponse struct {
 	// Citations is the older shape, which is bare URLs. It is read when search_results is
 	// absent so an answer never comes back with nothing to attribute it to.
 	Citations []string `json:"citations"`
+	Usage     struct {
+		// Cost is what Perplexity charged for the answer, in dollars: the tokens read and
+		// written, and the request fee for its search context.
+		Cost struct {
+			TotalCost float64 `json:"total_cost"`
+		} `json:"cost"`
+	} `json:"usage"`
 }
 
 // answer has a sonar model read the pages and write the sentence.
@@ -213,7 +221,7 @@ func (p *Provider) answer(ctx context.Context, question string) (search.Result, 
 		return search.Result{}, err
 	}
 
-	var found search.Result
+	found := search.Result{VendorMicros: int64(math.Round(decoded.Usage.Cost.TotalCost * 1_000_000))}
 	if len(decoded.Choices) > 0 {
 		found.Answer = strings.TrimSpace(decoded.Choices[0].Message.Content)
 	}
