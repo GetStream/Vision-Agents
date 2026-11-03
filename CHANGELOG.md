@@ -2,6 +2,10 @@
 
 ## Features
 
+### Cached speech-to-speech tokens the vendor did not split are billed at the cached rate
+
+A speech-to-speech reply whose vendor reports a cached total but no split of it by modality, such as an OpenAI-compatible realtime dialect without `cached_tokens_details`, now has the cached tokens shared out across text, audio and image in proportion, and priced at each modality's cached rate rather than its fresh one. A model with no cached rate, such as Gemini Live, keeps them at its modality rates, as Google bills them (AI-2187).
+
 ### A voice note sent with a question is transcribed and answered
 
 `POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518). `POST /v1/agents/sessions/{id}/respond` takes the same `audio`, heard and refused the same way, and `text` may be empty with it. Empty text without `audio` there is now a 400 `invalid_request` ("there is nothing to answer"), as on `responses`, where it was a 400 `validation_failed` (AI-2549).
