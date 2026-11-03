@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,6 +261,37 @@ func (s *CampaignsSuite) TestLaunchingWithoutAConfigIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(payload), codeCampaignNotReady)
 	s.Contains(string(payload), "agent config")
+}
+
+func (s *CampaignsSuite) TestLaunchingWithoutAGoalIsRefused() {
+	created := s.ready()
+	s.setGoal(created, "  ")
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), codeCampaignNotReady)
+	s.Contains(string(payload), "goal")
+}
+
+func (s *CampaignsSuite) TestAGoalIsStoredAndReturned() {
+	created := s.create(map[string]any{"name": "may"})
+	s.setGoal(created, "Confirm the visit for {{name}}")
+
+	s.Equal("Confirm the visit for {{name}}", s.get(created.Id).Sequence.Steps[0].Goal)
+}
+
+func (s *CampaignsSuite) TestAGoalOverTheLimitIsRefused() {
+	created := s.create(map[string]any{"name": "may"})
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = strings.Repeat("a", 2001)
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Empty(s.get(created.Id).Sequence.Steps[0].Goal)
 }
 
 func (s *CampaignsSuite) TestLaunchingAStartInThePastIsRefused() {
@@ -536,8 +568,16 @@ func (s *CampaignsSuite) ready() Campaign {
 	created := s.create(map[string]any{
 		"name": "campaign-" + s.utils.uuid(), "config_id": s.data.createAgentConfig().Id, "from_number": s.heldNumber(),
 	})
+	s.setGoal(created, "Confirm the visit")
 	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
 	return created
+}
+
+func (s *CampaignsSuite) setGoal(created Campaign, goal string) {
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = goal
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
 }
 
 // launch starts a draft now.

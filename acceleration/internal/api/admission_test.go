@@ -716,6 +716,10 @@ func (s *AdmissionSuite) campaign(concurrency int) Campaign {
 			ExcludedDates: []string{},
 		},
 	}, &created))
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = "Confirm the visit"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		CampaignRequest{Sequence: &sequence}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
 		map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}}, nil))
 	return created

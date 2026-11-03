@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -25,6 +27,7 @@ const (
 const (
 	stepOne          = "step_1"
 	maxAttempts      = 10
+	MaxGoal          = 2000
 	doNotCallName    = "Do not call"
 	doNotCallMeaning = "The person asked not to be called or contacted again."
 )
@@ -40,6 +43,7 @@ type Sequence struct {
 type Step struct {
 	ID         string    `json:"id"`
 	ConfigID   string    `json:"config_id"`
+	Goal       string    `json:"goal,omitempty"`
 	Attempts   []Attempt `json:"attempts"`
 	Outcomes   []Outcome `json:"outcomes"`
 	Other      Route     `json:"other"`
@@ -129,6 +133,9 @@ func (s Sequence) Ready() error {
 	if step.ConfigID == "" {
 		return errors.New("the step needs an agent config before the campaign can launch")
 	}
+	if strings.TrimSpace(step.Goal) == "" {
+		return errors.New("the conversation needs a goal before the campaign can launch")
+	}
 	for _, o := range step.Outcomes {
 		if o.Name == "" {
 			return fmt.Errorf("the outcome %q needs a name before the campaign can launch", o.ID)
@@ -174,6 +181,9 @@ func doNotCall() Outcome {
 func (st Step) validate() error {
 	if st.ID != stepOne {
 		return fmt.Errorf("the step must be called %s", stepOne)
+	}
+	if utf8.RuneCountInString(st.Goal) > MaxGoal {
+		return fmt.Errorf("the goal is longer than %d characters", MaxGoal)
 	}
 	if n := len(st.Attempts); n < 1 || n > maxAttempts {
 		return fmt.Errorf("a step needs between 1 and %d attempts", maxAttempts)

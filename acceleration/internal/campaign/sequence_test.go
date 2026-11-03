@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -34,6 +35,7 @@ func (s *SequenceSuite) TestTheDefaultSequenceCallsFourTimesOverTwentyDays() {
 	s.Equal(EndUnsuccessful, notInterested.Next.End)
 
 	s.NoError(seq.Validate())
+	seq.Steps[0].Goal = "Confirm the visit"
 	s.NoError(seq.Ready())
 }
 
@@ -146,6 +148,7 @@ func (s *SequenceSuite) TestASequenceHasExactlyOneStepCalledStepOne() {
 
 func (s *SequenceSuite) TestLaunchNeedsADescriptionForEveryOutcome() {
 	seq := DefaultSequence("cfg")
+	seq.Steps[0].Goal = "Confirm the visit"
 	seq.Steps[0].Outcomes = append(seq.Steps[0].Outcomes, Outcome{ID: "callback", Name: "Callback", Next: Next{End: EndSuccessful}})
 
 	s.NoError(seq.Validate())
@@ -161,6 +164,34 @@ func (s *SequenceSuite) TestLaunchNeedsAnAgentConfig() {
 
 	s.NoError(seq.Validate())
 	s.ErrorContains(seq.Ready(), "agent")
+}
+
+func (s *SequenceSuite) TestGoalIsRequiredToLaunch() {
+	seq := DefaultSequence("cfg")
+
+	for _, goal := range []string{"", "   "} {
+		seq.Steps[0].Goal = goal
+		s.NoError(seq.Validate())
+		s.ErrorContains(seq.Ready(), "goal")
+	}
+	seq.Steps[0].Goal = "Confirm the visit"
+	s.NoError(seq.Ready())
+}
+
+func (s *SequenceSuite) TestGoalOverTheLimitIsRefused() {
+	seq := DefaultSequence("cfg")
+
+	seq.Steps[0].Goal = strings.Repeat("é", MaxGoal)
+	s.NoError(seq.Validate())
+	seq.Steps[0].Goal = strings.Repeat("é", MaxGoal+1)
+	s.ErrorContains(seq.Validate(), "goal")
+}
+
+func (s *SequenceSuite) TestSequenceWithoutGoalStillParses() {
+	seq, err := ParseSequence([]byte(`{"steps":[{"id":"step_1","config_id":"cfg","attempts":[{"delay_minutes":0}],"outcomes":[],"other":{"next":{"end":"unsuccessful"}},"no_response":{"next":{"end":"unsuccessful"}}}],"double_dial":false}`))
+
+	s.Require().NoError(err)
+	s.Empty(seq.First().Goal)
 }
 
 func (s *SequenceSuite) TestASequenceSurvivesJSON() {
@@ -190,5 +221,5 @@ func (s *SequenceSuite) TestTheLegacySequenceIsWhatTheMigrationWrote() {
 
 	legacy := LegacySequence("cfg")
 	s.NoError(legacy.Validate())
-	s.NoError(legacy.Ready())
+	s.ErrorContains(legacy.Ready(), "goal")
 }

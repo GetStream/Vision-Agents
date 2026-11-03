@@ -431,6 +431,10 @@ func (s *CampaignContactsSuite) launched() Campaign {
 		E164: from, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
 	}))
 	created := s.draft(map[string]any{"config_id": s.data.createAgentConfig().Id, "from_number": from})
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = "Confirm the visit"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
 	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}})
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
 		map[string]any{"consent": true}, nil))

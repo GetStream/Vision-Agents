@@ -943,6 +943,7 @@ type CampaignSequence struct {
 type CampaignStep struct {
 	Id         string            `json:"id" doc:"step_1, for now."`
 	ConfigId   string            `json:"config_id" doc:"The agent config the step rings with, the same as the campaign's config_id."`
+	Goal       string            `json:"goal" maxLength:"2000" doc:"What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch."`
 	Attempts   []CampaignAttempt `json:"attempts" nullable:"false" doc:"1 to 10. The first has a delay of 0."`
 	Outcomes   []CampaignOutcome `json:"outcomes" nullable:"false" doc:"What an answered call can end as. do_not_call is built in."`
 	Other      CampaignRoute     `json:"other" doc:"Where an answered call none of the outcomes fit leads."`
