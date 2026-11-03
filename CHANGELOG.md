@@ -266,9 +266,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A deleted session's call still reads its transcript
+
+`GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation before its session was deleted still reads empty (AI-2473).
+
 ### A photo sent with no text is answered without a request id
 
 `POST /v1/agents/sessions/{id}/responses` and the session socket's `respond`, on a session kept in Stream Chat, now answer a question of photos alone that carries no `request_id`, as they did with one: the photos are uploaded and shown on the person's message, as data URIs, at most 8. Before, such a question was a 400 "invalid command ID or text". A question with text and no `request_id` is unchanged.
+
 ### A voice note's transcription is billed to its session and agent
 
 The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region, and refused with a retryable 503 `model_failed` when that region has no batch transcription instance; before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).

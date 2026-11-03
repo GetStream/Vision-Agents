@@ -430,6 +430,13 @@ func (s *Server) Fail(method, suffix string) {
 	s.db.failing[method][suffix] = true
 }
 
+// Heal serves requests of method ending in suffix again.
+func (s *Server) Heal(method, suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	delete(s.db.failing[method], suffix)
+}
+
 // wait keeps the request Hold asked for waiting until it is let go.
 func (db *store) wait(path string) {
 	db.holdMu.Lock()
