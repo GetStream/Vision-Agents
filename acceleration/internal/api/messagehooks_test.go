@@ -27,6 +27,8 @@ type MessageHooksSuite struct {
 	channelID string
 	// logged is what the router logged, at debug and up.
 	logged *lockedLog
+	// worker is what the customer's worker is handed, once a test connected one (handedOut).
+	worker <-chan dispatch.Message
 	// images serves a PNG at /photo.png and /other.png and nothing anywhere else, for photos
 	// sent in the channel.
 	images *httptest.Server

@@ -317,6 +317,16 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 	s.sessions.PinHook(customer, cid, origin.app)
 }
 
+// handOut is pinHook for a channel whose message went to one of the customer's workers, from
+// a hook of any origin: the text session the worker opens under the channel's id answers in
+// that channel (session.Manager.HandOut).
+func (s *Server) handOut(ctx context.Context, origin hookOrigin, customer, cid string) {
+	if s.sessions == nil {
+		return
+	}
+	s.sessions.HandOut(ctx, customer, cid, origin.app, origin.deployment)
+}
+
 // mayWrite reports whether what a hook found for a customer may be acted on: in app mode, a
 // hook from the deployment's own app starts work only for a customer still writing there,
 // never for one whose work there is only to be read.
