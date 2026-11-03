@@ -87,6 +87,24 @@ func (s *StoreSuite) TestAClaimedChatInboundHasEverythingItWasQueuedWith() {
 	s.Nil(claimed.FinishedAt)
 }
 
+// What a message's voice recording said is kept once, for the next try: a claim and a read by
+// seq carry it, and a keep after the first, from a try that heard it again, leaves the first.
+func (s *StoreSuite) TestWhatAQueuedChatRecordingSaidIsKeptOnceForTheNextTry() {
+	s.queuedChat("msg-one")
+	s.Nil(s.claimedChat(s.base, "msg-one").Heard, "nothing is heard before a try hears it")
+
+	s.Require().NoError(s.store.KeepChatInboundHeard(s.ctx, 1257545, "msg-one", "where is my order"))
+	s.Require().NoError(s.store.KeepChatInboundHeard(s.ctx, 1257545, "msg-one", "where is my order now"))
+
+	claimed := s.claimedChat(s.base.Add(chatLease), "msg-one")
+	s.Require().NotNil(claimed.Heard)
+	s.Equal("where is my order", *claimed.Heard)
+	read, err := s.store.ChatInboundBySeq(s.ctx, claimed.Seq)
+	s.Require().NoError(err)
+	s.Require().NotNil(read.Heard)
+	s.Equal("where is my order", *read.Heard)
+}
+
 func (s *StoreSuite) TestAChatInboundQueuedTwiceIsOneRow() {
 	s.queuedChat("msg-one")
 

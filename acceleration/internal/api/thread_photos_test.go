@@ -165,11 +165,13 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneToAnAgentWithAVisionSkillIsAnswer
 	s.Equal(unseenPhoto, s.lastTurn(s.holding.replies()[asked:]).Content)
 }
 
-// Control, as on base: a thread message with neither text nor a photo, such as a file alone or
-// the preview of a link, is not answered. The text message after it is, and alone.
+// Control, as on base: a thread message with neither text nor a photo, such as a file alone, a
+// voice recording alone or the preview of a link, is not answered. The text message after it
+// is, and alone.
 func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswered() {
 	channel := s.answeredThread()
 
+	s.sentInThread(channel, "", map[string]any{"type": "voiceRecording", "asset_url": s.images.URL + "/note.aac", "mime_type": "audio/aac"})
 	s.sentInThread(channel, "", map[string]any{"type": "file", "asset_url": s.images.URL + "/report.pdf", "mime_type": "application/pdf"})
 	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": s.images.URL + "/photo.png", "og_scrape_url": s.images.URL + "/photo.png"})
 	s.sentInThread(channel, "")
