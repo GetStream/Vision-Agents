@@ -2695,6 +2695,7 @@ func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
 // alone, and not with words that no longer say a photo came with them.
 func (s *AgentSuite) TestATurnsPhotosAreKeptAsANoteOnceTheyHaveBeenSeen() {
 	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}, Caption: "video 1, 0.0s of 1.0s", Video: true}
 	cases := map[string]struct {
 		text   string
 		photos []llm.ImagePart
@@ -2706,6 +2707,9 @@ func (s *AgentSuite) TestATurnsPhotosAreKeptAsANoteOnceTheyHaveBeenSeen() {
 		"blanks and a photo":  {" \n", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
 		"2 photos alone":      {"", []llm.ImagePart{photo, photo}, "[sent with 2 photos, not shown again]"},
 		"words with no photo": {"is the fan broken?", nil, "is the fan broken?"},
+		"words, a photo and a video's frames": {"which is it?", []llm.ImagePart{photo, frame, frame},
+			"which is it?\n\n[sent with a photo, not shown again]"},
+		"words and a video's frames": {"what happens here?", []llm.ImagePart{frame, frame}, "what happens here?"},
 	}
 	for name, c := range cases {
 		s.Run(name, func() {
@@ -2721,6 +2725,7 @@ func (s *AgentSuite) TestATurnsPhotosAreKeptAsANoteOnceTheyHaveBeenSeen() {
 
 			kept := llm.Message{Role: llm.User, Content: c.kept}
 			s.Equal(kept, harness.WithoutNotes(s.agent.History())[0])
+			s.Zero(photoNotes(s.model.requests()[0].Input), "the turn's reply is sent its images without the note")
 			next := harness.WithoutNotes(s.model.requests()[1].Input)
 			s.Contains(next, kept, "the next turn is asked with the note")
 			s.False(llm.HasImage(next), "and not with the photos")

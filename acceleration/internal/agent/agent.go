@@ -515,8 +515,10 @@ type Agent struct {
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
-	// turnSaid is the words the last turn was kept with, before the note of its photos.
-	turnSaid string
+	// turnSaid is the last turn's words as its replies are sent them while turnImages go
+	// with them, and turnKept the same words as history keeps them, with the note of its
+	// photos.
+	turnSaid, turnKept string
 
 	joined bool
 	closed bool
@@ -901,12 +903,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		}
 		id := replyPrefix + turnStamp()
 		attached := make([]llm.ImagePart, 0, len(images))
+		// The frames of a video are not photos the turn is kept with a note of.
+		photos := 0
 		for _, image := range images {
 			if err := image.Validate(); err != nil {
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
 			attached = append(attached, image)
+			if !image.Video {
+				photos++
+			}
 		}
 		switch {
 		case current.Offers(visionSkill):
@@ -928,10 +935,10 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: len(attached)}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: len(attached)}, "", attached, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
@@ -1989,7 +1996,7 @@ type heard struct {
 	// author is the Stream user who wrote a typed turn in a thread channel (WithAuthor).
 	author string
 	// photos is how many photos a typed turn came with, whether the model or the vision
-	// skill looks at them.
+	// skill looks at them, not counting the frames of a video.
 	photos int
 }
 
@@ -2251,6 +2258,7 @@ func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos 
 	turn := a.userTurnLocked(participant, text)
 	a.turnSaid = turn.Content
 	turn.Content = PhotoNote(turn.Content, photos)
+	a.turnKept = turn.Content
 	a.history = append(toolPicturesSeen(a.history), turn)
 	a.turnImages = images
 	if a.missed.participant == participant.ID {
@@ -2338,7 +2346,7 @@ func (a *Agent) turnReplayLocked() []llm.Message {
 		if a.history[at].Role != llm.User {
 			continue
 		}
-		if a.history[at].Content == PhotoNote(a.turnSaid, len(a.turnImages)) {
+		if a.history[at].Content == a.turnKept {
 			said := a.history[at]
 			said.Content = a.turnSaid
 			replay[at] = named(said)
