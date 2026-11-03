@@ -2,6 +2,10 @@
 
 ## Features
 
+### A photo sent in an agent's chat channel reaches the model
+
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+
 ### A custom connector's server instructions reach the agent
 
 The `instructions` a custom connector's MCP server (`custom_…`) sends when a session opens it are added after the agent config's own instructions, as for a server under `mcp_servers`: under a line naming the binding and its tools (`crm__*`), cut to 4000 bytes per server, and only when the session offers at least one of its tools. A built-in connector's are still left out. The instructions are read when the session opens; a binding the session opens later, after a login during the conversation, adds none (AI-2525).

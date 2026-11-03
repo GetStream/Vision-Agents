@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,9 @@ type MessageHooksSuite struct {
 	channelID string
 	// logged is what the router logged, at debug and up.
 	logged *lockedLog
+	// images serves a PNG at /photo.png and /other.png and nothing anywhere else, for photos
+	// sent in the channel.
+	images *httptest.Server
 }
 
 func TestMessageHooksSuite(t *testing.T) {
@@ -35,6 +39,9 @@ func TestMessageHooksSuite(t *testing.T) {
 func (s *MessageHooksSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	s.imageHTTP = &http.Client{}
+	s.images = photoServer("/photo.png", "/other.png")
+	s.T().Cleanup(s.images.Close)
 	s.RouterSuite.SetupSuite()
 }
 
