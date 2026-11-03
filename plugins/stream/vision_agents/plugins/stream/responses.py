@@ -196,12 +196,13 @@ async def _create_response(
     """Create a response under `request_id`, or a fresh one when the question is text only.
 
     Only a dispatch worker names the request: it passes back the id of the inbound message
-    it is answering, so the answer lands on it.
+    it is answering, with its photos, so the answer lands on it.
     """
     request = CreateResponseRequest(text=text)
     if images:
         request.images = images
-    # The router refuses a request id alongside images.
+    # A question with images is not named afresh; one named by a dispatch worker keeps its
+    # name, which the router takes beside images (not videos).
     elif not request_id:
         request_id = str(uuid.uuid4())
     if request_id:

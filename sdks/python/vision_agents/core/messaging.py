@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from vision_agents.core.llm import ImageContent
+
 
 @dataclass
 class InboundMessage:
@@ -30,7 +32,9 @@ class InboundMessage:
             about: the organization to scope memory to, the locale to answer in. Whoever
             created the channel decided what is in here, so read it as a claim rather than
             a fact; which agent answers is `config_id`, not anything in here.
-        text: What was written.
+        text: What was written. Empty when a photo was sent without text.
+        images: The photos sent with it, by the URLs the channel keeps them at, which
+            the model fetches itself. Empty when none was sent.
         message_id: The message itself, for replying in its thread rather than after it.
         user_id: Who wrote it.
         user_name: Their name, which may be empty.
@@ -45,6 +49,7 @@ class InboundMessage:
     config_id: str = ""
     custom: dict[str, str] = field(default_factory=dict)
     text: str = ""
+    images: list[ImageContent] = field(default_factory=list)
     message_id: str = ""
     user_id: str = ""
     user_name: str = ""

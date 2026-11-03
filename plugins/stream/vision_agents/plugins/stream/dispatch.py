@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 from vision_agents.core.agents import Agent
-from vision_agents.core.llm import FunctionRegistry
+from vision_agents.core.llm import FunctionRegistry, ImageContent
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.core.utils.utils import await_or_run
@@ -25,6 +25,7 @@ from ._tool_line import (
     cancel,
     run_with_tool_call_context,
 )
+from ._generated.models import ImageSource
 from .responses import RouterError, _create_response
 from .sessions import _tools
 
@@ -275,7 +276,8 @@ class Dispatch:
 
         The response is created with this worker's own credential, acting for whoever wrote
         the message, so it goes to the model rather than back to a worker. It carries the
-        message's command, so the answer lands on it.
+        message's command, so the answer lands on it, and the photos sent with it, by the
+        URLs the router handed over.
 
         Args:
             message: What arrived, naming the session it was written to.
@@ -290,7 +292,11 @@ class Dispatch:
             )
         backend = replace(self.backend, acting_for=message.user_id)
         await _create_response(
-            backend, message.session_id, message.text, request_id=message.request_id
+            backend,
+            message.session_id,
+            message.text,
+            [ImageSource(url=image.data_uri()) for image in message.images],
+            request_id=message.request_id,
         )
 
     async def run(self) -> None:
@@ -703,6 +709,7 @@ def _message_of(frame: dict[str, object]) -> InboundMessage:
         config_id=str(frame.get("config_id", "")),
         custom=_custom_of(frame),
         text=str(frame.get("text", "")),
+        images=_images_of(frame),
         message_id=str(frame.get("message_id", "")),
         user_id=str(frame.get("user_id", "")),
         user_name=str(frame.get("user_name", "")),
@@ -710,6 +717,35 @@ def _message_of(frame: dict[str, object]) -> InboundMessage:
         session_id=str(frame.get("session_id", "")),
         request_id=str(frame.get("request_id", "")),
     )
+
+
+def _images_of(frame: dict[str, object]) -> list[ImageContent]:
+    """Read the photos a message frame carries.
+
+    An entry that is not an object, has no URL, or has one that is not an absolute HTTP(S)
+    URL is dropped: there is nothing the model could fetch.
+    """
+    sent = frame.get("images")
+    images: list[ImageContent] = []
+    if not isinstance(sent, list):
+        return images
+    for entry in sent:
+        if not isinstance(entry, dict):
+            continue
+        url = entry.get("url")
+        mime = entry.get("mime_type")
+        if not isinstance(url, str) or not url:
+            continue
+        try:
+            if isinstance(mime, str) and mime:
+                images.append(ImageContent(url=url, mime=mime))
+            else:
+                images.append(ImageContent(url=url))
+        except ValueError:
+            logger.debug(
+                "a message arrived with an image that cannot be fetched: %s", url
+            )
+    return images
 
 
 def _time_of(text: str) -> Optional[datetime]:
