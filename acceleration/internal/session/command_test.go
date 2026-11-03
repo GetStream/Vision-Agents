@@ -14,7 +14,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 )
@@ -566,6 +568,36 @@ func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedB
 	_, err = alice.CheckRespond(s.ctx, "stale-session-command", "", false, options.LLM{})
 
 	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
+}
+
+// TestALoginCardForAPluginTheSpecStillNamesIsNotShown: a session no longer accepts plugin
+// logins in its conversation, so a tool result shaped as one for a user plugin a stored row
+// still names is kept as a result and draws no login card.
+func (s *SessionSuite) TestALoginCardForAPluginTheSpecStillNamesIsNotShown() {
+	s.persists()
+	running, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency",
+		Caller:  routing.Caller{UserID: "employee-1"},
+		Plugins: []store.PluginEntry{{Name: "slack", User: true}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = running.Close() })
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	slack, ok := plugins.Lookup("slack")
+	s.Require().True(ok)
+	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
+	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
+		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the reply should finish")
+
+	saved := s.stored(running)
+	s.Require().Len(saved, 2)
+	s.Empty(saved[1].Authorizations)
 }
 
 func (s *SessionSuite) TestAWatcherComingBackKeepsTheConversationOpen() {

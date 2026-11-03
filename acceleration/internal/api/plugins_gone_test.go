@@ -23,7 +23,8 @@ func (s *PluginsGoneSuite) SetupTest() {
 }
 
 // pluginRoutes are the routes the plugin operations were served on, the three served by hand
-// last.
+// last, each asked so that its handler, were it still served, answers other than 404: the
+// callback with no state is a 400 there, where an unknown state would be a 404.
 var pluginRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/v1/agents/plugins"},
 	{http.MethodGet, "/v1/agents/configs/{id}/plugins"},
@@ -31,7 +32,7 @@ var pluginRoutes = []struct{ method, path string }{
 	{http.MethodDelete, "/v1/agents/configs/{id}/plugins/linear"},
 	{http.MethodPut, "/v1/agents/configs/{id}/plugins/linear/client"},
 	{http.MethodDelete, "/v1/agents/configs/{id}/plugins/linear/client"},
-	{http.MethodGet, "/v1/agents/plugins/callback?state=s1&code=c1"},
+	{http.MethodGet, "/v1/agents/plugins/callback"},
 	{http.MethodGet, "/v1/agents/plugins/linear/logo"},
 	{http.MethodPost, "/v1/agents/plugins/events/t1"},
 }
