@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/gorilla/websocket"
 )
 
 // VoiceNotesSuite covers a voice note sent with a question: what the person said in it is
@@ -379,6 +380,156 @@ func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() 
 
 	s.Require().Equal(http.StatusAccepted, status, "%.300s", payload)
 	s.Equal(said, s.lastAsked(said))
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteSentToRespondIsTheQuestionAndShownOnThePersonsMessage() {
+	opened := s.noting()
+	command, typed, said := s.utils.uuid(), "From the morning shift", "the dish machine is leaking "+s.utils.uuid()
+	audio := wavOf(said)
+	before := len(s.chat.Uploads())
+
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": typed, "audio": map[string]string{"url": s.serve(audio)}}, &receipt))
+
+	s.False(receipt.Duplicate)
+	s.Equal(typed+"\n\n"+said, s.lastAsked(said), "the model is asked what was typed, then what was said")
+	s.shownWithItsNote(opened, command, typed+"\n\n"+said, audio, before)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteRespondRefusesIsAnsweredAsCreateResponseAnswersAndNothingIsAsked() {
+	opened := s.noting()
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened),
+		map[string]any{"text": "", "audio": map[string]string{"url": s.serve(wavOf(refuseForMoney))}})
+
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	s.Equal(http.StatusPaymentRequired, status)
+	s.Equal(codeSpendLimitReached, answered.Error.Code)
+	s.nothingWasAsked(opened)
+}
+
+func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnRespondIsHeardOnceAndMatchedOnWhatWasSent() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command, typed, note := s.utils.uuid(), "From the morning shift", s.serve(wavOf("the fryer is out "+s.utils.uuid()))
+	sent := map[string]any{"request_id": command, "text": typed, "audio": map[string]string{"url": note}}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened), sent, nil))
+
+	var retried CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened), sent, &retried))
+	s.True(retried.Duplicate, "a retry starts no second turn")
+	status, _ := s.serverClient.call(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": "From the evening shift", "audio": map[string]string{"url": note}})
+	s.Equal(http.StatusConflict, status, "other typed text under the same request id")
+	s.heard(since, 1)
+}
+
+// Text alone is answered on respond as it was before voice notes: a 204 without a request id,
+// a receipt with one, and the text asked as sent.
+func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	plain, kept, command := "Is the fryer fixed? "+s.utils.uuid(), "Is the ice machine fixed? "+s.utils.uuid(), s.utils.uuid()
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost, s.respond(opened), map[string]any{"text": plain}, nil))
+	s.Equal(plain, s.lastAsked(plain))
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": kept}, &receipt))
+	s.Equal(command, receipt.RequestId)
+	s.Equal(kept, s.lastAsked(kept))
+	status, _ := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": ""})
+	s.Equal(http.StatusBadRequest, status, "there is nothing to answer")
+	s.heard(since, 0)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteRespondedOnTheSocketIsTheQuestionAndShownOnThePersonsMessage() {
+	opened := s.noting()
+	command, said := s.utils.uuid(), "the walk-in is warm "+s.utils.uuid()
+	audio := wavOf(said)
+	before := len(s.chat.Uploads())
+
+	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "request_id": command,
+		"audio": frame{"url": "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(audio)}}))
+
+	s.Equal(said, s.lastAsked(said))
+	s.shownWithItsNote(opened, command, said, audio, before)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteTheSocketRefusesIsReportedAndNothingIsAsked() {
+	opened := s.noting()
+	watching := s.watching(opened)
+
+	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "audio": frame{"url": s.serve(wavOf("  "))}}))
+
+	reported := s.await(watching, "error")
+	s.Equal(errNothingHeard.Error(), reported["error"])
+	s.nothingWasAsked(opened)
+}
+
+func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnTheSocketIsHeardOnce() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command, said := s.utils.uuid(), "the hood fan is loud "+s.utils.uuid()
+	sent := frame{"type": "respond", "request_id": command, "text": "Kitchen", "audio": frame{"url": s.serve(wavOf(said))}}
+	watching := s.watching(opened)
+
+	s.Require().NoError(watching.WriteJSON(sent))
+	s.lastAsked(said)
+	s.Require().NoError(watching.WriteJSON(sent))
+	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "request_id": command, "text": "Bar",
+		"audio": sent["audio"]}))
+
+	reported := s.await(watching, "error")
+	s.Contains(reported["error"], "different", "other typed text under the same request id")
+	s.heard(since, 1)
+}
+
+// Text alone on the socket is asked as sent, as it was before voice notes.
+func (s *VoiceNotesSuite) TestTextAloneOnTheSocketIsAskedAsBefore() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	typed := "Is the walk-in fixed? " + s.utils.uuid()
+
+	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "text": typed}))
+
+	s.Equal(typed, s.lastAsked(typed))
+	s.heard(since, 0)
+}
+
+// shownWithItsNote checks that the person's message of command carries text and the voice
+// note audio, uploaded once since before uploads.
+func (s *VoiceNotesSuite) shownWithItsNote(opened Session, command, text string, audio []byte, before int) {
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	var message map[string]any
+	s.Require().Eventually(func() bool {
+		for _, stored := range s.chat.Stored(channel) {
+			if stored["id"] == command {
+				message = stored
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the person's message was never written")
+	s.Equal(text, message["text"], "the message carries what was said")
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"voiceRecording"`, "the voice note is played where it is shown")
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1, "the voice note is uploaded once")
+	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
+}
+
+// watching opens the session's socket as the backend that opened it.
+func (s *VoiceNotesSuite) watching(opened Session) *websocket.Conn {
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.T().Cleanup(func() { _ = watching.Close() })
+	return watching
+}
+
+func (s *VoiceNotesSuite) respond(opened Session) string {
+	return "/v1/agents/sessions/" + opened.Id + "/respond"
 }
 
 // heard checks that n voice notes were transcribed for the suite's app since since. It hears

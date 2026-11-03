@@ -345,6 +345,8 @@ type watcherCommand struct {
 	Verbatim bool `json:"verbatim"`
 	// Images attach to a respond command, and become image parts on that turn.
 	Images []wireImage `json:"images"`
+	// Audio is a voice note a respond command asks with, heard as createResponse hears one.
+	Audio *AudioSource `json:"audio"`
 }
 
 // readCommands applies what the caller sends, which is tool results and the handful of
@@ -498,7 +500,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 
 	case "respond":
 		if leftToDispatch(found, owner.Kind) {
-			if len(command.Images) > 0 {
+			if len(command.Images) > 0 || command.Audio != nil {
 				found.Report(errors.New("this agent hands what is written to its server, which takes text only"), "dispatch")
 				return true
 			}
@@ -514,13 +516,19 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 			found.Report(err, "llm")
 			return true
 		}
+		ctx := routing.WithCaller(context.Background(), sender)
+		text, notes, err := s.withHeardNote(ctx, found, command.CommandID, command.Text, command.Audio, len(images) > 0, options.LLM{})
+		if err != nil {
+			found.Report(err, "llm")
+			return true
+		}
 		if command.CommandID != "" && found.Durable() {
-			if _, _, err := found.RespondCommand(routing.WithCaller(context.Background(), sender), command.CommandID, command.Text, "", images, options.LLM{}); err != nil {
+			if _, _, err := found.RespondCommand(ctx, command.CommandID, text, "", images, options.LLM{}, notes...); err != nil {
 				found.Report(err, "llm")
 			}
 			return true
 		}
-		if _, err := found.Respond(routing.WithCaller(context.Background(), sender), command.Text, images, options.LLM{}, images...); err != nil {
+		if _, err := found.Respond(ctx, text, images, options.LLM{}, images...); err != nil {
 			found.Report(err, "llm")
 		}
 

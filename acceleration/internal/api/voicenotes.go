@@ -23,6 +23,30 @@ var (
 	errNothingHeard = invalidRequest("no words were heard in the voice note")
 )
 
+// withHeardNote is the question of text sent with the voice note at audio: what was typed,
+// then what was said, and the note, for a turn to show; text alone when audio is nil.
+//
+// The note is heard after every check that can refuse the question beforehand, since hearing
+// it is billed. Three refusals can still come after it is heard, and the note is billed then:
+// the transcript pushes a typed text over the 1 MiB command limit, a second turn starts between
+// the check and the start of this one, or the note fails to upload to Chat. A retry of the
+// question under commandID carries what its first hearing heard. images is whether photos go
+// with it, and asked is what the caller changes about this reply.
+func (s *Server) withHeardNote(ctx context.Context, found *session.Session, commandID, text string, audio *AudioSource, images bool, asked options.LLM) (string, []conversation.VoiceNote, error) {
+	if audio == nil {
+		return text, nil, nil
+	}
+	heard, err := found.CheckRespond(ctx, commandID, text, images, asked)
+	if err != nil {
+		return "", nil, refusedResponse(err)
+	}
+	note, failure := s.hearVoiceNote(ctx, found.Spec(), audio.Url, heard)
+	if failure != nil {
+		return "", nil, failure
+	}
+	return withVoiceNote(text, note.Heard), []conversation.VoiceNote{note}, nil
+}
+
 // hearVoiceNote fetches the voice note at source, a URL or a data URI, and transcribes it in
 // the session's languages for its customer and agent, under its tags and attribution, as the
 // session's own model work is. It returns the audio, for a conversation kept in Stream Chat to
