@@ -72,15 +72,6 @@ func (s *SpecSuite) TestThePromptIsWhatTheAgentWasToldWithoutTheClock() {
 	s.Equal(agent.NavigatingInstructions+"\n\nBe brief.\n\nKeep links whole.", spec.prompt())
 }
 
-func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}},
-	})
-
-	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}}, spec.Plugins)
-}
-
 func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 	bindings := []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
 		Connection: store.ConnectionBinding{Type: selectionSession}}}
@@ -88,23 +79,6 @@ func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Connectors: bindings})
 
 	s.Equal(bindings, spec.ConnectorBindings)
-}
-
-// TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider: the same provider is a
-// binding's connector_id equal to a plugin entry's name, the id the built-in connectors share
-// with the plugin catalog. The binding's alias plays no part.
-func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}, {Name: "gong", User: true}},
-		Connectors: []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
-			Connection: store.ConnectionBinding{Type: selectionSession}}},
-	})
-	spec.CallID = "call-1"
-
-	s.Require().NoError(spec.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "calendly"}, {Name: "gong", User: true}}, spec.Plugins)
 }
 
 // TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
@@ -141,39 +115,6 @@ func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed(
 	s.Empty(spec.KeyedAgentID())
 	s.Require().NoError(spec.Normalize())
 	s.NotEmpty(spec.AgentID)
-}
-
-// TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
-// is a no-op for a config that binds no connector, down to an empty list staying empty.
-func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}},
-	})
-	spec.CallID = "call-1"
-	empty := FromConfig(store.AgentConfig{CustomerID: "acme", Plugins: []store.PluginEntry{}})
-	empty.CallID = "call-2"
-
-	s.Require().NoError(spec.Normalize())
-	s.Require().NoError(empty.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}, spec.Plugins)
-	s.NotNil(empty.Plugins)
-	s.Empty(empty.Plugins)
-}
-
-func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "slack"}},
-		Connectors: []store.ConnectorBinding{{Name: "slack", ConnectorID: "custom_slack",
-			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
-	})
-	spec.CallID = "call-1"
-
-	s.Require().NoError(spec.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.Plugins)
 }
 
 // A call's transcript goes into the conversation's agent channel, else the agent id's, as
@@ -217,14 +158,6 @@ func (s *SpecSuite) TestHowAConfigsSandboxIsBuiltBecomesTheSessions() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Sandbox: daytonaProvider, SandboxOptions: options})
 
 	s.Equal(options, spec.SandboxOptions)
-}
-
-func (s *SpecSuite) TestAConfigsMCPServersBecomeTheSessions() {
-	servers := []store.MCPServer{{Name: "tablejourney", URL: "https://tablejourney.com/mcp"}}
-
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", MCPServers: servers})
-
-	s.Equal(servers, spec.MCPServers)
 }
 
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {

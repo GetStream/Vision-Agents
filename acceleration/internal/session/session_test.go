@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -14,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -29,7 +26,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -448,9 +444,6 @@ type SessionSuite struct {
 	// identity each edge was built with.
 	apps     *streamapp.Clients
 	edgeApps []streamapp.Identity
-	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
-	// server listens on loopback. Nil is the manager's default, as before.
-	plugins *plugins.Auth
 	// directory is where the manager says which sessions it runs, when a test reads that.
 	directory *node.Directory
 	// present is who is in the call before the next edge joins it, and unattended makes
@@ -473,7 +466,6 @@ func (s *SessionSuite) SetupTest() {
 	s.conversations = nil
 	s.apps = nil
 	s.edgeApps = nil
-	s.plugins = nil
 	s.directory = nil
 	s.ears = nil
 	s.others = nil
@@ -562,7 +554,6 @@ func (s *SessionSuite) manages() {
 		Conversations: s.conversations,
 		Stream:        s.apps,
 		DetachedGrace: s.grace,
-		PluginAuth:    s.plugins,
 		Directory:     s.directory,
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
@@ -2147,41 +2138,6 @@ func awaitReply(events <-chan Event) string {
 			return ""
 		}
 	}
-}
-
-// TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered: a config's mcp_servers and
-// plugins are no longer read, so a session whose spec still carries them, as one of a row
-// saved before they were refused does, never reaches the server and offers none of its tools.
-func (s *SessionSuite) TestAnMCPServerTheSpecStillNamesIsNeitherOpenedNorOffered() {
-	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
-	server.AddTool(&mcpsdk.Tool{
-		Name: "search", Description: "Finds a note.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
-		})
-	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	var reached atomic.Int32
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached.Add(1)
-		handler.ServeHTTP(w, r)
-	}))
-	defer provider.Close()
-	s.plugins = &plugins.Auth{HTTP: provider.Client()}
-	s.manages()
-	needsLogin := false
-
-	created := s.joins(Spec{
-		MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}},
-		Plugins:    []store.PluginEntry{{Name: "linear"}},
-	})
-
-	for _, tool := range created.current().Tools() {
-		s.False(strings.HasPrefix(tool, "notes__") || strings.HasPrefix(tool, "linear__"), "%s is offered", tool)
-	}
-	s.Zero(reached.Load(), "the server is never opened")
 }
 
 func awaitToolCall(events <-chan Event) *ToolCall {

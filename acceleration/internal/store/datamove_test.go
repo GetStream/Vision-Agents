@@ -256,34 +256,6 @@ func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
 	s.Empty(token)
 }
 
-func (s *DataMoveSuite) TestAPluginLoginAFileSaysIsConnectedIsNoLoginASessionUses() {
-	// The file is the importer's to write, but a login is only usable with a token, which never
-	// comes in with one.
-	config := newID()
-	// bob's own login, and the app's, which every session of the config uses.
-	for _, user := range []string{"bob", ""} {
-		_, err := s.source.DB().ExecContext(s.ctx,
-			"INSERT INTO agent_plugin_connections (id, customer_id, config_id, plugin_id, user_id, status)"+
-				" VALUES (?, 'acme', ?, 'slack', ?, ?)", newID(), config, user, PluginPending)
-		s.Require().NoError(err)
-	}
-
-	s.moveEdited("acme", "moved", "agent_plugin_connections", func(row map[string]any) {
-		row["status"] = PluginConnected
-		row["access_token"] = "a-token-of-the-files"
-	})
-
-	login, err := s.destination.UserPluginConnection(s.ctx, "moved", config, "bob", "slack")
-	s.Require().NoError(err, "the login arrives as its user's")
-	s.Empty(login.AccessToken)
-	ready, err := s.destination.ConnectedPlugins(s.ctx, "moved", config)
-	s.Require().NoError(err)
-	s.Empty(ready)
-	logins, err := s.destination.PluginLogins(s.ctx, "moved", config, "slack")
-	s.Require().NoError(err)
-	s.Empty(logins)
-}
-
 func (s *DataMoveSuite) TestAMoveKeepsWhoItsUsersAre() {
 	// What the router recorded of a user is the customer's data: an account arrives an account,
 	// and a claimed guest arrives claimed by the same account, so nobody else can claim it.

@@ -139,15 +139,6 @@ type Definitions interface {
 	LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error)
 }
 
-// txDefinitions reads definitions on a transaction. A check that runs under a write's row
-// lock reads on it, as a read on the pool waits for a second connection while the write
-// holds one, and with every connection held by such a write none comes.
-type txDefinitions struct{ tx bun.Tx }
-
-func (d txDefinitions) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
-	return latestVisibleDefinition(ctx, d.tx, customerID, id)
-}
-
 // latestVisibleDefinition is LatestConnectorDefinition read on db.
 func latestVisibleDefinition(ctx context.Context, db bun.IDB, customerID, id string) (ConnectorDefinition, error) {
 	if customerID == "" || id == "" {

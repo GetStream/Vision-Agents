@@ -72,7 +72,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
@@ -1103,12 +1102,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	pluginAuth := &plugins.Auth{
-		PublicURL:    settings.PublicURL,
-		DashboardURL: settings.DashboardURL,
-		Clients:      session.PluginClients(pgStore, secrets),
-	}
-
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
@@ -1119,7 +1112,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1919,7 +1912,6 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
-	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
@@ -1966,7 +1958,6 @@ func buildSessions(
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
