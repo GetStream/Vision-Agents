@@ -19,6 +19,10 @@ const (
 	decisionBatchSize   = 64
 	decisionFlushEvery  = time.Second
 	decisionWriteTimout = 5 * time.Second
+	// decisionDrainTimeout bounds how long Close waits for the queue to be written, the way
+	// turnDrainTimeout does: two writes, the one in flight and what is left for the rest.
+	// Batches not written by then are dropped and counted.
+	decisionDrainTimeout = 2 * decisionWriteTimout
 )
 
 // decisionRecorder keeps the conversation's reasoning in Redis for the hour somebody may
@@ -36,18 +40,39 @@ type decisionRecorder struct {
 	queue chan live.CallEvent
 	done  chan struct{}
 
+	// send stores one batch; it is Redis unless a test says otherwise.
+	send func(ctx context.Context, batch []live.CallEvent) error
+
+	// ctx is the writer's, cancelled when Close gives up on what is still queued.
+	ctx          context.Context
+	cancel       context.CancelFunc
+	drainTimeout time.Duration
+
 	closeOnce sync.Once
 	dropped   atomic.Int64
 }
 
 func newDecisionRecorder(liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *decisionRecorder {
+	return buildDecisionRecorder(liveClient, owner, logger).start()
+}
+
+// buildDecisionRecorder is a recorder that has not started writing, so a test can swap how.
+func buildDecisionRecorder(liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *decisionRecorder {
 	r := &decisionRecorder{
 		live:   liveClient,
 		owner:  owner,
 		logger: logger,
 		queue:  make(chan live.CallEvent, decisionQueueSize),
 		done:   make(chan struct{}),
+
+		drainTimeout: decisionDrainTimeout,
 	}
+	r.send = liveClient.RecordCallEvents
+	r.ctx, r.cancel = context.WithCancel(context.Background())
+	return r
+}
+
+func (r *decisionRecorder) start() *decisionRecorder {
 	go r.run()
 	return r
 }
@@ -79,11 +104,12 @@ func (r *decisionRecorder) Record(decided Decided) {
 	}
 }
 
-// Close drains the queue and stops the writer.
+// Close drains the queue and stops the writer, giving the writes drainTimeout between
+// them. Judgements still unwritten then are dropped and counted with the rest.
 func (r *decisionRecorder) Close() {
 	r.closeOnce.Do(func() {
 		close(r.queue)
-		<-r.done
+		drainWithin(r.done, r.drainTimeout, r.cancel)
 		if dropped := r.dropped.Load(); dropped > 0 {
 			r.logger.Warn("dropped decisions because the writer fell behind", "count", dropped)
 		}
@@ -125,10 +151,17 @@ func (r *decisionRecorder) write(batch []live.CallEvent) {
 	if len(batch) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), decisionWriteTimout)
+	if r.ctx.Err() != nil {
+		r.dropped.Add(int64(len(batch)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, decisionWriteTimout)
 	defer cancel()
 
-	if err := r.live.RecordCallEvents(ctx, batch); err != nil {
+	if err := r.send(ctx, batch); err != nil {
 		r.logger.Error("could not record what the conversation decided", "error", err)
+		if ctx.Err() != nil {
+			r.dropped.Add(int64(len(batch)))
+		}
 	}
 }

@@ -232,6 +232,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
+
+`loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
+
 ### The Python SDK refuses `mcp_servers` in agent.yaml
 
 `plugins.stream` now fails to load an agent folder whose `agent.yaml` names `mcp_servers`, with a `ValueError` that says to create a custom connector for the server's URL and name it under `connectors`, and never sends `mcp_servers` to the router. An empty key (`mcp_servers: []`, or the key with nothing after it) names nothing and loads. `RemoteEvent` has no `authorization_required` type and no `url` or `image_url`: only a plugin's login made it, and a connector's login is a step of the reply (AI-2532).
@@ -266,6 +270,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 A message with photos that a running session answers in writing is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a thread's history keeps it. A message of photos alone is kept as the note alone. Before, the history kept the text with no sign of the photo, and for a photo alone the question the router asked about it, so later replies read a request to describe images they were not shown (AI-2548).
 
+### Closing an agent no longer waits on a stuck database for every queued row
+
+Closing an agent waited for every finished turn and every judgement still queued to be recorded, each write with its own five-second limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The turn writer, the decision writer and the memory writer are each now bound by one deadline, ten seconds for the first two and twenty for the memory writer, whose calls may take ten seconds each. Rows not written by then are dropped and counted in one warning each, as rows are when a writer falls behind. A store that answers but is slow can also lose the tail of a full queue at the deadline. With a healthy database every queued row is still written (AI-2475).
 ### Tool rounds are bound even when a model calls a tool it was not offered
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
