@@ -193,7 +193,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 // impliedSelection is the connection a session binding the session named none for uses: the
 // verified caller's one connected connection to the binding's connector, of the session's
 // customer (Kanat's decision of 2026-10-09, AI-994), so an app that creates sessions without
-// connector_bindings, as it did with user_plugins, needs no new login after the plugin rows
+// connector_bindings, as it did before connectors, needs no new login after the plugin rows
 // move. Empty with none, or with more than one, which the caller has to choose between; a
 // connection pending, needing reauthorization or disconnected is not counted, since only a
 // connected one opens without a login. Not kept as the session's selection: a fork or a
@@ -393,8 +393,7 @@ func (m *Manager) openBinding(ctx context.Context, spec Spec, binding store.Conn
 			d.tools = append(d.tools, harness.Tool{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 			offered = true
 		}
-		// A built-in's tools are described well enough to use without, as a catalog plugin's
-		// are, and a server whose tools the model is not offered has nothing to advise on.
+		// A built-in's tools are described well enough to use without, and a server whose tools the model is not offered has nothing to advise on.
 		if offered && strings.HasPrefix(binding.ConnectorID, store.CustomPrefix) {
 			d.instructions = append(d.instructions, serverSaid{name: binding.Name,
 				tools: binding.Name + mcp.Separator + "*", text: toolset.Instructions()})
