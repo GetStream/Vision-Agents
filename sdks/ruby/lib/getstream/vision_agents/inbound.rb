@@ -60,7 +60,7 @@ module GetStream
     # the model do so. request_id is the request it was sent as, empty when there is none.
     # images are the photos sent with it, InboundImages, empty when none was sent.
     InboundMessage = Data.define(:channel_id, :channel_type, :agent_id, :config_id, :session_id, :request_id,
-                                 :text, :images, :message_id, :user_id, :user_name, :custom, :at) do
+                                 :text, :message_id, :user_id, :user_name, :custom, :at, :images) do
       def self.from(frame)
         new(channel_id: frame["channel_id"].to_s,
             channel_type: frame["channel_type"].to_s.then { |t| t.empty? ? "agent" : t },
@@ -72,7 +72,8 @@ module GetStream
             at: Inbound.time(frame["at"]))
       end
 
-      # images was added later, so a message built without it still builds.
+      # images was added later and is declared last, so a message built without it still builds,
+      # also from the positional arguments it had before.
       def initialize(images: [], **members)
         super
       end

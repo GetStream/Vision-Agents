@@ -141,6 +141,17 @@ class TestDispatch < LocalRouterTest
     assert_equal [], message.images
   end
 
+  def test_a_message_built_from_the_arguments_it_had_before_photos_keeps_each_in_its_place
+    at = Time.utc(2026, 1, 2, 3, 4, 5)
+    message = VA::InboundMessage.new("room-1", "agent", "agent_1", "cfg_1", "sess_1", "req_1", "hi", "msg_1",
+                                     "ada", "Ada", { "k" => "v" }, at)
+
+    assert_equal "msg_1", message.message_id
+    assert_equal at, message.at
+    assert_equal "ada", message.user_id
+    assert_equal [], message.images
+  end
+
   def test_answer_shows_the_photos_to_the_model_on_its_request_id
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
     message = VA::InboundMessage.from(
