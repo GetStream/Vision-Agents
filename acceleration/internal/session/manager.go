@@ -463,6 +463,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if m.options.Memory == nil {
 			return nil, stack.Wrap(ErrNoMemory)
 		}
+		if cmp.Or(spec.Region, pricing.DefaultRegion) != pricing.DefaultRegion {
+			return nil, stack.Wrap(ErrMemoryRegion)
+		}
 		remembering = m.options.Memory
 	}
 
@@ -2132,6 +2135,10 @@ var ErrSessionExists = errors.New("session: a session with that id already exist
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryRegion is memory asked for an agent kept outside the default region. The memory
+// provider keeps everything in the US, and an agent's work is done in its own region only.
+var ErrMemoryRegion = errors.New("session: memory is kept in region us only, so a session in another region cannot remember")
 
 // ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
 // answering 429. Asking again later may succeed.
