@@ -31,7 +31,7 @@ dependencies:
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: ced7d1c3d22f9ee54a6e2c64ac13644ca08f26be
+      ref: 01f2cefe58a01987fe2898ce99b6243103564c71
       path: packages/stream_chat_flutter_ai
   # Stream's design system, which the AI components are built on: its widgets for the app's own
   # screens (app bar, buttons, sheets). The version stream_chat_flutter_ai uses.
