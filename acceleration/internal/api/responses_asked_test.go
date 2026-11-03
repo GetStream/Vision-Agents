@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +131,53 @@ func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsAQuestionSho
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1)
 	s.Equal(data, uploads[0].Data, "the photo uploaded is the one sent")
+}
+
+// The frames of a video sent with a photo and no text are the model's alone: the person's
+// message shows the photo they sent, not stills the router cut from their clip (AI-2550).
+func (s *ResponsesAskedSuite) TestAVideoSentWithAPhotoWithoutTextShowsOnlyThePhotoOnThePersonsMessage() {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		// CI installs ffmpeg; a skip there would hide that this test never ran.
+		if os.Getenv("CI") != "" {
+			s.T().Fatal("ffmpeg is not installed, so the clip cannot be recorded")
+		}
+		s.T().Skip("ffmpeg not available to record the clip")
+	}
+	path := filepath.Join(s.T().TempDir(), "clip.mp4")
+	out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=4",
+		"-pix_fmt", "yuv420p", path).CombinedOutput()
+	s.Require().NoError(err, string(out))
+	clip, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + s.utils.uuid())
+	frames := 2
+	before, asked := len(s.chat.Uploads()), len(s.vision.requests())
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{
+			Images: &[]ImageSource{{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)}},
+			Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip), MaxFrames: &frames}},
+		}, nil))
+
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests()[asked:] {
+			if strings.Contains(fmt.Sprint(request.Input), "video 1, ") {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the video's frames")
+	message := s.onlyPersonsMessage(opened)
+	var attachments []map[string]any
+	encoded, _ := json.Marshal(message["attachments"])
+	s.Require().NoError(json.Unmarshal(encoded, &attachments))
+	s.Require().Len(attachments, 1, "the photo alone is shown, no frame of the video")
+	s.Equal("photo-1.png", attachments[0]["title"])
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, no frame of the video")
+	s.Equal(data, uploads[0].Data)
 }
 
 // The session socket's respond takes a photo with no text and no request id the same way.
