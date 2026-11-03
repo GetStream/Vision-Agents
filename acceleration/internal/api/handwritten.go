@@ -93,10 +93,7 @@ func documentHandWritten(api huma.API) {
 			"persistence_error, refused (true on a reply the prompt injection screen refused) and " +
 			"attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
-			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
-			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
-			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
-			"the message is sent again with the attachment's status set to connected. " +
+			"and duration_ms. " +
 			"A connector_authorization attachment asks the end user to connect a connector binding " +
 			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
 			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page " +

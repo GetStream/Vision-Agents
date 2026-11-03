@@ -201,8 +201,7 @@ func (m *Manager) attachConnectors(ctx context.Context, spec *Spec) (*dispatcher
 // a fixed binding, a shared conversation, an unverified caller, or with connectors off.
 //
 // A session the router opens itself implies the same way (Kanat's decision of 2026-10-09,
-// AI-1000), with the trust user_plugins gives its caller (userPlugins): for a plugin event,
-// the end user whose login subscribed, and nobody for the app's (pluginevents.Service.run);
+// AI-1000): for an MCP event, nobody, since it opens as the app (mcpevents.Service.run);
 // for a channel message, the number that wrote, as phone:+E164, or the user it was linked to
 // (channels.Service.answer). Pinned by api.RouterOpenedConnectorsSuite.
 //
@@ -668,9 +667,7 @@ func verifiedCaller(spec Spec) bool {
 }
 
 // connectorCollision is a connector tool called what another of the session's tools is.
-// A config cannot name a plugin or an MCP server what one of its bindings is
-// (api.pluginAliasComplaint), unless the binding is to that plugin's own connector, whose
-// entry the spec drops (Spec.withoutBoundPlugins); a caller's own tool still can.
+// A caller's own tool can be called what a binding's is.
 func connectorCollision(connectors, others []harness.Tool) error {
 	for _, tool := range connectors {
 		if slices.ContainsFunc(others, func(other harness.Tool) bool { return other.Name == tool.Name }) {

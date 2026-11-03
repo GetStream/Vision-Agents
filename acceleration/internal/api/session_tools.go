@@ -52,7 +52,7 @@ func (s *Server) registerSessionTools(api huma.API) {
 		Path:        "/v1/agents/sessions/{id}/tools",
 		Summary:     "List the tools a session's model is offered",
 		Description: "The tools the conversation model is offered on every request, with the description " +
-			"and schema each is sent with: the agent's own, its plugins' and the built-in ones this " +
+			"and schema each is sent with: the agent's own, its connectors' and the built-in ones this " +
 			"session can carry out. A session the router no longer holds answers what it was offered " +
 			"when it last opened; one that ended before that was kept, or kept nothing, is a 404.",
 		Responses: map[string]*huma.Response{"200": {Description: "The tools"}},

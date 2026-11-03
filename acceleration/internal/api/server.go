@@ -55,8 +55,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -174,10 +172,6 @@ type Options struct {
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
-	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
-	// Absent without a database or sessions, in which case a config's plugin_events are
-	// stored but nothing subscribes to them.
-	PluginEvents *pluginevents.Service
 	// Channels answers what arrives on the app's WhatsApp, text and iMessage lines. Absent
 	// without a database, sessions or a key encryption key, in which case a line cannot be
 	// connected and nothing is delivered.
@@ -240,9 +234,10 @@ type Options struct {
 	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
 	// which only a router no other tenant shares should allow.
 	PrivateModelEndpoints bool
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,
@@ -326,10 +321,7 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	// PluginHTTP reaches plugins' MCP servers and their auth servers: a login, its callback,
-	// and a config's MCP servers describing themselves. Absent reaches only public hosts.
-	PluginHTTP *http.Client
-	Logger     *slog.Logger
+	Logger         *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -369,8 +361,6 @@ type Server struct {
 	corsOrigins        []string
 	publicURL          string
 	dashboardURL       string
-	oauth              *plugins.Auth
-	pluginEvents       *pluginevents.Service
 	channels           *channels.Service
 	dlc                *dlc.Service
 	gate               *dlc.Gate
@@ -572,21 +562,14 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
 		upgrader:           newUpgrader(authMode),
-		oauth: &plugins.Auth{
-			HTTP:         options.PluginHTTP,
-			PublicURL:    options.PublicURL,
-			DashboardURL: options.DashboardURL,
-			Clients:      session.PluginClients(options.Store, options.Secrets),
-		},
-		pluginEvents: options.PluginEvents,
-		channels:     options.Channels,
-		dlc:          options.DLC,
-		gate:         options.Gate,
-		opsKey:       options.OpsKey,
-		manageKey:    options.ManageKey,
-		popularity:   newPopularity(options.Store, logger),
-		logger:       logger,
-		draining:     make(chan struct{}),
+		channels:           options.Channels,
+		dlc:                options.DLC,
+		gate:               options.Gate,
+		opsKey:             options.OpsKey,
+		manageKey:          options.ManageKey,
+		popularity:         newPopularity(options.Store, logger),
+		logger:             logger,
+		draining:           make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)

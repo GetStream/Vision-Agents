@@ -1,6 +1,6 @@
 # internal/mcpevents
 
-MCP Events over connections (T60, AI-899). An agent config's fixed connector binding declares the events it wants (`connectors[].events`). The router subscribes to each on the binding's connection's MCP server, with a callback of its own, and each event the server delivers opens a text conversation from the config. It is the plugin system's MCP Events client (`internal/pluginevents`, `internal/plugins/events.go`) moved onto connections. The plugin path (`POST /v1/agents/plugins/events/{token}`) is no longer served (404), and the tables `agent_plugin_event_*` stay until a later contract migration drops them.
+MCP Events over connections (T60, AI-899). An agent config's fixed connector binding declares the events it wants (`connectors[].events`). The router subscribes to each on the binding's connection's MCP server, with a callback of its own, and each event the server delivers opens a text conversation from the config. It replaces the plugin system's MCP Events client, which was deleted. The plugin path (`POST /v1/agents/plugins/events/{token}`) is no longer served (404), and the tables `agent_plugin_event_*` stay until a later contract migration drops them.
 
 MCP Events is a draft: [experimental-ext-triggers-events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events), `docs/design-sketch-proposal.md` at `6682596d` (September 8, 2026), «Status: Draft proposal». Only its webhook delivery is implemented here. No production MCP server offers events yet; the tests run against `fakeprovider.MCPEvents`.
 
@@ -81,7 +81,7 @@ consent finished, connected again                   api.completeConsent
 
 - **A connection that stays `needs_reauthorization`** (revoked, never reconnected) has its rows looked at every 15 minutes, a database read each, until it is reconnected or deleted.
 - **Subscribing on a config save.** A config that adds an event subscribes at the next validate of the connection, not at the save.
-- **`terminated` and `gap` envelopes** are acknowledged and logged, as the plugin system does; a `terminated` subscription is asked for again only at its next refresh.
+- **`terminated` and `gap` envelopes** are acknowledged and logged; a `terminated` subscription is asked for again only at its next refresh.
 - **The conversation an event opens lives in memory.** The delivery is acknowledged once its event id is stored; a router that stops before the conversation ends loses it. The draft: «The endpoint SHOULD NOT return 2xx until the event has been durably persisted or forwarded».
 - **`connection_event_deliveries` is never pruned**, as `agent_plugin_event_deliveries` is not. It goes with its subscription.
 

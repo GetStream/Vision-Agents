@@ -14,7 +14,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -24,13 +23,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -653,8 +650,7 @@ func configComplaint(ctx context.Context, request AgentConfigRequest) (string, b
 // aliasSeparator joins an alias to its tool's name in the name the model is offered,
 // <alias>__<tool>, which is split back at the first one: Prefix and Split in
 // internal/mcp/mcp.go:413-422 on codex/connector-support at cf62af0d, handed the alias by
-// internal/session/connector_tools.go:167 there, as plugins.PrefixSeparator does for plugins
-// today. An alias holding one would be split in the wrong place.
+// internal/session/connector_tools.go:167 there. An alias holding one would be split in the wrong place.
 const aliasSeparator = "__"
 
 // connectorBindingsComplaint reports what is wrong with a config's connector bindings as
@@ -927,8 +923,6 @@ func sandboxOfConfig(config store.AgentConfig) *savedSandbox {
 //     tools may write, unless each tool it grants is in the source's read_only_tools or its
 //     require_approval, which holds every call for a person to allow, and a binding with
 //     sandbox set, whose code calls the connector's whole API;
-//   - an MCP server or a plugin, whose tools no manifest describes, unless the plugin reaches
-//     its read-only endpoint;
 //   - a sandbox that may reach the network.
 //
 // Only a binding's require_approval asks a person before a call is sent; the others ask
@@ -959,14 +953,6 @@ func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitio
 	if sensitive == nil {
 		return "", true, nil
 	}
-	for _, server := range config.MCPServers {
-		outbound = append(outbound, fmt.Sprintf("MCP server %q", server.Name))
-	}
-	for _, entry := range config.Plugins {
-		if !entry.Readonly {
-			outbound = append(outbound, fmt.Sprintf("plugin %q", entry.Name))
-		}
-	}
 	if config.Sandbox != "" && !config.SandboxOptions.Isolated() {
 		outbound = append(outbound, "the sandbox's network access")
 	}
@@ -986,19 +972,6 @@ func SensitiveBindingsComplaint(ctx context.Context, definitions store.Definitio
 // sensitiveBindingsComplaint is SensitiveBindingsComplaint over the server's store.
 func (s *Server) sensitiveBindingsComplaint(ctx context.Context, customerID string, config store.AgentConfig) (string, bool, error) {
 	return SensitiveBindingsComplaint(ctx, s.store, customerID, config)
-}
-
-// sensitiveCheck is SensitiveBindingsComplaint as a store write asks it, under the config's
-// row lock: a refusal is the 400 an API write answers with.
-func sensitiveCheck(customerID string) store.ConfigCheck {
-	return func(ctx context.Context, config store.AgentConfig, definitions store.Definitions) error {
-		if message, ok, err := SensitiveBindingsComplaint(ctx, definitions, customerID, config); err != nil {
-			return err
-		} else if !ok {
-			return invalidRequest(message)
-		}
-		return nil
-	}
 }
 
 // bindingSendsOut reports whether a binding offers a tool that may send data out with nobody
@@ -1050,45 +1023,6 @@ func holdsPattern(binding store.ConnectorBinding, pattern string) bool {
 		matched, _ := path.Match(entry, pattern)
 		return matched && !strings.ContainsAny(entry, `?[\`)
 	})
-}
-
-// pluginAliasComplaint reports a binding called what a plugin or an MCP server of the same
-// config is. A plugin's tools are offered as <plugin>__<tool> (plugins.Prefix,
-// internal/plugins/mcp.go), a user plugin's as <plugin>__ and a suffix
-// (internal/plugins/user.go), an MCP server's as <name>__<tool> (McpServer.Name), and a
-// binding's as <alias>__<tool>. The built-in connectors share ids with the plugin catalog
-// (slack is in both internal/plugins/plugins.yaml and
-// internal/connectors/providers/slack.yaml), so the two would offer the same names. It reads
-// the config as it is about to be stored, so a patch or a sync adding either side is checked
-// against what the other already is.
-//
-// A binding to the plugin's own connector may be called what the plugin is: the session drops
-// a plugin entry whose connector a binding names (session.Spec.withoutBoundPlugins), so only
-// the binding offers the name, and a config with both stays editable (AI-994 F42).
-func pluginAliasComplaint(config store.AgentConfig) (string, bool) {
-	for _, binding := range config.Connectors {
-		if binding.ConnectorID != binding.Name && namesPluginEntry(config.Plugins, binding.Name) {
-			return fmt.Sprintf("connector binding %q is called what the config's plugin %q is, and both "+
-				"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
-		}
-		for _, server := range config.MCPServers {
-			if server.Name == binding.Name {
-				return fmt.Sprintf("connector binding %q is called what the config's MCP server %q is, and both "+
-					"would offer their tools as %s%stool", binding.Name, binding.Name, binding.Name, aliasSeparator), false
-			}
-		}
-	}
-	return "", true
-}
-
-// namesPluginEntry reports whether any of the entries is called name.
-func namesPluginEntry(entries []store.PluginEntry, name string) bool {
-	for _, entry := range entries {
-		if entry.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // storedBindings turns the bindings a caller sent into what a config stores, as written.
@@ -1435,337 +1369,6 @@ func sandboxOptionsOf(config sandbox.Config) *SandboxOptions {
 		AllowedDomains:   &domains,
 		NetworkAllowList: &cidrs,
 	}
-}
-
-// warnPluginsSaved logs a config stored with plugins or plugin_events, which connectors
-// replace, so the configs still on them can be counted before the fields go. unbound is how
-// many plugin entries no binding replaces: a migrated config keeps its entries beside the
-// bindings that replaced them, and a session ignores those (session.UnboundPlugins), so only
-// an unbound entry is real use.
-func (s *Server) warnPluginsSaved(ctx context.Context, config store.AgentConfig) {
-	if len(config.Plugins) == 0 && len(config.PluginEvents) == 0 {
-		return
-	}
-	plugins.ReportUse(ctx, s.logger, plugins.PathConfigSave,
-		"customer", config.CustomerID, "config", config.ID,
-		"plugin", store.PluginNames(config.Plugins), "unbound", len(session.UnboundPlugins(config)),
-		"plugin_events", len(config.PluginEvents))
-}
-
-// pluginEventsComplaint reports what is wrong with the events a config subscribes to, if
-// anything. It reads the config as it will be stored, since whether an event's plugin is
-// named depends on plugins as well.
-func pluginEventsComplaint(config store.AgentConfig) (string, bool) {
-	for _, event := range config.PluginEvents {
-		if _, ok := plugins.Lookup(event.Plugin); !ok {
-			return fmt.Sprintf("plugin_events: no plugin called %q", event.Plugin), false
-		}
-		if !store.NamesPlugin(config.Plugins, event.Plugin) {
-			return fmt.Sprintf("plugin_events: %s is not named under plugins", event.Plugin), false
-		}
-		if event.Event == "" {
-			return fmt.Sprintf("plugin_events: a %s event needs a name", event.Plugin), false
-		}
-	}
-	return "", true
-}
-
-// pluginEntriesComplaint reports what is wrong with the plugins a config names, if anything:
-// an id the catalog does not have, one named twice, or options its catalog entry does not
-// allow.
-func pluginEntriesComplaint(config store.AgentConfig) (string, bool) {
-	seen := map[string]bool{}
-	for _, entry := range config.Plugins {
-		plugin, ok := plugins.Lookup(entry.Name)
-		if !ok {
-			return fmt.Sprintf("plugins: no plugin called %q", entry.Name), false
-		}
-		if seen[entry.Name] {
-			return fmt.Sprintf("plugins: %s is named twice", entry.Name), false
-		}
-		seen[entry.Name] = true
-		if _, err := plugin.Configured(plugins.Options{
-			Readonly: entry.Readonly, Scopes: entry.Scopes, Toolsets: entry.Toolsets, Tools: entry.Tools,
-		}); err != nil {
-			return "plugins: " + strings.TrimPrefix(err.Error(), "plugins: "), false
-		}
-	}
-	return "", true
-}
-
-// pluginEntriesOf reads the plugins a caller named, with blank scopes and toolsets left out.
-func pluginEntriesOf(entries []PluginEntry) []store.PluginEntry {
-	read := []store.PluginEntry{}
-	for _, entry := range entries {
-		read = append(read, store.PluginEntry{
-			Name:     strings.TrimSpace(entry.Name),
-			User:     userConnected(entry),
-			Readonly: value(entry.Readonly),
-			Scopes:   nonBlank(value(entry.Scopes)),
-			Toolsets: nonBlank(value(entry.Toolsets)),
-			Tools:    nonBlank(value(entry.Tools)),
-		})
-	}
-	return read
-}
-
-// userConnected is whether each end user connects the plugin with their own account: what
-// the entry says, else what the catalog says of the plugin.
-func userConnected(entry PluginEntry) bool {
-	if entry.User != nil {
-		return *entry.User
-	}
-	return catalogUser(strings.TrimSpace(entry.Name))
-}
-
-// catalogUser is whether the catalog has each end user connect the plugin by default.
-func catalogUser(name string) bool {
-	plugin, _ := plugins.Lookup(name)
-	return plugin.User
-}
-
-func nonBlank(values []string) []string {
-	var kept []string
-	for _, item := range values {
-		if item = strings.TrimSpace(item); item != "" {
-			kept = append(kept, item)
-		}
-	}
-	return kept
-}
-
-// renderedPluginEntries is the plugins a config names as the API shows them: a bare id for
-// one with no options, or nothing for none.
-func renderedPluginEntries(entries []store.PluginEntry) *[]PluginEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-	rendered := make([]PluginEntry, 0, len(entries))
-	for _, entry := range entries {
-		shown := PluginEntry{Name: entry.Name}
-		if entry.User != catalogUser(entry.Name) {
-			user := entry.User
-			shown.User = &user
-		}
-		if entry.Readonly {
-			readonly := true
-			shown.Readonly = &readonly
-		}
-		if len(entry.Scopes) > 0 {
-			scopes := entry.Scopes
-			shown.Scopes = &scopes
-		}
-		if len(entry.Toolsets) > 0 {
-			toolsets := entry.Toolsets
-			shown.Toolsets = &toolsets
-		}
-		shown.Tools = shownTools(entry.Tools)
-		rendered = append(rendered, shown)
-	}
-	return &rendered
-}
-
-// mcpServersComplaint reports what is wrong with the MCP servers a config names, if
-// anything. A name prefixes the server's tools the way a plugin's id does, so it may not be
-// one, nor hold the separator that splits a tool's name from it. A session reaches a server
-// only on a public address (plugins.Open dials through egress.NewClient), so one on a private
-// network, loopback or link-local address is refused here rather than saved to fail silently.
-func mcpServersComplaint(ctx context.Context, config store.AgentConfig) (string, bool) {
-	seen := map[string]bool{}
-	for _, server := range config.MCPServers {
-		if strings.Contains(server.Name, plugins.PrefixSeparator) {
-			return fmt.Sprintf("mcp_servers: %s may not contain %s", server.Name, plugins.PrefixSeparator), false
-		}
-		if _, ok := plugins.Lookup(server.Name); ok {
-			return fmt.Sprintf("mcp_servers: %s is a catalog plugin; name it under plugins instead", server.Name), false
-		}
-		if seen[server.Name] {
-			return fmt.Sprintf("mcp_servers: %s is named twice", server.Name), false
-		}
-		seen[server.Name] = true
-		endpoint, err := url.Parse(server.URL)
-		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
-			return fmt.Sprintf("mcp_servers: %s needs an https url", server.Name), false
-		}
-		if err := core.CheckToolPatterns(server.Tools); err != nil {
-			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, err.Error()), false
-		}
-	}
-	// Last, since it resolves each host: the checks above cost nothing. Only the host is
-	// checked, so a path or query the server needs is kept. One answer for every refusal, as
-	// for a custom connector's endpoint: a name that does not resolve is not told apart from
-	// one that resolves to a private address.
-	for _, server := range config.MCPServers {
-		endpoint, _ := url.Parse(server.URL)
-		if err := egress.ValidatePublicHTTPSURL(ctx, (&url.URL{Scheme: endpoint.Scheme, Host: endpoint.Host}).String()); err != nil {
-			return fmt.Sprintf("mcp_servers: %s: only public https URLs are reachable; the router cannot reach an MCP server on a private network, loopback or link-local address", server.Name), false
-		}
-	}
-	return "", true
-}
-
-// mcpServersOf reads the MCP servers a caller named.
-func mcpServersOf(servers *[]McpServer) []store.MCPServer {
-	read := []store.MCPServer{}
-	for _, server := range value(servers) {
-		read = append(read, store.MCPServer{
-			Name:   strings.TrimSpace(server.Name),
-			URL:    strings.TrimSpace(server.Url),
-			Tools:  nonBlank(value(server.Tools)),
-			Scopes: nonBlank(value(server.Scopes)),
-			User:   value(server.User),
-		})
-	}
-	return read
-}
-
-// shownTools is a tool allowlist as the API shows it, or nothing for every tool.
-func shownTools(tools []string) *[]string {
-	if len(tools) == 0 {
-		return nil
-	}
-	shown := tools
-	return &shown
-}
-
-// renderedMCPServers is a config's MCP servers as the API shows them, or nothing for none.
-func renderedMCPServers(servers []store.MCPServer) *[]McpServer {
-	if len(servers) == 0 {
-		return nil
-	}
-	rendered := make([]McpServer, 0, len(servers))
-	for _, server := range servers {
-		shown := McpServer{Name: server.Name, Url: server.URL, Tools: shownTools(server.Tools)}
-		if len(server.Scopes) > 0 {
-			scopes := server.Scopes
-			shown.Scopes = &scopes
-		}
-		if server.User {
-			user := true
-			shown.User = &user
-		}
-		shown.NeedsLogin = server.NeedsLogin
-		if branding := server.Branding; branding != nil {
-			shown.Branding = &McpServerBranding{
-				Title:       optional(branding.Title),
-				Description: optional(branding.Description),
-				Version:     optional(branding.Version),
-				IconUrl:     optional(branding.IconURL),
-				WebsiteUrl:  optional(branding.WebsiteURL),
-			}
-		}
-		rendered = append(rendered, shown)
-	}
-	return &rendered
-}
-
-// describedMCPServers is servers with each one not asked yet asked how it describes itself
-// and whether it needs a login, or what is wrong with one whose login cannot be made as the
-// config says. A server that does not answer in time keeps what it said before at the same
-// URL, or goes without, and the config is saved either way.
-func (s *Server) describedMCPServers(ctx context.Context, servers, before []store.MCPServer) ([]store.MCPServer, string, bool) {
-	described := slices.Clone(servers)
-	complaints := make([]string, len(described))
-	ctx, cancel := context.WithTimeout(ctx, mcpBrandingTimeout)
-	defer cancel()
-	var wg sync.WaitGroup
-	for i := range described {
-		server := &described[i]
-		if server.Branding == nil {
-			wg.Go(func() { s.brand(ctx, server, before) })
-		}
-		if server.NeedsLogin == nil {
-			wg.Go(func() { complaints[i] = s.askLogin(ctx, server, before) })
-		}
-	}
-	wg.Wait()
-	for _, complaint := range complaints {
-		if complaint != "" {
-			return nil, complaint, false
-		}
-	}
-	return described, "", true
-}
-
-// brand asks the server how it describes itself.
-func (s *Server) brand(ctx context.Context, server *store.MCPServer, before []store.MCPServer) {
-	described, err := plugins.Describe(ctx, plugins.Connection{PluginID: server.Name, Endpoint: server.URL}, s.auth().HTTP)
-	if err != nil {
-		s.logger.Debug("mcp server did not describe itself", "server", server.Name, "error", err)
-		server.Branding = earlierServer(before, server.URL).Branding
-		return
-	}
-	if described != (plugins.Branding{}) {
-		server.Branding = &store.MCPBranding{
-			Title: described.Title, Description: described.Description, Version: described.Version,
-			IconURL: described.IconURL, WebsiteURL: described.WebsiteURL,
-		}
-	}
-}
-
-// askLogin records whether the server needs a login, and reports what is wrong if its
-// login cannot be made or the config asks for one it does not have.
-func (s *Server) askLogin(ctx context.Context, server *store.MCPServer, before []store.MCPServer) string {
-	needs, err := s.auth().NeedsLogin(ctx, server.URL)
-	if err != nil {
-		s.logger.Debug("mcp server could not be asked whether it needs a login", "server", server.Name, "error", err)
-		server.NeedsLogin = earlierServer(before, server.URL).NeedsLogin
-		return ""
-	}
-	server.NeedsLogin = &needs
-	if !needs {
-		if server.User || len(server.Scopes) > 0 {
-			return fmt.Sprintf("mcp_servers: %s sets scopes or user, but advertises no OAuth login", server.Name)
-		}
-		return ""
-	}
-	var unreachable *url.Error
-	if err := s.auth().CheckLogin(ctx, server.URL); err != nil && !errors.As(err, &unreachable) {
-		return fmt.Sprintf("mcp_servers: %s needs an OAuth login the router cannot make: %s",
-			server.Name, strings.TrimPrefix(err.Error(), "plugins: "))
-	}
-	return ""
-}
-
-// earlierServer is the server that was at endpoint before, or none.
-func earlierServer(before []store.MCPServer, endpoint string) store.MCPServer {
-	for _, server := range before {
-		if server.URL == endpoint {
-			return server
-		}
-	}
-	return store.MCPServer{}
-}
-
-// pluginEventsOf reads the events a caller subscribed the config to.
-func pluginEventsOf(events *[]PluginEvent) []store.PluginEvent {
-	read := []store.PluginEvent{}
-	for _, event := range value(events) {
-		read = append(read, store.PluginEvent{
-			Plugin:       strings.TrimSpace(event.Plugin),
-			Event:        strings.TrimSpace(event.Event),
-			Arguments:    value(event.Arguments),
-			Instructions: strings.TrimSpace(value(event.Instructions)),
-		})
-	}
-	return read
-}
-
-// renderedPluginEvents is a config's events as the API shows them, or nothing for none.
-func renderedPluginEvents(events []store.PluginEvent) *[]PluginEvent {
-	if len(events) == 0 {
-		return nil
-	}
-	rendered := make([]PluginEvent, 0, len(events))
-	for _, event := range events {
-		shown := PluginEvent{Plugin: event.Plugin, Event: event.Event, Instructions: optional(event.Instructions)}
-		if len(event.Arguments) > 0 {
-			arguments := event.Arguments
-			shown.Arguments = &arguments
-		}
-		rendered = append(rendered, shown)
-	}
-	return &rendered
 }
 
 // sandboxOf reads the sandbox a caller sent, which is optional. An unknown one is refused
@@ -2729,8 +2332,8 @@ func (AgentConnectorSelectionType) Schema(registry huma.Registry) *huma.Schema {
 		"connection_id, the same for every session. session is the connection the session's verified end "+
 		"user picks when the session is created, which has to be their own. When they pick none, it is "+
 		"their connection to the connector if exactly one of theirs is connected. For a session the router "+
-		"opens itself, the end user is the user whose login subscribed the plugin event (none for the app's "+
-		"own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is "+
+		"opens itself, the end user is nobody for an MCP event, which it opens as the app, "+
+		"or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is "+
 		"linked to. Such a session also uses that user's only connected connection when none is named.",
 		string(AgentConnectorSelectionTypeFixed), string(AgentConnectorSelectionTypeSession))
 }
