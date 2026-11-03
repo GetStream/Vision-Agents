@@ -4406,6 +4406,25 @@ func (s *AgentSuite) TestAGreetingThatCallsAToolAnywayIsNotFollowed() {
 	s.Len(s.model.requests(), 1, "the greeting was followed by another reply")
 }
 
+func (s *AgentSuite) TestATextReplyMadeToAnswerThatWritesACallDoesNotRunIt() {
+	// A call written as a tag is a call all the same: on a reply offered no tools it is
+	// dropped like one the provider returned.
+	s.ownsTools("order 12 ships tomorrow")
+	s.joinText()
+	s.model.reply = []string{"Checking."}
+	s.model.toolless = []string{`Order 12 ships tomorrow. <call tool="lookup_order" order="13"/>`}
+	s.model.keepCalling = true
+	s.asksFor("lookup_order", `{"order": "12"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == maxToolRounds+1 }, "the rounds never ran out")
+	s.never(func() bool { return len(s.model.requests()) > maxToolRounds+1 },
+		"the model was asked again after the reply made to answer")
+	s.Len(s.runner.asked(), 1, "the call the reply made to answer wrote ran")
+}
+
 func (s *AgentSuite) TestAFollowUpAfterTheToolRoundsRanOutIsOfferedNoTools() {
 	// The reply made to answer hands a question to a skill; its answer is told in a
 	// follow-up. Offered tools again, that follow-up starts the rounds over, and the reply
