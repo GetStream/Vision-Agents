@@ -634,7 +634,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
-		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
+		_, turnID, err := s.followUp(ctx, store.NewID(), text, text, images, asked, false)
 		return turnID, err
 	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
@@ -733,7 +733,9 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	if handedOn {
-		return s.followUp(ctx, id, text, images, asked, true)
+		// The person's message is already in the channel, action and all; the model is told
+		// what they did there as it is on any other command.
+		return s.followUp(ctx, id, text, s.toldWithAction(ctx, text, action), images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
 	if err != nil {
@@ -751,11 +753,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	told := text
-	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
-		told += "\n\n" + note
-	}
-	turnID, err := s.current().RespondTo(ctx, told, images, asked)
+	turnID, err := s.current().RespondTo(ctx, s.toldWithAction(ctx, text, action), images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -765,6 +763,15 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// toldWithAction is what the model is told of a person's message: their words, then what they
+// did in a reply's UI, when they did something there.
+func (s *Session) toldWithAction(ctx context.Context, text string, action map[string]any) string {
+	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
+		return text + "\n\n" + note
+	}
+	return text
 }
 
 // photos uploads what a person sent with a command, photos and voice notes, to their
@@ -831,14 +838,15 @@ func (s *Session) chose(name, connectionID string) {
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	_, _, err := s.followUp(ctx, id, text, images, options.LLM{}, false)
+	_, _, err := s.followUp(ctx, id, text, text, images, options.LLM{}, false)
 	return err
 }
 
 // followUp is FollowUp under commandMu, with asked changing this reply alone. It returns the
 // follow-up's receipt and the id the turn was recorded as, as RespondCommand does. accepted
-// broadcasts the receipt before the turn starts, as RespondCommand does for a command.
-func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
+// broadcasts the receipt before the turn starts, as RespondCommand does for a command. told is
+// what the model is told of text, such as what the person did in a reply's UI with it.
+func (s *Session) followUp(ctx context.Context, id, text, told string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
@@ -855,7 +863,7 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, asked)
+	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
 		// No turn started, so a caller retrying the same id must start one, not be told
 		// it is already there.
