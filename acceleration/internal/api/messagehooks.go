@@ -733,7 +733,13 @@ func (s *Server) answerMessage(origin hookOrigin, found *session.Session, event 
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 
-	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), s.heardText(ctx, found.Spec(), origin, event), event)
+	// Ask refuses a speech-to-speech agent, which answers only on the call (Mode), so a
+	// recording sent to one is not heard: hearing it is billed.
+	heard := event.Message.Text
+	if found.Mode() != "native" {
+		heard = s.heardText(ctx, found.Spec(), origin, event)
+	}
+	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), heard, event)
 	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
 			"channel", event.ChannelID, "session", found.ID(), "error", err)

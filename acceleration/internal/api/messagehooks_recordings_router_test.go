@@ -254,6 +254,24 @@ func (s *MessageHooksSuite) TestAVoiceRecordingForAConfigInARegionThatHearsNothi
 	s.Empty(s.sttRowsSince(since))
 }
 
+// A speech-to-speech session answers only on its call, so a recording written to it is not
+// heard: nothing is billed for a message it does not answer in writing.
+func (s *MessageHooksSuite) TestAVoiceRecordingToASpeechToSpeechSessionIsNotHeard() {
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		AgentId: &s.channelID, StartVoice: pointerTo(true), Sts: pointerTo("sts-fast"), Incognito: pointerTo(true),
+	})
+	s.Require().Equal("native", value(s.serverClient.getSession(opened.Id).Mode))
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage("", "is it fixed?", s.recordingAt("hello "+s.utils.uuid()))))
+
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `msg="could not answer a message" channel=`+s.channelID)
+	}, settleFor, 10*time.Millisecond, "the session was never asked")
+	s.Empty(s.sttRowsSince(since), "a recording to a speech-to-speech session was heard")
+}
+
 // recordedMessage is a signed message.new for the suite's channel with text and attachments, as
 // Stream would send it. The custom data is whatever the channel was created with.
 func (s *MessageHooksSuite) recordedMessage(custom, text string, attachments ...map[string]any) string {
