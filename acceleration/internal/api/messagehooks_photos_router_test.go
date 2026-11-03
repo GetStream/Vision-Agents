@@ -116,6 +116,32 @@ func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondToAPhotoSentAloneI
 	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
 }
 
+// The same refusal holds for a respond frame with no request id: nothing is asked of the model,
+// no reply is written, and the worker is told on the socket that there is nothing to answer.
+func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondWithNoRequestIDToAPhotoSentAloneIsRefusedAndNothingIsWritten() {
+	handed := s.photoAloneHandedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
+	socket := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events?decisions=false")
+
+	s.Require().NoError(socket.WriteJSON(frame{"type": "respond", "text": handed.Text}))
+
+	deadline := time.Now().Add(5 * time.Second)
+	_ = socket.SetReadDeadline(deadline)
+	var refusal string
+	for refusal == "" {
+		var event map[string]any
+		s.Require().NoError(socket.ReadJSON(&event), "the worker was told nothing")
+		if event["type"] == "error" {
+			refusal = fmt.Sprint(event)
+		}
+	}
+	s.Contains(refusal, "there is nothing to answer")
+	s.Never(func() bool { return len(s.vision.requests()) > seen || len(s.inTheChannel()) > 1 }, dropped, 10*time.Millisecond,
+		"an empty answer was asked or written")
+	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
+}
+
 // Control, as on base (4f52691c5): a second photo sent alone to a session a worker opened for
 // the channel is followed up by the router itself, which asks the model with the text the
 // message holds, empty, and writes the reply. Only a worker's own empty respond is refused.
