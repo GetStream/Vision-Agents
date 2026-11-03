@@ -120,14 +120,23 @@ func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondToAPhotoSentAloneI
 // the channel is followed up by the router itself, which asks the model with the text the
 // message holds, empty, and writes the reply. Only a worker's own empty respond is refused.
 func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionIsAskedAndAnswered() {
-	handed := s.photoAloneHandedOut()
+	worker := s.workerOf(s.customerID())
+	person, first := "sam", "is this fan broken?"
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(context.Background(), chatlog.ChannelType, s.channelID,
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &person}})
+	s.Require().NoError(err)
+	_, err = s.chat.Client.Chat().SendMessage(context.Background(), chatlog.ChannelType, s.channelID,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{UserID: &person, Text: &first}})
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), first))
+	handed := s.handed(worker)
 	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
 	s.Require().NotEmpty(opened.Id)
 	seen := len(s.vision.requests())
 
 	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
 
-	s.answered("", finishedReply)
+	s.answered(first, finishedReply)
 	asked := s.vision.requests()[seen:]
 	s.Require().Len(asked, 1, "the model was asked once")
 	s.Equal("", s.lastTurn(asked).Content)
