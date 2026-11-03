@@ -297,11 +297,22 @@ func (s *QuotaSuite) messagesBeforeRefusal() int {
 	return spent
 }
 
-// spend charges one message to a user's day, the way one of their own replies is.
+// spend charges one message to a user's day, the way one of their own replies is, and
+// returns once the day shows it. The limiter stops waiting for a debit after two seconds, so
+// when this process stalls the debit goes on after Debit has returned.
 func (s *QuotaSuite) spend(client *testClient) {
-	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{
-		UserID: client.userID, Verified: client.kind == user || client.kind == guest,
-	}, 1)
+	caller := routing.Caller{UserID: client.userID, Verified: client.kind == user || client.kind == guest}
+	left := func() int64 {
+		status, _ := s.limiter.Allow(s.T().Context(), s.customerID(), caller)
+		return status.Remaining
+	}
+	before := left()
+	s.limiter.Debit(s.T().Context(), s.customerID(), caller, 1)
+	if before == 0 {
+		return
+	}
+	s.Require().Eventually(func() bool { return left() < before }, settleFor, 10*time.Millisecond,
+		"the message was never counted on the day")
 }
 
 func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota() {
