@@ -496,7 +496,7 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
-		other := &stubLLM{reply: "Sure."}
+		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
 		s.othersMu.Unlock()

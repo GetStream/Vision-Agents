@@ -93,7 +93,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	if commandID != "" && found.Durable() {
 		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts, asked, notes...)
 	} else {
-		responseID, err = found.Respond(ctx, text, parts, asked)
+		responseID, err = found.Respond(ctx, text, parts, asked, parts[:len(images)]...)
 	}
 	if err != nil {
 		return nil, refusedResponse(err)
@@ -440,7 +440,7 @@ type CreateResponseRequest struct {
 	Images          *[]ImageSource `json:"images,omitempty"`
 	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
-	Text            string         `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. A session kept in Stream Chat takes images with no text only with a request_id."`
+	Text            string         `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id."`
 	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
 }
 
