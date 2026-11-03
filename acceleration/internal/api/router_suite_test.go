@@ -1928,6 +1928,13 @@ func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limi
 	return limit
 }
 
+// unreadLimits says a refusal is the one a router answers while it has not yet read what a
+// limited subject spent (the tier fails closed): it is no word on whether a limit is spent, and
+// once the read lands the same work may be admitted.
+func unreadLimits(failure ErrorDetail) bool {
+	return strings.Contains(failure.Message, "spend limits could not be read")
+}
+
 func (s *RouterSuite) policies(logger *slog.Logger) *policy.Enforcer {
 	settings := policy.Settings{Mode: s.limitsMode, Fresh: suiteFresh, SpendEvery: suiteFresh, SumEvery: suiteFresh}
 	if s.holds != nil {
