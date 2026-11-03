@@ -344,6 +344,16 @@ Moving a running session onto other models or another voice (`PATCH /v1/agents/s
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+### Naming a guest's id no longer hands out a token for that guest
+
+`POST /v1/agents/guests` with an `id` gave a fresh 24-hour token for any unclaimed guest of the app to whoever asked. A page holding only the app's key was enough, and the guest's name and custom data were replaced with whatever the request sent. A guest id is no secret: it is the author of the guest's messages and a member of their channels. So anyone who shared a channel with a guest could read that guest's conversations with the agent and carry on as them.
+
+An existing guest now gets a token only for one of these:
+- the app's backend;
+- the guest's own still-valid token;
+- the new `refresh_secret` the guest was last handed.
+
+Every guest response carries a `refresh_secret`. It works once, and each answer carries the next one. Any other caller that names an id is given a new guest, as if it had named none, rather than an error. That way a device holding a guest from before this change carries on as a new guest instead of being stuck, and the answer no longer tells a stranger which ids are guests. A guest coming back keeps their name and custom data; only the backend can change them. The secret's hash is kept on the user row (migration `20261207100000_users_refresh_secret`) and is never exported or imported with a customer's data (AI-2487).
 
 ### A voice reply cut short is billed for what it generated
 
