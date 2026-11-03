@@ -331,7 +331,7 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 		answers: map[string]fixedAnswer{}, running: map[string]int{}, peak: map[string]int{}}
 	servers := map[string]*mcpsdk.Server{}
 	for _, account := range []string{"primary", "secondary", "moved"} {
-		servers[account] = accountServer(account)
+		servers[account] = accountServer(account, "")
 	}
 	p.servers = servers
 	p.Server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -437,9 +437,11 @@ func newAccountsProvider(s *connectorFixture) *accountsProvider {
 	return p
 }
 
-// accountServer is account's MCP server, with the provider's stock tools.
-func accountServer(account string) *mcpsdk.Server {
-	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"}, nil)
+// accountServer is account's MCP server, with the provider's stock tools, saying instructions
+// about them at initialize.
+func accountServer(account, instructions string) *mcpsdk.Server {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: account, Version: "1"},
+		&mcpsdk.ServerOptions{Instructions: instructions})
 	server.AddTool(toolWhoami, whoami(account))
 	server.AddTool(toolSecret, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the secret"}}}, nil
@@ -487,6 +489,12 @@ func (p *accountsProvider) addTool(account, name, description string) {
 	})
 }
 
+// instruct has account's server say instructions about its tools, until forget. The tools
+// added since forget are dropped.
+func (p *accountsProvider) instruct(account, instructions string) {
+	p.servers[account] = accountServer(account, instructions)
+}
+
 // redescribe has account list whoami with description, a schema change, until forget.
 func (p *accountsProvider) redescribe(account, description string) {
 	changed := *toolWhoami
@@ -508,7 +516,7 @@ func (p *accountsProvider) forget() {
 	p.called, p.methods, p.streams, p.limited = map[string]int{}, map[string][]string{}, false, map[string]string{}
 	p.answers, p.gate, p.peak = map[string]fixedAnswer{}, nil, map[string]int{}
 	for account := range p.servers {
-		p.servers[account] = accountServer(account)
+		p.servers[account] = accountServer(account, "")
 	}
 }
 

@@ -30,6 +30,8 @@ type Toolset struct {
 	tools   []llm.Tool
 	// targets are the offered tools by the name the model calls them.
 	targets map[string]target
+	// instructions are what the server answered initialize with.
+	instructions string
 }
 
 var _ core.Toolset = (*Toolset)(nil)
@@ -43,6 +45,11 @@ type target struct {
 // Tools are the tools the model is offered.
 func (t *Toolset) Tools() []llm.Tool {
 	return t.tools
+}
+
+// Instructions is what the server said about using its tools at initialize.
+func (t *Toolset) Instructions() string {
+	return t.instructions
 }
 
 // Call runs one offered tool. A name this toolset did not offer, or arguments its input schema

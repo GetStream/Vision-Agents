@@ -735,7 +735,7 @@ func connectorBindingsComplaint(bindings *[]AgentConnectorBinding) (string, bool
 			return fmt.Sprintf("connector binding %q sets tool_patterns and tools, and a binding has one or the other", alias), false
 		}
 		if binding.ToolPatterns != nil {
-			if err := plugins.CheckToolPatterns(*binding.ToolPatterns); err != nil {
+			if err := core.CheckToolPatterns(*binding.ToolPatterns); err != nil {
 				return fmt.Sprintf("connector binding %q has a tool_patterns entry that is not a tool name or pattern", alias), false
 			}
 		}
@@ -758,7 +758,7 @@ func approvalComplaint(binding AgentConnectorBinding) (string, bool) {
 		return fmt.Sprintf("connector binding %q sets require_approval and sandbox, and code in the sandbox "+
 			"calls the connector's API with nobody asked", binding.Name), false
 	}
-	if err := plugins.CheckToolPatterns(binding.RequireApproval); err != nil {
+	if err := core.CheckToolPatterns(binding.RequireApproval); err != nil {
 		return fmt.Sprintf("connector binding %q has a require_approval entry that is not a tool name or pattern", binding.Name), false
 	}
 	for _, entry := range binding.RequireApproval {
@@ -1595,8 +1595,8 @@ func mcpServersComplaint(ctx context.Context, config store.AgentConfig) (string,
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
 			return fmt.Sprintf("mcp_servers: %s needs an https url", server.Name), false
 		}
-		if err := plugins.CheckToolPatterns(server.Tools); err != nil {
-			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, strings.TrimPrefix(err.Error(), "plugins: ")), false
+		if err := core.CheckToolPatterns(server.Tools); err != nil {
+			return fmt.Sprintf("mcp_servers: %s: %s", server.Name, err.Error()), false
 		}
 	}
 	// Last, since it resolves each host: the checks above cost nothing. Only the host is

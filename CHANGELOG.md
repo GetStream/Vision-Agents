@@ -6,6 +6,10 @@
 
 A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
 
+### A custom connector's server instructions reach the agent
+
+The `instructions` a custom connector's MCP server (`custom_…`) sends when a session opens it are added after the agent config's own instructions, as for a server under `mcp_servers`: under a line naming the binding and its tools (`crm__*`), cut to 4000 bytes per server, and only when the session offers at least one of its tools. A built-in connector's are still left out. The instructions are read when the session opens; a binding the session opens later, after a login during the conversation, adds none (AI-2525).
+
 ### A number or a 10DLC registration is paid for before it is bought
 
 `POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
@@ -229,6 +233,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`), `setOperatorProviderApp` and `PUT /v1/agents/connectors/{id}/oauth-client` no longer write the message hook into the pinned Stream app's `event_hooks`, so the entry "A provider app points its Stream app's message hook at the router" no longer holds. `setOperatorProviderApp` no longer answers a 503 when Stream refuses the hook. `go run ./cmd/phone hooks -url <base>` writes the call hook only. Stream Chat delivery (`POST /v1/chat/internal/messages`) is the only way Chat text reaches the router; a local router behind a tunnel gets no text written straight into a thread channel. `/v1/chat/hooks/stream` is still served for one release, as a way back. To drop an old message hook: `go run ./cmd/phone hooks -url <base> -remove <base>` (AI-2352).
 
 ## Bug Fixes
+
+### A login to a server named by URL never sends the deployment's client secret
+
+The login to an MCP server a config names under `mcp_servers` is made with the public client the router registers on that server, so the code exchange and every token refresh now go to its token endpoint without a client secret. Before, when the client id the server registered matched one the deployment holds for a plugin of the server's name, that client's secret was sent along. Catalog plugins still send the secret of the client the agent or the deployment registered in advance. The Shopify plugin logs in only at a shop host under `myshopify.com`: authorizing it for any other host is a 400, and a login stored for one is not opened. An `mcp_servers` entry named like a catalog plugin, which only a config saved before that name was refused can hold, is left out of every session (AI-2523).
 
 ### A custom MCP connector without scopes asks for the scopes its server lists
 
