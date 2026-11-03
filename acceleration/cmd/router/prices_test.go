@@ -334,6 +334,47 @@ func (s *PriceFileSuite) TestARouterNamesTheBYOKTwinItsListHasNoPriceFor() {
 	s.Contains(logs.String(), "modality=runtime provider=stream model=voice", "and so is all the rest the list leaves out")
 }
 
+// TestEveryPieceOfWorkTheBuiltInDeploymentBillsIsPriced: with every phone vendor, texts and
+// knowledge on, each item the routers can bill, BYOK twins included, is priced by the price
+// files, free or local, but the gaps below that still wait on a vendor's rate. Runtime is
+// priced by the chart's prices file, which a deployment reads beside these.
+func (s *PriceFileSuite) TestEveryPieceOfWorkTheBuiltInDeploymentBillsIsPriced() {
+	settings := config.Defaults()
+	files, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	routingConfig, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	list, err := newPrices(routingConfig, files, pricesVersion(settings), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	deployment := billableOf(settings, routingConfig, phone.Config{})
+	deployment.Knowledge, deployment.KnowledgeRegions = "turbopuffer", []string{pricing.DefaultRegion}
+	deployment.Runtime = false
+	vendorConfig, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	deployment.PhoneVendors = nil
+	var waiting []string
+	for _, vendor := range vendorConfig.Vendors {
+		if !vendor.Implemented {
+			continue
+		}
+		deployment.PhoneVendors = append(deployment.PhoneVendors, vendor.Vendor)
+		// Only Telnyx's call minutes have a published rate in vendor.json so far.
+		if vendor.Vendor != "telnyx" {
+			waiting = append(waiting, "phone/"+vendor.Vendor+"/"+phone.ModelCallMinutes)
+		}
+	}
+	deployment.SMS = true
+
+	var unpriced []string
+	for _, item := range list.Unpriced(billable.Items(deployment)) {
+		s.Equal(pricing.DefaultRegion, item.Region)
+		s.False(item.BYOK, "%s/%s/%s", item.Modality, item.Provider, item.Model)
+		unpriced = append(unpriced, item.Modality+"/"+item.Provider+"/"+item.Model)
+	}
+
+	s.ElementsMatch(waiting, unpriced)
+}
+
 func (s *PriceFileSuite) TestAMissingPricesFileStopsStartup() {
 	settings := config.Defaults()
 	settings.PricesFile = filepath.Join(s.T().TempDir(), "missing.json")

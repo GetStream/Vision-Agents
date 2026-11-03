@@ -861,6 +861,8 @@ type AgentSuite struct {
 	runner *stubToolRunner
 	// toolPolicy is what a test's tools ask of the agent (Options.ToolPolicy).
 	toolPolicy func(tool string) ToolPolicy
+	// onHeard is Options.OnHeard (holdsHeard).
+	onHeard func(Heard)
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
@@ -951,6 +953,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.toolPolicy = nil
+	s.onHeard = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.unified = false
@@ -1200,6 +1203,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		EndCallWhen:        s.endCallWhen,
 		ToolRunner:         running,
 		ToolPolicy:         s.toolPolicy,
+		OnHeard:            s.onHeard,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,

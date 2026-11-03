@@ -699,6 +699,10 @@ func (s *STS) SampleRate() int { return SampleRate }
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return CapabilitiesFor(s.options.Model) }
 
+// BackendModel is the Responses model this session hands its reasoning to, billed as that
+// model's own work.
+func (s *STS) BackendModel() string { return s.options.Backend }
+
 // handshake sends session.start and waits for session.started. Anything the server rejects
 // arrives as an error frame instead.
 func (s *STS) handshake(conn *websocket.Conn) error {

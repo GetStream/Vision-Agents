@@ -556,11 +556,28 @@ func (s *QuotaSuite) TestTheDeploymentsTokensStillSkipABackendUnderACustomersMes
 	s.Contains(err.Error(), "3 messages a day")
 }
 
-func (s *QuotaSuite) TestAnAddressStillAnswersForACustomersQuota() {
+func (s *QuotaSuite) TestUsersBehindOneAddressEachHaveTheCustomersQuota() {
+	// An office, or a carrier's NAT: the customer's quota is each user's, not the address's.
 	limiter := s.limiterWith(Limits{}, s.appQuota(Limits{MessagesPerDay: 1}))
-	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 10)
+	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP, Verified: true}, 10)
 
-	s.ErrorIs(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP}), ErrExhausted)
+	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP, Verified: true}))
+	err := s.allow(limiter, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP, Verified: true})
+	s.Require().ErrorIs(err, ErrExhausted, "the user who spent it is held to it")
+	s.Contains(err.Error(), "for every user of app "+s.customer)
+}
+
+func (s *QuotaSuite) TestAnAddressStillAnswersForTheDeploymentsLimit() {
+	// The app set the messages, so the tokens are the deployment's, and the address answers
+	// for those.
+	limiter := s.limiterWith(Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota {
+		return Quota{Messages: Limit{PerDay: 5, By: Setter{Level: LevelApp, ID: s.customer}}, Tokens: Limit{PerDay: 100}}
+	}))
+	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 100)
+
+	err := s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP})
+	s.Require().ErrorIs(err, ErrExhausted, "a fresh user id behind a spent address")
+	s.Contains(err.Error(), "100 tokens a day, for the router's default")
 	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP, ServerSide: true}),
 		"a backend has no address of its user's to answer for")
 }
@@ -579,7 +596,10 @@ func (s *QuotaSuite) TestTodayIsWhatTheCustomersQuotaCounted() {
 }
 
 func (s *QuotaSuite) TestUserKeysAreEveryBucketAUserIsCountedIn() {
-	limiter := s.limiterWith(Limits{MessagesPerDay: 1}, s.appQuota(Limits{MessagesPerDay: 1}))
+	// The app's messages count the user, and the deployment's tokens count the address too.
+	limiter := s.limiterWith(Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota {
+		return Quota{Messages: Limit{PerDay: 1, By: Setter{Level: LevelApp, ID: s.customer}}, Tokens: Limit{PerDay: 10}}
+	}))
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 	s.Require().ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
 
