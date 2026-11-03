@@ -264,7 +264,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### Closing an agent no longer waits on a stuck database for every queued row
 
-Closing an agent waited for every finished turn and every judgement still queued to be recorded, each write with its own five-second limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The turn writer and the decision writer are each now bound by one deadline of ten seconds. Rows not written by then are dropped and counted in one warning each, as rows are when a writer falls behind. A store that answers but is slow can also lose the tail of a full queue at the deadline. With a healthy database every queued row is still written. The memory writer is not changed (AI-2475).
+Closing an agent waited for every finished turn and every judgement still queued to be recorded, each write with its own five-second limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The turn writer, the decision writer and the memory writer are each now bound by one deadline, ten seconds for the first two and twenty for the memory writer, whose calls may take ten seconds each. Rows not written by then are dropped and counted in one warning each, as rows are when a writer falls behind. A store that answers but is slow can also lose the tail of a full queue at the deadline. With a healthy database every queued row is still written (AI-2475).
 
 ### A dispatch worker's session answers in the channel the message was written in
 

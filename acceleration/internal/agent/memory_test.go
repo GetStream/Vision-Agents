@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -71,4 +73,51 @@ func (s *MemoryWriterSuite) TestAnExchangeMem0RefusesIsOneErrorNamingTheQuota() 
 	logged := s.failures()
 	s.Require().Len(logged, 1)
 	s.Contains(logged[0], "429 Too Many Requests (mem0 quota or rate limit)")
+}
+
+// TestCloseGivesUpOnAMem0ThatNeverAnswers is the teardown of a call whose memory store is
+// stuck: every queued exchange used to get its own memoryTimeout, so closing waited for
+// all of them. Now it waits for one deadline and drops what is left, counted once.
+func (s *MemoryWriterSuite) TestCloseGivesUpOnAMem0ThatNeverAnswers() {
+	const queued = 20
+	var attempts atomic.Int64
+	release := make(chan struct{})
+	stuck := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		<-release
+	}))
+	s.T().Cleanup(stuck.Close)
+	s.T().Cleanup(func() { close(release) })
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	store, err := mem0.New(mem0.Options{APIKey: "test-key", BaseURL: stuck.URL, Logger: logger})
+	s.Require().NoError(err)
+	writer := newMemoryWriter(metered.NewMemory(store, nil).For(routing.Owner{}), memory.Scope{AppID: "router", UserID: "acme", AgentID: "support", RunID: "session-1"}, false, logger)
+	writer.drainTimeout = 200 * time.Millisecond
+	for i := 0; i < queued; i++ {
+		writer.Remember([]llm.Message{{Role: llm.User, Content: "I moved to Austin"}})
+	}
+
+	closed := make(chan struct{})
+	started := time.Now()
+	go func() {
+		writer.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		s.FailNow("Close was still waiting on a mem0 that never answers")
+	}
+
+	s.GreaterOrEqual(time.Since(started), 200*time.Millisecond, "closing does not drop exchanges before the deadline")
+	s.EqualValues(queued, writer.dropped.Load(), "the exchange in flight and every queued one are counted")
+	s.EqualValues(1, attempts.Load(), "no exchange is tried once the deadline has passed")
+	s.Equal(1, strings.Count(logs.String(), "dropped exchanges"), "the drops are logged once")
+	s.Contains(logs.String(), "count=20")
+}
+
+func (s *MemoryWriterSuite) TestTheDrainDeadlineIsTwoWrites() {
+	s.Equal(2*memoryTimeout, s.writer.drainTimeout)
 }

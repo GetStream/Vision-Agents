@@ -132,3 +132,20 @@ func (s *TurnRecordingSuite) TestPersistReportsAWriteTheDeadlineCut() {
 		s.NoError(r.persist(context.Background(), row), name+": a write that goes through is not")
 	}
 }
+
+// TestDecisionsReachRedis pins what the recorder writes with by default: a judgement
+// recorded and flushed by Close must be readable back from the live client.
+func (s *TurnRecordingSuite) TestDecisionsReachRedis() {
+	callID := fmt.Sprintf("call-decisions-%d", time.Now().UnixNano())
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID, CallID: callID}
+	r := newDecisionRecorder(s.liveClient, owner, slog.New(slog.DiscardHandler))
+	r.Record(Decided{Kind: "reply", Reason: "asked a question", TurnID: "turn-1", Text: "hello"})
+	r.Close()
+
+	events, err := s.liveClient.CallEvents(context.Background(), "acme", callID, s.startedAt, nil, 10)
+	s.Require().NoError(err)
+	s.Require().Len(events, 1)
+	s.Equal("reply", events[0].Kind)
+	s.Equal("turn-1", events[0].TurnID)
+	s.Equal("hello", events[0].Said)
+}

@@ -90,6 +90,7 @@ func (s *TurnRecorderSuite) TestTheDrainDeadlineIsTwoWrites() {
 	r.Close()
 
 	s.Equal(2*turnWriteTimeout, r.drainTimeout)
+	s.Equal(turnWriteTimeout, r.writeTimeout)
 }
 
 // TestCloseGivesUpOnAStoreThatNeverAnswers is the teardown of a call whose database is
