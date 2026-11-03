@@ -675,8 +675,8 @@ of the call, so no agent is dispatched and the call is ended through Stream at o
 seconds it was up are billed by the vendor. The same holds for a telephony suspension.
 Releasing a number is never refused. A campaign is refused at launch, and one refused midway
 pauses with the refusal's code as `paused_reason`. The contact it was about to ring goes back
-to waiting without using up an attempt, and is rung once the campaign is resumed. A scheduled task that could not be delivered for
-money records the refusal's code.
+to waiting without using up an attempt, and is rung once the campaign is resumed. A scheduled
+task that could not be delivered for money records the refusal's code.
 
 Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
 remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process

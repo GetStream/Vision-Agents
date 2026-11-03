@@ -183,6 +183,14 @@ func New(options Options) (*Runner, error) {
 // Owner is this router in the leases it takes.
 func (r *Runner) Owner() string { return r.owner }
 
+// Running is how many contacts this router is ringing or about to ring, a call placed
+// before its session exists included, for a drain to wait on.
+func (r *Runner) Running() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inFlight
+}
+
 // Start ticks until ctx is cancelled or Close is called.
 func (r *Runner) Start(ctx context.Context) error {
 	r.mu.Lock()
