@@ -1539,7 +1539,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
-	DetectVoicemail    *bool              `json:"detect_voicemail,omitempty" doc:"Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail."`
+	DetectVoicemail    *bool              `json:"detect_voicemail,omitempty" doc:"Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail."`
 	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`

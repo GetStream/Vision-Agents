@@ -739,6 +739,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
 	created.end = func(reason EndReason) { m.end(created, reason) }
+	created.machine.unreported = func() {
+		m.Machine(OwnerOf(created.Spec()).CustomerID, created.id, phone.MachineUnknown)
+	}
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -1580,7 +1583,9 @@ const voicemailWithin = 2 * time.Minute
 
 // Machine acts on the vendor saying what picked up the customer's placed call id, reporting
 // whether this node holds its session. A session whose plan is to leave a voicemail leaves it,
-// or hangs up, once an answering machine's greeting has ended; anything else carries on.
+// or hangs up, once an answering machine's greeting has ended. It does the same when the
+// vendor could not tell while the caller has said nothing to the agent: a vendor calls some
+// mobile voicemail boxes unknown. A fax is hung up on. A person carries on.
 // The message is left in the background, as it takes a while to say.
 func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
 	m.mu.Lock()
@@ -1593,22 +1598,30 @@ func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
 	if OwnerOf(spec).CustomerID != customerID || spec.Phone == nil || spec.Voicemail == nil {
 		return true
 	}
-	// A hang-up the agent asked for meanwhile would cut the message off.
-	found.checked(machine != phone.MachineGreetingEnded)
-	if machine != phone.MachineGreetingEnded {
+	if machine == phone.MachineHuman {
+		found.checked(true)
 		return true
+	}
+	// A hang-up the agent asked for meanwhile would cut the message off. A check already over
+	// heard the caller speak to the agent, so a report that could not tell is a person.
+	if !found.checked(false) && machine != phone.MachineGreetingEnded {
+		return true
+	}
+	message := spec.Voicemail.Message
+	if machine == phone.MachineFax {
+		message = ""
 	}
 	// Vendors retry a report: only the first one to reach a session still running leaves the message.
 	if found.endsFor(EndVoicemail) {
-		go m.leaveVoicemail(found, spec)
+		go m.leaveVoicemail(found, spec, message)
 	}
 	return true
 }
 
-// leaveVoicemail says spec's message to the answering machine, waits for it to be heard out
-// and hangs up. A session that began closing meanwhile, its call hung up, is left to close.
-func (m *Manager) leaveVoicemail(found *Session, spec Spec) {
-	if message := spec.Voicemail.Message; message != "" && !found.closingNow() {
+// leaveVoicemail says message to the answering machine, waits for it to be heard out and
+// hangs up. A session that began closing meanwhile, its call hung up, is left to close.
+func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
+	if message != "" && !found.closingNow() {
 		ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
 		// Whatever the agent was saying to the greeting is not for the recording.
 		found.Interrupt()

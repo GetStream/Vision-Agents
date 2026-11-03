@@ -105,6 +105,9 @@ type machineCheck struct {
 	// held is the hang-up the agent asked for meanwhile.
 	held  func()
 	timer *time.Timer
+	// unreported is what the session does at machineWait with no report: what it does when
+	// the vendor could not tell (Manager.Machine).
+	unreported func()
 }
 
 // holdHangUp keeps hangUp for when the check is over, reporting whether it did: only on a
@@ -126,19 +129,20 @@ func (s *Session) holdHangUp(hangUp func()) bool {
 func (s *Session) answered() {
 	s.machine.mu.Lock()
 	defer s.machine.mu.Unlock()
-	if s.machine.over || s.machine.timer != nil {
+	if s.machine.over || s.machine.timer != nil || s.machine.unreported == nil {
 		return
 	}
-	s.machine.timer = time.AfterFunc(machineWait, func() { s.checked(true) })
+	s.machine.timer = time.AfterFunc(machineWait, s.machine.unreported)
 }
 
-// checked ends the check. With carryOut a hang-up held meanwhile goes through; without, a
-// machine is being left a message or the caller spoke, and the call carries on.
-func (s *Session) checked(carryOut bool) {
+// checked ends the check, reporting whether it was still on. With carryOut a hang-up held
+// meanwhile goes through; without, a machine is being left a message or the caller spoke,
+// and the call carries on.
+func (s *Session) checked(carryOut bool) bool {
 	s.machine.mu.Lock()
 	if s.machine.over {
 		s.machine.mu.Unlock()
-		return
+		return false
 	}
 	s.machine.over = true
 	held := s.machine.held
@@ -152,6 +156,7 @@ func (s *Session) checked(carryOut bool) {
 	if carryOut && held != nil {
 		go held()
 	}
+	return true
 }
 
 // heardCaller ends the check once the phone caller said something the agent took as meant

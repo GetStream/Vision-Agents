@@ -525,7 +525,7 @@ func (s *TwilioSuite) TestEachAnsweredByIsWhoPickedUp() {
 		"machine_end_silence": phone.MachineGreetingEnded,
 		"machine_end_other":   phone.MachineGreetingEnded,
 		"machine_start":       phone.MachineUnknown,
-		"fax":                 phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
 		"unknown":             phone.MachineUnknown,
 		"something_new":       phone.MachineUnknown,
 	} {

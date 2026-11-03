@@ -295,7 +295,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		request.StatusCallback, request.StatusCallbackMethod = outbound.StatusURL, http.MethodPost
 	}
 	if outbound.MachineURL != "" {
-		request.MachineDetection, request.AsyncAmd = "DetectMessageEnd", true
+		request.MachineDetection, request.DetectionMode, request.AsyncAmd = "DetectMessageEnd", "Premium", true
 		request.AsyncAmdStatusCallback, request.AsyncAmdStatusCallbackMethod = outbound.MachineURL, http.MethodPost
 	}
 
@@ -618,9 +618,11 @@ type texmlCall struct {
 	// StatusCallback is where Telnyx posts the call's status, as a form, once it ends.
 	StatusCallback       string `json:"StatusCallback,omitempty"`
 	StatusCallbackMethod string `json:"StatusCallbackMethod,omitempty"`
-	// MachineDetection and the three after it ask for answering machine detection that
-	// reports to AsyncAmdStatusCallback while the call goes on, as Twilio's do.
+	// MachineDetection and the four after it ask for answering machine detection that
+	// reports to AsyncAmdStatusCallback while the call goes on, as Twilio's do. DetectionMode
+	// Premium is the more accurate model: Regular calls some mobile voicemail boxes unknown.
 	MachineDetection             string `json:"MachineDetection,omitempty"`
+	DetectionMode                string `json:"DetectionMode,omitempty"`
 	AsyncAmd                     bool   `json:"AsyncAmd,omitempty"`
 	AsyncAmdStatusCallback       string `json:"AsyncAmdStatusCallback,omitempty"`
 	AsyncAmdStatusCallbackMethod string `json:"AsyncAmdStatusCallbackMethod,omitempty"`

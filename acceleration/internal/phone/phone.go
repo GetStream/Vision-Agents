@@ -470,7 +470,9 @@ const (
 	// MachineGreetingEnded is an answering machine whose greeting has finished, so what is
 	// said next is recorded.
 	MachineGreetingEnded Machine = "greeting_ended"
-	// MachineUnknown is a fax, or whatever the vendor could not tell.
+	// MachineFax is a fax machine, which nothing said reaches.
+	MachineFax Machine = "fax"
+	// MachineUnknown is whatever the vendor could not tell.
 	MachineUnknown Machine = "unknown"
 )
 
@@ -493,6 +495,8 @@ func MachineOf(answeredBy string) Machine {
 		return MachineHuman
 	case "machine_end_beep", "machine_end_silence", "machine_end_other":
 		return MachineGreetingEnded
+	case "fax":
+		return MachineFax
 	}
 	return MachineUnknown
 }
