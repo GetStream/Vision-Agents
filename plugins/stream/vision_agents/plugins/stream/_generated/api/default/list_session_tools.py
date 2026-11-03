@@ -88,7 +88,7 @@ def sync_detailed(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
     session the router no longer holds answers what it was offered when it last opened; one that ended
     before that was kept, or kept nothing, is a 404.
 
@@ -122,7 +122,7 @@ def sync(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
     session the router no longer holds answers what it was offered when it last opened; one that ended
     before that was kept, or kept nothing, is a 404.
 
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
     session the router no longer holds answers what it was offered when it last opened; one that ended
     before that was kept, or kept nothing, is a 404.
 
@@ -183,7 +183,7 @@ async def asyncio(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
     session the router no longer holds answers what it was offered when it last opened; one that ended
     before that was kept, or kept nothing, is a 404.
 

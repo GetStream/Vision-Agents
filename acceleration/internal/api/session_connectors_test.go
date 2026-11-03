@@ -109,7 +109,7 @@ func (s *SessionConnectorsSuite) TestAToolCallAnswered400KeepsAStaticTokenConnec
 
 // TestACustomConnectorsServerInstructionsFollowTheAgentsOwn: what a custom connector's server
 // says about its tools when the session opens it is what the call records the agent was told,
-// after the config's own instructions, as for a server under mcp_servers.
+// after the config's own instructions.
 func (s *SessionConnectorsSuite) TestACustomConnectorsServerInstructionsFollowTheAgentsOwn() {
 	s.Equal("Be brief.\n\nThe crm tools (crm__*) come with these instructions from their server:\n\nQuote ticket ids whole.",
 		s.recordedInstructions(s.connector(), "Quote ticket ids whole."))

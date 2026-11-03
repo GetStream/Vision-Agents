@@ -153,30 +153,27 @@ def sync_detailed(
     state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the
     prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id,
     name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and
-    duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply
-    needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a
-    button opening authorize_url. Once the user finishes that login the message is sent again with the
-    attachment's status set to connected. A connector_authorization attachment asks the end user to
-    connect a connector binding the reply needed with their own account, with name (the binding's
-    alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and
-    expires_at: a page of the session's return_url's origin, or the dashboard for a session created
-    without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization
-    with that return_url, and the consent goes back to the session's return_url, or else to the
-    dashboard. Once the user finishes that login the message is sent again with status connected and no
-    handoff_token, and the agent carries on by itself. The call that needed the login waits for it on
-    its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and
-    an authorization of type oauth with provider (the connector id), provider_name, title, message, url
-    (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and
-    posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web
-    authentication sheet. Connected, the step is running again with authorization.status connected and
-    no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with
-    allowed false, or the person refusing at the provider, declines the login (declined); a consent that
-    ended otherwise without connecting, such as with another account, is failed, and one not finished by
-    expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call
-    runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled.
-    tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's
-    connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the
-    tool was run_code, as on task_settled.
+    duration_ms. A connector_authorization attachment asks the end user to connect a connector binding
+    the reply needed with their own account, with name (the binding's alias), connector_id,
+    connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the
+    session's return_url's origin, or the dashboard for a session created without one, opens launch_url
+    in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the
+    consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that
+    login the message is sent again with status connected and no handoff_token, and the agent carries on
+    by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts:
+    status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with
+    provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and
+    expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app
+    opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is
+    running again with authorization.status connected and no handoff_token, and the call runs in the
+    same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at
+    the provider, declines the login (declined); a consent that ended otherwise without connecting, such
+    as with another account, is failed, and one not finished by expires_at is expired. Each way the step
+    is cancelled, authorization.status says how, and the call runs nothing. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
+    one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
+    task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -368,30 +365,27 @@ def sync(
     state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the
     prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id,
     name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and
-    duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply
-    needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a
-    button opening authorize_url. Once the user finishes that login the message is sent again with the
-    attachment's status set to connected. A connector_authorization attachment asks the end user to
-    connect a connector binding the reply needed with their own account, with name (the binding's
-    alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and
-    expires_at: a page of the session's return_url's origin, or the dashboard for a session created
-    without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization
-    with that return_url, and the consent goes back to the session's return_url, or else to the
-    dashboard. Once the user finishes that login the message is sent again with status connected and no
-    handoff_token, and the agent carries on by itself. The call that needed the login waits for it on
-    its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and
-    an authorization of type oauth with provider (the connector id), provider_name, title, message, url
-    (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and
-    posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web
-    authentication sheet. Connected, the step is running again with authorization.status connected and
-    no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with
-    allowed false, or the person refusing at the provider, declines the login (declined); a consent that
-    ended otherwise without connecting, such as with another account, is failed, and one not finished by
-    expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call
-    runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled.
-    tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's
-    connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the
-    tool was run_code, as on task_settled.
+    duration_ms. A connector_authorization attachment asks the end user to connect a connector binding
+    the reply needed with their own account, with name (the binding's alias), connector_id,
+    connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the
+    session's return_url's origin, or the dashboard for a session created without one, opens launch_url
+    in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the
+    consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that
+    login the message is sent again with status connected and no handoff_token, and the agent carries on
+    by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts:
+    status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with
+    provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and
+    expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app
+    opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is
+    running again with authorization.status connected and no handoff_token, and the call runs in the
+    same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at
+    the provider, declines the login (declined); a consent that ended otherwise without connecting, such
+    as with another account, is failed, and one not finished by expires_at is expired. Each way the step
+    is cancelled, authorization.status says how, and the call runs nothing. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
+    one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
+    task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -578,30 +572,27 @@ async def asyncio_detailed(
     state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the
     prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id,
     name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and
-    duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply
-    needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a
-    button opening authorize_url. Once the user finishes that login the message is sent again with the
-    attachment's status set to connected. A connector_authorization attachment asks the end user to
-    connect a connector binding the reply needed with their own account, with name (the binding's
-    alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and
-    expires_at: a page of the session's return_url's origin, or the dashboard for a session created
-    without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization
-    with that return_url, and the consent goes back to the session's return_url, or else to the
-    dashboard. Once the user finishes that login the message is sent again with status connected and no
-    handoff_token, and the agent carries on by itself. The call that needed the login waits for it on
-    its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and
-    an authorization of type oauth with provider (the connector id), provider_name, title, message, url
-    (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and
-    posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web
-    authentication sheet. Connected, the step is running again with authorization.status connected and
-    no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with
-    allowed false, or the person refusing at the provider, declines the login (declined); a consent that
-    ended otherwise without connecting, such as with another account, is failed, and one not finished by
-    expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call
-    runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled.
-    tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's
-    connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the
-    tool was run_code, as on task_settled.
+    duration_ms. A connector_authorization attachment asks the end user to connect a connector binding
+    the reply needed with their own account, with name (the binding's alias), connector_id,
+    connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the
+    session's return_url's origin, or the dashboard for a session created without one, opens launch_url
+    in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the
+    consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that
+    login the message is sent again with status connected and no handoff_token, and the agent carries on
+    by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts:
+    status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with
+    provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and
+    expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app
+    opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is
+    running again with authorization.status connected and no handoff_token, and the call runs in the
+    same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at
+    the provider, declines the login (declined); a consent that ended otherwise without connecting, such
+    as with another account, is failed, and one not finished by expires_at is expired. Each way the step
+    is cancelled, authorization.status says how, and the call runs nothing. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
+    one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
+    task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -791,30 +782,27 @@ async def asyncio(
     state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the
     prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id,
     name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and
-    duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply
-    needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a
-    button opening authorize_url. Once the user finishes that login the message is sent again with the
-    attachment's status set to connected. A connector_authorization attachment asks the end user to
-    connect a connector binding the reply needed with their own account, with name (the binding's
-    alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and
-    expires_at: a page of the session's return_url's origin, or the dashboard for a session created
-    without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization
-    with that return_url, and the consent goes back to the session's return_url, or else to the
-    dashboard. Once the user finishes that login the message is sent again with status connected and no
-    handoff_token, and the agent carries on by itself. The call that needed the login waits for it on
-    its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and
-    an authorization of type oauth with provider (the connector id), provider_name, title, message, url
-    (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and
-    posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web
-    authentication sheet. Connected, the step is running again with authorization.status connected and
-    no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with
-    allowed false, or the person refusing at the provider, declines the login (declined); a consent that
-    ended otherwise without connecting, such as with another account, is failed, and one not finished by
-    expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call
-    runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled.
-    tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's
-    connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the
-    tool was run_code, as on task_settled.
+    duration_ms. A connector_authorization attachment asks the end user to connect a connector binding
+    the reply needed with their own account, with name (the binding's alias), connector_id,
+    connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the
+    session's return_url's origin, or the dashboard for a session created without one, opens launch_url
+    in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the
+    consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that
+    login the message is sent again with status connected and no handoff_token, and the agent carries on
+    by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts:
+    status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with
+    provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and
+    expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app
+    opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is
+    running again with authorization.status connected and no handoff_token, and the call runs in the
+    same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at
+    the provider, declines the login (declined); a consent that ended otherwise without connecting, such
+    as with another account, is failed, and one not finished by expires_at is expired. Each way the step
+    is cancelled, authorization.status says how, and the call runs nothing. Activity states are
+    thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes
+    tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
+    one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
+    task_settled.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without

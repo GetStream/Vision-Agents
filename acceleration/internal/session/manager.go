@@ -31,7 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -137,9 +136,6 @@ type ManagerOptions struct {
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
 	Directory *node.Directory
-	// PluginAuth signs an end user into the plugins an agent names per user, sending the
-	// provider back to this deployment's public URL. Nil sends it to localhost.
-	PluginAuth *plugins.Auth
 	// Connectors is what a session opens its agent config's connector bindings with. Zero,
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
@@ -174,7 +170,7 @@ type ManagerOptions struct {
 	Logger        *slog.Logger
 }
 
-// defaultDetachedGrace is long enough to finish a plugin login in another tab, or to leave
+// defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
 // the page a conversation is on and come back to it.
 const defaultDetachedGrace = 5 * time.Minute
 
@@ -658,7 +654,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
 	// connectors replaced them, and a save refuses them.
-	spec.ServerInstructions = serverInstructions(nil, nil, connectors.said())
+	spec.ServerInstructions = serverInstructions(connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	// A session opened without a zone runs in its user's stored one, so the agent's
@@ -2244,39 +2240,6 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		m.conversations = service
 	}
 	return m.conversations, nil
-}
-
-// LoginFinished marks the end user's login with this OAuth state as connected on the
-// conversation that asked for it, and has the session holding that conversation carry on
-// with what the login was asked for, so nobody has to ask again.
-func (m *Manager) LoginFinished(state string) {
-	conversations, err := m.Conversations()
-	if err != nil {
-		return
-	}
-	conv, pluginID, ok := conversations.Connected(state)
-	if !ok {
-		return
-	}
-	name := pluginID
-	if plugin, listed := plugins.Lookup(pluginID); listed {
-		name = plugin.Name
-	}
-	m.mu.Lock()
-	var held *Session
-	for _, s := range m.sessions {
-		if s.persisted == conv {
-			held = s
-		}
-	}
-	m.mu.Unlock()
-	if held == nil {
-		return
-	}
-	text := name + " is connected now. Carry on with what I asked for before you needed it."
-	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text, nil); err != nil {
-		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
-	}
 }
 
 // publisher is where files the subagent's code hands back are shown: the conversation's

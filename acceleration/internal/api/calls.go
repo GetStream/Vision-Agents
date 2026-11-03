@@ -1248,7 +1248,7 @@ func (*CallTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.S
 // InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
 type InputParts struct {
 	Images          int64 `json:"images" doc:"Pictures, attached or returned by a tool."`
-	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and plugin guidance."`
+	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and connector guidance."`
 	Messages        int64 `json:"messages" doc:"The conversation's words, from either side."`
 	ToolDefinitions int64 `json:"tool_definitions" doc:"The tools the model was offered: their names, descriptions and schemas."`
 	ToolUse         int64 `json:"tool_use" doc:"The tools the model called, and what they returned."`

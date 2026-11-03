@@ -18,7 +18,7 @@ class InputParts:
 
         Attributes:
             images (int): Pictures, attached or returned by a tool.
-            instructions (int): The system prompt: the agent's instructions, skills and plugin guidance.
+            instructions (int): The system prompt: the agent's instructions, skills and connector guidance.
             messages (int): The conversation's words, from either side.
             tool_definitions (int): The tools the model was offered: their names, descriptions and schemas.
             tool_use (int): The tools the model called, and what they returned.
