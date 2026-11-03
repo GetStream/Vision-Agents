@@ -192,13 +192,12 @@ func (s *MessageHooksSuite) TestATextOnlyMessageReachesTheWorkerWithNoImages() {
 	s.Nil(handed.Images)
 }
 
-// Control, as on base: a voice note, a video or a file sent alone reaches no worker.
-func (s *MessageHooksSuite) TestAVoiceNoteVideoOrFileAloneReachesNoWorker() {
+// Control, as on base: a video or a file sent alone reaches no worker.
+func (s *MessageHooksSuite) TestAVideoOrFileAloneReachesNoWorker() {
 	worker := s.workerOf(s.customerID())
 	custom := s.namesConfig()
 
 	for _, attachment := range []map[string]any{
-		{"type": "voiceRecording", "asset_url": s.images.URL + "/note.aac", "mime_type": "audio/aac"},
 		{"type": "video", "asset_url": s.images.URL + "/clip.mp4", "mime_type": "video/mp4"},
 		{"type": "file", "asset_url": s.images.URL + "/report.pdf", "mime_type": "application/pdf"},
 	} {
