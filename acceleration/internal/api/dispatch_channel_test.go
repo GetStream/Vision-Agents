@@ -114,14 +114,18 @@ func (s *MessageHooksSuite) TestAWorkersQuestionWithARequestIDIsNotWrittenIntoTh
 }
 
 // TestAWorkersQuestionWithoutARequestIDIsNotWrittenIntoTheChannelAgain: a worker that sends
-// no request id was answered with the reply alone on base too (Respond).
+// no request id was answered with the reply alone on base too (Respond). The cap it asks for
+// still reaches the model.
 func (s *MessageHooksSuite) TestAWorkersQuestionWithoutARequestIDIsNotWrittenIntoTheChannelAgain() {
 	handed := s.handedOut()
-	opened := s.workersSession(handed)
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
 
-	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text})
+	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, MaxOutputTokens: pointerTo(77)})
 
 	s.answered(handed.Text, finishedReply)
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], func(asked llm.ResponseParams) bool { return asked.MaxOutputTokens == 77 }),
+		"the worker's cap never reached the model")
 }
 
 // TestAWorkersRespondCommandIsNotWrittenIntoTheChannelAgain fails on base, as the response
@@ -149,18 +153,20 @@ func (s *MessageHooksSuite) TestAWorkersRespondCommandIsNotWrittenIntoTheChannel
 
 // TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel fails on base: the photo is
 // already on the person's message, and was uploaded again for the copy. The model is still
-// shown it.
+// shown it, under the cap the worker asked for.
 func (s *MessageHooksSuite) TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel() {
 	handed := s.handedOut()
 	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
 	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+s.utils.uuid()))
 	uploaded, seen := len(s.chat.Uploads()), len(s.vision.requests())
 
-	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: photo}}})
+	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: photo}}, MaxOutputTokens: pointerTo(77)})
 
 	s.answered(handed.Text, finishedReply)
 	s.Empty(s.chat.Uploads()[uploaded:])
 	s.True(slices.ContainsFunc(s.vision.requests()[seen:], llm.ResponseParams.HasImage), "the model was never shown the photo")
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], func(asked llm.ResponseParams) bool { return asked.MaxOutputTokens == 77 }),
+		"the worker's cap never reached the model")
 }
 
 // TestAWorkersQuestionAskedAgainIsAnsweredOnce: the Go SDK asks after its request id once
@@ -239,11 +245,19 @@ func (s *MessageHooksSuite) asked(session, text string) {
 	s.askedAs(session, CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())})
 }
 
-// askedAs creates the response asked on session and waits for its answer.
+// askedAs creates the response asked on session and waits for its answer. The response names
+// the reply, which is how a worker follows it: its id is one of the session's responses.
 func (s *MessageHooksSuite) askedAs(session string, asked CreateResponseRequest) {
 	watching := s.serverClient.opens("/v1/agents/sessions/" + session + "/events")
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+session+"/responses", asked, nil))
+	var created AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+session+"/responses", asked, &created))
 	s.await(watching, "responded")
+	s.Require().NotEmpty(created.Id, "the response names no reply to follow")
+	s.Eventually(func() bool {
+		var page AgentResponsePage
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+session+"/responses", nil, &page) == http.StatusOK &&
+			slices.ContainsFunc(page.Items, func(listed AgentResponse) bool { return listed.Id == created.Id })
+	}, settleFor, 20*time.Millisecond, "the reply is not among the session's responses")
 }
 
 // finishedReply stands for an agent's finished reply in what answered reads: a session past the
