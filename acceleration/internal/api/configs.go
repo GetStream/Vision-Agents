@@ -650,8 +650,7 @@ func configComplaint(ctx context.Context, request AgentConfigRequest) (string, b
 // aliasSeparator joins an alias to its tool's name in the name the model is offered,
 // <alias>__<tool>, which is split back at the first one: Prefix and Split in
 // internal/mcp/mcp.go:413-422 on codex/connector-support at cf62af0d, handed the alias by
-// internal/session/connector_tools.go:167 there, as plugins.PrefixSeparator does for plugins
-// today. An alias holding one would be split in the wrong place.
+// internal/session/connector_tools.go:167 there. An alias holding one would be split in the wrong place.
 const aliasSeparator = "__"
 
 // connectorBindingsComplaint reports what is wrong with a config's connector bindings as

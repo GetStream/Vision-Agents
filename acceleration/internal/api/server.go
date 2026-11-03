@@ -234,9 +234,10 @@ type Options struct {
 	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
 	// which only a router no other tenant shares should allow.
 	PrivateModelEndpoints bool
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,

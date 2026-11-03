@@ -170,7 +170,7 @@ type ManagerOptions struct {
 	Logger        *slog.Logger
 }
 
-// defaultDetachedGrace is long enough to finish a plugin login in another tab, or to leave
+// defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
 // the page a conversation is on and come back to it.
 const defaultDetachedGrace = 5 * time.Minute
 

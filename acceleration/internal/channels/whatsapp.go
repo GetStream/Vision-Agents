@@ -150,7 +150,7 @@ func (p *whatsAppProvider) Send(ctx context.Context, account Account, thread str
 		}
 		bodies = append(bodies, map[string]any{"type": kind, kind: media})
 	}
-	// The WhatsApp form of a plugin_authorization attachment: a button that opens the login
+	// The WhatsApp form of a login link: a button that opens the login
 	// rather than a URL somebody has to copy out of a message.
 	if link := reply.Link; link != nil {
 		bodies = append(bodies, map[string]any{
