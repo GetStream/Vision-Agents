@@ -21,15 +21,43 @@ func (s *CampaignSuite) TestTheClassifierPromptListsEveryChoiceWithDoNotCall() {
 func (s *CampaignSuite) TestTheClassifierPromptOffersAnAnswerForACallOnlyARecordingSpokeOn() {
 	prompt := classifyPrompt(DefaultSequence("config-1").First())
 
-	s.Contains(prompt, "If no person spoke, only a voicemail greeting, an answering machine or another recording, the outcome is recording.")
-	s.Contains(prompt, "If a person spoke and none of them fits, the outcome is none.")
+	s.Contains(prompt, "If no person spoke, only a voicemail greeting, an answering machine or another recording, the outcome is no-person.")
+	s.Contains(prompt, "If a person spoke and none of them fits, the outcome is no-fit.")
+	s.Contains(prompt, `{"outcome": "<id, no-person or no-fit>"}`)
 }
 
-func (s *CampaignSuite) TestAnAnswerThatOnlyARecordingSpokeIsRecording() {
-	chosen, err := outcomeOf(`{"outcome": "recording"}`, DefaultSequence("config-1").First())
+func (s *CampaignSuite) TestAnAnswerThatNoPersonSpokeIsNoPerson() {
+	chosen, err := outcomeOf(`{"outcome": "no-person"}`, DefaultSequence("config-1").First())
 
 	s.Require().NoError(err)
-	s.Equal(recording, chosen)
+	s.Equal(noPerson, chosen)
+}
+
+func (s *CampaignSuite) TestNoPersonIsNotTakenForAnOutcomeNamedRecordingOrNone() {
+	step := DefaultSequence("config-1").First()
+	step.Outcomes = append(step.Outcomes,
+		Outcome{ID: "recording", Name: "Recording", Description: "The person asked for the call to be recorded", Next: Next{End: EndUnsuccessful}},
+		Outcome{ID: "none", Name: "None", Description: "The person wants none of it", Next: Next{End: EndUnsuccessful}})
+	s.Require().NoError(Sequence{Steps: []Step{step}}.Validate())
+
+	chosen, err := outcomeOf(`{"outcome": "no-person"}`, step)
+	s.Require().NoError(err)
+	s.Equal(noPerson, chosen)
+
+	chosen, err = outcomeOf(`{"outcome": "recording"}`, step)
+	s.Require().NoError(err)
+	s.Equal("recording", chosen)
+}
+
+func (s *CampaignSuite) TestNoOutcomeIdCanBeASpecialAnswer() {
+	for _, answer := range []string{noPerson, noFit} {
+		step := DefaultSequence("config-1").First()
+		step.Outcomes = append(step.Outcomes, Outcome{ID: answer, Name: "Taken", Description: "x", Next: Next{End: EndUnsuccessful}})
+
+		err := Sequence{Steps: []Step{step}}.Validate()
+		s.Require().Error(err, answer)
+		s.Contains(err.Error(), "must start with a lowercase letter", answer)
+	}
 }
 
 func (s *CampaignSuite) TestTheClassifierPromptStatesTheGoalBeforeTheOutcomes() {

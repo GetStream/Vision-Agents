@@ -487,7 +487,7 @@ func (s *RunnerSuite) classifiedAs(outcome string) store.Campaign {
 }
 
 func (s *RunnerSuite) TestACallOnlyARecordingSpokeOnIsUnansweredAndCalledAgain() {
-	campaign := s.classifiedAs(recording)
+	campaign := s.classifiedAs(noPerson)
 
 	contact, attempts := s.contact(campaign, "+15550000001")
 	s.Equal(store.Enrolled, contact.Stage)
@@ -496,8 +496,27 @@ func (s *RunnerSuite) TestACallOnlyARecordingSpokeOnIsUnansweredAndCalledAgain()
 	s.Equal(string(Unanswered), attempts[0].Result)
 }
 
+func (s *RunnerSuite) TestNoPersonIsUnansweredWhenACampaignHasAnOutcomeNamedRecording() {
+	sequence := s.single()
+	sequence.Steps[0].Outcomes = append(sequence.Steps[0].Outcomes,
+		Outcome{ID: "recording", Name: "Recording", Description: "The person asked for the call to be recorded", Next: Next{End: EndSuccessful}})
+	s.classifier.outcome = noPerson
+	s.dialer.answer("+15550000001")
+	campaign := s.launched(sequence, 1, "UTC", "+15550000001")
+	s.tick(s.runner)
+	_, attempts := s.contact(campaign, "+15550000001")
+	s.transcripts.write(attempts[0].CallID, []chatlog.Spoken{{Text: "Please leave a message."}})
+	s.clock.advance(11 * time.Second)
+	s.tick(s.runner)
+
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt)
+	s.Equal(string(Unanswered), attempts[0].Result)
+}
+
 func (s *RunnerSuite) TestACallWithNoOutcomeThatFitsIsOther() {
-	campaign := s.classifiedAs(none)
+	campaign := s.classifiedAs(noFit)
 
 	contact, _ := s.contact(campaign, "+15550000001")
 	s.Equal(store.ContactCompleted, contact.Stage)

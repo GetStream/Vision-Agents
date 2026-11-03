@@ -557,7 +557,7 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 			}
 			r.logger.Warn("could not classify a campaign call, so it counts as other", "attempt", attempt.ID, "error", err)
 		}
-		if chosen == recording {
+		if chosen == noPerson {
 			return r.unanswered(ctx, sequence, hours, zone, contact, attempt)
 		}
 		settle = afterOutcome(step, contact, chosen)
