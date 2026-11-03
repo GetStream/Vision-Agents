@@ -4139,7 +4139,7 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
@@ -13466,7 +13466,7 @@ pub struct VideoSource {
     ///How many frames to sample, evenly spaced across the clip. Default 8.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_frames: ::std::option::Option<i64>,
-    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
     pub url: ::std::string::String,
 }
 ///`Voice`

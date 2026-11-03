@@ -2,6 +2,10 @@
 
 ## Features
 
+### A personal conversation takes a video with a question
+
+`POST /v1/agents/sessions/{id}/responses` takes `videos` with a `request_id`, where it was a 400 ("a request id carries text and images, not videos"), so a session with a user can be shown a clip. The model gets the clip's frames with the question, each with the moment it was taken. The person's message shows only what they typed and their photos. A retry under the same `request_id` does not fetch or sample its videos again and does not reach the model again. Without a `request_id`, a personal conversation still refuses the question, now before any video is fetched. Go's `Responses.Create` now sends a request id with clips when no photos go with them. `VideoSource.url` names the containers it takes: MP4, MOV, 3GP, MKV and WebM (AI-2515, AI-2508).
+
 ### A voice note sent with a question is transcribed and answered
 
 `POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518). `POST /v1/agents/sessions/{id}/respond` takes the same `audio`, heard and refused the same way, and `text` may be empty with it. Empty text without `audio` there is now a 400 `invalid_request` ("there is nothing to answer"), as on `responses`, where it was a 400 `validation_failed` (AI-2549).

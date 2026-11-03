@@ -819,7 +819,21 @@ func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
 		t.Errorf("the videos went over as %s", videos)
 	}
 	if _, carried := body["request_id"]; carried {
-		t.Error("a request id carries text only")
+		t.Error("a question with photos goes without a request id, so a photo may be a link")
+	}
+}
+
+func TestAQuestionWithClipsAndNoPhotosGoesOverWithARequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "What happens here?", Clip{URL: "https://example.com/unboxing.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if id, _ := body["request_id"].(string); len(id) != 32 {
+		t.Errorf("a question with clips went with request id %v, so a personal conversation refuses it", body["request_id"])
 	}
 }
 
