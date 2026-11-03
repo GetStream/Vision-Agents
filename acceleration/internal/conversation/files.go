@@ -31,17 +31,21 @@ func (c *Conversation) Publish(ctx context.Context, file sandbox.File) (sandbox.
 type Photo struct {
 	Sent     llm.ImagePart
 	Uploaded sandbox.Attachment
+	// Heard is what a voice note said, which a retry of its question carries rather than
+	// hear it again (CheckBegin). Empty for a photo.
+	Heard string
 }
 
-// VoiceNote is the audio of one a person sent with a question.
+// VoiceNote is the audio of one a person sent with a question, and what was heard in it.
 type VoiceNote struct {
 	MIME  string
 	Audio []byte
+	Heard string
 }
 
 // Sent is the voice note as a retry of its question is matched on.
 func (n VoiceNote) Sent() Photo {
-	return Photo{Sent: llm.ImagePart{MIME: n.MIME, Data: n.Audio}}
+	return Photo{Sent: llm.ImagePart{MIME: n.MIME, Data: n.Audio}, Heard: n.Heard}
 }
 
 // PublishPhotos uploads the photos a person sent with a question to the conversation's

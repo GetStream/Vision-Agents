@@ -952,6 +952,22 @@ func (a *Agent) SeesImages() bool {
 	return current != nil && current.Offers(visionSkill) || model != nil && model.Capabilities().Accepts(llm.ModalityImage)
 }
 
+// CheckTurn reports what RespondTo refuses a turn for before it starts, for a caller to learn
+// it before work it pays for: an asked the model does not take (CheckAsked), or images with
+// nothing that looks at them (ErrCannotSeeImages).
+func (a *Agent) CheckTurn(asked options.LLM, images bool) error {
+	if err := a.CheckAsked(asked); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	joined := a.harness != nil
+	a.mu.Unlock()
+	if images && joined && !a.native() && !a.SeesImages() {
+		return stack.Wrap(ErrCannotSeeImages)
+	}
+	return nil
+}
+
 // CheckAsked reports whether the conversation model takes what a caller asked to change
 // about one reply, so a reasoning effort it does not answer to is refused before the turn
 // starts rather than failing it.

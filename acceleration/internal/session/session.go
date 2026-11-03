@@ -621,7 +621,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
 	if s.persisted != nil && s.spec.Text {
 		if s.spec.Caller.UserID != "" {
-			return "", stack.Wrap(errors.New("personal conversations require a command ID"))
+			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
 		if err := s.persisted.Begin(text); err != nil {
 			return "", stack.Wrap(err)
@@ -640,6 +640,38 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
 	return s.openTurn(turnID, text), nil
+}
+
+// errPersonalNeedsCommand is a question to a personal conversation sent without a command ID.
+var errPersonalNeedsCommand = errors.New("personal conversations require a command ID")
+
+// CheckRespond refuses what Respond, or RespondCommand with command id, would refuse a
+// question with a voice note for before its turn starts, for a caller to learn it before work
+// it pays for: hearing the voice note. images is whether photos go with it. heard is what the
+// voice note of a command begun before said then, for a retry to carry rather than hear it
+// again.
+func (s *Session) CheckRespond(ctx context.Context, id string, images bool, asked options.LLM) (heard string, err error) {
+	if err := s.current().CheckTurn(asked, images); err != nil {
+		return "", stack.Wrap(err)
+	}
+	if s.persisted == nil {
+		return "", nil
+	}
+	if id != "" {
+		if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+			return "", stack.Wrap(err)
+		}
+		heard, err := s.persisted.CheckBegin(id)
+		return heard, stack.Wrap(err)
+	}
+	if !s.spec.Text {
+		return "", nil
+	}
+	if s.spec.Caller.UserID != "" {
+		return "", stack.Wrap(errPersonalNeedsCommand)
+	}
+	_, err = s.persisted.CheckBegin("")
+	return "", stack.Wrap(err)
 }
 
 // Durable is whether a question's request id is kept, so a retry of it is answered once.

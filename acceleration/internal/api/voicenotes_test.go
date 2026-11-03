@@ -197,6 +197,104 @@ func (s *VoiceNotesSuite) TestAQuestionWithNeitherTextNorAVoiceNoteIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteIsHeardOnceAndMatchedOnWhatWasSent() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command, typed, said := s.utils.uuid(), "From the morning shift", "the ice machine is empty "+s.utils.uuid()
+	note := s.serve(wavOf(said))
+
+	var answering AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Text: typed, Audio: &AudioSource{Url: note}}, &answering))
+	s.Require().Equal(typed+"\n\n"+said, value(answering.Said))
+	var retried AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Text: typed, Audio: &AudioSource{Url: note}}, &retried))
+	s.Empty(retried.Id, "a retry starts no second turn")
+
+	for name, other := range map[string]CreateResponseRequest{
+		"another voice note": {RequestId: &command, Text: typed, Audio: &AudioSource{Url: s.serve(wavOf(said + " and the fryer"))}},
+		"other typed text":   {RequestId: &command, Text: "From the evening shift", Audio: &AudioSource{Url: note}},
+	} {
+		status, _ := s.serverClient.call(http.MethodPost, s.responses(opened), other)
+		s.Equal(http.StatusConflict, status, name)
+	}
+	s.heard(since, 1)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteRetriedOnAQuestionSentWithoutOneIsAnotherQuestionAndNotHeard() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command := s.utils.uuid()
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Text: "Is the fryer fixed?"}, nil))
+
+	status, _ := s.serverClient.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Text: "Is the fryer fixed?", Audio: &AudioSource{Url: s.serve(wavOf("it is not"))}})
+
+	s.Equal(http.StatusConflict, status)
+	s.heard(since, 0)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteWithAnEffortTheModelDoesNotTakeIsRefusedBeforeItIsHeard() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	effort := "bogus-effort"
+
+	status, _ := s.serverClient.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{ReasoningEffort: &effort, Audio: &AudioSource{Url: s.serve(wavOf("hi " + s.utils.uuid()))}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.heard(since, 0)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteWithAPhotoForAnAgentThatCannotSeeIsRefusedBeforeItIsHeard() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Images: &[]ImageSource{{Url: photo}}, Audio: &AudioSource{Url: s.serve(wavOf("look " + s.utils.uuid()))}})
+
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeNotConfigured, answered.Error.Code)
+	s.heard(since, 0)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledUnderTheSessionsTags() {
+	tags := map[string]string{"team": "kitchen-" + s.utils.uuid()}
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model"), Tags: &tags})
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("tagged " + s.utils.uuid()))}}, nil))
+
+	rows := s.meteredRows(routing.STT, since, 1)
+	s.Equal(tags["team"], rows[0].Tags["team"])
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() {
+	opened := s.noting()
+	said := "big " + s.utils.uuid()
+	atLimit := wavOf(said + strings.Repeat(" ", maxInlineAudio-len(wavOf(said))))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
+
+	s.Require().Equal(http.StatusAccepted, status, "%.300s", payload)
+	s.Equal(said, s.lastAsked(said))
+}
+
+// heard checks that n voice notes were transcribed for the suite's app since since. It hears
+// one more on a session of its own, whose row is written after theirs, and counts n+1.
+func (s *VoiceNotesSuite) heard(since time.Time, n int) {
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(s.noting()),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("counted " + s.utils.uuid()))}}, nil))
+	s.meteredRows(routing.STT, since, n+1)
+}
+
 // noting opens a text session on a noted model, which a test reads what it was asked from.
 func (s *VoiceNotesSuite) noting() Session {
 	return s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})

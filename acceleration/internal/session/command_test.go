@@ -353,6 +353,71 @@ func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
 	s.ErrorIs(err, persistent.ErrCommandConflict, "a retry is matched on the voice note as well as the text")
 }
 
+func (s *SessionSuite) TestAVoiceNoteIsRefusedBeforeItIsHeardForWhatItsCommandWouldBe() {
+	s.persists()
+	running := s.commands()
+
+	_, err := running.CheckRespond(s.ctx, "", false, options.LLM{})
+	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
+
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	_, err = running.CheckRespond(s.ctx, "command-b", false, options.LLM{})
+	s.ErrorIs(err, persistent.ErrResponseRunning, "a question waits for the answer running")
+	_, err = running.CheckRespond(s.ctx, "command-a", false, options.LLM{})
+	s.ErrorIs(err, persistent.ErrCommandConflict, "a question sent without a voice note is another than one with")
+
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the first command should finish")
+	heard, err := running.CheckRespond(s.ctx, "command-v", false, options.LLM{})
+	s.Require().NoError(err)
+	s.Empty(heard, "a command not begun was heard by nobody")
+	note := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("a voice note"), Heard: "the fryer leaks"}
+	_, _, err = running.RespondCommand(s.ctx, "command-v", "the fryer leaks", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+
+	heard, err = running.CheckRespond(s.ctx, "command-v", false, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("the fryer leaks", heard, "a retry carries what the first hearing heard")
+	s.gated.answers(1)
+}
+
+func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedBeforeItIsHeard() {
+	client := chattest.Client(s.T())
+	service := persistent.NewForChat(client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	const channelID = "support-12345678-1234-1234-1234-123456789abd"
+	const agentID = "test-agent"
+	creator := agentID
+	_, err := client.Chat().GetOrCreateChannel(s.ctx, "agent", channelID, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: "alice"}, {UserID: "bob"}},
+			Custom: map[string]any{
+				"support_customer_id": "acme", "support_agent_id": agentID,
+				"support_owner_id": "alice", "support_access": "members",
+				persistent.TriggerField: persistent.SessionCommandTrigger,
+			}},
+	})
+	s.Require().NoError(err)
+	spec := Spec{CustomerID: "acme", Text: true, PersistConversation: true,
+		AgentID: agentID, ConversationID: "agent:" + channelID,
+		LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "alice"}}
+	alice, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	spec.Caller.UserID = "bob"
+	bob, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = bob.Close() })
+
+	_, err = alice.CheckRespond(s.ctx, "stale-session-command", false, options.LLM{})
+
+	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
+}
+
 func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
 	s.persists()
 	running := s.commands()

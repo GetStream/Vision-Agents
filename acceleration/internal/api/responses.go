@@ -68,33 +68,32 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
-	// Heard last, once nothing cheaper can refuse the question, since hearing it is billed.
+	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
+	commandID := value(request.Body.RequestId)
+	// Heard last, once nothing else can refuse the question, since hearing it is billed. A
+	// retry of a question carries what its first hearing heard.
 	text := request.Body.Text
 	var notes []conversation.VoiceNote
 	if request.Body.Audio != nil {
-		spec := found.Spec()
-		note, said, failure := s.hearVoiceNote(ctx, spec.CustomerID, spec.LanguageHints, request.Body.Audio.Url)
+		heard, err := found.CheckRespond(ctx, commandID, len(parts) > 0, asked)
+		if err != nil {
+			return nil, refusedResponse(err)
+		}
+		note, failure := s.hearVoiceNote(ctx, found.Spec(), request.Body.Audio.Url, heard)
 		if failure != nil {
 			return nil, failure
 		}
-		text, notes = withVoiceNote(text, said), []conversation.VoiceNote{note}
+		text, notes = withVoiceNote(text, note.Heard), []conversation.VoiceNote{note}
 	}
 
-	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	var responseID string
-	if id := value(request.Body.RequestId); id != "" && found.Durable() {
-		_, responseID, err = found.RespondCommand(ctx, id, text, "", parts, asked, notes...)
-		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, conflict(err.Error())
-		}
+	if commandID != "" && found.Durable() {
+		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts, asked, notes...)
 	} else {
 		responseID, err = found.Respond(ctx, text, parts, asked)
 	}
-	if errors.Is(err, agent.ErrCannotSeeImages) {
-		return nil, notConfigured(agent.ErrCannotSeeImages.Error())
-	}
 	if err != nil {
-		return nil, invalidRequest(err.Error())
+		return nil, refusedResponse(err)
 	}
 	if len(videos) > 0 {
 		found.SawVideo()
@@ -110,6 +109,18 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	return &createResponseResponse{Body: AgentResponse{Id: responseID, SessionId: found.ID(), Said: &text,
 		Status: AgentResponseStatusRunning, CreatedAt: time.Now().UTC()}}, nil
+}
+
+// refusedResponse is the answer to a question its session refused before the turn started.
+func refusedResponse(err error) error {
+	switch {
+	case errors.Is(err, conversation.ErrCommandConflict):
+		return conflict(err.Error())
+	case errors.Is(err, agent.ErrCannotSeeImages):
+		return notConfigured(agent.ErrCannotSeeImages.Error())
+	default:
+		return invalidRequest(err.Error())
+	}
 }
 
 // listResponses returns a session's turns, oldest first.

@@ -129,6 +129,9 @@ type commandRecord struct {
 	Reply string `json:",omitempty"`
 	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
 	Files []sandbox.Attachment `json:",omitempty"`
+	// Heard is what the voice note sent with the command said, for a retry to carry rather
+	// than hear it again (CheckBegin).
+	Heard string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -1311,6 +1314,31 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	return record.CommandReceipt, nil
 }
 
+// CheckBegin refuses what BeginCommand would refuse id with a voice note for now, for a
+// caller to learn it before work it pays for: hearing the voice note. heard is what the voice
+// note of id said when it was begun, for a retry to carry rather than hear it again, and empty
+// for an id not begun. A command begun without a voice note is another question.
+func (c *Conversation) CheckBegin(id string) (heard string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return "", stack.Wrap(errors.New("conversation is not open"))
+	}
+	if previous, ok := c.data.Commands[id]; ok {
+		if previous.Initiator != c.data.Owner {
+			return "", stack.Wrap(ErrCommandNotFound)
+		}
+		if previous.Heard == "" {
+			return "", stack.Wrap(ErrCommandConflict)
+		}
+		return previous.Heard, nil
+	}
+	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
+		return "", stack.Wrap(ErrResponseRunning)
+	}
+	return "", nil
+}
+
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored. photos are
@@ -1355,7 +1383,13 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	record := commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	for _, photo := range photos {
+		if photo.Heard != "" {
+			record.Heard = photo.Heard
+		}
+	}
+	c.data.Commands[id] = record
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,

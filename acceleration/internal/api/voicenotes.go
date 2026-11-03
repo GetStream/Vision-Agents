@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
@@ -22,11 +23,13 @@ var (
 )
 
 // hearVoiceNote fetches the voice note at source, a URL or a data URI, and transcribes it in
-// the session's languages for its customer. It returns the audio, for a conversation kept in
-// Stream Chat to show, and what was said in it.
-func (s *Server) hearVoiceNote(ctx context.Context, customerID string, languages []string, source string) (conversation.VoiceNote, string, error) {
+// the session's languages for its customer, under its tags. It returns the audio, for a
+// conversation kept in Stream Chat to show, and what was said in it. A note heard before, the
+// retry of a question, is fetched to be matched on and carries what was heard then rather than
+// being transcribed and billed again.
+func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, heard string) (conversation.VoiceNote, error) {
 	if s.streams == nil || s.streams.Transcriptions == nil {
-		return conversation.VoiceNote{}, "", errNoVoiceNotes
+		return conversation.VoiceNote{}, errNoVoiceNotes
 	}
 	// The person is waiting for an answer, so the note is held to what an inline
 	// transcription is.
@@ -34,23 +37,27 @@ func (s *Server) hearVoiceNote(ctx context.Context, customerID string, languages
 	defer cancel()
 	note, err := voiceNoteAt(ctx, s.imageHTTP, source)
 	if err != nil {
-		return conversation.VoiceNote{}, "", invalidRequest(fmt.Sprintf("the voice note could not be used: %v", err))
+		return conversation.VoiceNote{}, invalidRequest(fmt.Sprintf("the voice note could not be used: %v", err))
+	}
+	if heard != "" {
+		note.Heard = heard
+		return note, nil
 	}
 
-	held, recording := recordingOf(options.STT{Languages: languages}, "", note.Audio)
+	held, recording := recordingOf(options.STT{Languages: spec.LanguageHints}, "", note.Audio)
 	transcript, _, failure := s.streams.Transcriptions.Transcribe(ctx,
-		sttrouter.Recording{CustomerID: customerID, Options: held, Source: recording})
+		sttrouter.Recording{CustomerID: spec.CustomerID, Tags: spec.Tags, Options: held, Source: recording})
 	if answer, refused := moneyError(failure); refused {
-		return conversation.VoiceNote{}, "", answer
+		return conversation.VoiceNote{}, answer
 	}
 	if failure != nil {
-		return conversation.VoiceNote{}, "", modelFailed(failure)
+		return conversation.VoiceNote{}, modelFailed(failure)
 	}
-	said := strings.TrimSpace(transcript.Text)
-	if said == "" {
-		return conversation.VoiceNote{}, "", errNothingHeard
+	note.Heard = strings.TrimSpace(transcript.Text)
+	if note.Heard == "" {
+		return conversation.VoiceNote{}, errNothingHeard
 	}
-	return note, said, nil
+	return note, nil
 }
 
 // voiceNoteAt is the audio at source: a data URI's bytes, or what a URL answers, fetched

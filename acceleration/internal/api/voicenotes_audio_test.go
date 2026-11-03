@@ -5,12 +5,16 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
@@ -39,8 +43,9 @@ var (
 // most the inline limit, by URL or data URI.
 type VoiceNoteAudioSuite struct {
 	suite.Suite
-	served map[string]cdnFile
-	cdn    *httptest.Server
+	served  map[string]cdnFile
+	cdn     *httptest.Server
+	fetches atomic.Int32
 }
 
 type cdnFile struct {
@@ -54,7 +59,9 @@ func TestVoiceNoteAudioSuite(t *testing.T) {
 
 func (s *VoiceNoteAudioSuite) SetupTest() {
 	s.served = map[string]cdnFile{}
+	s.fetches.Store(0)
 	s.cdn = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.fetches.Add(1)
 		file, ok := s.served[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
@@ -152,28 +159,68 @@ func (s *VoiceNoteAudioSuite) TestADataURIThatDoesNotReadIsRefused() {
 }
 
 func (s *VoiceNoteAudioSuite) TestADeploymentThatTranscribesNothingRefusesAVoiceNote() {
-	_, _, err := (&Server{}).hearVoiceNote(context.Background(), "acme", nil, "data:audio/wav;base64,AAAA")
+	_, err := (&Server{}).hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme"}, "data:audio/wav;base64,AAAA", "")
 
 	s.Equal(errNoVoiceNotes, err)
 }
 
 func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsHeardInTheSessionsLanguages() {
-	config, err := routing.DefaultConfig()
-	s.Require().NoError(err)
 	heard := &heardTranscriber{}
-	transcribers := sttrouter.NewTranscriberRegistry()
-	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil })
-	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Config: config[routing.STT], Transcribers: transcribers})
-	s.Require().NoError(err)
-	server := &Server{streams: &Streams{Transcriptions: recordings}}
+	server := &Server{streams: &Streams{Transcriptions: s.recordings(heard)}}
 
-	_, said, err := server.hearVoiceNote(context.Background(), "acme", []string{"es"},
-		"data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wavOf("hola")))
+	note, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme", LanguageHints: []string{"es"}},
+		"data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wavOf("hola")), "")
 
 	s.Require().NoError(err)
-	s.Equal("se oye", said)
+	s.Equal("se oye", note.Heard)
 	s.Equal([]string{"es"}, heard.recording.Languages)
 	s.Equal(wavOf("hola"), heard.recording.Audio)
+}
+
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsHeardWithinTheInlineDeadline() {
+	heard := &heardTranscriber{}
+	server := &Server{streams: &Streams{Transcriptions: s.recordings(heard)}}
+	started := time.Now()
+
+	_, err := server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme"},
+		"data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wavOf("hola")), "")
+
+	s.Require().NoError(err)
+	s.Require().False(heard.deadline.IsZero(), "a person waits on the note, so hearing it has a deadline")
+	s.WithinDuration(started.Add(inlineDeadline), heard.deadline, 5*time.Second)
+}
+
+func (s *VoiceNoteAudioSuite) TestARouterFetchesAVoiceNoteOnlyFromAPublicAddress() {
+	server, err := NewServer(Options{
+		Routers: map[routing.Modality]routing.Inspector{routing.LLM: idleInspector{}},
+		Auth: auth.Func(func(context.Context, *http.Request) (auth.Principal, error) {
+			return auth.Principal{}, nil
+		}),
+		AuthMode: auth.Custom,
+	})
+	s.Require().NoError(err)
+	heard := &heardTranscriber{}
+	server.streams = &Streams{Transcriptions: s.recordings(heard)}
+	s.served["/note"] = cdnFile{kind: "audio/wav", body: wavOf("hola")}
+
+	_, err = server.hearVoiceNote(context.Background(), session.Spec{CustomerID: "acme"}, s.cdn.URL+"/note", "")
+
+	s.ErrorContains(err, "non-public address", "the suite's CDN is on loopback")
+	s.Zero(s.fetches.Load(), "the note is refused before it is fetched")
+	s.Nil(heard.recording.Audio, "nothing is heard")
+}
+
+func (s *VoiceNoteAudioSuite) TestAnImageARunFetchesIsHeldToTheImageLimit() {
+	png := []byte("\x89PNG\r\n\x1a\n")
+	at := append(png, make([]byte, maxRunImageBytes-len(png))...)
+	s.served["/photo"] = cdnFile{kind: "image/png", body: at}
+	_, kind, err := fetchImage(context.Background(), s.cdn.Client(), s.cdn.URL+"/photo")
+	s.Require().NoError(err, "exactly the limit is fetched")
+	s.Equal("image/png", kind)
+
+	s.served["/photo"] = cdnFile{kind: "image/png", body: append(at, 0)}
+	_, _, err = fetchImage(context.Background(), s.cdn.Client(), s.cdn.URL+"/photo")
+	s.EqualError(err, "it is over 5 MB", "an image is held to what a vision provider takes, not to a voice note's limit")
 }
 
 func (s *VoiceNoteAudioSuite) TestWhatWasSaidFollowsWhatWasTyped() {
@@ -187,11 +234,27 @@ func (s *VoiceNoteAudioSuite) fetched(body []byte, kind string) (conversation.Vo
 	return voiceNoteAt(context.Background(), s.cdn.Client(), s.cdn.URL+"/note")
 }
 
-// heardTranscriber keeps the recording it was handed, and hears the same words in any.
-type heardTranscriber struct{ recording stt.Recording }
+// recordings transcribes every recording with heard.
+func (s *VoiceNoteAudioSuite) recordings(heard *heardTranscriber) *sttrouter.Recordings {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(routing.Spec) (stt.Transcriber, error) { return heard, nil })
+	recordings, err := sttrouter.NewRecordings(sttrouter.Options{Config: config[routing.STT], Transcribers: transcribers})
+	s.Require().NoError(err)
+	return recordings
+}
 
-func (t *heardTranscriber) Transcribe(_ context.Context, recording stt.Recording) (stt.Transcription, error) {
+// heardTranscriber keeps the recording it was handed and the deadline it was handed it under,
+// and hears the same words in any.
+type heardTranscriber struct {
+	recording stt.Recording
+	deadline  time.Time
+}
+
+func (t *heardTranscriber) Transcribe(ctx context.Context, recording stt.Recording) (stt.Transcription, error) {
 	t.recording = recording
+	t.deadline, _ = ctx.Deadline()
 	return stt.Transcription{Text: " se oye "}, nil
 }
 
