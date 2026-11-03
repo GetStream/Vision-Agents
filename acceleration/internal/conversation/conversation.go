@@ -1354,14 +1354,15 @@ func (c *Conversation) CheckBegin(id string) (heard string, err error) {
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored. photos are
-// what the person sent with it (PublishPhotos), which their message shows.
+// what the person sent with it (PublishPhotos), which their message shows; text may be empty
+// when there are some.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
+	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > 1024*1024 {
 		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
 	}
 	digest := commandDigest(text, photos)

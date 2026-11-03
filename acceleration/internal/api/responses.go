@@ -38,7 +38,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil) {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0) {
 		return nil, invalidRequest("there is nothing to answer")
 	}
 

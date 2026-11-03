@@ -73,6 +73,31 @@ func (s *ResponsesAskedSuite) TestAPhotoQuestionIsShownToTheModelAndOnThePersons
 	s.Len(s.chat.Uploads()[before:], 1)
 }
 
+func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextIsAQuestionTheModelIsShown() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	command := s.utils.uuid()
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+command))
+	before := len(s.vision.requests())
+
+	var answering AgentResponse
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{RequestId: &command, Images: &[]ImageSource{{Url: photo}}}, &answering))
+
+	s.NotEmpty(answering.Id, "a turn started")
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests()[before:] {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the photo")
+	message := s.personsMessage(opened, command)
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"image"`)
+}
+
 // personsMessage is the message a command was written as in the session's channel.
 func (s *ResponsesAskedSuite) personsMessage(opened Session, command string) map[string]any {
 	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
