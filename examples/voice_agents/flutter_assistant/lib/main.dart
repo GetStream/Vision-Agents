@@ -1,7 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
-import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
+import 'package:stream_core_flutter/core.dart';
 import 'package:flutter/services.dart';
 
 import 'assistant.dart';

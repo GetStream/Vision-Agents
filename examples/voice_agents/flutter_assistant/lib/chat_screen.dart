@@ -5,6 +5,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
+import 'package:stream_core_flutter/core.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 import 'agent_chat.dart';
