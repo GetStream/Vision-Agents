@@ -266,6 +266,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A session search matches the word still being typed
+
+A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
+
 ### A GPT-Live call hung up before its last report is billed its seconds
 
 A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
