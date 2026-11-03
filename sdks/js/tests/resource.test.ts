@@ -632,6 +632,30 @@ describe("responses", () => {
     assert.deepEqual(Object.keys(plain).sort(), ["request_id", "text"]);
   });
 
+  it("sends what the person did in a reply's UI with their words, still under a request id", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-1/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
+    });
+
+    await held.responses.create("Update the plan", {
+      uiAction: { v: 1, message_id: "reply-1", format: "a2ui", name: "update_plan", payload: { pace: "relaxed" } },
+    });
+    const acted = router.last.body as Record<string, unknown>;
+    await held.responses.create("Plain", { uiAction: {} });
+    const empty = router.last.body as Record<string, unknown>;
+
+    assert.deepEqual(acted["ui_action"], {
+      v: 1,
+      message_id: "reply-1",
+      format: "a2ui",
+      name: "update_plan",
+      payload: { pace: "relaxed" },
+    });
+    assert.match(String(acted["request_id"]), /^[0-9a-f-]{36}$/, "the router keeps the action only under a request id");
+    assert.deepEqual(Object.keys(empty).sort(), ["request_id", "text"], "an empty action is not sent");
+  });
+
   it("reads one turn's items rather than the whole conversation's", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/responses", {
       status: 202,
