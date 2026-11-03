@@ -254,6 +254,22 @@ func (s *MessageHooksSuite) TestAVoiceRecordingForAConfigInARegionThatHearsNothi
 	s.Empty(s.sttRowsSince(since))
 }
 
+// Control, as on base: a deployment that hears nothing hands a worker a message with text and a
+// voice recording as the text alone, with no note about the recording.
+func (s *MessageHooksSuite) TestAVoiceRecordingSentWithTextToADeploymentThatHearsNothingIsTheTextAlone() {
+	streams := s.router.streams
+	deaf := *streams
+	deaf.Transcriptions = nil
+	s.router.streams = &deaf
+	defer func() { s.router.streams = streams }()
+	worker := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage(s.namesConfig(), "About line two", s.recordingAt("the fryer is leaking"))))
+
+	s.Equal("About line two", s.handed(worker).Text)
+}
+
 // A speech-to-speech session answers only on its call, so a recording written to it is not
 // heard: nothing is billed for a message it does not answer in writing.
 func (s *MessageHooksSuite) TestAVoiceRecordingToASpeechToSpeechSessionIsNotHeard() {
