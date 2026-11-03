@@ -6860,7 +6860,7 @@ components:
           type: number
       type: object
     Quota:
-      description: 'What one end user may spend in a UTC day. Each number is the first set of the user''s own (/v1/policies/users/{user_id}), the app''s, the organization''s and the router''s default. A quota set here counts everything recorded with the user: what their devices ask for and what the app''s backend asks for in their name. (An app''s quota counted devices only before; the router''s default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.'
+      description: 'What one end user may spend in a UTC day. Each number is the first set of the user''s own (/v1/policies/users/{user_id}), the app''s, the organization''s and the router''s default. A quota set here counts everything recorded with the user: what their devices ask for and what the app''s backend asks for in their name. (An app''s quota counted devices only before; the router''s default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router''s default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.'
       properties:
         messages_per_user_per_day:
           description: 'How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level''s applies: the app''s, then the organization''s, then the router''s default.'
@@ -19481,7 +19481,7 @@ paths:
       description: |-
         Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole: the vendor's cost in `rates` and `tiers`, for reference, and the price customers are charged in `prices` and `price_tiers`, both set outright: nothing is worked out from the cost, and no markup is added. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
 
-        Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with no entry of its own is unpriced, never priced by another region's or the other `byok` state's.
+        Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with no entry of its own is unpriced, never priced by another region's or the other `byok` state's. A new `llm`, `knowledge` or `sandbox` item is written with its `byok` entry beside it, at a fifth of the vendor's rates, unless the change sets that entry itself or one is in force, and a withdrawn one has its `byok` entry withdrawn with it; a renamed item's `byok` entry keeps the old one's SKU.
 
         Every item has one SKU, kept across its price changes, which each row it prices records. An entry without `sku` keeps the item's, or gives a new item one made from its modality, provider, model, `when`, `region` and `byok` (`llm-openai-gpt-6-luna-service-tier-flex-us`, `llm-openai-gpt-6-luna-us-byok`), lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past one another item has had. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, when that item is withdrawn by the same change or is no longer in force; else, or when a change scheduled later gives it to another item, the change is a 400 `sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.
 
@@ -21098,6 +21098,7 @@ paths:
       summary: Buy a number, which starts its monthly charge
   /v1/phone/numbers/{e164}:
     delete:
+      description: 'A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.'
       operationId: releasePhoneNumber
       parameters:
         - description: The number in +15551234567 form.
@@ -21129,6 +21130,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
         "503":

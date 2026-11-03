@@ -144,11 +144,13 @@ func (s *PriceListsSuite) TestPricesNameTheirRegionAndBYOK() {
 			mine = append(mine, price)
 		}
 	}
-	s.Require().Len(mine, 3)
-	s.Equal([]string{pricing.RegionEU, pricing.RegionUS, pricing.RegionUS}, []string{mine[0].Region, mine[1].Region, mine[2].Region})
-	s.Equal([]bool{false, false, true}, []bool{mine[0].BYOK, mine[1].BYOK, mine[2].BYOK}, "each item's BYOK price after it")
-	s.Equal(0.2, mine[2].Rates["input_tokens"].USD)
-	s.Equal("llm-t1c-"+model+"-us-byok", mine[2].SKU)
+	s.Require().Len(mine, 4, "the eu entry is written with a BYOK twin of its own")
+	s.Equal([]string{pricing.RegionEU, pricing.RegionEU, pricing.RegionUS, pricing.RegionUS},
+		[]string{mine[0].Region, mine[1].Region, mine[2].Region, mine[3].Region})
+	s.Equal([]bool{false, true, false, true}, []bool{mine[0].BYOK, mine[1].BYOK, mine[2].BYOK, mine[3].BYOK},
+		"each item's BYOK price after it")
+	s.Equal(0.2, mine[3].Rates["input_tokens"].USD)
+	s.Equal("llm-t1c-"+model+"-us-byok", mine[3].SKU)
 	s.Contains(raw, `"region":"us"`)
 	s.Contains(raw, `"byok":true`)
 	s.Contains(raw, `"byok":false`)

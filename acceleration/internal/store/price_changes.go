@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -145,8 +146,12 @@ type PriceChangeWrite struct {
 	Reason string
 	Source string
 	// EffectiveAt nil, or no later than now, is now.
-	EffectiveAt    *time.Time
-	Entries        []PriceEntryWrite
+	EffectiveAt *time.Time
+	Entries     []PriceEntryWrite
+	// Expand, when set, is the entries the change writes on the list it lands on, Entries and
+	// those written beside them, before their SKUs are assigned. A change sent again under its
+	// idempotency key is matched on Entries alone.
+	Expand         func(PriceListAt, []PriceEntryWrite) []PriceEntryWrite
 	IdempotencyKey string
 	ActorID        string
 	ActorName      string
@@ -264,7 +269,11 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
 		if err != nil {
 			return err
 		}
-		writes, err := before.Assign(write.Entries)
+		entries := write.Entries
+		if write.Expand != nil {
+			entries = write.Expand(before, entries)
+		}
+		writes, err := before.Assign(entries)
 		if err != nil {
 			return refusedByCheck{err}
 		}
@@ -348,9 +357,17 @@ func (r refusedByCheck) Error() string { return r.err.Error() }
 // written, or when it was no later than the moment the change was made, which it then took.
 // Entries are compared in the order they were written, so a resubmit must list them in the
 // order the first did: the same entries in another order are another body. An entry that
-// asked for no SKU matches the one it was given.
+// asked for no SKU matches the one it was given. With Expand, the entries it wrote beside
+// those asked for are left out of the comparison.
 func samePriceChange(change PriceChange, rows []PriceEntry, write PriceChangeWrite) bool {
 	_, name, _ := cutStamp(change.Name)
+	if write.Expand != nil {
+		asked := map[string]bool{}
+		for _, entry := range write.Entries {
+			asked[prices.Name(entry.Entry)] = true
+		}
+		rows = slices.DeleteFunc(slices.Clone(rows), func(row PriceEntry) bool { return !asked[prices.Name(row.Entry())] })
+	}
 	if change.Kind != PriceChangeAPI || name != write.Name || change.Reason != write.Reason || change.Source != write.Source ||
 		len(rows) != len(write.Entries) {
 		return false

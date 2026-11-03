@@ -515,6 +515,9 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	// give it back to.
 	if seller != nil {
 		if err := seller.ReleaseNumber(ctx, e164); err != nil {
+			if age := s.now().Sub(held.PurchasedAt); age < NumberSettles && errors.As(err, new(*VendorError)) {
+				return stack.Wrap(fmt.Errorf("%w: %s was bought %s ago: %w", ErrNumberSettling, e164, age.Round(time.Second), err))
+			}
 			return err
 		}
 	}
