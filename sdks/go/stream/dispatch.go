@@ -105,6 +105,9 @@ type InboundMessage struct {
 	Custom map[string]string
 	// Text is what was written.
 	Text string
+	// Images are the photos sent with it, each a URL to fetch and its MIME type when the
+	// router knows it. Nil when none was sent.
+	Images []Image
 	// MessageID is the message in the channel, for replying in its thread.
 	MessageID string
 	// UserID and UserName are who wrote it.
@@ -711,11 +714,27 @@ func messageOf(frame Frame) InboundMessage {
 		RequestID:   frame.String("request_id"),
 		Custom:      customOf(frame, "custom"),
 		Text:        frame.String("text"),
+		Images:      imagesOf(frame),
 		MessageID:   frame.String("message_id"),
 		UserID:      frame.String("user_id"),
 		UserName:    frame.String("user_name"),
 		At:          timeOf(frame.String("at")),
 	}
+}
+
+// imagesOf reads the photos a message frame carries. An entry with no URL is dropped, since
+// there is nothing to fetch, and so is one that is not an object.
+func imagesOf(frame Frame) []Image {
+	sent, _ := frame["images"].([]any)
+	var images []Image
+	for _, entry := range sent {
+		described, _ := entry.(map[string]any)
+		image := Image{URL: Frame(described).String("url"), MIME: Frame(described).String("mime_type")}
+		if image.URL != "" {
+			images = append(images, image)
+		}
+	}
+	return images
 }
 
 // timeOf reads an RFC 3339 timestamp, leaving the zero time for one that cannot be read:
