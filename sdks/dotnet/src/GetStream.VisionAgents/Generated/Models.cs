@@ -10440,17 +10440,26 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("audio")]
+        public AudioSource? Audio { get; set; } = default!;
+
+        /// <summary>
         /// The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("client_id")]
         public string? ClientId { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
+        /// <summary>
+        /// What to answer, as though it had been said. May be empty when audio carries the question.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
 

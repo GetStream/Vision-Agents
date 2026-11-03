@@ -2642,7 +2642,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "RespondRequest" => {
-          properties: %w[client_id request_id text].freeze,
+          properties: %w[audio client_id request_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "ResumeHistory" => {
