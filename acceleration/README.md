@@ -2444,11 +2444,13 @@ The default `--source-auth jwt` is for a source behind Stream's gateway, such as
 `--source-auth server` is for a source router reached directly.
 
 A scheduled task active on the source is imported paused, and so is a campaign running or
-scheduled there, since the source goes on delivering them until the move is cut over. A contact
-in the middle of a call on the source waits here for its next attempt. Each is marked as paused by
+scheduled there, since the source goes on delivering them until the move is cut over. Each is
+marked as paused by
 the move; a change carried later sets the mark again from the source's state, so one the user
 paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
-any other edit keeps it.
+any other edit keeps it. A contact in the middle of a call on the source is settled here from that
+call once the mark is cleared, as one whose router died is: its next attempt waits its delay. One
+whose answered call still awaits its outcome has the transcript read here then.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes

@@ -130,6 +130,8 @@ SELECT * FROM claimed ORDER BY next_attempt_at, seq`,
 
 // TakeOverExpired leases to owner up to limit contacts whose call's runner stopped renewing its
 // lease, most likely because it died. The new owner settles the call; it never dials again.
+// A contact of a campaign a data move paused is the source's until the cut-over, and its dial
+// may not have been imported yet.
 func (s *Store) TakeOverExpired(ctx context.Context, owner string, now time.Time, lease time.Duration, limit int) ([]Claimed, error) {
 	if owner == "" {
 		return nil, stack.Wrap(errors.New("store: a take-over needs an owner"))
@@ -140,8 +142,9 @@ func (s *Store) TakeOverExpired(ctx context.Context, owner string, now time.Time
 
 	var contacts []Contact
 	err := s.db.NewRaw(`WITH expired AS (
-	SELECT id FROM campaign_contacts
+	SELECT id FROM campaign_contacts cc
 	WHERE stage = ? AND leased_until < ?
+		AND NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)
 	ORDER BY leased_until
 	LIMIT ?
 	FOR UPDATE SKIP LOCKED
@@ -377,7 +380,8 @@ type Classifying struct {
 // ClaimClassifications hands owner up to limit answered dials whose transcript should be written
 // by now. Each is put off by lease, so another runner retries it if this one dies, and its
 // contact is leased to owner so owner can settle it. Only a contact's latest answered dial is
-// read, and not while another runner holds the contact.
+// read, and not while another runner holds the contact, nor while a data move's source still
+// reads it (move_paused).
 func (s *Store) ClaimClassifications(ctx context.Context, owner string, now time.Time, lease time.Duration, limit int) ([]Classifying, error) {
 	if owner == "" {
 		return nil, stack.Wrap(errors.New("store: a claim needs an owner"))
@@ -394,6 +398,7 @@ func (s *Store) ClaimClassifications(ctx context.Context, owner string, now time
 	JOIN campaign_contacts cc ON cc.id = ca.contact_id
 	WHERE ca.classify_state = ? AND ca.classify_after <= ? AND cc.stage = ?
 		AND (cc.leased_by = '' OR cc.leased_until IS NULL OR cc.leased_until < ?)
+		AND NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)
 		AND NOT EXISTS (SELECT 1 FROM campaign_attempts newer
 			WHERE newer.contact_id = ca.contact_id AND newer.classify_state = ca.classify_state
 			AND (newer.started_at, newer.dial) > (ca.started_at, ca.dial))
