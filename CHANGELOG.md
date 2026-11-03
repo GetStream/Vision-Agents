@@ -2,9 +2,6 @@
 
 ## Features
 
-### A user who has spent their day still reads their sessions
-
-A device caller whose daily quota is spent is no longer refused a read: `GET` of a session, its responses and the rest answer as before, with `X-Quota-Remaining: 0` and the other quota headers. Opening a session, a turn, a run and a socket are still a 429, as is any other write (AI-2187).
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
