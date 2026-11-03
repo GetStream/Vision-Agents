@@ -2451,6 +2451,25 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.Equal(llm.Assistant, exchange[1].Role)
 }
 
+// A photo sent alone into a call is remembered as its note: an empty message is one a
+// memory store drops, which leaves the reply about the photo answering nothing.
+func (s *AgentSuite) TestAPhotoSentAloneIsRememberedAsItsNote() {
+	s.remembers = &stubMemory{}
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.join(true)
+
+	_, err := s.agent.RespondTo(s.ctx, "", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
+	exchange := s.remembers.remembered()[0]
+	s.Require().Len(exchange, 2, "what was asked and what was answered")
+	s.Equal(llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]"}, exchange[0])
+}
+
 func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 	s.delegates()
 	s.join(true)
