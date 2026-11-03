@@ -90,6 +90,21 @@ func (s *MessageHooksSuite) TestAVoiceRecordingToADispatchSessionReachesItsWorke
 	s.Equal(session, s.meteredRows(routing.STT, since, 1)[0].SessionID)
 }
 
+// A voice recording that cannot be heard, sent alone to a running session whose agent leaves
+// text to dispatch, reaches its worker as the note saying so: never as an empty text, which a
+// worker's session refuses to answer (nothingToAnswer).
+func (s *MessageHooksSuite) TestAnUnheardVoiceRecordingToADispatchSessionReachesItsWorkerAsANote() {
+	session := s.dispatching()
+	worker := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage(s.ownedBy(s.customerID()), "", s.recordingFrom(s.images.URL+"/gone.aac"))))
+
+	handed := s.handed(worker)
+	s.Equal(session, handed.SessionID)
+	s.Equal(unheardRecording, handed.Text)
+}
+
 // A voice recording sent to a running session the router answers reaches its model as what it
 // says, after the text sent with it, and is billed to that session.
 func (s *MessageHooksSuite) TestAVoiceRecordingToARunningSessionReachesTheModelAsWhatItSays() {
