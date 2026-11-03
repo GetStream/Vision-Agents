@@ -48,7 +48,7 @@ const refreshAhead = 10 * time.Minute
 
 // retryAfter is how long a refused subscription waits before it is asked for again the first
 // time, and how long one whose connection waits on a renewal or a reconnect waits each time:
-// the plugin system's, a choice. Each further refusal doubles it, up to maxRetryAfter.
+// a choice. Each further refusal doubles it, up to maxRetryAfter.
 const retryAfter = 15 * time.Minute
 
 // maxRetryAfter is the longest a refused subscription waits: a day, the longest grant the
@@ -75,7 +75,7 @@ const minLook = time.Second
 // due row, one claim at a time.
 const claimBatch = 1
 
-// runTimeout bounds the conversation one event opens: the plugin system's choice.
+// runTimeout bounds the conversation one event opens: a choice.
 const runTimeout = 15 * time.Minute
 
 // Options configures a Service. Every field but Logger and Lease is required.

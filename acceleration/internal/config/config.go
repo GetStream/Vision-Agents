@@ -66,7 +66,8 @@ type Config struct {
 	ListenFD  int    `koanf:"listen_fd"`
 	PublicURL string `koanf:"public_url"`
 	LogLevel  string `koanf:"log_level"`
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string `koanf:"dashboard_url"`
 	// TrustedProxies are the CIDR ranges this deployment's own proxies sit in, and they
 	// decide how much of X-Forwarded-For is believed. Empty means none of it is.
