@@ -248,6 +248,10 @@ A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`a
 
 `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`), `setOperatorProviderApp` and `PUT /v1/agents/connectors/{id}/oauth-client` no longer write the message hook into the pinned Stream app's `event_hooks`, so the entry "A provider app points its Stream app's message hook at the router" no longer holds. `setOperatorProviderApp` no longer answers a 503 when Stream refuses the hook. `go run ./cmd/phone hooks -url <base>` writes the call hook only. Stream Chat delivery (`POST /v1/chat/internal/messages`) is the only way Chat text reaches the router; a local router behind a tunnel gets no text written straight into a thread channel. `/v1/chat/hooks/stream` is still served for one release, as a way back. To drop an old message hook: `go run ./cmd/phone hooks -url <base> -remove <base>` (AI-2352).
 
+### The Rust SDK refuses `plugins` and `plugin_events` in agent.yaml
+
+A non-empty `plugins:` or `plugin_events:` in the `agent.yaml` of a Rust agent folder (`Folder::load`, `Agent::from_folder`) now fails with `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as in the Go SDK. It was synced, with a warning. An empty or missing key loads as before, and `Settings::plugins` is gone (AI-2529).
+
 ### The PHP SDK refuses `plugins` in agent.yaml
 
 A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. An empty `plugins` key loads as before. `Agent` no longer takes a `logger`: it only carried the warning that `plugins` are deprecated.

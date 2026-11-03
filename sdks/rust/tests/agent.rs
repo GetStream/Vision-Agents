@@ -143,7 +143,7 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
     write(
         root.path(),
         "agent.yaml",
-        "name: jean\nharness: default\nsandbox: daytona\nplugins: [sentry]\ngreeting:\n  text: Hello.\n  mode: variation\n",
+        "name: jean\nharness: default\nsandbox: daytona\ngreeting:\n  text: Hello.\n  mode: variation\n",
     );
     let agent = Agent::from_folder(root.path())
         .unwrap()
@@ -156,7 +156,6 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
     assert_eq!(body["harness"], "default");
     assert_eq!(body["subagent"], "openai/gpt-5.6");
     assert_eq!(body["sandbox"], "daytona");
-    assert_eq!(body["plugins"], json!(["sentry"]));
     assert_eq!(
         body["greeting"],
         json!({"text": "Hello.", "mode": "variation"})
@@ -1156,46 +1155,36 @@ async fn a_failing_connections_list_is_wrapped_with_the_connector_name() {
 }
 
 #[tokio::test]
-async fn sync_the_directory_in_plugin_warning_dir() {
-    let Ok(root) = std::env::var("PLUGIN_WARNING_DIR") else {
-        return;
-    };
-    let server = Server::start().await;
-    synced(&server);
-    Agent::from_folder(root)
-        .unwrap()
-        .client(server.client())
-        .sync()
-        .await
-        .unwrap();
-}
-
-#[test]
-fn plugins_still_sync_and_are_warned_of_once_per_sync() {
-    let warning = "agent.yaml plugins are deprecated: rename plugins to connectors";
-    for (declaration, warnings) in [
-        ("name: jean\nplugins: [sentry]\n", 1),
-        ("name: jean\nconnectors: [sentry]\n", 0),
-    ] {
+async fn a_folder_naming_plugins_is_refused_and_one_naming_none_syncs() {
+    for key in ["plugins", "plugin_events"] {
         let root = tempfile::tempdir().unwrap();
-        write(root.path(), "agent.yaml", declaration);
+        write(
+            root.path(),
+            "agent.yaml",
+            &format!("name: jean\n{key}: [sentry]\n"),
+        );
 
-        let ran = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "sync_the_directory_in_plugin_warning_dir",
-                "--nocapture",
-            ])
-            .env("PLUGIN_WARNING_DIR", root.path())
-            .output()
+        let error = Agent::from_folder(root.path()).err().unwrap().to_string();
+
+        assert!(
+            error.contains(&format!(
+                "{key} is no longer read: plugins were replaced by connectors, so name the provider under connectors"
+            )) && error.contains("agent.yaml"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // An empty or null key was never sent: the file syncs without it, as it did.
+    for declaration in ["plugins: []\n", "plugins:\n", "plugin_events: []\n"] {
+        let server = Server::start().await;
+        let body = synced_connectors(&server, &format!("name: jean\n{declaration}"))
+            .await
             .unwrap();
 
-        let stderr = String::from_utf8_lossy(&ran.stderr);
-        assert!(ran.status.success(), "{stderr}");
-        assert_eq!(
-            stderr.matches(warning).count(),
-            warnings,
-            "{declaration:?}: {stderr}"
+        assert!(body.get("plugins").is_none(), "{declaration:?}: {body}");
+        assert!(
+            body.get("plugin_events").is_none(),
+            "{declaration:?}: {body}"
         );
     }
 }
