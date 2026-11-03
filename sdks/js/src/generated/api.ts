@@ -3076,7 +3076,10 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Give a number back, which stops its monthly charge */
+        /**
+         * Give a number back, which stops its monthly charge
+         * @description A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
+         */
         readonly delete: operations["releasePhoneNumber"];
         readonly options?: never;
         readonly head?: never;
@@ -7969,7 +7972,7 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
+        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
         readonly Quota: {
             /**
              * Format: int64
@@ -10400,7 +10403,7 @@ export type components = {
         readonly "X-Stream-Balance-Warning": "low" | "exhausted";
         /** @description true when some of X-Stream-Cost-Micros is the router's own count, because the vendor never said what the work used. Absent otherwise. */
         readonly "X-Stream-Cost-Estimated": "true";
-        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse, sends none. */
+        /** @description What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user's device. An operation that answers before its work runs, such as createResponse or respondSession, sends none. */
         readonly "X-Stream-Cost-Micros": number;
     };
     pathItems: never;
@@ -17568,6 +17571,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

@@ -56,6 +56,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -90,6 +95,10 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Give a number back, which stops its monthly charge
 
+     A vendor still setting up a number bought in the last minute may refuse to give it back: that is a
+    409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure
+    is a 503 `phone_vendor_failed`.
+
     Args:
         e164 (str): The number in +15551234567 form.
 
@@ -119,6 +128,10 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Give a number back, which stops its monthly charge
 
+     A vendor still setting up a number bought in the last minute may refuse to give it back: that is a
+    409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure
+    is a 503 `phone_vendor_failed`.
+
     Args:
         e164 (str): The number in +15551234567 form.
 
@@ -142,6 +155,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Any | ErrorResponse]:
     """Give a number back, which stops its monthly charge
+
+     A vendor still setting up a number bought in the last minute may refuse to give it back: that is a
+    409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure
+    is a 503 `phone_vendor_failed`.
 
     Args:
         e164 (str): The number in +15551234567 form.
@@ -169,6 +186,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> Any | ErrorResponse | None:
     """Give a number back, which stops its monthly charge
+
+     A vendor still setting up a number bought in the last minute may refuse to give it back: that is a
+    409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure
+    is a 503 `phone_vendor_failed`.
 
     Args:
         e164 (str): The number in +15551234567 form.

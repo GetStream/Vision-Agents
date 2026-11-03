@@ -90,6 +90,10 @@ type Request struct {
 	PriceVersion string `bun:"price_version,notnull"`
 	// SKU is the priced item's, as its entry names it: empty for work no entry matched.
 	SKU string `bun:"sku,notnull"`
+	// Region and BYOK are the priced item's, whether or not an entry matched it: where the
+	// work ran, and whether on the customer's own key. Rows from before them read "" and false.
+	Region string `bun:"region,notnull"`
+	BYOK   bool   `bun:"byok,notnull"`
 	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on the
 	// row is CostMicros - BaseCostMicros.
 	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`

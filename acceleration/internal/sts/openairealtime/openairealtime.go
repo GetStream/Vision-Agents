@@ -14,6 +14,7 @@
 package openairealtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -901,6 +902,19 @@ func (s *STS) SampleRate() int { return s.options.Vendor.OutputSampleRate }
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return s.capabilities }
 
+// TranscriptionModel is the transcriber OpenAI bills writing down the caller's turns to, apart
+// from the conversation, and empty where nothing is billed so: no transcript was asked for, or
+// the vendor is not OpenAI.
+func (s *STS) TranscriptionModel() string {
+	if s.dialect != DialectOpenAI {
+		return ""
+	}
+	if configured := s.transcription(); configured != nil {
+		return configured.Model
+	}
+	return ""
+}
+
 // Client exposes the underlying WebSocket so callers can use the protocol directly.
 func (s *STS) Client() *websocket.Conn { return s.conn }
 
@@ -1304,10 +1318,7 @@ func (s *STS) transcribed(event serverEvent) {
 	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
 		return
 	}
-	model := openaiTranscriber
-	if configured := s.transcription(); configured != nil && configured.Model != "" {
-		model = configured.Model
-	}
+	model := cmp.Or(s.TranscriptionModel(), openaiTranscriber)
 	if used.Type == "duration" {
 		if used.Seconds > 0 {
 			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})
