@@ -1,6 +1,8 @@
 package campaign
 
 import (
+	"strings"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -15,7 +17,7 @@ func (s *CampaignSuite) TestACampaignCallsInstructionsCarryTheContactsVariables(
 	contact := store.Contact{ID: "contact-1", ToNumber: "+15550000002", Instructions: "They asked for a call after five.",
 		Variables: map[string]string{"first_name": "Anna", "plan": "Gold"}}
 
-	spec := campaignSpec(config, campaign, contact, phone.Placed{SessionID: "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e", VendorCallID: "v-1"})
+	spec := campaignSpec(config, campaign, DefaultSequence("config-1").First(), contact, phone.Placed{SessionID: "0b9f2a52-5c1e-4d7a-9a3e-0f6b8f1c2d3e", VendorCallID: "v-1"})
 
 	s.Contains(spec.Instructions, "Remind Anna about the renewal.")
 	s.Contains(spec.Instructions, "- plan: Gold")
@@ -37,7 +39,47 @@ func (s *CampaignSuite) TestTheContactsOwnInstructionsComeLast() {
 	config := store.AgentConfig{Instructions: "Remind {{first_name}}."}
 	contact := store.Contact{Instructions: "Be brief.", Variables: map[string]string{"first_name": "Anna", "plan": "Gold"}}
 
-	spec := campaignSpec(config, store.Campaign{}, contact, phone.Placed{})
+	spec := campaignSpec(config, store.Campaign{}, DefaultSequence("config-1").First(), contact, phone.Placed{})
 
-	s.Equal("Remind Anna.\n\nAbout the person you are calling:\n- plan: Gold\n\nBe brief.", spec.Instructions)
+	s.True(strings.HasPrefix(spec.Instructions, "Remind Anna.\n\nAbout the person you are calling:\n- plan: Gold\n\nBe brief.\n\n"), spec.Instructions)
+}
+
+func (s *CampaignSuite) TestACampaignCallIsToldItsGoalThenTheBriefThenTheContactThenHowToEnd() {
+	config := store.AgentConfig{Instructions: "You are Jean."}
+	step := DefaultSequence("config-1").First()
+	step.Goal = "Confirm {{name}}'s visit on {{appointment}}."
+	contact := store.Contact{Instructions: "Speak slowly.",
+		Variables: map[string]string{"name": "Ali", "appointment": "Tuesday at 10 AM", "clinic": "Northwind"}}
+
+	spec := campaignSpec(config, store.Campaign{}, step, contact, phone.Placed{})
+
+	wantInOrder := []string{"You are Jean.", "This call: Confirm Ali's visit on Tuesday at 10 AM.", "- clinic: Northwind", "Speak slowly.", "How the call ends:"}
+	last := -1
+	for _, want := range wantInOrder {
+		at := strings.Index(spec.Instructions, want)
+		s.Require().GreaterOrEqual(at, 0, "%q is missing from %q", want, spec.Instructions)
+		s.Greater(at, last, "%q is out of order in %q", want, spec.Instructions)
+		last = at
+	}
+	s.NotContains(spec.Instructions, "- name:")
+	s.NotContains(spec.Instructions, "- appointment:")
+}
+
+func (s *CampaignSuite) TestTheClosingRuleNamesEveryOutcomeAndTellsTheAgentToEndTheCall() {
+	step := DefaultSequence("config-1").First()
+	step.Goal = "Confirm the visit."
+
+	spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, step, store.Contact{}, phone.Placed{})
+
+	s.Contains(spec.Instructions, "say a short goodbye and end the call")
+	s.Contains(spec.Instructions, "- Success: The person agreed to what the call was about")
+	s.Contains(spec.Instructions, "- Not interested: The person declined")
+	s.Contains(spec.Instructions, "- Do not call: The person asked not to be called or contacted again.")
+}
+
+func (s *CampaignSuite) TestACampaignWithNoGoalAddsNoGoalLineButStillTellsTheAgentHowToEnd() {
+	spec := campaignSpec(store.AgentConfig{Instructions: "You are Jean."}, store.Campaign{}, DefaultSequence("config-1").First(), store.Contact{}, phone.Placed{})
+
+	s.NotContains(spec.Instructions, "This call:")
+	s.Contains(spec.Instructions, "How the call ends:")
 }

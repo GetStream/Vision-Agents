@@ -79,6 +79,9 @@ func (c *llmClassifier) Classify(ctx context.Context, campaign store.Campaign, c
 func classifyPrompt(step Step) string {
 	var prompt strings.Builder
 	prompt.WriteString("You are reading the transcript of a phone call an automated agent placed to a person.\n\n")
+	if step.Goal != "" {
+		prompt.WriteString("The call was placed to: " + step.Goal + "\n\n")
+	}
 	prompt.WriteString("Decide which one of these outcomes the call reached, judged by what the person said:\n\n")
 	for _, choice := range step.Choices() {
 		fmt.Fprintf(&prompt, "- %s: %s. %s\n", choice.ID, strings.TrimSuffix(choice.Name, "."), choice.Description)

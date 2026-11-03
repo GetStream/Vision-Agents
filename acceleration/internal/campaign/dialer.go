@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -54,7 +56,7 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	}
 
 	dialed := Dialed{Result: Unanswered, CallID: placed.SessionID, VendorCallID: placed.VendorCallID}
-	created, err := d.sessions.Create(ctx, campaignSpec(config, dial.Campaign, dial.Contact, placed))
+	created, err := d.sessions.Create(ctx, campaignSpec(config, dial.Campaign, dial.Step, dial.Contact, placed))
 	if _, nobody := errors.AsType[*session.CallUnansweredError](err); nobody {
 		return dialed, nil
 	}
@@ -139,7 +141,9 @@ func answeredCall(ctx context.Context, st *store.Store, customerID, callID strin
 // campaignSpec is the session that has the conversation with contact: the agent config with
 // the contact's variables filled in, the variables it never names briefed to it, and the
 // contact's own instructions last, so they are the most recent thing the model read.
-func campaignSpec(config store.AgentConfig, campaign store.Campaign, contact store.Contact, placed phone.Placed) session.Spec {
+// The goal of step comes right after the config's instructions and the closing rule after
+// everything, so the agent knows why it called and when the call is over.
+func campaignSpec(config store.AgentConfig, campaign store.Campaign, step Step, contact store.Contact, placed phone.Placed) session.Spec {
 	spec := session.FromConfig(config)
 	meet(&spec, placed)
 	spec.CampaignID = campaign.ID
@@ -147,8 +151,12 @@ func campaignSpec(config store.AgentConfig, campaign store.Campaign, contact sto
 	// The agent placed this call, so it is told how to get past whatever answers before
 	// it is told what this particular person was rung about.
 	spec.Navigating = true
-	brief := Brief([]string{spec.Instructions, spec.Greeting}, contact.Variables)
-	spec.Instructions = say(say(Render(spec.Instructions, contact.Variables), brief), contact.Instructions)
+	brief := Brief([]string{spec.Instructions, spec.Greeting, step.Goal}, contact.Variables)
+	var goal string
+	if step.Goal != "" {
+		goal = "This call: " + Render(step.Goal, contact.Variables)
+	}
+	spec.Instructions = say(say(say(say(Render(spec.Instructions, contact.Variables), goal), brief), contact.Instructions), closing(step))
 	spec.Greeting = Render(spec.Greeting, contact.Variables)
 	spec.Tags = merge(spec.Tags, campaign.Tags)
 	spec.Attribution = scheduledBy(campaign)
@@ -158,4 +166,15 @@ func campaignSpec(config store.AgentConfig, campaign store.Campaign, contact sto
 		VendorCallID: placed.VendorCallID,
 	}
 	return spec
+}
+
+// closing tells the agent which outcomes end the call. Without it the agent keeps asking
+// after the person has already answered.
+func closing(step Step) string {
+	var rule strings.Builder
+	rule.WriteString("How the call ends: once the call has reached one of these, say a short goodbye and end the call.")
+	for _, choice := range step.Choices() {
+		fmt.Fprintf(&rule, "\n- %s: %s", strings.TrimSuffix(choice.Name, "."), choice.Description)
+	}
+	return rule.String()
 }

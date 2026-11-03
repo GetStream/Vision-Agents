@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 )
@@ -15,6 +16,21 @@ func (s *CampaignSuite) TestTheClassifierPromptListsEveryChoiceWithDoNotCall() {
 	s.Contains(prompt, "- not_interested: Not interested. The person declined")
 	s.Contains(prompt, "- do_not_call: Do not call. The person asked not to be called or contacted again.")
 	s.Contains(prompt, `{"outcome": `)
+}
+
+func (s *CampaignSuite) TestTheClassifierPromptStatesTheGoalBeforeTheOutcomes() {
+	step := DefaultSequence("config-1").First()
+	step.Goal = "Confirm the visit"
+
+	prompt := classifyPrompt(step)
+
+	goal := strings.Index(prompt, "The call was placed to: Confirm the visit")
+	s.Require().GreaterOrEqual(goal, 0)
+	s.Less(goal, strings.Index(prompt, "- success:"))
+}
+
+func (s *CampaignSuite) TestTheClassifierPromptHasNoGoalLineForACampaignWithoutOne() {
+	s.NotContains(classifyPrompt(DefaultSequence("config-1").First()), "The call was placed to")
 }
 
 func (s *CampaignSuite) TestAnAnswerNamingNoChoiceIsNone() {
