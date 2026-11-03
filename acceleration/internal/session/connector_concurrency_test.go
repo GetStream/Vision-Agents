@@ -132,8 +132,32 @@ func (s *ConcurrencySuite) TestACallInterruptedWhileWaitingIsNotSent() {
 	release()
 
 	s.ErrorIs(err, context.Canceled)
+	s.ErrorContains(err, "crm__whoami was not sent")
 	s.Equal([]string{"primary"}, first())
 	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestATurnDeadlineEndingTheWaitIsNotSent: a turn deadline that ends the wait is the client's
+// timeout, not a busy connector. The deadline is armed at the wait itself (admit called
+// directly), so no earlier step of the call can run it out first.
+func (s *ConcurrencySuite) TestATurnDeadlineEndingTheWaitIsNotSent() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	d := s.attachAll(s.fixed("crm", primary, "whoami"))
+	r := d.routes["crm__whoami"]
+	held, err := d.slots.take(s.ctx, r.connection.ID, r.maxInFlight)
+	s.Require().NoError(err)
+	defer held()
+	turn, stop := context.WithTimeout(s.ctx, 100*time.Millisecond)
+	defer stop()
+
+	release, parts, how, err := d.admit(turn, time.Now().Add(time.Minute), r, llm.ToolCall{ID: uuid.NewString(), Name: "crm__whoami", Arguments: "{}"})
+
+	s.Nil(release)
+	s.Nil(parts)
+	s.Equal(store.InvocationClientTimeout, how.kind)
+	s.ErrorIs(err, context.DeadlineExceeded)
+	s.ErrorContains(err, "crm__whoami was not sent")
 }
 
 // TestANonCancellableCallInterruptedWhileWaitingIsNotSent: cancellable: false leaves a call
@@ -263,7 +287,15 @@ func (s *ConcurrencySuite) interruptWhileWaiting(d *dispatcher, connection, name
 		answered <- err
 	}()
 	// The call in flight is one user of the connection, the waiting call the second.
-	s.Require().Eventually(func() bool { return d.slots.users(connection) == 2 }, 30*time.Second, 5*time.Millisecond)
+	// A call refused before it waits answers at once: fail with that answer, not a timeout.
+	for until := time.Now().Add(5 * time.Second); d.slots.users(connection) != 2; time.Sleep(5 * time.Millisecond) {
+		select {
+		case err := <-answered:
+			s.FailNowf("the call was answered before it waited", "%v", err)
+		default:
+		}
+		s.Require().True(time.Now().Before(until), "the call never waited for a slot")
+	}
 	interrupt()
 	select {
 	case err := <-answered:
