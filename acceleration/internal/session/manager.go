@@ -951,7 +951,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
+			m.records.Closed(created.id, time.Now().UTC(), created.EndReason())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
