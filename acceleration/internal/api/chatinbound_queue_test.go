@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
@@ -415,7 +416,8 @@ func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingNothingTookIsHeardOnceF
 	default:
 		s.Fail("the answer ended before the worker had the recording")
 	}
-	s.Len(s.sttRowsSince(since), 1, "heard again on a try after one nothing took")
+	s.meteredRows(routing.STT, since, 1)
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 1 }, time.Second, 10*time.Millisecond, "heard again on a try after one nothing took")
 }
 
 // A queued voice recording a peer could not place is answered unavailable, as a text is, so the
@@ -444,7 +446,7 @@ func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingWhoseAnswerStartedIsNot
 
 	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), s.row(queued)))
 
-	s.Empty(s.sttRowsSince(since), "a recording whose answer started was heard")
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, time.Second, 10*time.Millisecond, "a recording whose answer started was heard")
 	select {
 	case message := <-worker.Messages():
 		s.Failf("answered twice", "%s reached the worker", message.ChannelID)

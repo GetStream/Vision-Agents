@@ -251,7 +251,7 @@ func (s *MessageHooksSuite) TestAVoiceRecordingForAConfigInARegionThatHearsNothi
 
 	s.Equal(unheardRecording, s.handed(worker).Text)
 	s.Zero(fetched.Load(), "the recording was fetched")
-	s.Empty(s.sttRowsSince(since))
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, time.Second, 10*time.Millisecond, "a recording its region cannot hear was heard")
 }
 
 // Control, as on base: a deployment that hears nothing hands a worker a message with text and a
@@ -276,7 +276,7 @@ func (s *MessageHooksSuite) TestAVoiceRecordingToASpeechToSpeechSessionIsNotHear
 	opened := s.serverClient.createSession(CreateSessionRequest{
 		AgentId: &s.channelID, StartVoice: pointerTo(true), Sts: pointerTo("sts-fast"), Incognito: pointerTo(true),
 	})
-	s.Require().Equal("native", value(s.serverClient.getSession(opened.Id).Mode))
+	s.Require().Equal("native", string(value(s.serverClient.getSession(opened.Id).Mode)))
 	since := time.Now().UTC()
 
 	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
@@ -285,7 +285,7 @@ func (s *MessageHooksSuite) TestAVoiceRecordingToASpeechToSpeechSessionIsNotHear
 	s.Require().Eventually(func() bool {
 		return strings.Contains(s.logged.String(), `msg="could not answer a message" channel=`+s.channelID)
 	}, settleFor, 10*time.Millisecond, "the session was never asked")
-	s.Empty(s.sttRowsSince(since), "a recording to a speech-to-speech session was heard")
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, time.Second, 10*time.Millisecond, "a recording to a speech-to-speech session was heard")
 }
 
 // recordedMessage is a signed message.new for the suite's channel with text and attachments, as
