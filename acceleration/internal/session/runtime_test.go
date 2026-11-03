@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -286,11 +288,13 @@ func (s *RuntimeSuite) TestTheGreetingIsTheSessionsFirstRecordedTurn() {
 	call.arrives(visitor)
 
 	var turns []store.AgentResponse
-	s.Require().Eventually(func() bool {
-		s.Require().NoError(created.FlushRecords(s.ctx))
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		require.NoError(c, created.FlushRecords(s.ctx))
 		turns, err = s.store.SessionResponses(s.ctx, s.customer, created.ID(), 10, nil)
-		s.Require().NoError(err)
-		return len(turns) > 0 && turns[0].Status == store.ResponseCompleted
+		require.NoError(c, err)
+		require.NotEmpty(c, turns)
+		require.Equal(c, store.ResponseCompleted, turns[0].Status)
 	}, settleFor, 10*time.Millisecond, "the greeting was never written down")
 	items, err := s.store.SessionItems(s.ctx, s.customer, created.ID(), turns[0].ID, 10, nil)
 	s.Require().NoError(err)
