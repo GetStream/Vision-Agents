@@ -6,10 +6,11 @@ import { messageOf } from "./errors";
 /** How the agent answers: in Markdown, or with interactive UI in a format. */
 export type ReplyFormat = "markdown" | "a2ui" | "openui";
 
-/** The formats this page shows. OpenUI replies show as their text here. */
+/** The formats this page shows. */
 const SHOWN: { format: ReplyFormat; title: string; description: string }[] = [
   { format: "markdown", title: "Text", description: "Answers in Markdown" },
   { format: "a2ui", title: "Interactive", description: "Answers with cards, maps and forms, in A2UI" },
+  { format: "openui", title: "Interactive (OpenUI)", description: "The same, in OpenUI" },
 ];
 
 /** Asks swift_assistant's backend how the agent answers. */
@@ -112,7 +113,6 @@ export function ReplyFormatMenu() {
               </label>
             ))}
           </div>
-          {format === "openui" && <p className="reply-format-note">Juno answers in OpenUI, which this page shows as text.</p>}
           <p className="reply-format-note">New conversations answer this way.</p>
           {failure && <p className="failure-pill">{failure}</p>}
         </div>

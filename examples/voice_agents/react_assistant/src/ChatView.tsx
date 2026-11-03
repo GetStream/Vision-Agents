@@ -17,6 +17,7 @@ import {
   aiUIActionJSON,
 } from "stream-chat-react/ai-components";
 import { createA2UIRenderer } from "stream-chat-react/a2ui";
+import { createOpenUIRenderer } from "stream-chat-react/openui";
 
 import type { AgentChat, AgentChatSnapshot } from "./agentChat";
 import { Assistant } from "./assistant";
@@ -160,17 +161,16 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
 }
 
 /**
- * The UI the agent writes for a reply, in place of its text: A2UI, with the app's own trip
- * components beside its own. What the person does in it is their next question, in their words,
- * carrying the action, so it shows at once like anything they ask. A reply whose UI this page
- * does not read, such as OpenUI, shows its text.
+ * The UI the agent writes for a reply, in place of its text: A2UI or OpenUI, with the app's own
+ * trip components beside each format's own. What the person does in it is their next question,
+ * in their words, carrying the action, so it shows at once like anything they ask.
  */
 function useGeneratedUI(screen: ChatScreen): AIUIHost {
   return useMemo(
     () =>
       new AIUIHost({
         components: tripComponents,
-        renderers: [createA2UIRenderer()],
+        renderers: [createA2UIRenderer(), createOpenUIRenderer()],
         send: (action) => screen.send(action.label, [], false, aiUIActionJSON(action)),
       }),
     [screen],

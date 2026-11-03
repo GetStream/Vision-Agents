@@ -11,6 +11,9 @@
   "dependencies": {
     "@a2ui/react": "0.15.0",
     "@a2ui/web_core": "0.15.0",
+    "@openuidev/react-headless": "0.18.1",
+    "@openuidev/react-lang": "1.0.2",
+    "@openuidev/react-ui": "0.18.1",
     "@stream-io/calypso": "file:../../../sdks/js",
     "@stream-io/video-client": "^1.64.0",
     "leaflet": "^1.9.4",
@@ -18,7 +21,8 @@
     "react-dom": "19.2.0",
     "stream-chat": "^9.54.0",
     "stream-chat-react": "file:vendor/stream-chat-react.tgz",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.20",
