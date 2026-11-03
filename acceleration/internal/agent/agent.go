@@ -2906,6 +2906,9 @@ func (a *Agent) finish(response llm.Response) {
 	if response.Status == llm.StatusFailed {
 		calls = nil
 	}
+	// A reply offered no tools has none to run, whatever the provider returned: following
+	// them is how a model that ignores that chains past the tool rounds.
+	calls = a.harness.DropUnoffered(response.ID, calls)
 	hold := false
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
@@ -3486,6 +3489,8 @@ func (a *Agent) follow() error {
 	instructions := a.prompted()
 	tell := a.tellLocked(turnID, len(a.speakers))
 	asked := a.asked
+	limit := cmp.Or(a.options.MaxToolRounds, maxToolRounds)
+	spent := limit > 0 && a.toolRounds >= limit
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
@@ -3499,6 +3504,7 @@ func (a *Agent) follow() error {
 		Tell:         tell,
 		History:      history,
 		Asked:        asked,
+		NoTools:      spent,
 	}, "")
 }
 

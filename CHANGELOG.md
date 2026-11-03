@@ -262,6 +262,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Tool rounds are bound even when a model calls a tool it was not offered
+
+A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
+
 ### A dispatch worker's session answers in the channel the message was written in
 
 A text session that the customer's backend opens under the `agent_id` of a message the router just handed to its dispatch worker now answers in that message's channel. The Go SDK's `Dispatch.Conversation` opens its sessions this way. Before, the session wrote its reply into a new `agent:<session id>` channel, and the person saw nothing. The session writes only its replies: the person's message is already in the channel. A second message while that session runs is answered by the same session, and is not dispatched again. Every other session keeps a channel of its own, as before (AI-2505).

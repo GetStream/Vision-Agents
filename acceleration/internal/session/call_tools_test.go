@@ -135,6 +135,7 @@ func (s *SessionSuite) hangingUp() *chattest.Server {
 // hangsUp has the caller take their leave and waits for the agent to hang up on them.
 func (s *SessionSuite) hangsUp(created *Session) {
 	s.Contains(offered(created), "end_call")
+	s.hears(created)
 	s.says(created, "that is all, thanks")
 	s.eventually(func() bool {
 		return created.State() == Ended && !s.manager.Running(created.ID())
