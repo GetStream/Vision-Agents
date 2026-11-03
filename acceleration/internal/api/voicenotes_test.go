@@ -323,10 +323,24 @@ func (s *VoiceNotesSuite) TestAVoiceNoteFromAnotherCallerIsBilledAsTheSessionsOp
 	heard := s.meteredRows(routing.STT, since, 1)[0]
 	answered := s.answerRow(since)
 	s.Equal(routing.CallerServer, answered.Attributes[routing.CallerAttribute], "the session was opened by a backend")
-	s.Equal(s.client.userID, answered.UserID)
 	s.Equal(answered.Attributes[routing.CallerAttribute], heard.Attributes[routing.CallerAttribute],
 		"the note is billed as the session's opener, not as the user who sent it")
-	s.Equal([]string{answered.APIKey, answered.UserID}, []string{heard.APIKey, heard.UserID})
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteFromAnotherUserIsBilledToTheSessionsUser() {
+	opened := s.serverClient.actingFor(s.client).createSession(
+		CreateSessionRequest{Llm: pointerTo("noted/noted-model"), Incognito: pointerTo(true)})
+	since := time.Now().UTC()
+
+	other := s.data.createUser()
+	s.Require().NotEqual(s.client.userID, other.userID)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.actingFor(other).do(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("user " + s.utils.uuid()))}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	answered := s.answerRow(since)
+	s.Equal(s.client.userID, answered.UserID, "the answer is billed to the session's user")
+	s.Equal(answered.UserID, heard.UserID, "the note is billed to the session's user, not to the one who sent it")
 }
 
 func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToTheCallItWasSentIn() {
