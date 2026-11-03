@@ -217,7 +217,7 @@
     {"modality":"phone","provider":"telnyx","model":"dlc_campaign_month","region":"us","when":{"use_case_type":"EMERGENCY"},"rates":{"requests":{"usd":5,"per":1}}},
     {"modality":"phone","provider":"telnyx","model":"dlc_campaign_month","region":"us","when":{"use_case_type":"AGENTS_FRANCHISES"},"rates":{"requests":{"usd":30,"per":1}}},
     {"modality":"phone","provider":"telnyx","model":"dlc_campaign_month","region":"us","when":{"use_case_type":"PLATFORM_FREE_TRIAL"},"free":true},
-    {"modality":"knowledge","provider":"turbopuffer","model":"lookup","region":"us","rates":{"bytes_queried":{"usd":0,"per":1},"bytes_returned":{"usd":0,"per":1},"requests":{"usd":0.00128,"per":1000},"results":{"usd":0,"per":1}}},
+    {"modality":"knowledge","provider":"turbopuffer","model":"lookup","region":"us","rates":{"bytes_queried":{"usd":1,"per":1000000000000000},"bytes_returned":{"usd":0.05,"per":1000000000},"requests":{"usd":0,"per":1},"results":{"usd":0,"per":1}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"write","region":"us","rates":{"bytes_written":{"usd":2,"per":1000000000,"minimum":10000},"requests":{"usd":0,"per":1}}},
     {"modality":"knowledge","provider":"turbopuffer","model":"storage","region":"us","rates":{"byte_hours":{"usd":0.33,"per":730000000000}}},
     {"modality":"memory","provider":"mem0","model":"search","region":"us","rates":{"requests":{"usd":2.49,"per":1000}}},
