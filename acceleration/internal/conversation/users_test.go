@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"crypto/rand"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,7 +17,10 @@ func TestOpeningAConversationLeavesAnExistingUserAlone(t *testing.T) {
 	service := NewForChat(chat.Client)
 	t.Cleanup(service.Close)
 
-	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	// Fresh, so no earlier test can have it: CreateMissingUsers remembers users per URL and
+	// key for the whole process, and a later chattest server can be given an earlier one's port.
+	agent := "agent-" + rand.Text()
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", agent, "", "employee")
 	require.NoError(t, err)
 	c.Release()
 
@@ -24,6 +28,6 @@ func TestOpeningAConversationLeavesAnExistingUserAlone(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "Ada Lovelace", employee["name"])
 	require.Equal(t, "https://example.com/ada.png", employee["image"])
-	_, created := chat.User("agent")
+	_, created := chat.User(agent)
 	require.True(t, created, "a user the app has never seen is still created")
 }
