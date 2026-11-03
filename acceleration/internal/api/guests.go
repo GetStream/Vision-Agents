@@ -394,9 +394,14 @@ func (s *Server) addToGuestChannels(ctx context.Context, customerID, guestID, us
 // that does not exist, which reports as success and reads as a claim that did nothing.
 func transcriptChannel(one store.AgentSession) string {
 	if one.ConversationID != "" {
-		return strings.TrimPrefix(one.ConversationID, chatlog.ChannelType+":")
+		return conversationChannel(one.ConversationID)
 	}
 	return one.AgentID
+}
+
+// conversationChannel is the id of the Stream Chat channel a conversation id names.
+func conversationChannel(cid string) string {
+	return strings.TrimPrefix(cid, chatlog.ChannelType+":")
 }
 
 // registerGuests declares the operations served in guests.go.
