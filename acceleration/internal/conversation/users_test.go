@@ -34,11 +34,11 @@ func TestOpeningAConversationLeavesAnExistingUserAlone(t *testing.T) {
 }
 
 func TestAChattestServerOnAReusedURLDoesNotInheritUsersKnownToAnEarlierOne(t *testing.T) {
-	// An earlier server on the same port, called with the key every chattest server used to
-	// share, had this user created. The cache outlives it, and the new server never saw them.
-	chat := chattest.NewServer(t)
+	// An earlier server had this user created, then the new server got its port. The cache
+	// outlives the earlier one, and the new server never saw the user.
+	earlier, chat := chattest.NewServer(t), chattest.NewServer(t)
 	id := "reused-" + rand.Text()
-	remember(chat.URL+"\x00test", []string{id})
+	remember(chat.URL+"\x00"+earlier.Key, []string{id})
 
 	require.NoError(t, CreateMissingUsers(t.Context(), chat.Client, map[string]getstream.UserRequest{id: {ID: id}}))
 
