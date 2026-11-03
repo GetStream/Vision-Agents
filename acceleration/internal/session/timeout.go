@@ -2,7 +2,7 @@ package session
 
 import "time"
 
-// EndReason is why a session ended: which wait timed out, or what the agent did. It is
+// endReason is why a session ended: which wait timed out, or what the agent did. It is
 // named in the log line and kept on the session's row.
 type EndReason string
 
@@ -17,6 +17,8 @@ const (
 	TimeoutStart EndReason = "start"
 	// TimeoutUnanswered ends a placed call's session once its vendor says nobody will answer.
 	TimeoutUnanswered EndReason = "unanswered"
+	// EndVoicemail ends a placed call an answering machine picked up, once the message is left.
+	EndVoicemail EndReason = "voicemail"
 )
 
 // SetTimeout ends the session d from now. Calling it again moves the moment and replaces
@@ -81,6 +83,18 @@ func (s *Session) noteEnd(reason EndReason) {
 	if s.ended == "" {
 		s.ended = reason
 	}
+}
+
+// endsFor notes reason as why the session ends, reporting whether it did: not once the
+// session is closing or another reason was noted.
+func (s *Session) endsFor(reason EndReason) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing || s.ended != "" {
+		return false
+	}
+	s.ended = reason
+	return true
 }
 
 // endReason is why the session ended, empty while nothing has said.

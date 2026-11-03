@@ -326,6 +326,9 @@ type Spec struct {
 	Memory MemorySpec
 	// Phone attaches the session to a number, which is what turns transferring on.
 	Phone *PhoneSpec
+	// Voicemail is what the session does when the vendor says an answering machine picked
+	// up its placed call. Nil carries on as with a person.
+	Voicemail *VoicemailPlan
 
 	// CampaignID and ContactID say which piece of outbound work this call is, so a
 	// campaign can be told how its contacts went. Both are empty for a call nobody
@@ -350,6 +353,11 @@ type MemorySpec struct {
 	AppID string
 	// Filter narrows recall with the caller's own labels.
 	Filter map[string]string
+}
+
+// VoicemailPlan is the message left on an answering machine. Empty hangs up instead.
+type VoicemailPlan struct {
+	Message string
 }
 
 // PhoneSpec is the number the session acts from.

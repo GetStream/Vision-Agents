@@ -62,6 +62,6 @@ func (h *hangUp) EndCall(ctx context.Context) error {
 		}
 	}
 	h.done = true
-	h.manager.hangUp(h.session)
+	h.manager.hangUp(h.session, EndAgentHangup)
 	return nil
 }

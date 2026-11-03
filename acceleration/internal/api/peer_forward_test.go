@@ -448,6 +448,15 @@ func (s *ScheduledTasksSuite) TestANodeWithNoKeyringRefusesEveryForward() {
 	s.refused(text, err)
 }
 
+func (s *ScheduledTasksSuite) TestTheMachinePeerPathIsRefusedWithoutAPeer() {
+	body, err := json.Marshal(map[string]string{"customer_id": s.customerID(), "session_id": s.utils.uuid(), "machine": "greeting_ended"})
+	s.Require().NoError(err)
+
+	status, answer := s.deliver(machinePeerPath, string(body), "")
+
+	s.Equal(http.StatusNotFound, status, "body: %s", answer)
+}
+
 func (s *ScheduledTasksSuite) TestTheUnansweredPeerPathIsRefusedWithoutAPeer() {
 	body, err := json.Marshal(map[string]string{"customer_id": s.customerID(), "session_id": s.utils.uuid()})
 	s.Require().NoError(err)
