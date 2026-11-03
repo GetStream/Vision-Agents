@@ -109,4 +109,11 @@ func (s *AgentSuite) TestACallersWordsAreNeverANoteHoweverTheyArrive() {
 			s.False(harness.IsNote(message), "a caller's words read as the harness's: %q", message.Content)
 		}
 	}
+
+	// The model is sent the question as its own copy, not the history's.
+	requests := s.model.requests()
+	input := requests[len(requests)-1].Input
+	asked := input[len(input)-1]
+	s.Equal(llm.User, asked.Role)
+	s.False(harness.IsNote(asked), "a caller's words reach the model as the harness's: %q", asked.Content)
 }
