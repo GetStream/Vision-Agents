@@ -196,7 +196,8 @@ Show ONE summary and wait for an explicit yes:
 - numbers to buy, vendor and monthly cost, and any mid-run release of a just-bought number;
 - the router address and the customer id every request uses;
 - account changes: hooks pointed at a tunnel URL (app-wide: while it is up the local router
-  also gets the Stream app's other call events and its new-message events); any stale hook URL
+  also gets the Stream app's other call events; it gets no new-message events, since the router
+  writes no message hook and Stream Chat delivers messages to its shard's router); any stale hook URL
   to remove; numbers to attach; Twilio voice URLs to set; the Telnyx person app's voice URL,
   with the numbers on that app listed (it changes all of them);
 - for each person number whose voice setting is `other` (it points at some other app or
@@ -216,6 +217,7 @@ In this order, each change into the state file:
    in the background (it needs no env file), write cloudflared's own process id
    (`pgrep -f 'cloudflared tunnel --url http://localhost:8080'`) to the state file, take its
    `https://<random>.trycloudflare.com` URL, then `go run ./cmd/phone hooks -url <tunnel URL>`
+   (the call hook only: a text to the agent's channel is not answered by this local router)
    (`-remove <stale URL>` only if approved; `-app <id>` only for a router in app mode). A local
    Telnyx router's own TeXML app (`TELNYX_CONNECTION_ID`) needs its voice URL on the tunnel; the
    human sets that.
