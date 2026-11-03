@@ -125,7 +125,6 @@ export interface Declaration {
    * unless `network` or an allow list opens it.
    */
   sandboxOptions?: Schemas["SandboxOptions"];
-  plugins?: string[];
   keyterms?: string[];
   tags?: Record<string, string>;
   video?: Schemas["SessionVideo"];
@@ -140,8 +139,6 @@ export interface Declaration {
    * which leaves the stored bindings; empty when it lists none, which removes them.
    */
   connectors?: ConnectorDeclaration[];
-  /** MCP servers outside the plugin catalog, which the router opens by their url. */
-  mcpServers?: Schemas["McpServer"][];
   /**
    * The lines the agent answers on besides its Stream Chat channel, each a number the app
    * connected on the router.
@@ -761,8 +758,6 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
-    ...(declared.plugins?.length ? { plugins: declared.plugins } : {}),
-    ...(declared.mcpServers?.length ? { mcp_servers: declared.mcpServers } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
