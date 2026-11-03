@@ -282,18 +282,30 @@ public sealed class FolderTests : IDisposable
         Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
     }
 
-    [Fact]
-    public void AConnectorAliasThatIsAlsoAPluginIsRefusedButAnotherConnectorIdIsNot()
+    [Theory]
+    [InlineData("plugins: [linear]\n")]
+    [InlineData("plugins:\n  - sentry\n  - linear\n")]
+    [InlineData("plugins: sentry\n")]
+    [InlineData("plugins: [linear]\nconnectors:\n  - linear\n")]
+    public void PluginsAreRefusedWithAPointerToConnectors(string declaration)
     {
-        Write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - issues\n  - linear\n");
+        Write("agent.yaml", "name: jean\n" + declaration);
 
         var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
 
-        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": \"linear\" is named under both connectors and plugins", refused.Message);
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors", refused.Message);
+    }
 
-        Write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n");
+    [Theory]
+    [InlineData("")]
+    [InlineData("plugins: []\n")]
+    [InlineData("plugins:\n")]
+    [InlineData("plugins: ~\n")]
+    public void NoPluginsOrAnEmptyListLoadsWithItsConnectors(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration + "connectors:\n  - linear\n");
 
-        Assert.Equal("issues", Assert.Single(Folder.Load(_root).Declaration.Connectors!).Name);
+        Assert.Equal("linear", Assert.Single(Folder.Load(_root).Declaration.Connectors!).Name);
     }
 
     [Fact]
