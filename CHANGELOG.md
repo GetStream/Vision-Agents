@@ -2,6 +2,10 @@
 
 ## Features
 
+### A voice note sent with a question is transcribed and answered
+
+`POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518).
+
 ### A photo sent in an agent's chat channel reaches the model
 
 A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
@@ -228,9 +232,33 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The Python SDK refuses `mcp_servers` in agent.yaml
+
+`plugins.stream` now fails to load an agent folder whose `agent.yaml` names `mcp_servers`, with a `ValueError` that says to create a custom connector for the server's URL and name it under `connectors`, and never sends `mcp_servers` to the router. An empty key (`mcp_servers: []`, or the key with nothing after it) names nothing and loads. `RemoteEvent` has no `authorization_required` type and no `url` or `image_url`: only a plugin's login made it, and a connector's login is a step of the reply (AI-2532).
+
+### The .NET SDK refuses `plugins` in agent.yaml
+
+`Folder.Load` and `new Agent(...)` in `GetStream.VisionAgents` throw a `ConfigurationException` for a non-empty `plugins:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. `SyncAsync` no longer sends `plugins`, and no longer logs that they are deprecated. The public `Declaration.Plugins` property is removed, so code that reads it no longer compiles. An empty `plugins: []` or a bare `plugins:` still loads. Name the provider under `connectors:` instead (AI-2527).
+
+### The Go SDK refuses `mcp_servers` in agent.yaml
+
+A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`agents.Load`, `agents.New`) with `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`; `mcp_servers: []` and a null `mcp_servers:` load and sync as before, and `agents.MCPServerSettings` and `Settings.MCPServers` are gone (AI-2531).
+
 ### The router no longer points its Chat message hook at itself
 
 `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`), `setOperatorProviderApp` and `PUT /v1/agents/connectors/{id}/oauth-client` no longer write the message hook into the pinned Stream app's `event_hooks`, so the entry "A provider app points its Stream app's message hook at the router" no longer holds. `setOperatorProviderApp` no longer answers a 503 when Stream refuses the hook. `go run ./cmd/phone hooks -url <base>` writes the call hook only. Stream Chat delivery (`POST /v1/chat/internal/messages`) is the only way Chat text reaches the router; a local router behind a tunnel gets no text written straight into a thread channel. `/v1/chat/hooks/stream` is still served for one release, as a way back. To drop an old message hook: `go run ./cmd/phone hooks -url <base> -remove <base>` (AI-2352).
+
+### The Rust SDK refuses `plugins` and `plugin_events` in agent.yaml
+
+A non-empty `plugins:` or `plugin_events:` in the `agent.yaml` of a Rust agent folder (`Folder::load`, `Agent::from_folder`) now fails with `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as in the Go SDK. It was synced, with a warning. An empty or missing key loads as before, and `Settings::plugins` is gone (AI-2529).
+
+### The PHP SDK refuses `plugins` in agent.yaml
+
+A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. An empty `plugins` key loads as before. `Agent` no longer takes a `logger`: it only carried the warning that `plugins` are deprecated.
+
+### The Ruby SDK refuses `plugins` in agent.yaml
+
+`Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
 
@@ -241,6 +269,7 @@ Closing an agent waited for every finished turn and every judgement still queued
 ### A dispatch worker's session answers in the channel the message was written in
 
 A text session that the customer's backend opens under the `agent_id` of a message the router just handed to its dispatch worker now answers in that message's channel. The Go SDK's `Dispatch.Conversation` opens its sessions this way. Before, the session wrote its reply into a new `agent:<session id>` channel, and the person saw nothing. The session writes only its replies: the person's message is already in the channel. A second message while that session runs is answered by the same session, and is not dispatched again. Every other session keeps a channel of its own, as before (AI-2505).
+
 ### A login to a server named by URL never sends the deployment's client secret
 
 The login to an MCP server a config names under `mcp_servers` is made with the public client the router registers on that server, so the code exchange and every token refresh now go to its token endpoint without a client secret. Before, when the client id the server registered matched one the deployment holds for a plugin of the server's name, that client's secret was sent along. Catalog plugins still send the secret of the client the agent or the deployment registered in advance. The Shopify plugin logs in only at a shop host under `myshopify.com`: authorizing it for any other host is a 400, and a login stored for one is not opened. An `mcp_servers` entry named like a catalog plugin, which only a config saved before that name was refused can hold, is left out of every session (AI-2523).

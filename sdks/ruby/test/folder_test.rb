@@ -231,7 +231,7 @@ class TestFolder < Minitest::Test
   def test_a_declaration_key_nobody_knows_is_refused
     ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n",
      "dispatch:\n  sms: enabled\n", "speed: 1.1\n", "thinking_llm: llm-thinking\n", "agent_plugins: [linear]\n",
-     "user_plugins: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
+     "user_plugins: [linear]\n", "plugin_events: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
      "greeting:\n  text: Hello\n  tone: warm\n", "sandbox_options:\n  memory: 4\n",
      "sandbox_options:\n  timeout: 2h\n", "sandbox_options:\n  cpu: two\n",
      "sandbox_options:\n  network: maybe\n"].each do |yaml|
@@ -270,8 +270,7 @@ class TestFolder < Minitest::Test
         'connector "linear": connection must be a connection id or label',
       "connectors:\n  - name: linear\n    required: sometimes\n" =>
         'connector "linear": required should be true or false',
-      "connectors:\n  - name: linear\n    toools: [x]\n" => "a connector has no toools",
-      "plugins: [linear]\nconnectors:\n  - linear\n" => '"linear" is named under both connectors and plugins'
+      "connectors:\n  - name: linear\n    toools: [x]\n" => "a connector has no toools"
     }.each do |yaml, message|
       write("agent.yaml", "name: jean\n#{yaml}")
 
@@ -310,12 +309,28 @@ class TestFolder < Minitest::Test
     assert_equal "abc", folder.stamp
   end
 
-  def test_a_connector_and_plugin_sharing_connector_id_but_not_name_coexist
-    write("agent.yaml", "name: jean\nplugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n")
+  def test_plugins_are_refused_with_a_pointer_to_connectors
+    ["plugins: [linear]\n", "plugins: [linear, slack]\n", "plugins: linear\n", "plugins: ''\n", "plugins: {}\n",
+     "plugins: {linear: true}\n", "plugins: [[]]\n", "plugins: [{name: linear}]\n", "plugins: [~]\n",
+     "plugins: [linear]\nconnectors:\n  - linear\n",
+     "plugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}")
 
-    folder = VA::Folder.load(@root)
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
 
-    assert_equal "issues", folder.settings["connectors"].first["name"]
+      assert_equal "#{File.join(@root, "agent.yaml")}: plugins is no longer read: plugins were replaced by " \
+                   "connectors, so name the provider under connectors", error.message, yaml
+    end
+  end
+
+  def test_plugins_that_name_nothing_load
+    ["plugins: []\n", "plugins:\n", "plugins: ~\n", "plugins: null\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}connectors:\n  - linear\n")
+
+      folder = VA::Folder.load(@root)
+
+      assert_equal ["linear"], folder.settings["connectors"].map { |each| each["name"] }, yaml
+    end
   end
 
   def test_connectors_null_loads_without_error_and_is_not_stored

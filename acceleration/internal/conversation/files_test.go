@@ -200,6 +200,95 @@ func TestARetryWithTheSamePhotosIsTheSameCommandAndOtherPhotosAreAnother(t *test
 	require.ErrorIs(t, err, ErrCommandConflict, "the same words without the photo are another question")
 }
 
+func TestAPhotoSentAloneIsAQuestionAndNothingSentIsNone(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+
+	_, err = c.BeginCommand("ask-1", "", "")
+	require.Error(t, err, "a question of nothing is not one")
+	photos, err := c.PublishPhotos(t.Context(), []llm.ImagePart{{MIME: "image/jpeg", Data: []byte("jpeg")}})
+	require.NoError(t, err)
+	_, err = c.BeginCommand("ask-1", "", "", photos...)
+	require.NoError(t, err, "a photo sent alone asks something")
+}
+
+func TestAPersonsVoiceNoteIsPlayedOnTheirMessageAndReadBackAsWhatItSaid(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	t.Cleanup(s.Close)
+	c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+	photos, err := c.PublishPhotos(t.Context(), []llm.ImagePart{{MIME: "image/jpeg", Data: []byte("jpeg")}})
+	require.NoError(t, err)
+	note, err := c.PublishVoiceNote(t.Context(), VoiceNote{MIME: "audio/mp4", Audio: []byte("m4a"), Heard: "the fryer leaks"})
+	require.NoError(t, err)
+	_, err = c.BeginCommand("ask-1", "Look\n\nthe fryer leaks", "", append(photos, note)...)
+	require.NoError(t, err)
+	c.Observe(agent.ResponseDelta{Text: "Turn it off."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	raw, _ := json.Marshal(db.messages["ask-1"]["attachments"])
+	db.mu.Unlock()
+	var stored []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	require.Len(t, stored, 2)
+	require.Equal(t, "image", stored[0]["type"])
+	require.Equal(t, "voiceRecording", stored[1]["type"], "Chat's SDKs play a voiceRecording and offer a file for download")
+	require.Equal(t, "https://cdn.fake/file/voice-note.mp4", stored[1]["asset_url"])
+
+	cold := NewForChat(client)
+	t.Cleanup(cold.Close)
+	page, err := cold.HistoryForCaller(t.Context(), "customer", "agent", c.CID(), "", "alice")
+	require.NoError(t, err)
+	require.Equal(t, []sandbox.Attachment{
+		{Name: "photo-1.jpeg", MIME: "image/jpeg", URL: "https://cdn.fake/image/photo-1.jpeg", Size: 4},
+		{Name: "voice-note.mp4", MIME: "audio/mp4", URL: "https://cdn.fake/file/voice-note.mp4", Size: 3},
+	}, page.Messages[0].Files, "the voice note is read back with the message")
+	history, _, err := cold.ContextForCaller(t.Context(), "customer", "agent", c.CID(), "alice")
+	require.NoError(t, err)
+	require.Equal(t, llm.Message{Role: llm.User, Content: "Look\n\nthe fryer leaks\n\n[sent with a photo, not shown again]"}, history[0],
+		"the voice note is in the text already, and is no photo")
+}
+
+func TestAMessageUpdatedLaterShowsAVoiceNoteAsItWasSent(t *testing.T) {
+	note := []sandbox.Attachment{{Name: "voice-note.mp4", MIME: "audio/mp4", URL: "https://cdn.fake/file/voice-note.mp4", Size: 3}}
+
+	sent := chatFileAttachments(note, true)
+	updated := fileAttachments(note, true)
+
+	require.Equal(t, "voiceRecording", *sent[0].Type)
+	require.Equal(t, *sent[0].Type, updated[0]["type"], "an update would turn the player into a download")
+	require.Equal(t, *sent[0].AssetUrl, updated[0]["asset_url"])
+}
+
+func TestAudioTheAgentMadeIsOfferedAsAFile(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "artist", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("read it to me"))
+	c.Observe(agent.Delegated{TaskID: "task-1", Skill: "speak"})
+	c.Observe(agent.Responded{Text: "Recording it.", PendingWork: true})
+	recording, err := c.Publish(context.Background(), sandbox.File{Name: "reading.mp3", MIME: "audio/mpeg", Data: []byte("mp3")})
+	require.NoError(t, err)
+
+	c.Observe(agent.TaskSettled{TaskID: "task-1", Skill: "speak", Text: "Read.", Files: []sandbox.Attachment{recording}})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+
+	db.mu.Lock()
+	raw, _ := json.Marshal(db.messages[current(c).ID]["attachments"])
+	db.mu.Unlock()
+	require.Contains(t, string(raw), `"type":"file"`)
+	require.NotContains(t, string(raw), "voiceRecording", "only a person sends a voice note")
+}
+
 func TestAPhotoLinkedFromElsewhereIsNotTaken(t *testing.T) {
 	db, client := newChat(t)
 	s := NewForChat(client)

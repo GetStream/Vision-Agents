@@ -27,6 +27,7 @@ extension StringCodingKey {
     static let approval: StringCodingKey = "approval"
     static let at: StringCodingKey = "at"
     static let attempts: StringCodingKey = "attempts"
+    static let audio: StringCodingKey = "audio"
     static let backchannel: StringCodingKey = "backchannel"
     static let body: StringCodingKey = "body"
     static let cachedInputTokens: StringCodingKey = "cached_input_tokens"
