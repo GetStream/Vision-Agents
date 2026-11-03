@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -234,6 +235,38 @@ func (s *SpecSuite) TestAConfigsMCPServersBecomeTheSessions() {
 }
 
 func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
+	spec, mcp, tools := s.tablejourney()
+	defer mcp.Close()
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, nil)
+
+	s.Require().Len(tools, 1)
+	s.Equal("tablejourney__search_places", tools[0].Name)
+	s.True(strings.HasPrefix(spec.prompt(), "Be brief.\n\nThe tablejourney tools"), spec.prompt())
+	s.True(strings.HasSuffix(spec.prompt(), "Keep booking links whole."), spec.prompt())
+}
+
+// What the config's MCP servers said comes first, then what each custom connector's server
+// said, each cut to the same cap on its own: a cut that splits a rune drops it.
+func (s *SpecSuite) TestMCPServersAndCustomConnectorsSayTheirsInOneBlock() {
+	spec, mcp, _ := s.tablejourney()
+	defer mcp.Close()
+	long := strings.Repeat("a", serverInstructionsLimit-1) + "é" + "never read"
+
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, []serverSaid{
+		{name: "crm", tools: "crm__*", text: long},
+		{name: "archive", tools: "archive__*", text: "Dates are UTC."},
+	})
+
+	s.Equal("Be brief.\n\n"+
+		"The tablejourney tools (tablejourney__*) come with these instructions from their server:\n\nKeep booking links whole.\n\n"+
+		"The crm tools (crm__*) come with these instructions from their server:\n\n"+strings.Repeat("a", serverInstructionsLimit-1)+"\n\n"+
+		"The archive tools (archive__*) come with these instructions from their server:\n\nDates are UTC.",
+		spec.prompt())
+}
+
+// tablejourney is a session told "Be brief." with the MCP server tablejourney attached, which
+// offers search_places and says "Keep booking links whole." about it, and its tools.
+func (s *SpecSuite) tablejourney() (Spec, *plugins.Runtime, []harness.Tool) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ID     int    `json:"id"`
@@ -252,21 +285,14 @@ func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": body.ID, "result": result})
 	}))
-	defer server.Close()
+	s.T().Cleanup(server.Close)
 	needsLogin := false
 	spec := Spec{
 		Instructions: "Be brief.",
 		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL, NeedsLogin: &needsLogin}},
 	}
-
 	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, &plugins.Auth{HTTP: server.Client()}, slog.New(slog.DiscardHandler))
-	defer mcp.Close()
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, nil)
-
-	s.Require().Len(tools, 1)
-	s.Equal("tablejourney__search_places", tools[0].Name)
-	s.True(strings.HasPrefix(spec.prompt(), "Be brief.\n\nThe tablejourney tools"), spec.prompt())
-	s.True(strings.HasSuffix(spec.prompt(), "Keep booking links whole."), spec.prompt())
+	return spec, mcp, tools
 }
 
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {

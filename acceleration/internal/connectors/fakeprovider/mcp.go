@@ -76,6 +76,14 @@ func (s *Server) AnswerMCP(status int) {
 	s.mcpStatus = status
 }
 
+// InstructMCP has the MCP endpoint answer server/discover and initialize with instructions
+// about using its tools, until InstructMCP("").
+func (s *Server) InstructMCP(instructions string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpInstructions = instructions
+}
+
 // mcp is the MCP endpoint, a protected resource (RFC 6750) in front of a JSON-RPC server
 // that answers each POST with one JSON object (Streamable HTTP).
 func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
@@ -171,12 +179,18 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": serverInfo()},
 			"ttlMs":             0, "cacheScope": "public",
 		}
+		if s.mcpInstructions != "" {
+			result["instructions"] = s.mcpInstructions
+		}
 	case !modern && request.Method == "initialize":
 		// MCP 2025-11-25 «Lifecycle»: answer with the one legacy version spoken here.
 		result = map[string]any{
 			"protocolVersion": legacyVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      serverInfo(),
+		}
+		if s.mcpInstructions != "" {
+			result["instructions"] = s.mcpInstructions
 		}
 	case modern && s.is(MCPEvents) && (request.Method == "events/subscribe" || request.Method == "events/unsubscribe"):
 		var envelope struct {
