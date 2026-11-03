@@ -2149,7 +2149,8 @@ busy: the line was busy or the person declined.
 no_answer: it rang and nobody answered.
 failed: the vendor could not place it, for a bad number or a carrier fault.
 canceled: the vendor says the call was hung up before an answer.
-unknown: the vendor reports nothing about how it ended, and the phone never joined.*/
+unknown: the vendor reports nothing about how it ended, and the phone never joined.
+voicemail: an answering machine picked up, and the agent left its message or hung up.*/
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2175,6 +2176,8 @@ pub enum CallOutcome {
     Canceled,
     #[serde(rename = "unknown")]
     Unknown,
+    #[serde(rename = "voicemail")]
+    Voicemail,
 }
 impl ::std::fmt::Display for CallOutcome {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2185,6 +2188,7 @@ impl ::std::fmt::Display for CallOutcome {
             Self::Failed => f.write_str("failed"),
             Self::Canceled => f.write_str("canceled"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Voicemail => f.write_str("voicemail"),
         }
     }
 }
@@ -2198,6 +2202,7 @@ impl ::std::str::FromStr for CallOutcome {
             "failed" => Ok(Self::Failed),
             "canceled" => Ok(Self::Canceled),
             "unknown" => Ok(Self::Unknown),
+            "voicemail" => Ok(Self::Voicemail),
             _ => Err("invalid value".into()),
         }
     }

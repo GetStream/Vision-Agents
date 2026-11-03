@@ -18,6 +18,7 @@ struct StringCodingKey: CodingKey, ExpressibleByStringLiteral {
 }
 
 extension StringCodingKey {
+    static let action: StringCodingKey = "action"
     static let agent: StringCodingKey = "agent"
     static let agentId: StringCodingKey = "agent_id"
     static let allowTitle: StringCodingKey = "allow_title"
@@ -190,4 +191,5 @@ extension StringCodingKey {
     static let video: StringCodingKey = "video"
     static let videos: StringCodingKey = "videos"
     static let voice: StringCodingKey = "voice"
+    static let voicemail: StringCodingKey = "voicemail"
 }

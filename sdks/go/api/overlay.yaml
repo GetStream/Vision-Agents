@@ -1,0 +1,21 @@
+# Go-only spec changes. A generator in another language never reads this file, so its
+# names stay as they are.
+overlay: 1.0.0
+info:
+  title: Go SDK overlay
+  version: 1.0.0
+actions:
+  # oapi-codegen prefixes every constant of two enums that share a value (enumsConflict in
+  # pkg/codegen/codegen.go, v2.8.0). CallOutcome and SessionEndReason share voicemail, so
+  # naming CallOutcome's constants here keeps SessionEndReason's AgentHangup, Voicemail and
+  # the rest. In the spec, x-enum-varnames would rename Python's and Kotlin's members too.
+  - target: $.components.schemas.CallOutcome
+    update:
+      x-enum-varnames:
+        - CallOutcomeCompleted
+        - CallOutcomeBusy
+        - CallOutcomeNoAnswer
+        - CallOutcomeFailed
+        - CallOutcomeCanceled
+        - CallOutcomeUnknown
+        - CallOutcomeVoicemail

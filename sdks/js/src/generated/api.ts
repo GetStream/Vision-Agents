@@ -4955,9 +4955,10 @@ export type components = {
          *     failed: the vendor could not place it, for a bad number or a carrier fault.
          *     canceled: the vendor says the call was hung up before an answer.
          *     unknown: the vendor reports nothing about how it ended, and the phone never joined.
+         *     voicemail: an answering machine picked up, and the agent left its message or hung up.
          * @enum {string}
          */
-        readonly CallOutcome: "completed" | "busy" | "no_answer" | "failed" | "canceled" | "unknown";
+        readonly CallOutcome: "completed" | "busy" | "no_answer" | "failed" | "canceled" | "unknown" | "voicemail";
         readonly CallToken: {
             /** @description The Stream app the call is in, which the browser SDK joins against. */
             readonly api_key: string;

@@ -34,9 +34,9 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * How a placed call ended. completed: the person answered and the call ended. busy: the line was busy or the person declined. no_answer: it rang and nobody answered. failed: the vendor could not place it, for a bad number or a carrier fault. canceled: the vendor says the call was hung up before an answer. unknown: the vendor reports nothing about how it ended, and the phone never joined.
+ * How a placed call ended. completed: the person answered and the call ended. busy: the line was busy or the person declined. no_answer: it rang and nobody answered. failed: the vendor could not place it, for a bad number or a carrier fault. canceled: the vendor says the call was hung up before an answer. unknown: the vendor reports nothing about how it ended, and the phone never joined. voicemail: an answering machine picked up, and the agent left its message or hung up.
  *
- * Values: completed,busy,no_answer,failed,canceled,unknown,unknown_default_open_api
+ * Values: completed,busy,no_answer,failed,canceled,unknown,voicemail,unknown_default_open_api
  */
 @Serializable(with = CallOutcomeSerializer::class)
 internal enum class CallOutcome(val value: kotlin.String) {
@@ -58,6 +58,9 @@ internal enum class CallOutcome(val value: kotlin.String) {
 
     @SerialName(value = "unknown")
     unknown("unknown"),
+
+    @SerialName(value = "voicemail")
+    voicemail("voicemail"),
 
     @SerialName(value = "unknown_default_open_api")
     unknown_default_open_api("unknown_default_open_api");

@@ -8,6 +8,7 @@ class CallOutcome(StrEnum):
     FAILED = "failed"
     NO_ANSWER = "no_answer"
     UNKNOWN = "unknown"
+    VOICEMAIL = "voicemail"
 
     def __str__(self) -> str:
         return str(self.value)

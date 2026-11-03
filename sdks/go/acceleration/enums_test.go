@@ -24,3 +24,22 @@ func TestAgentLogSourceKeepsItsConstantNames(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionEndReasonKeepsItsConstantNames pins names callers already use. CallOutcome
+// shares voicemail with it, so api/overlay.yaml names CallOutcome's constants; without that
+// overlay these are renamed and this file no longer compiles.
+func TestSessionEndReasonKeepsItsConstantNames(t *testing.T) {
+	named := map[acceleration.SessionEndReason]string{
+		acceleration.AgentHangup: "agent_hangup",
+		acceleration.Hangup:      "hangup",
+		acceleration.Start:       "start",
+		acceleration.Transferred: "transferred",
+		acceleration.Unanswered:  "unanswered",
+		acceleration.Voicemail:   "voicemail",
+	}
+	for constant, value := range named {
+		if string(constant) != value {
+			t.Errorf("%q is spelled %q", value, constant)
+		}
+	}
+}

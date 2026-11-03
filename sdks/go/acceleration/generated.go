@@ -495,6 +495,7 @@ const (
 	CallOutcomeFailed    CallOutcome = "failed"
 	CallOutcomeNoAnswer  CallOutcome = "no_answer"
 	CallOutcomeUnknown   CallOutcome = "unknown"
+	CallOutcomeVoicemail CallOutcome = "voicemail"
 )
 
 // Valid indicates whether the value is a known member of the CallOutcome enum.
@@ -511,6 +512,8 @@ func (e CallOutcome) Valid() bool {
 	case CallOutcomeNoAnswer:
 		return true
 	case CallOutcomeUnknown:
+		return true
+	case CallOutcomeVoicemail:
 		return true
 	default:
 		return false
@@ -3963,6 +3966,7 @@ type CallEvent struct {
 // failed: the vendor could not place it, for a bad number or a carrier fault.
 // canceled: the vendor says the call was hung up before an answer.
 // unknown: the vendor reports nothing about how it ended, and the phone never joined.
+// voicemail: an answering machine picked up, and the agent left its message or hung up.
 type CallOutcome string
 
 // CallToken defines model for CallToken.
@@ -4935,6 +4939,7 @@ type Contact struct {
 	// failed: the vendor could not place it, for a bad number or a carrier fault.
 	// canceled: the vendor says the call was hung up before an answer.
 	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+	// voicemail: an answering machine picked up, and the agent left its message or hung up.
 	Outcome      *CallOutcome `json:"outcome,omitempty"`
 	State        ContactState `json:"state"`
 	ToNumber     string       `json:"to_number"`
@@ -7960,6 +7965,7 @@ type SessionCallOutcome struct {
 	// failed: the vendor could not place it, for a bad number or a carrier fault.
 	// canceled: the vendor says the call was hung up before an answer.
 	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+	// voicemail: an answering machine picked up, and the agent left its message or hung up.
 	Outcome *CallOutcome `json:"outcome,omitempty"`
 }
 

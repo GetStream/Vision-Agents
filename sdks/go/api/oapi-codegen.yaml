@@ -6,6 +6,8 @@ generate:
   client: true
 output-options:
   skip-prune: true
+  overlay:
+    path: api/overlay.yaml
   # The sockets are in the spec so a reader knows they exist, but a generated client
   # cannot express an upgrade. They are hand-written in stream/socket.go, the same way the
   # server side of them is hand-written in acceleration/internal/api. openSocketSession has

@@ -29,6 +29,7 @@ class SessionCallOutcome:
             failed: the vendor could not place it, for a bad number or a carrier fault.
             canceled: the vendor says the call was hung up before an answer.
             unknown: the vendor reports nothing about how it ended, and the phone never joined.
+            voicemail: an answering machine picked up, and the agent left its message or hung up.
     """
 
     answered_at: datetime.datetime | Unset = UNSET

@@ -8,6 +8,7 @@ import StreamCore
 /// failed: the vendor could not place it, for a bad number or a carrier fault.
 /// canceled: the vendor says the call was hung up before an answer.
 /// unknown: the vendor reports nothing about how it ended, and the phone never joined.
+/// voicemail: an answering machine picked up, and the agent left its message or hung up.
 final class CallOutcome: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
 
@@ -21,4 +22,5 @@ final class CallOutcome: RawRepresentable, Codable, Hashable, Sendable {
     static let failed = CallOutcome(rawValue: "failed")
     static let noAnswer = CallOutcome(rawValue: "no_answer")
     static let unknown = CallOutcome(rawValue: "unknown")
+    static let voicemail = CallOutcome(rawValue: "voicemail")
 }
