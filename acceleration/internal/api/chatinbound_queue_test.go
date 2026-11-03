@@ -37,6 +37,8 @@ func TestChatInboundQueueSuite(t *testing.T) {
 }
 
 func (s *ChatInboundQueueSuite) SetupSuite() {
+	// Voice recordings are served on loopback, which the public-egress client refuses.
+	s.imageHTTP = &http.Client{}
 	s.chatInbounds.keys(&s.RouterSuite)
 	s.deploymentKnown = true
 	s.database = "chatqueue"
@@ -363,6 +365,32 @@ func (s *ChatInboundQueueSuite) TestAPeerThatCouldNotPlaceADeliveryAnswersUnavai
 		queuedFrom(s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))))
 	s.Require().NoError(err)
 	s.Equal(int32(http.StatusServiceUnavailable), answer.GetStatus(), "body: %s", answer.GetBody())
+}
+
+// A queued voice recording is heard in line, as the queue's worker answers every delivery: one
+// nobody takes is tried again, unheard, and one a worker takes is with it once the answer ends.
+func (s *ChatInboundQueueSuite) TestAQueuedVoiceRecordingIsHeardAndHandedInLine() {
+	recording := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(wavOf("where is my order"))
+	}))
+	defer recording.Close()
+	since := time.Now().UTC()
+	queued := s.row(s.queue(strings.Replace(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""),
+		`"text": "is my order on its way?"`,
+		`"text": "", "attachments": [{"type": "voiceRecording", "asset_url": "`+recording.URL+`/note.aac"}]`, 1)))
+
+	s.Require().ErrorIs(s.router.AnswerChatInbound(context.Background(), queued), errChatInboundUnsettled)
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, dropped, 10*time.Millisecond, "a recording nobody would answer was heard")
+
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), queued))
+	select {
+	case message := <-worker.Messages():
+		s.Equal("where is my order", message.Text)
+	default:
+		s.Fail("the answer ended before the worker had the recording")
+	}
 }
 
 // Nobody waiting to answer is no answer: the delivery stays queued for a worker to connect.

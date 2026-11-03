@@ -17,7 +17,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -248,11 +247,15 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			s.logger.Info("leaving a message the channel bridge wrote to its worker", "channel", thread.ChannelID, "message", event.Message.ID)
 			return true
 		}
+		// A thread is answered from what was written and the photos, as before voice recordings
+		// were heard in a plain channel: a recording alone has nothing in it to answer there.
+		if event.Message.Text == "" && len(event.photos()) == 0 {
+			return true
+		}
 		origin.answer(func() { s.answerThread(origin, thread, event) })
 		return true
 	}
-	// Only a linked thread answers a photo or a voice recording sent without text on a thread
-	// channel (addressed).
+	// Only a linked thread answers a photo sent without text on a thread channel (addressed).
 	_, recorded := event.recording()
 	if event.Message.Text == "" && strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) {
 		return true
@@ -427,11 +430,11 @@ func (s *Server) handOn(ctx context.Context, origin hookOrigin, recorded bool, h
 }
 
 // unopenedSpec is what a voice recording sent where no session runs is heard for, as a session
-// opened for it would hear it: the config answering the channel, else its customer alone in
-// the default region, for the channel's agent, under the attribution of the person who sent it.
+// opened for it would hear it: the config answering the channel, else its customer alone, for
+// the channel's agent, under the attribution of the person who sent it.
 // A config nobody holds any more is the customer alone; err is a read that failed.
 func (s *Server) unopenedSpec(ctx context.Context, customerID, configID string, event messageEvent) (session.Spec, error) {
-	spec := session.Spec{CustomerID: customerID, Region: pricing.DefaultRegion}
+	spec := session.Spec{CustomerID: customerID}
 	if configID != "" {
 		config, err := s.store.AgentConfig(ctx, customerID, configID)
 		switch {

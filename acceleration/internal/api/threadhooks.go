@@ -190,7 +190,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	// rather than a second answer. Only a reply another way into the session is
 	// still writing is waited out; any other failure ends the message, as each
 	// attempt whose turn did not start leaves a cancelled reply in the channel.
-	text, images := s.messagePhotos(turn, found.SeesImages(), s.heardText(turn, found.Spec(), event), event)
+	text, images := s.messagePhotos(turn, found.SeesImages(), event.Message.Text, event)
 	followUpID := "thread_" + store.NewID()
 	for {
 		err = found.FollowUp(turn, followUpID, text, images)
@@ -208,8 +208,8 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	}
 }
 
-// messagePhotos is what a message tells the model: its text, with what its voice recording
-// said (heardText), and the photos sent with it, read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
+// messagePhotos is what a message tells the model: text, which is what was written with it,
+// and the photos sent with it, read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
 // nothing that looks at one (the turn would be refused with ErrCannotSeeImages) or it could
 // not be fetched, is dropped and the turn is told of it, so the reply says so rather than the
 // person hearing nothing.

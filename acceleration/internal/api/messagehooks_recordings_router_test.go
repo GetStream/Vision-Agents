@@ -152,6 +152,40 @@ func (s *MessageHooksSuite) TestAVoiceRecordingAloneInAnUnlinkedThreadChannelIsN
 	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, dropped, 10*time.Millisecond, "the recording was heard")
 }
 
+// A channel whose last call names no config, or a config nobody holds any more, still hears a
+// recording, for the channel's customer.
+func (s *MessageHooksSuite) TestAVoiceRecordingInAChannelWithNoConfigIsHeardForItsCustomer() {
+	worker := s.workerOf(s.customerID())
+	for _, config := range []string{"", "gone-" + s.utils.uuid()} {
+		s.channelID = "chat-" + s.utils.uuid()
+		s.ran(config)
+		said := "hello " + s.utils.uuid()
+
+		s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", s.recordedMessage("", "", s.recordingAt(said))))
+
+		s.Equal(said, s.handed(worker).Text, config)
+	}
+}
+
+// A voice recording written in the channel a worker's session answers reaches that session's
+// model as what it says, billed to it, and is not handed out again.
+func (s *MessageHooksSuite) TestAVoiceRecordingToAWorkersSessionReachesItsModelAsWhatItSays() {
+	handed := s.handedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model"),
+	})
+	s.asked(opened.Id, handed.Text)
+	asked := len(s.vision.requests())
+	said := "and what about Spain " + s.utils.uuid()
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", s.recordedMessage("", "", s.recordingAt(said))))
+
+	s.Equal(said, s.askedOf(s.vision, asked).Content)
+	s.Equal(opened.Id, s.meteredRows(routing.STT, since, 1)[0].SessionID)
+	s.nothingReaches(s.worker, "a recording to a running session was dispatched again")
+}
+
 // recordedMessage is a signed message.new for the suite's channel with text and attachments, as
 // Stream would send it. The custom data is whatever the channel was created with.
 func (s *MessageHooksSuite) recordedMessage(custom, text string, attachments ...map[string]any) string {
