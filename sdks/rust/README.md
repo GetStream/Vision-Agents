@@ -200,8 +200,9 @@ if it failed. `get_or_create_agent` keeps one session per channel, because the s
 answered the last message is the one that knows what was said.
 
 An agent whose `agent.yaml` says `dispatch: {text: enabled}` hands what end users write to the
-worker with the running session's `session_id` and its `request_id`. `answer` has the model
-answer it on that session, with the worker's own credential acting for the user who wrote it.
+worker with the running session's `session_id`, its `request_id` and the photos sent with it
+in `images`. `answer` has the model answer it on that session, shown those photos, with the
+worker's own credential acting for the user who wrote it.
 `get_or_create_agent` refuses such a message.
 
 A worker can also host an agent's functions for every session opened under its name,

@@ -79,10 +79,7 @@ final readonly class InboundMessage
             return [];
         }
         $images = [];
-        foreach ($sent as $described) {
-            if (!is_array($described)) {
-                continue;
-            }
+        foreach (Json::objects($frame, 'images') as $described) {
             $url = $described['url'] ?? null;
             $mimeType = $described['mime_type'] ?? null;
             if (is_string($url) && $url !== '') {
