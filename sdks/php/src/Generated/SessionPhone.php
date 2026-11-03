@@ -20,7 +20,7 @@ final readonly class SessionPhone
         public ?string $vendor = null,
         // The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
         public ?string $vendorCallId = null,
-        // What the agent does when an answering machine picks up the call placed. It acts only on a call placed with...
+        // What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voi...
         public ?SessionVoicemail $voicemail = null,
     ) {
     }

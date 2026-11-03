@@ -7549,7 +7549,7 @@ export type components = {
             readonly custom?: {
                 readonly [key: string]: string;
             };
-            /** @description Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail. */
+            /** @description Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail. */
             readonly detect_voicemail?: boolean;
             /** @description One of the customer's own numbers, which is what the person sees. */
             readonly from: string;
@@ -8846,7 +8846,7 @@ export type components = {
             readonly vendor?: string;
             /** @description The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
             readonly vendor_call_id?: string;
-            /** @description What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it. */
+            /** @description What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it. */
             readonly voicemail?: components["schemas"]["SessionVoicemail"];
         };
         readonly SessionQuery: {
@@ -8954,7 +8954,7 @@ export type components = {
         /** @description What the agent does when an answering machine picks up. */
         readonly SessionVoicemail: {
             readonly action: components["schemas"]["VoicemailAction"];
-            /** @description Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up. */
+            /** @description Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up. */
             readonly message?: string;
         };
         readonly SetNumberAgentRequest: {
@@ -10498,7 +10498,7 @@ export type components = {
         };
         /**
          * @description hang_up: end the call at once, saying nothing.
-         *     leave_message: say message once the greeting has ended, then hang up.
+         *     leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
          * @enum {string}
          */
         readonly VoicemailAction: "hang_up" | "leave_message";

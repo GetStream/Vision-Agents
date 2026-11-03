@@ -8,7 +8,7 @@ namespace GetStream\VisionAgents\Generated;
 
 /**
  * hang_up: end the call at once, saying nothing. leave_message: say message once the greeting
- * has ended, then hang up.
+ * has ended or once the call counts as a machine, then hang up.
  */
 enum VoicemailAction: string
 {

@@ -6668,7 +6668,7 @@ type PlaceCallRequest struct {
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
 	Custom *map[string]string `json:"custom,omitempty"`
 
-	// DetectVoicemail Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail.
+	// DetectVoicemail Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
 	DetectVoicemail *bool `json:"detect_voicemail,omitempty"`
 
 	// From One of the customer's own numbers, which is what the person sees.
@@ -8277,10 +8277,10 @@ type SessionVideo struct {
 // SessionVoicemail What the agent does when an answering machine picks up.
 type SessionVoicemail struct {
 	// Action hang_up: end the call at once, saying nothing.
-	// leave_message: say message once the greeting has ended, then hang up.
+	// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
 	Action VoicemailAction `json:"action"`
 
-	// Message Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+	// Message Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
 	Message *string `json:"message,omitempty"`
 }
 
@@ -10023,7 +10023,7 @@ type VoiceSampleRequest struct {
 }
 
 // VoicemailAction hang_up: end the call at once, saying nothing.
-// leave_message: say message once the greeting has ended, then hang up.
+// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
 type VoicemailAction string
 
 // WhatsAppProfile defines model for WhatsAppProfile.

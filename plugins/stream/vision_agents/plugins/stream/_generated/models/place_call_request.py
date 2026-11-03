@@ -31,7 +31,9 @@ class PlaceCallRequest:
             custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into
             that session with the same custom, or use a new session.
         detect_voicemail (bool | Unset): Ask the number's vendor to tell when an answering machine picks up. Ignored on
-            vendors that cannot. What the agent then does is the session's phone.voicemail.
+            vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a
+            machine while the person called has said nothing to the agent. What the agent then does is the session's
+            phone.voicemail.
         headers (PlaceCallRequestHeaders | Unset): Carried to the person's leg as custom SIP headers. Only some vendors
             can express these, and one that cannot refuses the call.
         initial_digits (str | Unset): Digits pressed once the person answers, for reaching an extension behind a menu,

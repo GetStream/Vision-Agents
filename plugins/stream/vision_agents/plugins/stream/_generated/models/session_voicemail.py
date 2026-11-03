@@ -19,9 +19,9 @@ class SessionVoicemail:
 
     Attributes:
         action (VoicemailAction): hang_up: end the call at once, saying nothing.
-            leave_message: say message once the greeting has ended, then hang up.
-        message (str | Unset): Said word for word once the machine's greeting has ended, then the agent hangs up.
-            Required for leave_message, and not only spaces. Ignored for hang_up.
+            leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+        message (str | Unset): Said word for word once the machine's greeting has ended, or once the call counts as a
+            machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
     """
 
     action: VoicemailAction
