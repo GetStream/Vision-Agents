@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Any, AsyncIterator, Optional
 
 import pytest
@@ -759,6 +760,60 @@ class TestDispatch:
 
         assert [(image.url, image.mime) for image in message.images] == read
         assert message.text == "is my invoice reissuable?"
+
+    async def test_a_refused_photo_url_is_never_logged(
+        self,
+        router: Router,
+        dispatch: stream.Dispatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        secret = "s3cret-token"
+        refused = [
+            {"url": f"https://user:{secret}@cdn.example.com/a.jpg"},
+            {"url": f"data:image/png;base64,{secret}"},
+            {"url": f"ftp://cdn.example.com/{secret}.jpg"},
+        ]
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            with caplog.at_level(logging.DEBUG):
+                await router.hand_over({**MESSAGE, "images": refused})
+                message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.images == []
+        assert "cannot be fetched" in caplog.text
+        assert secret not in caplog.text
+
+    def test_a_message_built_by_position_keeps_its_older_fields_in_place(self):
+        message = InboundMessage(
+            "chan",
+            "agent",
+            "cfg",
+            {},
+            "hi",
+            "msg-1",
+            "user-1",
+            "Ana",
+            None,
+            "s-1",
+            "r-1",
+        )
+
+        assert (message.message_id, message.user_id, message.user_name) == (
+            "msg-1",
+            "user-1",
+            "Ana",
+        )
+        assert (message.session_id, message.request_id) == ("s-1", "r-1")
+        assert message.images == []
 
     async def test_a_message_sent_without_photos_has_none(
         self, router: Router, dispatch: stream.Dispatch

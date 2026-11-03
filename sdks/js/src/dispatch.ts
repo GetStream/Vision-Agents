@@ -217,7 +217,7 @@ export class Dispatch {
       throw new ConfigurationError("no session is holding this message; open one with sessionFor");
     }
     const acting = new Client(this.client.backend.actingFor(message.userId));
-    const images = message.images.map(({ url }) => ({ url }));
+    const images = (message.images ?? []).map(({ url }) => ({ url }));
     return createResponse(acting, message.sessionId, message.text, { images }, message.requestId);
   }
 

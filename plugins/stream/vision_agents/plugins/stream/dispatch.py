@@ -723,7 +723,7 @@ def _images_of(frame: dict[str, object]) -> list[ImageContent]:
     """Read the photos a message frame carries.
 
     An entry that is not an object, has no URL, or has one that is not an absolute HTTP(S)
-    URL is dropped: there is nothing the model could fetch.
+    URL without credentials is dropped. So is a `data:` URI, which the router would accept.
     """
     sent = frame.get("images")
     images: list[ImageContent] = []
@@ -742,9 +742,7 @@ def _images_of(frame: dict[str, object]) -> list[ImageContent]:
             else:
                 images.append(ImageContent(url=url))
         except ValueError:
-            logger.debug(
-                "a message arrived with an image that cannot be fetched: %s", url
-            )
+            logger.debug("a message arrived with an image that cannot be fetched")
     return images
 
 

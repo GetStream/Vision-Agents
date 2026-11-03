@@ -34,7 +34,7 @@ dispatch.onMessage(async (message) => {
   console.log(`${message.userName || message.userId} wrote: ${message.text}`);
 
   const session = await dispatch.sessionFor(message, john);
-  const images = message.images.map(({ url }) => ({ url }));
+  const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });
 

@@ -243,7 +243,7 @@ dispatch.onMessage(async (message) => {
     return;
   }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
-  const images = message.images.map(({ url }) => ({ url }));
+  const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });
 

@@ -45,8 +45,8 @@ export interface InboundMessage {
   requestId: string;
   /** What was written. Empty when a photo was sent without text. */
   text: string;
-  /** The photos sent with it, by the URLs the channel keeps them at. Empty when none was. */
-  images: InboundImage[];
+  /** The photos sent with it, by the URLs the channel keeps them at. Empty or absent when none was. */
+  images?: InboundImage[];
   messageId: string;
   userId: string;
   userName: string;

@@ -633,7 +633,6 @@ describe("Dispatch", () => {
       sessionId: "",
       requestId: "",
       text: "hello",
-      images: [],
       messageId: "msg_1",
       userId: "ana",
       userName: "Ana",
@@ -673,7 +672,6 @@ describe("Dispatch", () => {
       sessionId: "sess_1",
       requestId: "req_1",
       text: "are you open today",
-      images: [],
       messageId: "",
       userId: "ana",
       userName: "Ana",
@@ -724,6 +722,29 @@ describe("Dispatch", () => {
         );
         assert.equal(claimsOf(token)["user_id"], undefined);
       }
+    });
+
+    it("answers a hand-built message without photos as text alone, exactly as before photos", async () => {
+      router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+        status: 202,
+        body: { id: "resp_1", session_id: "sess_1", status: "running", created_at: "2026-01-01T00:00:00Z" },
+      });
+      const handBuilt: InboundMessage = {
+        channelId: "",
+        channelType: "agent",
+        agentId: "john",
+        configId: "",
+        sessionId: "sess_1",
+        requestId: "req_2",
+        text: "hi",
+        messageId: "",
+        userId: "ana",
+        userName: "Ana",
+      };
+
+      await new Dispatch({ client: api }).answer(handBuilt);
+
+      assert.deepEqual(router.last.body, { text: "hi", request_id: "req_2" });
     });
 
     it("shows the model the photos sent with it, under its request", async () => {
