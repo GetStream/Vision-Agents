@@ -36,7 +36,8 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
                 the scheduled tasks the copy paused because they were active there, each
                 at its first occurrence after now, and name the campaigns still running
-                there at the last --once, which it leaves paused
+                there at the last --once, which it leaves paused. Do not run --once again
+                after --resume: every run makes the deployment copied from the truth again
 
 Until the last --once the deployment copied from is the truth: a change it makes to a
 row overwrites what was done to that row here, a delete included. Once SDKs point here,
@@ -257,7 +258,7 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 			if once {
 				fmt.Printf("caught up at cursor %d. Point your SDKs here, pause the campaigns at the deployment copied from "+
 					"and wait for their calls to end, then run this once more to pick up the last writes. "+
-					"Once the deployment copied from stops delivering, run it with --resume --as %s.\n", cursor, customerID)
+					"Once the deployment copied from stops delivering, run it with --resume --as %s, and do not run --once again after that.\n", cursor, customerID)
 				return nil
 			}
 			fmt.Printf("caught up at cursor %d\n", cursor)
@@ -295,7 +296,18 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 	for _, id := range campaigns {
 		fmt.Fprintf(out, "campaign %s was still running where it came from at the last --once, so it stays paused here: "+
 			"contacts rung there since then are still pending here, and starting it here rings them again. "+
-			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you start it here\n", id, id)
+			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id)
+	}
+	calling, err := pgStore.PausedCampaignsCalling(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	for _, campaign := range calling {
+		fmt.Fprintf(out, "campaign %s is paused here with %d contacts in a call where it came from at the last --once: "+
+			"starting it here rings them again. Check them there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
+			campaign.ID, campaign.Calls, campaign.ID)
 	}
 	return nil
 }

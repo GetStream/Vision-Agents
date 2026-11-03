@@ -1541,6 +1541,52 @@ func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndStartsWhereTheCopyLe
 	s.Equal(1, next.Attempts)
 }
 
+// A campaign the user paused at the source without waiting for its calls to end arrives paused
+// and unmarked with a contact still calling. The cut-over names it with how many, since a start
+// here rings them again.
+func (s *DataMoveSuite) TestACampaignPausedAtTheSourceWithContactsCallingIsNamedWithTheirCount() {
+	s.capture("acme")
+	inCalls := s.seedCampaign("acme", Running)
+	quiet := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
+		{CampaignID: inCalls, ToNumber: "+15550101"}, {CampaignID: inCalls, ToNumber: "+15550102"},
+		{CampaignID: inCalls, ToNumber: "+15550103"}, {CampaignID: quiet, ToNumber: "+15550104"}}))
+	s.ringOnSource(inCalls)
+	s.ringOnSource(inCalls)
+	s.hangUpOnSource(s.ringOnSource(quiet))
+	cursor := s.move("acme", "moved")
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", inCalls, Paused))
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", quiet, Paused))
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	_, campaigns := s.resume("moved")
+	s.Empty(campaigns, "the user paused both at the source")
+	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
+	s.Require().NoError(err)
+	s.Equal([]CampaignCalls{{ID: inCalls, Calls: 2}}, calling, "only the one with contacts in a call, counted")
+
+	first := s.startHere("moved", inCalls)
+	s.Equal(2, first.Attempts, "a start here rings the one the source was calling again")
+}
+
+func (s *DataMoveSuite) TestACampaignNotPausedHereIsNotNamedForItsCalls() {
+	running := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: running, ToNumber: "+15550101"}}))
+	s.ringOnSource(running)
+	other := s.seedCampaign("other", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: other, ToNumber: "+15550102"}}))
+	s.ringOnSource(other)
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "other", other, Paused))
+	s.move("acme", "moved")
+	s.move("other", "moved-other")
+
+	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
+	s.Require().NoError(err)
+	s.Empty(calling, "the one the move paused is named as running there, and another customer's is not its")
+}
+
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
 // connection with no credentials holds: none, key version 0, no expiry, and a status asking
 // for a reconnect.

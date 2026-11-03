@@ -2390,11 +2390,15 @@ Cut over once SDKs point here:
 
 1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
    until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
-   A pause stops new calls only, and a call that ends after the last `--once` is not carried.
+   A pause ends the call in progress on the router that runs the campaign, and a call that
+   ends after the last `--once` is not carried. A pause lands on one router only: with more
+   than one replica at the source, confirm the campaign has stopped (no contact `calling` and
+   no new attempts) before the last `--once`.
 2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
    holds every call the source made.
-3. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
-   pauses are carried over, they clear the marks, and step 4 then resumes nothing.
+3. Stop the source delivering. Do not pause the scheduled tasks there before that last
+   `--once`: the pauses are carried over, they clear the marks, and step 4 then resumes
+   nothing.
 4. Run the cut-over:
 
    ```bash
@@ -2422,7 +2426,11 @@ paused at the source in step 1 stays paused here and is not named. Start it here
 `POST /v1/agents/campaigns/{id}/start` when it is to ring again. A campaign still running at the
 source at the last `--once` stays paused here, and `--resume` names it: a contact the source rang
 after that is still `pending` here, and a start here rings that contact again. Read its contacts
-at the source before you start it here.
+at the source before you start it here. A campaign paused at the source that still holds contacts
+`calling` is named too, with how many: a start here rings them again.
+
+Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
+again: it overwrites what the cut-over resumed and started here with what the source has.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app

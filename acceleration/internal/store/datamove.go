@@ -928,6 +928,35 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 	return resumed, skipped, overLimit, campaigns, nil
 }
 
+// CampaignCalls is a campaign and how many of its contacts are in a call.
+type CampaignCalls struct {
+	ID    string `bun:"id"`
+	Calls int    `bun:"calls"`
+}
+
+// PausedCampaignsCalling returns the customer's campaigns that are paused here, not by the move,
+// and still hold contacts in a call, with how many each. The source was calling them at the
+// last catch-up: a start here releases them to pending (ReleaseContacts) and rings them again.
+func (s *Store) PausedCampaignsCalling(ctx context.Context, customerID string) ([]CampaignCalls, error) {
+	var calling []CampaignCalls
+	err := s.db.NewSelect().
+		TableExpr("campaigns AS c").
+		ColumnExpr("c.id AS id").
+		ColumnExpr("count(*) AS calls").
+		Join("JOIN campaign_contacts AS cc ON cc.campaign_id = c.id").
+		Where("c.customer_id = ?", customerID).
+		Where("c.state = ?", Paused).
+		Where("NOT c.move_paused").
+		Where("cc.state = ?", Calling).
+		Group("c.id").
+		Order("c.id").
+		Scan(ctx, &calling)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: paused campaigns calling: %w", err))
+	}
+	return calling, nil
+}
+
 // scheduledTaskHolder is a user on an agent config, who holds at most its limit of active tasks.
 type scheduledTaskHolder struct{ user, config string }
 
