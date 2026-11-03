@@ -255,3 +255,5 @@ func (a *Active) Quoted(item Item, micros int64) Quote { return a.List().Quoted(
 func (a *Active) Billable(item Item) bool { return a.List().Billable(item) }
 
 func (a *Active) Entry(item Item) (Entry, bool) { return a.List().Entry(item) }
+
+func (a *Active) Covers(item Item) bool { return a.List().Covers(item) }

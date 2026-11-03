@@ -2,6 +2,47 @@
 
 ## Features
 
+### Users behind one address each have their own quota
+
+A quota a customer set was also counted against the address a device called from, so every
+user of an app behind one IP address, an office or a carrier's NAT, shared one user's quota,
+and the refusal named a user who had not spent it. A customer's quota is now counted per user
+only. The address still answers for the router's own default limits, the guard against a
+backend minting a fresh user id per request (AI-2187).
+
+### A knowledge lookup is priced by the bytes it searched and returned
+
+A turbopuffer lookup was priced at a flat fee per request, turbopuffer's 1.28 GB query
+minimum, so a lookup over a larger base cost more than it was billed. It is now priced by the
+bytes turbopuffer billed it for searching, which include that minimum, and by the bytes it
+returned, at turbopuffer's list rates (AI-2187).
+
+### Cached speech-to-speech tokens the vendor did not split are billed at the cached rate
+
+A speech-to-speech reply whose vendor reports a cached total but no split of it by modality, such as an OpenAI-compatible realtime dialect without `cached_tokens_details`, now has the cached tokens shared out across text, audio and image in proportion, and priced at each modality's cached rate rather than its fresh one. A model with no cached rate, such as Gemini Live, keeps them at its modality rates, as Google bills them (AI-2187).
+
+### A sonar search keeps what Perplexity said it cost
+
+A search answered by a Perplexity sonar model now records the `usage.cost.total_cost` Perplexity sends, its tokens and request fee together, on the row as the vendor's cost (`vendor_cost_micros`), so the price list can be checked against it. The search is still priced by the request (AI-2187).
+
+### A user who has spent their day still reads their sessions
+
+A device caller whose daily quota is spent is no longer refused a read: `GET` of a session, its responses and the rest answer as before, with `X-Quota-Remaining: 0` and the other quota headers. Opening a session, a turn, a run and a socket are still a 429, as is any other write (AI-2187).
+
+### Releasing a number bought moments ago says to try again
+
+`DELETE /v1/phone/numbers/{e164}` answers a 409 `phone_number_settling` when the vendor refuses to give back a number bought in the last minute, which it is still setting up: Telnyx refused one 4 seconds after its purchase and took the same release 13 seconds later. The number stays held, so the same release can be sent again. Any other vendor failure is still a 503 `phone_vendor_failed`. Both are now listed on the operation (AI-2187).
+
+### A price change writes the BYOK price beside a new item
+
+`POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
+### Usage rows say where the work ran and whether on the customer's own key
+
+Every `requests` row and usage event now carries `region` and `byok`, the priced item's, whether or not an entry priced it, so spend splits by region and by the customer's own provider keys, and unpriced work, which has no SKU, still says where it ran. The organization's usage listing in the usage service shows both. Rows and events from before read empty and false. Migrations `20261207120000_requests_region_byok` (router) and `00006_usage_event_region_byok` (usage service) add the columns with constant defaults, rewriting no row (AI-2187).
+### A session's runtime is priced in its region
+
+Runtime rows (`modality: runtime`) are now priced by the entry of the session's region: an `eu` agent's time is priced by `runtime/stream/*` in `eu`, never by the `us` one. A price list with no `eu` runtime entries leaves an `eu` session's time unpriced, so add them, free or priced, before an `eu` agent opens a session (AI-2187).
+
 ### A voice note sent with a question is transcribed and answered
 
 `POST /v1/agents/sessions/{id}/responses` takes `audio`, a voice note by URL or base64 data URI of at most 8 MiB, and `text` may then be empty. The router transcribes it in the session's languages before the turn starts, billed to the session's customer, and the agent answers what was said, after any text. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. A note that is not audio, is too big, holds no words, cannot be fetched or is refused for money is refused before any turn starts. Go: `client.VoiceNote{URL}` on `Responses.Create` (AI-2518). `POST /v1/agents/sessions/{id}/respond` takes the same `audio`, heard and refused the same way, and `text` may be empty with it. Empty text without `audio` there is now a 400 `invalid_request` ("there is nothing to answer"), as on `responses`, where it was a 400 `validation_failed` (AI-2549).
@@ -278,6 +319,16 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A session outside region us cannot ask for memory
+
+The memory provider (mem0, at `api.mem0.ai`) keeps everything in the US, and an agent's work is done in its own region only. A session in another region, such as an `eu` agent's, that asks for memory (`memory.user_id`) is now refused with a 400 naming the region, rather than sending what the user said to the US (AI-2187).
+
+### Two regions kept in one turbopuffer region are refused
+
+`knowledge.regions` (`ROUTER_KNOWLEDGE_REGIONS`) mapping two of the router's regions to one turbopuffer region, the default region's included (`TURBOPUFFER_REGION`, else `gcp-us-central1`), stops the router and `router usage storage` from starting. Its knowledge bases would be listed under both regions, and the hourly storage job billed each twice under different usage ids (AI-2187).
+### A voice session naming an unpriced backend or transcriber is refused
+
+`backend_model` (a GPT-Live session's text model) and `transcription_model` (OpenAI Realtime's transcriber) come from the caller's overwrites, and each is billed as a row of its own under that name. A name the price list does not cover was recorded at nothing. The session is now refused before the vendor is called, as a request error naming the model. `gpt-4o-transcribe` ($2.50 and $10 a million tokens in and out) and `whisper-1` ($0.006 a minute of audio) gain vendor prices, so they are accepted (AI-2187).
 ### A Muse model answers a reply that may call no tool
 
 A reply that must not call a tool (an answer after a tool result, a reply with no tools offered, a question for a colleague) was sent to Meta's API with `tool_choice: "none"`, which it refuses with a 400. Those replies now go out with no tools and no tool choice, as they already did for Ollama. A request for `required` or a named tool on a Muse model is still refused before it is sent (AI-2542).
