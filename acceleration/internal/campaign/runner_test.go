@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -547,17 +548,29 @@ func (s *RunnerSuite) TestACampaignLeavingAMessageWithAConfigThatBecameSpeechToS
 	s.Equal(0, contact.Attempt, "the attempt is unused")
 }
 
-func (s *RunnerSuite) TestASpeechToSpeechConfigThatHangsUpOnVoicemailIsDialed() {
-	campaign := s.leavingAMessageWith(store.AgentConfig{STS: "stub/stub-sts"}, VoicemailHangUp)
-	dialer := NewPhoneDialer(nil, nil, s.store, slog.New(slog.DiscardHandler))
-	contacts, err := s.store.QueryContacts(s.ctx, campaign.ID, store.ContactFilter{Limit: 1})
+func (s *RunnerSuite) TestASpeechToSpeechConfigIsOnlyRefusedAVoicemailMessage() {
+	// Telephony is suspended, so a call that reaches the phone service fails before any vendor.
+	s.Require().NoError(s.store.SuspendTelephony(s.ctx, &store.TelephonySuspension{
+		CustomerID: s.customerID, Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	config, err := phone.DefaultConfig()
 	s.Require().NoError(err)
-	step, err := ParseSequence(campaign.Sequence)
+	service, err := phone.NewService(phone.ServiceOptions{Registry: phone.NewRegistry(config), Store: s.store})
 	s.Require().NoError(err)
+	dialer := NewPhoneDialer(service, nil, s.store, slog.New(slog.DiscardHandler))
 
-	s.Panics(func() {
-		_, _ = dialer.Dial(s.ctx, Dial{Campaign: campaign, Contact: contacts[0], Step: step.First()})
-	}, "it got as far as placing the call, which the nil phone cannot")
+	for action, reason := range map[string]string{VoicemailHangUp: "telephony_suspended", VoicemailLeaveMessage: reasonVoicemailNeedsExactWords} {
+		campaign := s.leavingAMessageWith(store.AgentConfig{STS: "stub/stub-sts"}, action)
+		contacts, err := s.store.QueryContacts(s.ctx, campaign.ID, store.ContactFilter{Limit: 1})
+		s.Require().NoError(err)
+		sequence, err := ParseSequence(campaign.Sequence)
+		s.Require().NoError(err)
+
+		dialed, err := dialer.Dial(s.ctx, Dial{Campaign: campaign, Contact: contacts[0], Step: sequence.First()})
+
+		s.Require().NoError(err, action)
+		s.Equal(Dialed{Result: Paused, Reason: reason}, dialed, action)
+	}
 }
 
 func (s *RunnerSuite) TestTheLastContactCompletesTheCampaign() {
