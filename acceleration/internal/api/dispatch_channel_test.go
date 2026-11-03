@@ -125,7 +125,8 @@ func (s *MessageHooksSuite) TestAWorkersQuestionWithoutARequestIDIsNotWrittenInt
 }
 
 // TestAWorkersRespondCommandIsNotWrittenIntoTheChannelAgain fails on base, as the response
-// with a request id does: /respond with one is the same command.
+// with a request id does: /respond with one is the same command. Its receipt is still
+// announced as command_accepted, before the reply.
 func (s *MessageHooksSuite) TestAWorkersRespondCommandIsNotWrittenIntoTheChannelAgain() {
 	handed := s.handedOut()
 	opened := s.workersSession(handed)
@@ -135,8 +136,11 @@ func (s *MessageHooksSuite) TestAWorkersRespondCommandIsNotWrittenIntoTheChannel
 	var receipt CommandReceipt
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
 		map[string]any{"text": handed.Text, "request_id": id}, &receipt))
+	accepted, _ := s.await(watching, "command_accepted")["command"].(map[string]any)
 	s.await(watching, "responded")
 
+	s.Equal(id, accepted["request_id"])
+	s.Equal(receipt.AssistantMessageId, accepted["assistant_message_id"])
 	s.Equal(id, receipt.RequestId)
 	s.Empty(receipt.UserMessageId, "the person's message is not the session's")
 	s.NotEmpty(receipt.AssistantMessageId)

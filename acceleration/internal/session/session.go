@@ -621,7 +621,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
-		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked)
+		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
 		return turnID, err
 	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
@@ -714,7 +714,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	if handedOn {
-		return s.followUp(ctx, id, text, images, asked)
+		return s.followUp(ctx, id, text, images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
@@ -808,19 +808,23 @@ func (s *Session) chose(name, connectionID string) {
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	_, _, err := s.followUp(ctx, id, text, images, options.LLM{})
+	_, _, err := s.followUp(ctx, id, text, images, options.LLM{}, false)
 	return err
 }
 
 // followUp is FollowUp under commandMu, with asked changing this reply alone. It returns the
-// follow-up's receipt and the id the turn was recorded as, as RespondCommand does.
-func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
+// follow-up's receipt and the id the turn was recorded as, as RespondCommand does. accepted
+// broadcasts the receipt before the turn starts, as RespondCommand does for a command.
+func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
+	}
+	if accepted {
+		s.broadcast(receipt)
 	}
 	if receipt.Duplicate {
 		return receipt, "", nil

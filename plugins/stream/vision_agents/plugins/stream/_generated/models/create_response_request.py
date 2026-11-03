@@ -35,7 +35,9 @@ class CreateResponseRequest:
             answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream
             Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the
             person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same
-            id, text, images and voice note starts no second turn and returns no id.
+            id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened
+            for a message handed out from a channel, that message is already there: nothing is written or uploaded for it,
+            and a reused id is answered as a duplicate even with other text or images.
         videos (list[VideoSource] | Unset): Recorded clips to show the agent. The router samples evenly spaced frames
             from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a
             video, since none of the ones routed here take one whole.
