@@ -157,7 +157,10 @@ function ThemeSwitch({ theme, onTheme }: { theme: Theme; onTheme: (theme: Theme)
       title={label}
       type="button"
     >
-      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+      {/* Keyed, so the new icon turns in as the page changes. */}
+      <span className="theme-icon" key={theme}>
+        {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+      </span>
     </button>
   );
 }
