@@ -197,7 +197,7 @@ describe("Backend", () => {
     });
 
     assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" });
-    assert.deepEqual(backend.query(), { user_id: "jlahey" });
+    assert.deepEqual(backend.query(), { user_id: "jlahey", "stream-auth-type": "jwt" });
     const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
     assert.equal(url.searchParams.get("customer_id"), "local");
     assert.equal(url.searchParams.get("user_id"), "jlahey");
@@ -210,6 +210,36 @@ describe("Backend", () => {
       token: "token-1",
     });
     assert.equal((await backend.streamCredentials())?.token, "token-2", "asked again each time");
+  });
+
+  it("says a page that set its user is that user, so it reaches only their conversations", async () => {
+    // A router reached by customer id takes a caller that says nothing for the app's backend,
+    // which reaches every user's sessions. A page that named its user says `jwt`, which such a
+    // router reads as that end user.
+    const backend = new Backend({ url: router.url, customerId: "local" });
+    await backend.setUser({ id: "jlahey", name: "Jim Lahey" }, "token-for-jim");
+
+    assert.equal(backend.serverSide, false);
+    assert.deepEqual(backend.query(), { user_id: "jlahey", "stream-auth-type": "jwt" });
+    const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
+    assert.equal(url.searchParams.get("stream-auth-type"), "jwt");
+    assert.equal(url.searchParams.get("user_id"), "jlahey");
+  });
+
+  it("speaks for the app's backend again once the page's user is cleared", async () => {
+    const backend = new Backend({ url: router.url, customerId: "local" });
+    await backend.setUser("jlahey", "token-for-jim");
+    backend.clearUser();
+
+    assert.equal(backend.serverSide, true);
+    assert.deepEqual(backend.query(), {});
+  });
+
+  it("keeps a backend that names a user server-side, so it can configure agents for them", () => {
+    const backend = new Backend({ url: router.url, customerId: "local", userId: "ana" });
+
+    assert.equal(backend.serverSide, true);
+    assert.deepEqual(backend.query(), { user_id: "ana" });
   });
 
   it("names the customer when that is all there is to go on", async () => {
