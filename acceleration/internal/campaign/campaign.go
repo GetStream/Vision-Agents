@@ -117,8 +117,11 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		return stack.Wrap(errors.New("campaign: the runner is shut down"))
 	}
 	if _, already := r.running[campaign.ID]; already {
-		r.mu.Unlock()
-		return nil
+		defer r.mu.Unlock()
+		// A pause on another router leaves the loop here until its next claim finds the
+		// campaign paused (stopped), so the row may say paused while it is listed. It is written
+		// running holding the list, which that loop reads it under.
+		return r.store.SetCampaignState(ctx, customerID, campaign.ID, store.Running)
 	}
 	// The loop outlives the request that started it, so it takes the background rather
 	// than a context that is cancelled the moment the caller is answered.
@@ -202,7 +205,7 @@ func (r *Runner) run(ctx context.Context, campaign store.Campaign, config store.
 		if !found {
 			<-slots
 			calls.Wait()
-			if ctx.Err() != nil {
+			if r.stopped(ctx, campaign) {
 				return
 			}
 			// Another call may have been running when the queue emptied, so this is
@@ -387,6 +390,32 @@ func (r *Runner) pending(ctx context.Context, campaignID string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// stopped reports whether this loop is to end without writing the campaign's state: it was
+// cancelled, or the campaign is no longer running, which is all a pause on another router
+// leaves for it. Such a loop is taken off the list. The row is read holding the list, so a
+// Start here either finds the loop gone and runs another, or has written the campaign running.
+func (r *Runner) stopped(ctx context.Context, campaign store.Campaign) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if ctx.Err() != nil {
+		return true
+	}
+	// Bounded, as Close waits on the list and cancels this loop only once it holds it.
+	reading, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	read, err := r.store.Campaign(reading, campaign.CustomerID, campaign.ID)
+	if err != nil {
+		r.logger.Error("could not read whether a campaign still runs", "campaign", campaign.ID, "error", err)
+		return false
+	}
+	if read.State == store.Running {
+		return false
+	}
+	delete(r.running, campaign.ID)
+	return true
 }
 
 // stop takes the campaign off the running list and records where it got to.

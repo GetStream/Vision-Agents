@@ -4,8 +4,12 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
@@ -206,6 +210,73 @@ func (s *CampaignsSuite) TestOnlyTheAppsOwnBackendMayCreateACampaign() {
 			"from_number": s.utils.number(),
 		}, nil)
 	})
+}
+
+func (s *CampaignsSuite) TestAPauseOnAnotherRouterStopsTheCallsOfTheOneRunningIt() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()})
+	// The suite's router runs the campaign; the pause lands on a second router over the same
+	// database, as it does behind a load balancer.
+	other := s.campaigns(s.router.sessions, slog.New(slog.DiscardHandler))
+	locked := s.holdContacts(created.Id)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+	s.Require().NoError(other.Pause(context.Background(), s.customerID(), created.Id))
+	s.Require().NoError(locked.Rollback())
+
+	s.Never(func() bool {
+		return s.state(created.Id) != CampaignStatePaused || s.rung(created.Id) > 0
+	}, time.Second, 20*time.Millisecond, "the router running it rang nobody after the pause, and left it paused")
+	s.Require().NoError(other.Start(context.Background(), s.customerID(), created.Id))
+	s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished },
+		10*time.Second, 20*time.Millisecond, "started again, it rings everybody it held back")
+	s.Equal(2, s.rung(created.Id))
+}
+
+func (s *CampaignsSuite) TestACampaignNobodyPausesRingsEverybodyAndFinishes() {
+	created := s.campaign(2)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()},
+		map[string]any{"to_number": s.utils.number()})
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+	s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished },
+		10*time.Second, 20*time.Millisecond)
+	contacts := s.contacts(created.Id)
+	s.Require().Len(contacts, 3)
+	for _, contact := range contacts {
+		// The suite's phone service has no credentials, so every call it places fails.
+		s.Equal(ContactStateFailed, contact.State)
+		s.Equal(1, contact.Attempts)
+	}
+}
+
+// holdContacts locks a campaign's contacts until the returned transaction ends, which holds
+// a runner off them, as its claim skips locked rows.
+func (s *CampaignsSuite) holdContacts(campaignID string) bun.Tx {
+	ctx := context.Background()
+	locked, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = locked.Rollback() })
+	_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", campaignID)
+	s.Require().NoError(err)
+	return locked
+}
+
+// state is what the campaign's row says it is doing.
+func (s *CampaignsSuite) state(campaignID string) CampaignState {
+	var campaign Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID, nil, &campaign))
+	return campaign.State
+}
+
+// rung counts the times anybody on the campaign was claimed to be rung.
+func (s *CampaignsSuite) rung(campaignID string) int {
+	rung := 0
+	for _, contact := range s.contacts(campaignID) {
+		rung += contact.Attempts
+	}
+	return rung
 }
 
 // campaign creates a campaign over a stored config and returns it.
