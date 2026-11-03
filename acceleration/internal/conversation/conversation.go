@@ -1129,14 +1129,14 @@ func entries(p Page) []entry {
 
 func entryOf(p Page, m Message) entry {
 	said := m.Text
-	if m.Role == "user" && len(m.Files) > 0 {
+	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
 		// A message of photos alone is the note alone.
 		if said != "" {
 			said += "\n\n"
 		}
-		said += photoNote(len(m.Files))
+		said += photoNote(photos)
 	}
 	content := said
 	var artifacts []ArtifactAttachment
@@ -1192,6 +1192,18 @@ func entryOf(p Page, m Message) entry {
 }
 
 // photoNote follows a person's words in history when they sent photos with them.
+// photosOn counts the photos on m. A voice note sent with it is not one: its text already
+// holds what was said.
+func photosOn(m Message) int {
+	var photos int
+	for _, file := range m.Files {
+		if strings.HasPrefix(file.MIME, "image/") {
+			photos++
+		}
+	}
+	return photos
+}
+
 func photoNote(count int) string {
 	if count == 1 {
 		return "[sent with a photo, not shown again]"
