@@ -113,6 +113,8 @@ def sync_detailed(
 
      A text session that ended is reopened under the same id, on the config it was opened with: a chat is
     never over for the person writing in it. A call that ended is not found.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -148,6 +150,8 @@ def sync(
 
      A text session that ended is reopened under the same id, on the config it was opened with: a chat is
     never over for the person writing in it. A call that ended is not found.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -178,6 +182,8 @@ async def asyncio_detailed(
 
      A text session that ended is reopened under the same id, on the config it was opened with: a chat is
     never over for the person writing in it. A call that ended is not found.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -211,6 +217,8 @@ async def asyncio(
 
      A text session that ended is reopened under the same id, on the config it was opened with: a chat is
     never over for the person writing in it. A call that ended is not found.
+    A voice note in audio is transcribed before the turn starts, and what was said is the question,
+    after any text. A voice note that cannot be heard is refused and no turn starts.
 
     Args:
         id (str): The session, as returned when it was created.

@@ -13,6 +13,8 @@ final readonly class SessionRespondCommand
     public function __construct(
         public string $text,
         public string $type,
+        // A voice note to answer, as on createResponse: transcribed before the turn starts, and what was said is the...
+        public ?AudioSource $audio = null,
         /** @var list<ImageSource>|null */
         public ?array $images = null,
         // Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persis...
@@ -28,6 +30,7 @@ final readonly class SessionRespondCommand
         return new self(
             text: Json::string($data, 'text'),
             type: Json::string($data, 'type'),
+            audio: array_key_exists('audio', $data) && $data['audio'] !== null ? AudioSource::fromArray(Json::object($data, 'audio')) : null,
             images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
             requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
         );
@@ -43,6 +46,9 @@ final readonly class SessionRespondCommand
         $out = [];
         $out['text'] = $this->text;
         $out['type'] = $this->type;
+        if ($this->audio !== null) {
+            $out['audio'] = $this->audio->toArray();
+        }
         if ($this->images !== null) {
             $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
         }

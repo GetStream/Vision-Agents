@@ -11,6 +11,7 @@ from ..models.session_respond_command_type import SessionRespondCommandType
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.audio_source import AudioSource
     from ..models.image_source import ImageSource
 
 
@@ -23,6 +24,7 @@ class SessionRespondCommand:
     Attributes:
         text (str):
         type_ (SessionRespondCommandType):
+        audio (AudioSource | Unset):
         images (list[ImageSource] | Unset):
         request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry is answered once.
             Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only
@@ -31,6 +33,7 @@ class SessionRespondCommand:
 
     text: str
     type_: SessionRespondCommandType
+    audio: AudioSource | Unset = UNSET
     images: list[ImageSource] | Unset = UNSET
     request_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -39,6 +42,10 @@ class SessionRespondCommand:
         text = self.text
 
         type_ = self.type_.value
+
+        audio: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.audio, Unset):
+            audio = self.audio.to_dict()
 
         images: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.images, Unset):
@@ -57,6 +64,8 @@ class SessionRespondCommand:
                 "type": type_,
             }
         )
+        if audio is not UNSET:
+            field_dict["audio"] = audio
         if images is not UNSET:
             field_dict["images"] = images
         if request_id is not UNSET:
@@ -66,12 +75,20 @@ class SessionRespondCommand:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.audio_source import AudioSource
         from ..models.image_source import ImageSource
 
         d = dict(src_dict)
         text = d.pop("text")
 
         type_ = SessionRespondCommandType(d.pop("type"))
+
+        _audio = d.pop("audio", UNSET)
+        audio: AudioSource | Unset
+        if isinstance(_audio, Unset):
+            audio = UNSET
+        else:
+            audio = AudioSource.from_dict(_audio)
 
         _images = d.pop("images", UNSET)
         images: list[ImageSource] | Unset = UNSET
@@ -87,6 +104,7 @@ class SessionRespondCommand:
         session_respond_command = cls(
             text=text,
             type_=type_,
+            audio=audio,
             images=images,
             request_id=request_id,
         )
