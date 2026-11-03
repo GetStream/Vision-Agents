@@ -23,6 +23,7 @@ final readonly class InboundMessage
      * @param string $sessionId the running session it was written to; nothing has answered it yet
      * @param string $requestId the request it was sent as, passed back when answering
      * @param array<string, string> $custom
+     * @param list<InboundImage> $images the photos sent with it; empty when none was sent
      */
     public function __construct(
         public string $channelId,
@@ -37,6 +38,7 @@ final readonly class InboundMessage
         public ?DateTimeImmutable $at = null,
         public string $sessionId = '',
         public string $requestId = '',
+        public array $images = [],
     ) {
     }
 
@@ -59,7 +61,35 @@ final readonly class InboundMessage
             at: Json::parseDate(Json::string($frame, 'at')),
             sessionId: Json::string($frame, 'session_id'),
             requestId: Json::string($frame, 'request_id'),
+            images: self::imagesOf($frame),
         );
+    }
+
+    /**
+     * The photos a message frame carries. An entry with no string URL is dropped, since there
+     * is nothing to fetch, and so is one that is not an object.
+     *
+     * @param array<string, mixed> $frame
+     * @return list<InboundImage>
+     */
+    private static function imagesOf(array $frame): array
+    {
+        $sent = $frame['images'] ?? null;
+        if (!is_array($sent) || !array_is_list($sent)) {
+            return [];
+        }
+        $images = [];
+        foreach ($sent as $described) {
+            if (!is_array($described)) {
+                continue;
+            }
+            $url = $described['url'] ?? null;
+            $mimeType = $described['mime_type'] ?? null;
+            if (is_string($url) && $url !== '') {
+                $images[] = new InboundImage($url, is_string($mimeType) ? $mimeType : '');
+            }
+        }
+        return $images;
     }
 
     /**
