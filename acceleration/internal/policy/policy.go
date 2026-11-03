@@ -196,8 +196,8 @@ type Enforcer struct {
 	tiers   map[string]tierSeen
 	// now is the clock the tiers are kept by.
 	now func() time.Time
-	// userQuotaLogs throttles the line a user's own quota that cannot be read logs, per app.
-	userQuotaLogs throttle
+	// userQuotaLogs throttles (quota.Throttle) the line a user's own quota that cannot be read logs, to once a minute per customer.
+	userQuotaLogs quota.Throttle
 
 	money money
 	// localBookings are the bookings of a router with no shared Redis.
@@ -315,7 +315,8 @@ func (e *Enforcer) Attribute(ctx context.Context, customerID string) (routing.Ad
 
 // Quota returns what one of a customer's end users may spend in a day, each number the first
 // set of the user's own policy, the app's, the organization's and defaults. A limit of zero
-// is no cap. A policy that could not be read leaves the level below it in place.
+// is no cap. A policy that could not be read leaves the level below it in place; a user's own
+// is then marked Unread, so a debit still counts what they spend.
 //
 // The app's and the organization's numbers come from the app's decision in memory. Whether
 // any of the app's users has a policy of their own is read through appconfig, not the
@@ -341,10 +342,11 @@ func (e *Enforcer) Quota(ctx context.Context, customerID, userID string, default
 	}
 	own, err := e.config.Policy(reading, store.ScopeUser, store.UserScopeID(customerID, userID))
 	if err != nil {
-		if e.userQuotaLogs.due(customerID, time.Minute) {
+		if e.userQuotaLogs.Due(customerID, time.Minute) {
 			e.logger.Error("could not read a user's own quota, holding them to their app's",
 				"customer", customerID, "error", err)
 		}
+		held.Unread = true
 		return held
 	}
 	return layered(held, own.Quota, quota.Setter{Level: quota.LevelUser, ID: userID})
@@ -798,26 +800,6 @@ func allowedByBoth(organization, app *[]string) []string {
 		}
 	}
 	return both
-}
-
-// throttle says whether a line keyed by key is due, at most once every every.
-type throttle struct {
-	mu   sync.Mutex
-	last map[string]time.Time
-}
-
-func (t *throttle) due(key string, every time.Duration) bool {
-	now := time.Now()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if last, ok := t.last[key]; ok && now.Sub(last) < every {
-		return false
-	}
-	if t.last == nil {
-		t.last = map[string]time.Time{}
-	}
-	t.last[key] = now
-	return true
 }
 
 // once is a throttle of one line, in Unix nanoseconds.

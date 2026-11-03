@@ -29,7 +29,7 @@ const BuiltinCustomer = ""
 // the one the architecture's plan reserves for custom definitions
 // (acceleration/docs/connectors/subtasks.md, T6 acceptance, on connectors/planning), which the
 // core's custom_crm and custom_mtls_service fixtures already use. The migration checks it too.
-const CustomPrefix = "custom_"
+const CustomPrefix = core.CustomPrefix
 
 // ConnectorLabel is a connector id as a metric label: a built-in's own id, one of the
 // catalog the router ships, or "custom" for every custom definition, whose id its customer
