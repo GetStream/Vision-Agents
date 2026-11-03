@@ -73,7 +73,8 @@ func (s *AdmissionSuite) organization() string { return s.app.organization.ID }
 
 // refused waits for the request to be refused once the organization's money has been read,
 // and returns the status and the failure it was refused with. The request that warms an
-// organization may be admitted, as a router that has read nothing yet admits.
+// organization may be admitted, as a router that has read nothing yet admits, and one past a
+// limit whose spend is not read yet is refused without the limit being spent (unreadLimits).
 func (s *AdmissionSuite) refused(method, path string, body any) (int, ErrorDetail) {
 	var status int
 	var failure ErrorDetail
@@ -86,7 +87,7 @@ func (s *AdmissionSuite) refused(method, path string, body any) (int, ErrorDetai
 		var answered ErrorResponse
 		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 		failure = answered.Error
-		return status == http.StatusPaymentRequired || status == http.StatusForbidden
+		return (status == http.StatusPaymentRequired || status == http.StatusForbidden) && !unreadLimits(failure)
 	}, 10*time.Second, 50*time.Millisecond, "%s %s is refused for money", method, path)
 	return status, failure
 }
@@ -189,6 +190,32 @@ func (s *AdmissionSuite) TestASpentLimitIsAPaymentRequiredNotAServerError() {
 	s.Equal(ErrorTypePaymentRequired, failure.Type)
 	s.Equal(codeSpendLimitReached, failure.Code)
 	s.Contains(failure.Message, "the daily limit of $0.01 on app "+s.customerID()+" is spent; it resets at")
+}
+
+// TestALimitWhoseSpendIsUnreadIsNoSpentLimit keeps the app's spend unread when its limit lands:
+// the tier fails closed with a refusal that says nothing of the limit, which refused waits past.
+func (s *AdmissionSuite) TestALimitWhoseSpendIsUnreadIsNoSpentLimit() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.usageFront.down.Store(true)
+	s.limitApp(usage.Daily, 10_000)
+	var unread ErrorDetail
+	s.Require().Eventually(func() bool {
+		status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		if status != http.StatusPaymentRequired {
+			return false
+		}
+		var answered ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+		unread = answered.Error
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "refused while the spend cannot be read")
+	s.Equal(codeSpendLimitReached, unread.Code)
+	s.True(unreadLimits(unread), "the refusal unreadLimits knows: %s", unread.Message)
+
+	s.usageFront.down.Store(false)
+	_, failure := s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+
+	s.Contains(failure.Message, "the daily limit of $0.01 on app "+s.customerID()+" is spent")
 }
 
 func (s *AdmissionSuite) TestAUsersSpentLimitIsTooManyRequestsWithRetryAfter() {
