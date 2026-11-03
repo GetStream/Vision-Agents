@@ -661,6 +661,7 @@ func (s *OAuth2CodeSuite) TestACustomConnectorAsksForNoScopeUnlessScopesSupporte
 		"space":         {document: map[string]any{"scopes_supported": []string{"issues:read", "a b"}}},
 		"control char":  {document: map[string]any{"scopes_supported": []string{"issues:read", "c\u0000d"}}},
 		"newline":       {document: map[string]any{"scopes_supported": []string{"issues:read", "e\nf"}}},
+		"delete char":   {document: map[string]any{"scopes_supported": []string{"issues:read", "g\u007fh"}}},
 		"a quote":       {document: map[string]any{"scopes_supported": []string{"issues:read", "a\"b"}}},
 		"a backslash":   {document: map[string]any{"scopes_supported": []string{"issues:read", "a\\b"}}},
 		"non-ASCII":     {document: map[string]any{"scopes_supported": []string{"issues:read", "é"}}},
