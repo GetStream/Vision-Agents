@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -204,9 +205,9 @@ type money struct {
 	firstSlots     chan struct{}
 
 	errorLogged once
-	refusals    throttle
+	refusals    quota.Throttle
 	// waiting spaces the warning about holds that wait on a read, per account.
-	waiting throttle
+	waiting quota.Throttle
 
 	// instance names this process's holds in the shared Redis (shared.go). dirty is every hold
 	// changed since it was last written there, version numbers the changes, unflushedSince is
@@ -665,13 +666,13 @@ func (e *Enforcer) answer(organization, appID string, refusal, spend error, reas
 		args = append(args, "app", appID)
 	}
 	if m.settings.Mode != config.LimitsShadow {
-		if reason == reasonSuspended && seen.why != "" && m.refusals.due(organization+"\x00suspended_reason", logEvery) {
+		if reason == reasonSuspended && seen.why != "" && m.refusals.Due(organization+"\x00suspended_reason", logEvery) {
 			e.logger.Info("refused a suspended organization", append(args, "status_reason", seen.why)...)
 		}
 		return refusal, spend
 	}
 	wouldRefuse.WithLabelValues(reason).Inc()
-	if m.refusals.due(organization+"\x00"+reason, logEvery) {
+	if m.refusals.Due(organization+"\x00"+reason, logEvery) {
 		args = append(args, "reason", reason, "refusal", errors.Join(refusal, spend),
 			"balance_micros", seen.balance, "held_micros", seen.held)
 		if !seen.read.IsZero() {
