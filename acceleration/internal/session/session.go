@@ -615,14 +615,24 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // rather than frames of a video: with no text they are the question, so a conversation kept
 // in Stream Chat shows them on the person's message, as a command's are (RespondCommand).
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM, photos ...llm.ImagePart) (string, error) {
-	// Uploaded before commandMu, as a command's photos are: a stop waits on that lock.
 	var shown []persistent.Photo
-	if text == "" && s.persisted != nil && s.spec.Text && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
-		published, err := s.persisted.PublishPhotos(ctx, photos)
+	if text == "" && len(photos) > 0 && s.persisted != nil && !s.spec.Dispatched && s.spec.Caller.UserID == "" {
+		// Voice neither starts nor stops while this question holds moving, so photos uploaded
+		// for a written conversation are shown on the person's message, not left behind by a
+		// call whose transcript writes it.
+		moved, err := s.move(ctx)
 		if err != nil {
-			return "", stack.Wrap(err)
+			return "", err
 		}
-		shown = published
+		defer moved()
+		if !s.Voicing() {
+			// Uploaded before commandMu, as a command's photos are: a stop waits on that lock.
+			published, err := s.persisted.PublishPhotos(ctx, photos)
+			if err != nil {
+				return "", stack.Wrap(err)
+			}
+			shown = published
+		}
 	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -680,7 +690,7 @@ func (s *Session) CheckRespond(ctx context.Context, id, text string, images bool
 		heard, err := s.persisted.CheckBegin(id, text)
 		return heard, stack.Wrap(err)
 	}
-	if !s.spec.Text {
+	if s.Voicing() {
 		return "", nil
 	}
 	if s.spec.Caller.UserID != "" {

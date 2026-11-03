@@ -360,6 +360,51 @@ func (s *SessionSuite) TestPhotosWithoutTextAreShownOnTheMessageOfAQuestionWitho
 	s.Equal(photo.Data, uploads[0].Data)
 }
 
+// Voice started while the photos of a question with no text upload waits for the question to
+// take its turn, so the photos are shown on the person's message rather than uploaded for a
+// call that never shows them (AI-2550).
+func (s *SessionSuite) TestVoiceStartedWhilePhotosWithoutTextUploadLeavesThemShown() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	uploading, release := chat.Hold("/image")
+
+	asked := make(chan error, 1)
+	go func() {
+		_, err := shared.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+		asked <- err
+	}()
+	select {
+	case <-uploading:
+	case <-time.After(settleFor):
+		s.FailNow("the photo was never uploaded")
+	}
+	voiced := make(chan error, 1)
+	go func() { voiced <- shared.StartVoice(s.ctx, Call{}) }()
+	s.Never(shared.Voicing, 300*time.Millisecond, 5*time.Millisecond, "voice started while the photo uploaded")
+	release()
+
+	s.Require().NoError(<-asked)
+	s.Require().NoError(<-voiced)
+	s.True(shared.Voicing())
+	s.eventually(func() bool {
+		for _, message := range s.stored(shared) {
+			if message.Role == "user" && message.Text == "" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the photo")
+	s.Len(chat.Uploads(), 1)
+}
+
 // Controls, as on base: a worker's session answers what is already in its channel, a call is
 // written by its transcript, and an incognito chat keeps nothing, so none uploads the photos
 // of a question with no text.
