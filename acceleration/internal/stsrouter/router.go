@@ -97,9 +97,13 @@ func New(options Options) (*Router, error) {
 		}
 	}
 
+	var router *Router
 	core, err := routing.New(routing.Options[sts.STS]{
 		Validate: func(provider sts.STS, config routing.ProviderConfig) error {
-			return declared(provider.Capabilities(), config)
+			if err := declared(provider.Capabilities(), config); err != nil {
+				return err
+			}
+			return router.delegatedPriced(provider, config)
 		},
 		Modality: routing.STS,
 		Config:   options.Config,
@@ -114,7 +118,30 @@ func New(options Options) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core, backend: core.Recorder().For(routing.LLM)}, nil
+	router = &Router{Router: core, backend: core.Recorder().For(routing.LLM)}
+	return router, nil
+}
+
+// delegatedPriced refuses a session that would bill work under another model's name than its
+// own with no price for it: the text model a Live voice hands its reasoning to, or the
+// transcriber OpenAI writes the caller's turns down with. Both names can come from the
+// caller's overwrites, and work under a name the price list does not cover is recorded at
+// nothing.
+func (r *Router) delegatedPriced(provider sts.STS, config routing.ProviderConfig) error {
+	delegate := func(model string) routing.ProviderConfig {
+		return routing.ProviderConfig{Provider: config.Provider, Model: model, Region: config.Region, BYOK: config.BYOK}
+	}
+	if live, ok := provider.(interface{ BackendModel() string }); ok {
+		if model := live.BackendModel(); model != "" && !r.backend.Priced(delegate(model)) {
+			return routing.Refused(stack.Wrap(fmt.Errorf("%s: backend model %s has no price", config.Name(), model)))
+		}
+	}
+	if transcribing, ok := provider.(interface{ TranscriptionModel() string }); ok {
+		if model := transcribing.TranscriptionModel(); model != "" && !r.Recorder().Priced(delegate(model)) {
+			return routing.Refused(stack.Wrap(fmt.Errorf("%s: transcription model %s has no price", config.Name(), model)))
+		}
+	}
+	return nil
 }
 
 // Start selects a provider and opens a conversation, falling back to the next candidate

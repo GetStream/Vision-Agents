@@ -407,6 +407,12 @@ func (r *Recorder) Billable(config ProviderConfig) bool {
 	return r.billableFor(config, nil)
 }
 
+// Priced reports whether work on the provider has a price, or is free or local: work that has
+// none is recorded at nothing. A customer's own model is the customer's to price.
+func (r *Recorder) Priced(config ProviderConfig) bool {
+	return config.Provider == CustomProvider || r.pricer.Covers(ItemOf(r.modality, config, nil))
+}
+
 // billableFor is Billable for work whose row carries attributes.
 func (r *Recorder) billableFor(config ProviderConfig, attributes map[string]string) bool {
 	if config.Provider == CustomProvider {

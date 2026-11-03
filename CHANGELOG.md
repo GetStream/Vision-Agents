@@ -266,6 +266,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A voice session naming an unpriced backend or transcriber is refused
+
+`backend_model` (a GPT-Live session's text model) and `transcription_model` (OpenAI Realtime's transcriber) come from the caller's overwrites, and each is billed as a row of its own under that name. A name the price list does not cover was recorded at nothing. The session is now refused before the vendor is called, as a request error naming the model. `gpt-4o-transcribe` ($2.50 and $10 a million tokens in and out) and `whisper-1` ($0.006 a minute of audio) gain vendor prices, so they are accepted (AI-2187).
+
 ### A GPT-Live call hung up before its last report is billed its seconds
 
 A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
