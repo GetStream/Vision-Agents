@@ -5,6 +5,9 @@
 ### Cached speech-to-speech tokens the vendor did not split are billed at the cached rate
 
 A speech-to-speech reply whose vendor reports a cached total but no split of it by modality, such as an OpenAI-compatible realtime dialect without `cached_tokens_details`, now has the cached tokens shared out across text, audio and image in proportion, and priced at each modality's cached rate rather than its fresh one. A model with no cached rate, such as Gemini Live, keeps them at its modality rates, as Google bills them (AI-2187).
+### A price change writes the BYOK price beside a new item
+
+`POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
 ### Usage rows say where the work ran and whether on the customer's own key
 
 Every `requests` row and usage event now carries `region` and `byok`, the priced item's, whether or not an entry priced it, so spend splits by region and by the customer's own provider keys, and unpriced work, which has no SKU, still says where it ran. The organization's usage listing in the usage service shows both. Rows and events from before read empty and false. Migrations `20261207120000_requests_region_byok` (router) and `00006_usage_event_region_byok` (usage service) add the columns with constant defaults, rewriting no row (AI-2187).
