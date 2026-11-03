@@ -251,6 +251,9 @@ func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*s
 
 // respondSession answers a piece of text through the model.
 func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
+	// It answers once the turn starts, as createResponse does; a voice note's transcription is
+	// the turn's cost.
+	leaveUncosted(ctx)
 	if request.Body != nil {
 		if err := refuseOversizeWithoutAudio(request.Body.Audio, len(request.Body.Text)); err != nil {
 			return nil, err
