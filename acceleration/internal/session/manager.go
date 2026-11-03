@@ -524,7 +524,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
-		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
@@ -653,18 +652,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
-	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
-	tools = append(tools, pluginTools...)
-	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
+	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
+	// connectors replaced them, and a save refuses them.
+	spec.ServerInstructions = serverInstructions(nil, nil, connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
-	if mcp != nil || len(unconnected) > 0 {
-		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
-	}
-	if mcp != nil {
-		created.closers = append(created.closers, mcp.Close)
-	}
 	// A session opened without a zone runs in its user's stored one, so the agent's
 	// clock line tells the day, and the scheduling tools read dates, in the zone its
 	// tasks will run in.
@@ -676,7 +668,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// A user with no zone of their own is in the config's default one, the zone a task they
 	// scheduled would take, so the agent's clock line and the scheduling tools agree.
 	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
-	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// The scheduling tools are offered inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
 	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
@@ -684,13 +676,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		scheduling.next = runner
 		runner = scheduling
 	}
-	if own := m.userPlugins(spec, runner); own != nil {
-		tools = append(tools, plugins.UserTools(own.offered)...)
-		runner = own
-		created.closers = append(created.closers, own.Close)
-	}
 	// The dispatcher goes in front, so the names it opened are its own whatever else the
-	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	// session offers.
 	if connectors != nil {
 		if err := connectorCollision(connectorTools, tools); err != nil {
 			return nil, err
@@ -705,7 +692,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	if spec.ProgressiveTools {
-		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+		tools, runner = progressively(tools, connectorTools, runner)
 	}
 
 	var toolStarted func(agent.ToolStarted)

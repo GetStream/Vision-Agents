@@ -1472,7 +1472,7 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 type RespondRequest struct {
 	ClientId  *string      `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
 	RequestId *string      `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio     *AudioSource `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
+	Audio     *AudioSource `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
 	Text      string       `json:"text" doc:"What to answer, as though it had been said. May be empty when audio carries the question."`
 }
 
