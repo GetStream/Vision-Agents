@@ -24,6 +24,18 @@ var errNoStore = notConfigured("this deployment does not record what sessions sa
 // inside the hundred images the strictest vision provider takes in one request.
 const maxVideos = 2
 
+// sizeOfResponse is the bytes of the text, images and videos a response carries.
+func sizeOfResponse(body *CreateResponseRequest) int {
+	size := len(body.Text)
+	for _, image := range value(body.Images) {
+		size += len(image.Url)
+	}
+	for _, clip := range value(body.Videos) {
+		size += len(clip.Url)
+	}
+	return size
+}
+
 // createResponse asks the agent something and names the turn it answers as.
 //
 // It is respond with an id back, which is the whole of the difference. Without one a caller
@@ -33,6 +45,11 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	// A response is asked of a running session rather than a stored one: a call that ended
 	// can be read and forked, but not talked to. A chat that ended is reopened.
 	leaveUncosted(ctx)
+	if request.Body != nil {
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfResponse(request.Body)); err != nil {
+			return nil, err
+		}
+	}
 	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure

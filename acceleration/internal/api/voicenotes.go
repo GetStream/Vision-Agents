@@ -23,6 +23,21 @@ var (
 	errNothingHeard = invalidRequest("no words were heard in the voice note")
 )
 
+// maxBodyWithoutAudio is the most a request with no voice note reads, as it was before voice
+// notes: Huma's 1 MiB default. Only a voice note raises it, to maxInlineAudioBody.
+const maxBodyWithoutAudio = 1 << 20
+
+// refuseOversizeWithoutAudio refuses a request with no voice note whose size, the bytes of the
+// text and sources it carries, is over maxBodyWithoutAudio, with the refusal Huma gives a body
+// over its limit. The operations that take a voice note read up to maxInlineAudioBody before
+// the handler sees what is in it, so this holds the rest of them to the limit they had.
+func refuseOversizeWithoutAudio(audio *AudioSource, size int) error {
+	if audio == nil && size > maxBodyWithoutAudio {
+		return payloadTooLarge(fmt.Sprintf("request body is too large limit=%d bytes", maxBodyWithoutAudio))
+	}
+	return nil
+}
+
 // withHeardNote is the question of text sent with the voice note at audio: what was typed,
 // then what was said, and the note, for a turn to show; text alone when audio is nil.
 //

@@ -469,6 +469,55 @@ func (s *VoiceNotesSuite) TestEmptyTextWithoutAVoiceNoteOnRespondIsAnInvalidRequ
 	s.Equal("there is nothing to answer", refused.Error.Message)
 }
 
+// Text with no voice note keeps the 1 MiB limit a request had before voice notes, on respond
+// and on createResponse, answered as Huma answers a body over its limit.
+func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedAndNothingIsAsked() {
+	big := strings.Repeat("a", 2<<20)
+	for name, send := range map[string]func(opened Session) (int, []byte){
+		"respond": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big})
+		},
+		"respond with a request id": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big, "request_id": s.utils.uuid()})
+		},
+		"createResponse": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{Text: big})
+		},
+		"createResponse with a photo": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{
+				Text: big[:1<<20], Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
+		},
+	} {
+		s.Run(name, func() {
+			s.forgetNoted()
+			opened := s.noting()
+
+			status, payload := send(opened)
+
+			var refused ErrorResponse
+			s.Require().NoError(json.Unmarshal(payload, &refused), "%.300s", payload)
+			s.Equal(http.StatusRequestEntityTooLarge, status)
+			s.Equal("payload_too_large", refused.Error.Code)
+			s.Equal("request body is too large limit=1048576 bytes", refused.Error.Message)
+			s.nothingWasAsked(opened)
+		})
+	}
+}
+
+// A voice note raises the limit: text under it, and a voice note of the inline limit sent as
+// a data URI, are answered on respond.
+func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeardOnRespond() {
+	opened := s.noting()
+	said := "big " + s.utils.uuid()
+	atLimit := wavOf(said + strings.Repeat(" ", maxInlineAudio-len(wavOf(said))))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened),
+		RespondRequest{Audio: &AudioSource{Url: "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
+
+	s.Require().Equal(http.StatusNoContent, status, "%.300s", payload)
+	s.Equal(said, s.lastAsked(said))
+}
+
 // shownWithItsNote checks that the person's message of command carries text and the voice
 // note audio, uploaded once since before uploads.
 func (s *VoiceNotesSuite) shownWithItsNote(opened Session, command, text string, audio []byte, before int) {
