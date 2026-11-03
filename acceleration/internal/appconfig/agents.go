@@ -81,17 +81,6 @@ func (s *Store) update(ctx context.Context, config *store.AgentConfig, write fun
 	return nil
 }
 
-// AddConnectorBinding appends a binding to a config's connectors and nothing else
-// (store.Store.AddConnectorBinding), and forgets the cached config under its id and its name.
-func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding store.ConnectorBinding, allow store.ConfigCheck) (bool, error) {
-	config, added, err := s.db.AddConnectorBinding(ctx, customerID, configID, binding, allow)
-	if err != nil || !added {
-		return added, err
-	}
-	s.forget(ctx, key("agent", customerID, configID), key("agent-name", customerID, config.Name))
-	return true, nil
-}
-
 // AddConfigPlugin names a plugin on a config as the app's and nothing else
 // (store.Store.AddConfigPlugin), and forgets the cached config under its id and its name.
 func (s *Store) AddConfigPlugin(ctx context.Context, customerID, configID, pluginID string, allow store.ConfigCheck) error {

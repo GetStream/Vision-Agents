@@ -929,8 +929,7 @@ const (
 
 // driveShaped is an oauth2_code connection to a connector shaped as google_drive.yaml is, with
 // coveredBy under its scopes, whose echo needs drive.file, holding granted. An imported grant
-// may hold only what scopes.list asks for, so granted is written to the row, as router plugins
-// migrate stores a plugin's configured scopes (oauth2code.MovedGrant).
+// may hold only what scopes.list asks for, so granted is written to the row.
 func (s *ConnectionToolsSuite) driveShaped(coveredBy, granted string) string {
 	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	yaml := strings.Replace(s.manifest(id, 1, oauth2code.Name, "    tools:\n      - name: echo\n        needs_scopes: ["+googleDriveFile+"]\n"),
