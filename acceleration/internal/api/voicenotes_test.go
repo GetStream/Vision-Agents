@@ -3,16 +3,19 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // VoiceNotesSuite covers a voice note sent with a question: what the person said in it is
@@ -288,11 +291,22 @@ func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() 
 }
 
 // heard checks that n voice notes were transcribed for the suite's app since since. It hears
-// one more on a session of its own, whose row is written after theirs, and counts n+1.
+// one more on a session tagged its own, and counts once that one's row is written: one writer
+// writes the rows in the order they were recorded, so theirs are written by then.
 func (s *VoiceNotesSuite) heard(since time.Time, n int) {
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(s.noting()),
+	tags := map[string]string{"counted": s.utils.uuid()}
+	counted := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model"), Tags: &tags})
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, s.responses(counted),
 		CreateResponseRequest{Audio: &AudioSource{Url: s.serve(wavOf("counted " + s.utils.uuid()))}}, nil))
-	s.meteredRows(routing.STT, since, n+1)
+	var rows []store.Request
+	s.Require().Eventually(func() bool {
+		rows = nil
+		err := s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ? AND modality = ? AND started_at >= ?", s.customerID(), string(routing.STT), since).
+			Scan(context.Background())
+		return err == nil && slices.ContainsFunc(rows, func(row store.Request) bool { return row.Tags["counted"] == tags["counted"] })
+	}, settleFor, 20*time.Millisecond, "the counting note's row was never written")
+	s.Len(rows, n+1, "voice notes transcribed besides the counting one")
 }
 
 // noting opens a text session on a noted model, which a test reads what it was asked from.
