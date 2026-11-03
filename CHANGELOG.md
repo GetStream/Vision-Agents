@@ -214,6 +214,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A GPT-Live call hung up before its last report is billed its seconds
+
+A GPT-Live session is billed by the seconds OpenAI reports, the last of them as it closes. A session that ended without that last report, because the caller hung up and the vendor never answered the close, was billed only up to the report before it, often nothing. The seconds it was open beyond the last report are now billed on the router's clock, as one row marked `usage_estimated` and counted under `router_usage_estimated_total{reason="cancelled"}` (AI-1726).
+
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
