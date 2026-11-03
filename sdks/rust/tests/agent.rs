@@ -1161,7 +1161,7 @@ async fn a_folder_naming_plugins_is_refused_and_one_naming_none_syncs() {
         write(
             root.path(),
             "agent.yaml",
-            format!("name: jean\n{key}: [sentry]\n"),
+            &format!("name: jean\n{key}: [sentry]\n"),
         );
 
         let error = Agent::from_folder(root.path()).err().unwrap().to_string();
