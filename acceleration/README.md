@@ -2460,7 +2460,9 @@ the move; a change carried later sets the mark again from the source's state, so
 paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
 any other edit keeps it. A contact in the middle of a call on the source is settled here from that
 call once the mark is cleared, as one whose router died is: its next attempt waits its delay. One
-whose answered call still awaits its outcome has the transcript read here then.
+whose answered call still awaits its outcome has the transcript read here then. On a campaign the
+user had paused on the source there is no mark, so such a contact is settled as soon as it
+arrives.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
