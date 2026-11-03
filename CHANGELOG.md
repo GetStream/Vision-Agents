@@ -226,6 +226,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### A login to a server named by URL never sends the deployment's client secret
+
+The login to an MCP server a config names under `mcp_servers` is made with the public client the router registers on that server, so the code exchange and every token refresh now go to its token endpoint without a client secret. Before, when the client id the server registered matched one the deployment holds for a plugin of the server's name, that client's secret was sent along. Catalog plugins still send the secret of the client the agent or the deployment registered in advance. The Shopify plugin logs in only at a shop host under `myshopify.com`: authorizing it for any other host is a 400, and a login stored for one is not opened. An `mcp_servers` entry named like a catalog plugin, which only a config saved before that name was refused can hold, is left out of every session (AI-2523).
+
 ### A custom MCP connector without scopes asks for the scopes its server lists
 
 A new consent for a custom (`custom_`) `oauth2_code` connector whose definition lists no scopes now asks for every scope in its MCP server's protected resource metadata (`scopes_supported`), as the MCP authorization spec says and as a URL-named `mcp_servers` login already did. A server that lists none still gets no `scope`. The client the router registers for it asks for the same scopes. Built-in connectors and existing connections are unchanged (AI-2526).
