@@ -471,7 +471,7 @@ func (s *CallStatusSuite) TestATelnyxMachineReportReachesTheMachineHookWithoutAC
 	s.router.phone.OnMachine(func(_ context.Context, customerID, sessionID string, machine phone.Machine) {
 		told = append(told, customerID+" "+sessionID+" "+string(machine))
 	})
-	s.T().Cleanup(func() { s.router.phone.OnMachine(nil) })
+	s.T().Cleanup(func() { s.router.phone.OnMachine(s.router.tellMachine) })
 
 	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
 
@@ -493,6 +493,66 @@ func (s *CallStatusSuite) TestAMachineReportThatCannotBeReadIs400() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "AnsweredBy")
+}
+
+// hangsUpOnMachines opens on sessions a placed call's session whose plan is to hang up on an
+// answering machine, with a call kept for it, and returns its id and the call's token.
+func (s *CallStatusSuite) hangsUpOnMachines(sessions *session.Manager) (string, string) {
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Voicemail: &session.VoicemailPlan{},
+		Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	token, _ := s.placedFor(opened.ID())
+	return opened.ID(), token
+}
+
+// endsForVoicemail waits for sessions to stop holding id.
+func (s *CallStatusSuite) endsForVoicemail(sessions *session.Manager, id string) {
+	s.Require().Eventually(func() bool { return !sessions.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the session was kept on the answering machine")
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionHere() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(s.manager, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionOnTheNodeHoldingIt() {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NotEqual(other.Listener.Addr().String(), s.router.directory.Address())
+	id, token := s.hangsUpOnMachines(sessions)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(sessions, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForASessionThatEndedIsTakenAndChangesNothing() {
+	id, token := s.hangsUpOnMachines(s.manager)
+	s.Require().Equal(http.StatusNoContent, func() int {
+		status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+		return status
+	}())
+	s.endsForVoicemail(s.manager, id)
+
+	again, failure := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, again, "body: %s", failure)
+}
+
+func (s *CallStatusSuite) TestAPersonPickingUpKeepsTheSession() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Never(func() bool { return !s.manager.Running(id) }, time.Second, 50*time.Millisecond,
+		"the session was ended for a person")
 }
 
 func (s *CallStatusSuite) TestAnUnknownStatusTokenIs404() {

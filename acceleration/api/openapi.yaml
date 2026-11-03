@@ -7966,13 +7966,14 @@ components:
         - connection_id
       type: object
     SessionEndReason:
-      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.'
+      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.'
       enum:
         - agent_hangup
         - transferred
         - hangup
         - start
         - unanswered
+        - voicemail
       type: string
     SessionFilter:
       additionalProperties: false

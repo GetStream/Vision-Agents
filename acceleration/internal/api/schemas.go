@@ -880,8 +880,8 @@ func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 type SessionEndReason string
 
 func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.",
-		"agent_hangup", "transferred", "hangup", "start", "unanswered")
+	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.",
+		"agent_hangup", "transferred", "hangup", "start", "unanswered", "voicemail")
 }
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.

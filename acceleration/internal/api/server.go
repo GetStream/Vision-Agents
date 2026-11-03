@@ -644,6 +644,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.phone != nil {
 		server.phone.OnUnanswered(server.endUnanswered)
+		server.phone.OnMachine(server.tellMachine)
 	}
 	return server, nil
 }
@@ -707,6 +708,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
 	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
+	mux.HandleFunc("POST "+machinePeerPath, s.tellMachineForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
