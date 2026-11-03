@@ -174,7 +174,8 @@ func (s *PriceListsSuite) TestAChangePricesTheNextRequest() {
 
 	s.runCounted()
 
-	s.Require().Len(written.Entries, 1)
+	s.Require().NotEmpty(written.Entries)
+	s.False(written.Entries[0].BYOK)
 	for _, row := range s.countedRows() {
 		// 600 fresh tokens at $3, 400 cached at $0.30 and 20 generated at $15 per million.
 		s.EqualValues(2_220, row.BaseCostMicros, "the vendor's cost, for reference")
@@ -211,7 +212,7 @@ func (s *PriceListsSuite) TestAChangeAddingAnEUEntryPricesEUWorkAlone() {
 
 	written := s.created(s.change(eu))
 
-	s.Require().Len(written.Entries, 1)
+	s.Require().Len(written.Entries, 2, "the eu entry and its BYOK twin")
 	s.Equal(pricing.RegionEU, written.Entries[0].Region)
 	s.Equal("llm-t1c-"+model+"-eu", written.Entries[0].SKU)
 	euQuote := s.prices.Quote(t1cItem(model, pricing.RegionEU, false), used)
@@ -221,7 +222,7 @@ func (s *PriceListsSuite) TestAChangeAddingAnEUEntryPricesEUWorkAlone() {
 	list := s.active()
 	var regions []string
 	for _, entry := range list.Entries {
-		if entry.Model == model {
+		if entry.Model == model && !entry.BYOK {
 			regions = append(regions, entry.Region)
 		}
 	}
@@ -249,6 +250,57 @@ func (s *PriceListsSuite) TestAChangeAddingABYOKEntryWithItsOwnPrice() {
 	s.Equal("llm-t1c-"+model+"-us-byok", quote.SKU)
 	s.EqualValues(1_200_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).CostMicros,
 		"work on the operator's key keeps its price")
+}
+
+// TestANewItemIsWrittenWithItsBYOKTwinAtTheFee: a change adding an llm item writes the item's
+// BYOK twin with it, as a price file does, so work on a customer's own key has a price: a fifth
+// of the vendor's rate.
+func (s *PriceListsSuite) TestANewItemIsWrittenWithItsBYOKTwinAtTheFee() {
+	model := "m" + s.token()
+
+	written := s.created(s.change(pricedAt(entry(model, 1), 1.2)))
+
+	s.Require().Len(written.Entries, 2)
+	s.Equal("llm-t1c-"+model+"-us-byok", written.Entries[1].SKU)
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	twin := s.prices.Quote(t1cItem(model, pricing.RegionUS, true), used)
+	s.False(twin.Unpriced)
+	s.EqualValues(200_000, twin.CostMicros)
+	s.Zero(twin.BaseCostMicros)
+	s.EqualValues(1_200_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).CostMicros)
+}
+
+// TestAWithdrawalWithdrawsTheBYOKTwin: an item withdrawn takes its twin with it, rather than
+// leaving work on a customer's key priced for an item the list no longer has.
+func (s *PriceListsSuite) TestAWithdrawalWithdrawsTheBYOKTwin() {
+	model := "m" + s.token()
+	s.created(s.change(entry(model, 1)))
+
+	written := s.created(s.change(PriceEntryInput{
+		PriceItem: PriceItem{Modality: "llm", Provider: "t1c", Model: model, Region: pricing.RegionUS}, Withdrawn: true,
+	}))
+
+	s.Require().Len(written.Entries, 2)
+	_, base := s.prices.Entry(t1cItem(model, pricing.RegionUS, false))
+	_, twin := s.prices.Entry(t1cItem(model, pricing.RegionUS, true))
+	s.False(base)
+	s.False(twin)
+}
+
+// TestABYOKPriceStaffSetIsKept: a change to an item whose twin is in force leaves the twin as
+// staff priced it.
+func (s *PriceListsSuite) TestABYOKPriceStaffSetIsKept() {
+	model := "m" + s.token()
+	byok := pricedAt(entry(model, 1), 0.15)
+	byok.BYOK = true
+	s.created(s.change(pricedAt(entry(model, 1), 1.2), byok))
+
+	written := s.created(s.change(pricedAt(entry(model, 2), 2.4)))
+
+	s.Require().Len(written.Entries, 1)
+	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
+	s.EqualValues(150_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, true), used).CostMicros)
+	s.EqualValues(2_400_000, s.prices.Quote(t1cItem(model, pricing.RegionUS, false), used).CostMicros)
 }
 
 // TestAnEntryWithoutARegionFailsValidation: region is required, in the form a region takes, so
@@ -430,7 +482,9 @@ func (s *PriceListsSuite) TestARenamedModelKeepsItsSKUThroughTheAPI() {
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", rename, &preview))
 	shown := map[string]PricePreviewItem{}
 	for _, item := range preview.Items {
-		shown[item.Model] = item
+		if !item.BYOK {
+			shown[item.Model] = item
+		}
 	}
 	s.Require().NotNil(shown[renamed.Model].After)
 	s.Equal(sku, shown[renamed.Model].After.SKU)
@@ -438,9 +492,10 @@ func (s *PriceListsSuite) TestARenamedModelKeepsItsSKUThroughTheAPI() {
 	s.Equal(sku, shown[old.Model].Before.SKU)
 	written := s.created(rename)
 
-	s.Require().Len(written.Entries, 2)
-	s.Equal(sku, written.Entries[0].SKU)
-	s.Equal(sku, written.Entries[1].SKU)
+	s.Require().Len(written.Entries, 4, "each with its BYOK twin")
+	s.Equal([]string{sku, sku + "-byok", sku, sku + "-byok"},
+		[]string{written.Entries[0].SKU, written.Entries[1].SKU, written.Entries[2].SKU, written.Entries[3].SKU},
+		"the renamed twin keeps the withdrawn twin's SKU")
 	quote := s.prices.Quote(t1cItem(renamed.Model, pricing.RegionUS, false), pricing.Quantities{pricing.InputTokens: 1})
 	s.Equal(sku, quote.SKU)
 }
@@ -637,8 +692,9 @@ func (s *PriceListsSuite) TestWithdrawingARoutedModelNeedsConfirmation() {
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", withdrawal, &preview))
 	s.True(preview.ConfirmationRequired)
 	s.Contains(preview.NeedsConfirmation, noted)
-	s.Require().Len(preview.Items, 1)
+	s.Require().Len(preview.Items, 2, "the entry and its BYOK twin")
 	s.True(preview.Items[0].Unpriced)
+	s.True(preview.Items[1].BYOK)
 	status, code := s.refused(withdrawal)
 	s.Equal(http.StatusConflict, status)
 	s.Equal(codeConfirmationRequired, code)
@@ -727,7 +783,7 @@ func (s *PriceListsSuite) TestAScheduledChangeCanBeCancelled() {
 	s.Require().NotNil(cancelled.CancelledAt)
 	s.Equal(s.staff.header.Get(actorIDHeader), cancelled.CancelledBy)
 	s.Equal("The vendor withdrew it.", cancelled.CancelReason)
-	s.Len(cancelled.Entries, 1)
+	s.Len(cancelled.Entries, 2, "the entry and its BYOK twin")
 
 	other := s.staff.with(actorIDHeader, "staff:"+s.utils.uuid())
 	var again PriceChange
@@ -790,7 +846,8 @@ func (s *PriceListsSuite) TestAPriceChangeCanBeReadBack() {
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodGet, "/v1/manage/price-lists/changes/"+written.Name, nil, &read))
 	s.Equal(written.Name, read.Name)
 	s.Equal(PriceChangeKind(store.PriceChangeAPI), read.Kind)
-	s.Require().Len(read.Entries, 1)
+	s.Require().Len(read.Entries, 2, "the entry and its BYOK twin")
+	s.True(read.Entries[1].BYOK)
 	s.Equal(model, read.Entries[0].Model)
 	s.Equal(1.0, read.Entries[0].Rates["input_tokens"].USD)
 	s.Equal(1.0, read.Entries[0].Prices["input_tokens"].USD)
@@ -822,7 +879,7 @@ func (s *PriceListsSuite) TestThePreviewWritesNothing() {
 
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", s.change(entry("m"+s.token(), 1)), &preview))
 
-	s.Len(preview.Items, 1)
+	s.Len(preview.Items, 2, "the entry and its BYOK twin")
 	s.Nil(preview.Items[0].Before, "nothing priced it")
 	s.NotNil(preview.Items[0].After)
 	s.Equal(pricing.RegionUS, preview.Items[0].Region)
@@ -843,9 +900,11 @@ func (s *PriceListsSuite) TestAPreviewOfAnEUEntryLeavesTheUSOneAsItWas() {
 	var preview PricePreview
 	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodPost, "/v1/manage/price-lists/changes/preview", input, &preview))
 
-	s.Require().Len(preview.Items, 1)
+	s.Require().Len(preview.Items, 2, "the eu entry and its BYOK twin")
 	s.Equal(pricing.RegionEU, preview.Items[0].Region)
 	s.Nil(preview.Items[0].Before)
+	s.Equal(pricing.RegionEU, preview.Items[1].Region)
+	s.True(preview.Items[1].BYOK)
 	s.False(preview.ConfirmationRequired, "ten times the us price is no move of it")
 }
 

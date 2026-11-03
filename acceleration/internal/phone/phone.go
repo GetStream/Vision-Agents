@@ -45,6 +45,14 @@ var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 // supported: numbers outside the US and Canada.
 var ErrAddressRequired = errors.New("phone: this number needs a verified address")
 
+// ErrNumberSettling is a release the vendor refused for a number bought moments ago, which it
+// is still setting up: the same release goes through once it has (Telnyx took 13 seconds).
+var ErrNumberSettling = errors.New("phone: the vendor is still setting up this number")
+
+// NumberSettles is how long after its purchase a vendor's refusal to release a number is taken
+// to be ErrNumberSettling.
+const NumberSettles = time.Minute
+
 // ErrDestinationRefused is a number no call from here may reach, whoever asks: one billed to
 // the caller at a premium rate.
 var ErrDestinationRefused = errors.New("phone: calls to this number are refused")

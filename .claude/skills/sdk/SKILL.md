@@ -280,9 +280,9 @@ router, not wrapped by an SDK. Every SDK has moved: the `respond`, `RespondAsync
 
 The request id is the SDK's, never the caller's. responses.create generates a fresh random `request_id`
 (a UUID or 32 hex characters) for every text-only question, on every session, and sends it, so a retry
-of the same request is answered once. A question with images or clips sends none, because the router
-refuses one with media. A session not kept in Stream Chat ignores it, so an SDK never checks whether a
-conversation is kept. No SDK exposes a `request_id` (or the old `command_id`) option on responses.create,
+of the same request is answered once. A question with images sends none, because a photo sent with a request id
+must be a data URI. A question with clips sends one (AI-2515). A session not kept in Stream Chat ignores it, so an
+SDK never checks whether a conversation is kept. No SDK exposes a `request_id` (or the old `command_id`) option on responses.create,
 and docs never mention it. The one id a caller passes on is the dispatch worker's: answering an inbound
 message sends back that message's `request_id`, through the SDK's answer helper (`client.RequestID` in Go).
 
@@ -725,3 +725,5 @@ Answering machines: `POST /v1/phone/calls` takes `detect_voicemail` (bool), and 
 Answering machines in the client SDKs: Kotlin and Dart are regenerated (the session `phone.voicemail`, the `voicemail` end reason); Swift needs nothing, since no phone operation is client-accessible.
 
 Plugins, `plugin_events` and `mcp_servers` are gone from the spec (AI-2538): `AgentConfig` no longer carries the three fields, so a GET or list does not return them. `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest` keep them as deprecated, and a non-empty value is a 400 `invalid_request` (`plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`; the same shape for `plugin_events`; `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`), while a missing key, `null` and `[]` pass as before. The 9 plugin operations are removed from the spec and answer 404: `listPlugins`, `getPluginLogo`, `pluginOAuthCallback`, `receivePluginEvent`, `listConfigPlugins`, `disconnectPlugin`, `authorizePlugin`, `setPluginClient` and `deletePluginClient`. Every generated client is regenerated. No hand-written SDK change is needed. The older notes above that ask an SDK to build plugin behaviour no longer apply: the `plugin_authorization` button, the plugin operations and PHP's `mcp_servers:`.
+
+A personal conversation takes videos by request id (AI-2515): `createResponse` with `request_id` and `videos` is answered, where it was a 400, and the model gets the frames. The frames are not uploaded to the person's message. A retry does not sample the videos again. `VideoSource.url` names its containers (AI-2508, doc only). Go's `Responses.Create` sends a request id unless photos are attached, so a question with clips now has one. Rust (`sdks/rust/src/responses.rs`, `text_only`) still sends no request id with videos and needs the same rule. JavaScript and Python send no videos. Every generated client is regenerated.

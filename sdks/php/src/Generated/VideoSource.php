@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class VideoSource
 {
     public function __construct(
-        // Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The...
+        // Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM...
         public string $url,
         // How many frames to sample, evenly spaced across the clip. Default 8.
         public ?int $maxFrames = null,

@@ -84,6 +84,14 @@ type Heard struct {
 
 func (Heard) isAgentEvent() {}
 
+// sendHeard tells onHeard of event, when set, then sends it (Options.OnHeard).
+func sendHeard(emitter *Emitter, onHeard func(Heard), event Heard) {
+	if onHeard != nil {
+		onHeard(event)
+	}
+	emitter.Send(event)
+}
+
 // Said is words the agent speaks as they are, without asking the model: a greeting, or
 // any other line it was told to say. A voice reports it in place of a Responded, which is
 // the model's answer to somebody, so nothing waiting on an answer takes the greeting for

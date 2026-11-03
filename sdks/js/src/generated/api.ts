@@ -3076,7 +3076,10 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Give a number back, which stops its monthly charge */
+        /**
+         * Give a number back, which stops its monthly charge
+         * @description A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
+         */
         readonly delete: operations["releasePhoneNumber"];
         readonly options?: never;
         readonly head?: never;
@@ -5844,7 +5847,7 @@ export type components = {
             readonly max_output_tokens?: number;
             /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
             readonly reasoning_effort?: string;
-            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images. */
+            /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images. */
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id. */
             readonly text: string;
@@ -7969,7 +7972,7 @@ export type components = {
              */
             readonly per_million_output_tokens?: number;
         };
-        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
+        /** @description What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset. */
         readonly Quota: {
             /**
              * Format: int64
@@ -10206,7 +10209,7 @@ export type components = {
         readonly VideoSource: {
             /** @description How many frames to sample, evenly spaced across the clip. Default 8. */
             readonly max_frames?: number;
-            /** @description Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
+            /** @description Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
             readonly url: string;
         };
         readonly Voice: {
@@ -17568,6 +17571,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

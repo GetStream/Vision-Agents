@@ -202,7 +202,7 @@ async def _create_response(
     if images:
         request.images = images
     # A question with images is not named afresh; one named by a dispatch worker keeps its
-    # name, which the router takes beside images (not videos).
+    # name, which the router takes beside images.
     elif not request_id:
         request_id = str(uuid.uuid4())
     if request_id:

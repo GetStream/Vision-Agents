@@ -27,6 +27,29 @@ func (s *KnowledgeLimitsSuite) SetupTest() {
 	s.logs.Reset()
 }
 
+func (s *KnowledgeLimitsSuite) TestTwoRegionsKeptInOneTurbopufferRegionAreRefused() {
+	s.T().Setenv("TURBOPUFFER_API_KEY", "tpuf-test")
+	s.settings.Knowledge.Regions = map[string]string{"us": "aws-eu-central-1", "eu": "aws-eu-central-1"}
+
+	_, err := knowledgeBackends(s.settings.Knowledge, 0, slog.New(slog.DiscardHandler))
+	s.ErrorContains(err, "keeps eu and us in one turbopuffer region, aws-eu-central-1",
+		"its knowledge bases would be listed under both, and their storage billed twice")
+}
+
+func (s *KnowledgeLimitsSuite) TestARegionKeptWhereTheDefaultRegionIsIsRefused() {
+	s.T().Setenv("TURBOPUFFER_API_KEY", "tpuf-test")
+	s.T().Setenv("TURBOPUFFER_REGION", "gcp-us-east4")
+	s.settings.Knowledge.Regions = map[string]string{"eu": "gcp-us-east4"}
+
+	_, err := knowledgeBackends(s.settings.Knowledge, 0, slog.New(slog.DiscardHandler))
+	s.ErrorContains(err, "keeps eu and us in one turbopuffer region, gcp-us-east4")
+
+	s.settings.Knowledge.Regions = map[string]string{"eu": "aws-eu-central-1"}
+	backends, err := knowledgeBackends(s.settings.Knowledge, 0, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.Len(backends, 2)
+}
+
 func (s *KnowledgeLimitsSuite) TestLimitsThatGrowADocumentFourTimesOrLessAreNotWarnedOf() {
 	s.settings.Knowledge.MinChunk, s.settings.Knowledge.MaxHeading = 500, 235
 

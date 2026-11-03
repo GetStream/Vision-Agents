@@ -4807,7 +4807,7 @@ namespace GetStream.VisionAgents.Models
         public string? ReasoningEffort { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
@@ -10038,7 +10038,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Quota
@@ -15757,7 +15757,7 @@ namespace GetStream.VisionAgents.Models
         public int? MaxFrames { get; set; } = default!;
 
         /// <summary>
-        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string Url { get; set; } = default!;

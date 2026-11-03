@@ -102,6 +102,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 	if a.speculating == "" {
 		a.speculating = uuid.NewString()
 	}
+	a.speculated++
 	spec := &speculation{
 		id:      a.speculating,
 		ready:   ready,
@@ -113,6 +114,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 			Tell:         tell,
 			History:      append(a.replayLocked(), named(said)),
 			Note:         note,
+			Generation:   a.speculated,
 		},
 		startedAt: time.Now(),
 		ctx:       ctx,
@@ -155,7 +157,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 			for stream.Next() {
 			}
 		}
-		spec.harness.Forget(spec.turn.ID)
+		spec.harness.Forget(spec.turn.ID, spec.turn.Generation)
 		return
 	}
 
@@ -219,6 +221,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 	a.sender = routing.Caller{}
 	a.scheduled = false
 	a.lastParticipant = ready.Participant
+	a.heardCaller = true
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()
 
