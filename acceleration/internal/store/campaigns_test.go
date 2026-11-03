@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // draftCampaign creates a draft for a fresh customer with the given numbers added.
@@ -276,8 +278,17 @@ func (s *StoreSuite) TestANumberAlreadyMarkedDuplicateByTheMigrationDoesNotBlock
 
 func (s *StoreSuite) TestACampaignHoldsAtMostAHundredThousandContacts() {
 	campaign := s.draftCampaign(newID())
-	_, err := s.store.DB().ExecContext(s.ctx, `INSERT INTO campaign_contacts (id, campaign_id, to_number)
-		SELECT 'c' || n, ?, '+1' || n FROM generate_series(1, 99999) AS n`, campaign.ID)
+	// Replica mode skips the row triggers (the data change capture and the campaign foreign
+	// key) for these setup rows only, which is most of what 99,999 rows cost: on a busy runner
+	// the insert outlasted the driver's 10s read timeout. AddContacts below runs with them.
+	err := s.store.DB().RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL session_replication_role = replica"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO campaign_contacts (id, campaign_id, to_number)
+			SELECT 'c' || n, ?, '+1' || n FROM generate_series(1, 99999) AS n`, campaign.ID)
+		return err
+	})
 	s.Require().NoError(err)
 
 	again, duplicates, err := s.store.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+11"}, {ToNumber: "+12"}})
