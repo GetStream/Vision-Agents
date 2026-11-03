@@ -254,6 +254,9 @@ type Pricer interface {
 	Billable(item Item) bool
 	// Entry is the item's entry: its vendor cost and its price.
 	Entry(item Item) (Entry, bool)
+	// Covers reports whether the item's work is priced, or marked free or local, as Unpriced
+	// leaves it out.
+	Covers(item Item) bool
 }
 
 // priced reports whether the entry has a price above zero.
