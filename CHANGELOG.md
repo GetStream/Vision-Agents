@@ -2,6 +2,37 @@
 
 ## Features
 
+### Users behind one address each have their own quota
+
+A quota a customer set was also counted against the address a device called from, so every
+user of an app behind one IP address, an office or a carrier's NAT, shared one user's quota,
+and the refusal named a user who had not spent it. A customer's quota is now counted per user
+only. The address still answers for the router's own default limits, the guard against a
+backend minting a fresh user id per request (AI-2187).
+
+### A knowledge lookup is priced by the bytes it searched and returned
+
+A turbopuffer lookup was priced at a flat fee per request, turbopuffer's 1.28 GB query
+minimum, so a lookup over a larger base cost more than it was billed. It is now priced by the
+bytes turbopuffer billed it for searching, which include that minimum, and by the bytes it
+returned, at turbopuffer's list rates (AI-2187).
+
+### Cached speech-to-speech tokens the vendor did not split are billed at the cached rate
+
+A speech-to-speech reply whose vendor reports a cached total but no split of it by modality, such as an OpenAI-compatible realtime dialect without `cached_tokens_details`, now has the cached tokens shared out across text, audio and image in proportion, and priced at each modality's cached rate rather than its fresh one. A model with no cached rate, such as Gemini Live, keeps them at its modality rates, as Google bills them (AI-2187).
+
+### A sonar search keeps what Perplexity said it cost
+
+A search answered by a Perplexity sonar model now records the `usage.cost.total_cost` Perplexity sends, its tokens and request fee together, on the row as the vendor's cost (`vendor_cost_micros`), so the price list can be checked against it. The search is still priced by the request (AI-2187).
+
+### A user who has spent their day still reads their sessions
+
+A device caller whose daily quota is spent is no longer refused a read: `GET` of a session, its responses and the rest answer as before, with `X-Quota-Remaining: 0` and the other quota headers. Opening a session, a turn, a run and a socket are still a 429, as is any other write (AI-2187).
+
+### Releasing a number bought moments ago says to try again
+
+`DELETE /v1/phone/numbers/{e164}` answers a 409 `phone_number_settling` when the vendor refuses to give back a number bought in the last minute, which it is still setting up: Telnyx refused one 4 seconds after its purchase and took the same release 13 seconds later. The number stays held, so the same release can be sent again. Any other vendor failure is still a 503 `phone_vendor_failed`. Both are now listed on the operation (AI-2187).
+
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
