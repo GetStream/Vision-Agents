@@ -813,6 +813,11 @@ func (s *SessionCreateSuite) TestADeletedSessionsCallBoundToAConversationStillRe
 		}
 		return said
 	}
+	// The call's row is written behind the session's: a read before it answers 404.
+	s.Require().Eventually(func() bool {
+		_, err := s.store.Call(s.T().Context(), s.customerID(), bound.Id)
+		return err == nil
+	}, settleFor, 20*time.Millisecond, "the call's row was never written")
 	s.Require().Eventually(func() bool {
 		return slices.Contains(transcript(), question) && slices.Contains(transcript(), answered)
 	}, settleFor, 20*time.Millisecond, "the call's transcript was never written")
