@@ -232,6 +232,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`), `setOperatorProviderApp` and `PUT /v1/agents/connectors/{id}/oauth-client` no longer write the message hook into the pinned Stream app's `event_hooks`, so the entry "A provider app points its Stream app's message hook at the router" no longer holds. `setOperatorProviderApp` no longer answers a 503 when Stream refuses the hook. `go run ./cmd/phone hooks -url <base>` writes the call hook only. Stream Chat delivery (`POST /v1/chat/internal/messages`) is the only way Chat text reaches the router; a local router behind a tunnel gets no text written straight into a thread channel. `/v1/chat/hooks/stream` is still served for one release, as a way back. To drop an old message hook: `go run ./cmd/phone hooks -url <base> -remove <base>` (AI-2352).
 
+### The Ruby SDK refuses `plugins` in agent.yaml
+
+`Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
+
 ## Bug Fixes
 
 ### A dispatch worker's session answers in the channel the message was written in
