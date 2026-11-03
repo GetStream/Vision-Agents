@@ -11,8 +11,11 @@ import { Store } from "./store";
 export interface ChatScreenDeps {
   /** Carries on the conversation `sessionId` names, or starts one for undefined, with its chat open. */
   open(sessionId: string | undefined): Promise<AgentChat>;
-  /** A conversation's latest messages, read from its channel without its session. */
-  history(conversationId: string): Promise<LocalMessage[]>;
+  /**
+   * A conversation's latest messages, read from its channel without its session. The channel,
+   * as `type:id`, is passed when the list already said it, and looked up otherwise.
+   */
+  history(sessionId: string, conversationId: string | undefined): Promise<LocalMessage[]>;
   /** Deletes a conversation's session. */
   remove(sessionId: string): Promise<void>;
   /** The call of a session whose voice is on. */
@@ -77,8 +80,8 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   /**
    * @param sessionId The conversation to carry on, or undefined for a new one.
    * @param onStarted Says which session a new conversation became, once it is first used.
-   * @param conversationId The carried-on conversation's channel, as `type:id`, so its messages can
-   * be read while its session opens.
+   * @param conversationId The carried-on conversation's channel, as `type:id`, when the list
+   * already said it, which saves looking it up before reading its messages.
    */
   constructor(
     private readonly sessionId: string | undefined,
@@ -99,7 +102,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
     });
     if (sessionId) {
       void this.open();
-      if (conversationId) void this.preview(conversationId);
+      void this.preview(sessionId, conversationId);
     }
   }
 
@@ -269,8 +272,8 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
    * Reads a carried-on conversation's messages from Stream, which takes a fraction of the time its
    * session does to come back. Nothing is lost if it fails: the chat reads them again once open.
    */
-  private async preview(conversationId: string): Promise<void> {
-    const history = await this.deps.history(conversationId).catch(() => undefined);
+  private async preview(sessionId: string, conversationId: string | undefined): Promise<void> {
+    const history = await this.deps.history(sessionId, conversationId).catch(() => undefined);
     // The session opened first, or the person moved on: there is nothing to show this for.
     if (!history || this.left || this.get().chat) return;
     this.update({ history, isLoading: false });

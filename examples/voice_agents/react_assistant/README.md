@@ -75,7 +75,9 @@ npm run build     # types, then the bundle
   sent is deleted again on leaving it. One that ended carries on when it is next asked
   something. Picking one shows its messages from Stream at once, while its session comes back on
   the router, which takes a couple of seconds: a question asked meanwhile shows straight away
-  and is sent when the session is ready.
+  and is sent when the session is ready. The open conversation is in the URL, as
+  `?conversation=<id>`, so a link or a bookmark opens it again, and Back and Forward go between
+  the conversations opened.
 - **Chat** is Stream's AI components (`stream-chat-react/ai-components`) over the session's
   channel. `AIConversation` lays it out in turns: a question moves to the top and shows at once,
   and its reply writes itself out below it, with the model's reasoning as it thinks
