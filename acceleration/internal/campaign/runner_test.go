@@ -470,6 +470,40 @@ func (s *RunnerSuite) TestACallWhereOnlyTheAgentSpokeIsUnanswered() {
 	s.Equal(string(Unanswered), attempts[0].Result)
 }
 
+// classifiedAs answers a call where somebody spoke, and has the classifier read it as outcome.
+func (s *RunnerSuite) classifiedAs(outcome string) store.Campaign {
+	s.classifier.outcome = outcome
+	s.dialer.answer("+15550000001")
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	s.tick(s.runner)
+	_, attempts := s.contact(campaign, "+15550000001")
+	s.transcripts.write(attempts[0].CallID, []chatlog.Spoken{
+		{Text: "Please leave a message."},
+		{Text: "Your voice wasn't detected. Please record again."},
+	})
+	s.clock.advance(11 * time.Second)
+	s.tick(s.runner)
+	return campaign
+}
+
+func (s *RunnerSuite) TestACallOnlyARecordingSpokeOnIsUnansweredAndCalledAgain() {
+	campaign := s.classifiedAs(recording)
+
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt)
+	s.Empty(contact.Outcome)
+	s.Equal(string(Unanswered), attempts[0].Result)
+}
+
+func (s *RunnerSuite) TestACallWithNoOutcomeThatFitsIsOther() {
+	campaign := s.classifiedAs(none)
+
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.ContactCompleted, contact.Stage)
+	s.Equal(OutcomeOther, contact.Outcome)
+}
+
 func (s *RunnerSuite) TestARefusalOfMoneyPausesTheCampaign() {
 	s.dialer.results["+15550000001"] = []Dialed{{Result: Paused, Reason: "insufficient_credits"}}
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")

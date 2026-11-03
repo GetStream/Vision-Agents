@@ -18,6 +18,20 @@ func (s *CampaignSuite) TestTheClassifierPromptListsEveryChoiceWithDoNotCall() {
 	s.Contains(prompt, `{"outcome": `)
 }
 
+func (s *CampaignSuite) TestTheClassifierPromptOffersAnAnswerForACallOnlyARecordingSpokeOn() {
+	prompt := classifyPrompt(DefaultSequence("config-1").First())
+
+	s.Contains(prompt, "If no person spoke, only a voicemail greeting, an answering machine or another recording, the outcome is recording.")
+	s.Contains(prompt, "If a person spoke and none of them fits, the outcome is none.")
+}
+
+func (s *CampaignSuite) TestAnAnswerThatOnlyARecordingSpokeIsRecording() {
+	chosen, err := outcomeOf(`{"outcome": "recording"}`, DefaultSequence("config-1").First())
+
+	s.Require().NoError(err)
+	s.Equal(recording, chosen)
+}
+
 func (s *CampaignSuite) TestTheClassifierPromptStatesTheGoalBeforeTheOutcomes() {
 	step := DefaultSequence("config-1").First()
 	step.Goal = "Confirm the visit"

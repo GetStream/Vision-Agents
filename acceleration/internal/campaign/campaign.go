@@ -548,8 +548,7 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 		// Answered, and never readable: what was said is unknown, which is other.
 		settle = afterOutcome(step, contact, "")
 	case !callerSpoke(said):
-		return r.store.ClassifyAndSettle(ctx, r.owner, store.Classification{AttemptID: attempt.ID, Unanswered: true},
-			contact.ID, afterSilence(sequence, hours, zone, contact, attempt.StartedAt, r.now()))
+		return r.unanswered(ctx, sequence, hours, zone, contact, attempt)
 	default:
 		chosen, err := r.classifier.Classify(ctx, campaign, attempt.CallID, step, said)
 		if err != nil {
@@ -557,6 +556,9 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 				return err
 			}
 			r.logger.Warn("could not classify a campaign call, so it counts as other", "attempt", attempt.ID, "error", err)
+		}
+		if chosen == recording {
+			return r.unanswered(ctx, sequence, hours, zone, contact, attempt)
 		}
 		settle = afterOutcome(step, contact, chosen)
 	}
@@ -569,6 +571,13 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 	}
 	return r.store.ClassifyAndSettle(ctx, r.owner,
 		store.Classification{AttemptID: attempt.ID, Outcome: settle.Outcome, Converted: settle.Converted}, contact.ID, settle)
+}
+
+// unanswered settles an answered call nobody spoke on like a dial nobody picked up: the next
+// attempt goes on schedule.
+func (r *Runner) unanswered(ctx context.Context, sequence Sequence, hours CallingHours, zone *time.Location, contact store.Contact, attempt store.CampaignAttempt) error {
+	return r.store.ClassifyAndSettle(ctx, r.owner, store.Classification{AttemptID: attempt.ID, Unanswered: true},
+		contact.ID, afterSilence(sequence, hours, zone, contact, attempt.StartedAt, r.now()))
 }
 
 // settle writes where a call left a contact, even once the call's context is gone.
