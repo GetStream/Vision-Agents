@@ -767,7 +767,7 @@ describe("Agent", () => {
       });
     });
 
-    describe("mcp_servers and channels", () => {
+    describe("channels", () => {
       const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
 
       beforeEach(() => {
@@ -787,17 +787,6 @@ describe("Agent", () => {
         const body = await synced(
           [
             "name: jean",
-            "mcp_servers:",
-            "  - name: crm",
-            '    url: "https://crm.example.com/mcp"',
-            "    tools: [list_*, get_deal]",
-            "    scopes:",
-            "      - read",
-            "    user: true",
-            "  - name: notes",
-            "    url: https://notes.example.com/mcp",
-            "    tools: []",
-            "    user: false",
             "channels:",
             "  whatsapp:",
             '    number: "+15551234567" # the main line',
@@ -809,16 +798,6 @@ describe("Agent", () => {
           ].join("\n"),
         );
 
-        assert.deepEqual(body["mcp_servers"], [
-          {
-            name: "crm",
-            url: "https://crm.example.com/mcp",
-            tools: ["list_*", "get_deal"],
-            scopes: ["read"],
-            user: true,
-          },
-          { name: "notes", url: "https://notes.example.com/mcp" },
-        ]);
         assert.deepEqual(body["channels"], {
           whatsapp: { number: "+15551234567" },
           sms: { number: "+15557654321" },
@@ -826,20 +805,17 @@ describe("Agent", () => {
         });
       });
 
-      it("sends no mcp_servers for an empty list, and empty channels for an empty mapping", async () => {
-        const body = await synced("name: jean\nmcp_servers: []\nchannels: {}\n");
+      it("sends empty channels for an empty mapping", async () => {
+        const body = await synced("name: jean\nchannels: {}\n");
 
-        assert.equal("mcp_servers" in body, false);
         assert.deepEqual(body["channels"], {});
       });
 
-      it("fingerprints a change to either", async () => {
+      it("fingerprints a change to channels", async () => {
         const one = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000001\n");
         const other = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000002\n");
-        const servers = await synced("name: jean\nmcp_servers:\n  - name: a\n    url: https://a.example.com\n");
 
         assert.notEqual(one["hash"], other["hash"]);
-        assert.notEqual(one["hash"], servers["hash"]);
       });
 
       it("sends how the sandbox is built and what it may reach", async () => {
@@ -869,17 +845,27 @@ describe("Agent", () => {
         });
       });
 
-      it("sends the same body as before for an agent.yaml that names neither", async () => {
-        const body = await synced("name: jean\nllm: llm-fast\nplugins:\n  - weather\n");
+      it("sends the same body as before for an agent.yaml with no plugins or mcp_servers, or empty ones", async () => {
+        for (const extra of ["", "plugins: []\n", "plugins:\n", "mcp_servers: []\n", "mcp_servers:\n", "plugins: []\nmcp_servers: ~\n"]) {
+          const body = await synced(`name: jean\nllm: llm-fast\n${extra}`);
 
-        assert.deepEqual(body, {
-          name: "jean",
-          instructions: "Be brief.",
-          llm: "llm-fast",
-          plugins: ["weather"],
-          // Probed on the base, before agent.yaml could declare either.
-          hash: "693edb6e1c1bf06d590d73d9b06ec2b7defcb319627b098b9a0c1f56e2b38561",
-        });
+          assert.deepEqual(body, {
+            name: "jean",
+            instructions: "Be brief.",
+            llm: "llm-fast",
+            // Probed on the base, 39edf6a16, for each of these files.
+            hash: "bee9653c8f8302df07255b6d11a843a43b12ef5fee7e9be5b6201c4a3d92ba98",
+          });
+        }
+      });
+
+      it("refuses plugins and mcp_servers that name something, and sends nothing", async () => {
+        await assert.rejects(() => synced("name: jean\nplugins:\n  - weather\n"), /plugins is no longer read/);
+        await assert.rejects(
+          () => synced("name: jean\nmcp_servers:\n  - name: a\n    url: https://a.example.com\n"),
+          /mcp_servers is no longer read/,
+        );
+        assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 0);
       });
     });
 
