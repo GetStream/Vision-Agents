@@ -19,11 +19,12 @@ import (
 // an event to a callback the router serves. The draft is
 // https://github.com/modelcontextprotocol/experimental-ext-triggers-events, docs/
 // design-sketch-proposal.md at commit 6682596d (September 8, 2026), «Status: Draft proposal»;
-// «Webhook-Based Delivery» is what is implemented here, on the connection's client.
+// «Webhook-Based Delivery» is what is implemented here. The plugin system's client
+// (internal/plugins/events.go) is the working code this follows, on the connection's client.
 
-// eventsVersion is the MCP protocol version events are asked for in: the modern version the
-// fake provider speaks (fakeprovider.modernVersion, MCP 2026-07-28 «Versioning and
-// Compatibility»).
+// eventsVersion is the MCP protocol version events are asked for in: the plugin system's
+// plugins.EventsVersion (internal/plugins/events.go), and the modern version the fake provider
+// speaks (fakeprovider.modernVersion, MCP 2026-07-28 «Versioning and Compatibility»).
 const eventsVersion = "2026-07-28"
 
 // metaProtocolVersion is the _meta key a 2026-07-28 request names its version with

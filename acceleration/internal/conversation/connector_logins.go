@@ -137,8 +137,8 @@ func markConnectorConnected(m *Message, authorizationID string) bool {
 	return false
 }
 
-// loginConnected is the Status of a connector login the user has finished, which a client
-// shows as connected rather than as a button to press again.
+// loginConnected is the Status of a connector login the user has finished, the same
+// word plugin_authorization uses (plugins.AuthorizationConnected).
 const loginConnected = "connected"
 
 func mergeConnectorAuthorizations(existing []ConnectorAuthorization, found ConnectorAuthorization) []ConnectorAuthorization {
@@ -210,7 +210,7 @@ func validConnectorAuthorization(found ConnectorAuthorization) bool {
 		return false
 	}
 	parsed, err := url.Parse(found.LaunchURL)
-	// https only, with a host and no userinfo: it is a page the person opens to log in.
+	// https only, as plugins.ValidAuthorization requires of an authorize URL.
 	return err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
 		parsed.User == nil && strings.HasSuffix(parsed.Path, connectorLaunchPath+found.AuthorizationID)
 }

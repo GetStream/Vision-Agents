@@ -23,9 +23,9 @@ import (
 
 // A session binding the caller has no usable connection for, because none was chosen or the
 // chosen one needs reauthorization, is offered as two tools whose names do not depend on the
-// connection: a session's tools are fixed when it opens. The first call asks the person to
-// log in, in the conversation; once they have, the same two tools reach their account
-// through the dispatcher, and the session carries on.
+// connection, as a user plugin is (plugins.UserTools): a session's tools are fixed when it
+// opens. The first call asks the person to log in, in the conversation; once they have, the
+// same two tools reach their account through the dispatcher, and the session carries on.
 const (
 	loginListTools = "list_tools"
 	loginCallTool  = "call_tool"
@@ -653,7 +653,7 @@ func loginStopped(name string) string {
 }
 
 // authorizationRequired is the status a waiting binding's tools answer with until the person
-// logs in.
+// logs in, the word a user plugin's do (plugins.AuthorizationRequired).
 const authorizationRequired = "authorization_required"
 
 // credentialRejected is what the model reads for a connection whose token or key the provider
