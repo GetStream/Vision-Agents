@@ -1381,6 +1381,11 @@ type Call struct {
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
+	// ConversationID is the conversation the call was bound to when it started, as its
+	// session's row names it. It outlives that row, so a deleted session's call can still
+	// find its transcript. Empty for a call from before the column, and for one that kept
+	// no conversation.
+	ConversationID string `bun:"conversation_id,nullzero"`
 	// ConfigID names the agent config the call ran under. Empty when the caller spelled
 	// the whole spec out.
 	ConfigID   string `bun:"config_id,nullzero"`

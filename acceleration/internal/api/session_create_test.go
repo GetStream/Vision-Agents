@@ -790,6 +790,41 @@ func (s *SessionCreateSuite) TestADeletedSessionsCallStillReadsItsTranscript() {
 	s.Equal(want, transcript())
 }
 
+// TestADeletedSessionsCallBoundToAConversationStillReadsItsTranscript: a session opened in a
+// conversation another session started writes there, not under its own id, so the call's row
+// is what names the conversation once the session's row is deleted.
+func (s *SessionCreateSuite) TestADeletedSessionsCallBoundToAConversationStillReadsItsTranscript() {
+	first := s.serverClient.createSession(historySession(false))
+	s.answerTo(first.Id, "Where is order 3825?")
+	s.serverClient.stopSession(first.Id)
+
+	request := historySession(false)
+	request.LegacyConversationId = first.ConversationId
+	bound := s.serverClient.createSession(request)
+	s.Require().Equal(value(first.ConversationId), value(bound.ConversationId), "the session is in the first one's conversation")
+	question := "And order 4472?"
+	answered := s.answerTo(bound.Id, question)
+	transcript := func() (said []string) {
+		var read []TranscriptMessage
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+			"/v1/agents/calls/"+bound.Id+"/transcript", nil, &read))
+		for _, line := range read {
+			said = append(said, line.Text)
+		}
+		return said
+	}
+	s.Require().Eventually(func() bool {
+		return slices.Contains(transcript(), question) && slices.Contains(transcript(), answered)
+	}, settleFor, 20*time.Millisecond, "the call's transcript was never written")
+	want := transcript()
+
+	s.serverClient.deleteSession(bound.Id)
+	_, err := s.store.StoredSession(s.T().Context(), s.customerID(), bound.Id)
+	s.Require().Error(err, "the session's row is deleted")
+
+	s.Equal(want, transcript())
+}
+
 // TestATranscriptReadBeforeItsSessionRowIsWrittenIsTheConversations: the session's row is
 // written behind the call's, so a transcript read in between still reads the conversation's
 // channel, not the agent's. On the base, 42653ab8d, it answered with no lines.
