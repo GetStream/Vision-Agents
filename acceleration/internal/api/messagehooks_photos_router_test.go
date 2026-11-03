@@ -191,6 +191,32 @@ func (s *MessageHooksSuite) TestAPhotoARunningSessionCannotFetchIsDroppedAndSaid
 	s.Empty(imagesIn(turn))
 }
 
+// A running session keeps the photos it answered as a note in its history, as a thread does,
+// and not the question it asked about a photo sent alone, which refers to an image the next
+// message's reply is not shown.
+func (s *MessageHooksSuite) TestPhotosARunningSessionAnsweredAreANoteInTheNextTurnsHistory() {
+	s.running("vision/vision-model")
+	asked := len(s.vision.requests())
+	question := "is this fan broken? " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", question, s.photoAt("/photo.png")))
+	s.askedOf(s.vision, asked)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", "", s.photoAt("/photo.png")))
+	s.askedOf(s.vision, asked+1)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", "and now? "+s.utils.uuid()))
+	s.askedOf(s.vision, asked+2)
+
+	var said []string
+	for _, message := range s.vision.requests()[asked+2].Input {
+		if message.Role == llm.User {
+			said = append(said, message.Content)
+		}
+	}
+	s.Contains(said, question+"\n\n[sent with a photo, not shown again]")
+	s.Contains(said, "[sent with a photo, not shown again]", "a photo sent alone is the note alone")
+	s.False(llm.HasImage(s.vision.requests()[asked+2].Input), "a photo is seen with the message it came with alone")
+}
+
 // Control, as on base: a text-only message to a running session the router answers reaches
 // its model as the text alone.
 func (s *MessageHooksSuite) TestATextOnlyMessageToARunningSessionReachesTheModelAsItsText() {
