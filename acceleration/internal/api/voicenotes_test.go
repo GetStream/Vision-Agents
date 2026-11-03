@@ -487,6 +487,10 @@ func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedA
 			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{
 				Text: big[:1<<20], Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
 		},
+		"createResponse with a video": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{
+				Text: "watch this", Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + big}}})
+		},
 	} {
 		s.Run(name, func() {
 			s.forgetNoted()
