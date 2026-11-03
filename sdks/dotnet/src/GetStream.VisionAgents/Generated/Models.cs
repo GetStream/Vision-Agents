@@ -26,7 +26,7 @@ namespace GetStream.VisionAgents.Models
 {
     using System = global::System;
 
-
+    
 
     /// <summary>
     /// The calling organization's account: its balance, its credit and spend, its status and tier, the threshold it is warned at, and what Stream allows it. Why an organization is suspended is Stream's, and is not here.
