@@ -122,8 +122,9 @@ func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, w
 		return nil, stack.Wrap(err)
 	}
 	event.Message.Attachments = attachments
-	// As the hook would: a message with neither text nor a photo, such as a video alone, is
-	// not answered (addressed).
+	// As the hook would: a message with no text, photo or voice recording, such as a video
+	// alone, is not answered (addressed). Of a message's files the bridge writes only its photos
+	// (channelbridge photos), so a thread is answered from the text and photos, as before.
 	if !addressed(event) {
 		return nil, nil
 	}
