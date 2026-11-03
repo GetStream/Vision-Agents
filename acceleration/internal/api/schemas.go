@@ -973,7 +973,6 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 // SessionRespondCommand is the SessionRespondCommand schema.
 type SessionRespondCommand struct {
 	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio     *AudioSource              `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse: transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is reported as an error and no turn starts."`
 	Images    *[]ImageSource            `json:"images,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type" enum:"respond"`

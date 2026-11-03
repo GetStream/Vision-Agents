@@ -17,7 +17,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
-	"github.com/gorilla/websocket"
 )
 
 // VoiceNotesSuite covers a voice note sent with a question: what the person said in it is
@@ -426,33 +425,17 @@ func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnRespondIsHeardOnceAndMatchedOn
 	s.heard(since, 1)
 }
 
-// Without a request id the question is answered as one too: on respond, in a body as big as
-// createResponse takes, and on the socket.
-func (s *VoiceNotesSuite) TestAVoiceNoteWithoutARequestIDIsAskedOnRespondAndTheSocket() {
+// Without a request id the question is answered as one too, in a body as big as
+// createResponse takes.
+func (s *VoiceNotesSuite) TestAVoiceNoteWithoutARequestIDIsAskedOnRespond() {
 	opened := s.noting()
-	posted, written := "big "+s.utils.uuid(), "socket "+s.utils.uuid()
+	posted := "big " + s.utils.uuid()
 	atLimit := wavOf(posted + strings.Repeat(" ", maxInlineAudio-len(wavOf(posted))))
 
 	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": "",
 		"audio": map[string]string{"url": "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
 	s.Require().Equal(http.StatusNoContent, status, "%.300s", payload)
 	s.Equal(posted, s.lastAsked(posted))
-
-	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "audio": frame{"url": s.serve(wavOf(written))}}))
-	s.Equal(written, s.lastAsked(written))
-}
-
-func (s *VoiceNotesSuite) TestAVoiceNoteWithAPhotoOnTheSocketForAnAgentThatCannotSeeIsRefusedBeforeItIsHeard() {
-	opened := s.noting()
-	since := time.Now().UTC()
-	watching := s.watching(opened)
-	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))
-
-	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "images": []frame{{"url": photo}},
-		"audio": frame{"url": s.serve(wavOf("look " + s.utils.uuid()))}}))
-
-	s.await(watching, "error")
-	s.heard(since, 0)
 }
 
 // Text alone is answered on respond as it was before voice notes: a 204 without a request id,
@@ -469,83 +452,21 @@ func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
 		map[string]any{"request_id": command, "text": kept}, &receipt))
 	s.Equal(command, receipt.RequestId)
 	s.Equal(kept, s.lastAsked(kept))
-	status, _ := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": ""})
-	s.Equal(http.StatusBadRequest, status, "there is nothing to answer")
 	s.heard(since, 0)
 }
 
-func (s *VoiceNotesSuite) TestAVoiceNoteRespondedOnTheSocketIsTheQuestionAndShownOnThePersonsMessage() {
+// Empty text without a voice note is refused as createResponse refuses it, a 400
+// invalid_request: it was a validation_failed while the text had a minimum length.
+func (s *VoiceNotesSuite) TestEmptyTextWithoutAVoiceNoteOnRespondIsAnInvalidRequest() {
 	opened := s.noting()
-	command, said := s.utils.uuid(), "the walk-in is warm "+s.utils.uuid()
-	audio := wavOf(said)
-	before := len(s.chat.Uploads())
 
-	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "request_id": command,
-		"audio": frame{"url": "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(audio)}}))
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": ""})
 
-	s.Equal(said, s.lastAsked(said))
-	s.shownWithItsNote(opened, command, said, audio, before)
-}
-
-func (s *VoiceNotesSuite) TestAVoiceNoteTheSocketRefusesIsReportedAndNothingIsAsked() {
-	opened := s.noting()
-	watching := s.watching(opened)
-
-	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "audio": frame{"url": s.serve(wavOf("  "))}}))
-
-	reported := s.await(watching, "error")
-	s.Equal(errNothingHeard.Error(), reported["error"])
-	s.nothingWasAsked(opened)
-}
-
-// A refused note takes the question with it: the photos sent beside it are not answered alone.
-func (s *VoiceNotesSuite) TestAVoiceNoteTheSocketRefusesTakesThePhotosSentWithIt() {
-	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
-	watching := s.watching(opened)
-	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+s.utils.uuid()))
-	before := len(s.chat.Uploads())
-
-	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "images": []frame{{"url": photo}},
-		"audio": frame{"url": s.serve(wavOf("  "))}}))
-	s.await(watching, "error")
-
-	command := s.utils.uuid()
-	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "request_id": command, "text": "And the next question"}))
-	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
-	s.Require().Eventually(func() bool {
-		return slices.ContainsFunc(s.chat.Stored(channel), func(stored map[string]any) bool { return stored["id"] == command })
-	}, settleFor, 10*time.Millisecond, "the next question was never written")
-	s.Empty(s.chat.Uploads()[before:], "the photo of a refused question is not shown")
-}
-
-func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnTheSocketIsHeardOnce() {
-	opened := s.noting()
-	since := time.Now().UTC()
-	command, said := s.utils.uuid(), "the hood fan is loud "+s.utils.uuid()
-	sent := frame{"type": "respond", "request_id": command, "text": "Kitchen", "audio": frame{"url": s.serve(wavOf(said))}}
-	watching := s.watching(opened)
-
-	s.Require().NoError(watching.WriteJSON(sent))
-	s.lastAsked(said)
-	s.Require().NoError(watching.WriteJSON(sent))
-	s.Require().NoError(watching.WriteJSON(frame{"type": "respond", "request_id": command, "text": "Bar",
-		"audio": sent["audio"]}))
-
-	reported := s.await(watching, "error")
-	s.Contains(reported["error"], "different", "other typed text under the same request id")
-	s.heard(since, 1)
-}
-
-// Text alone on the socket is asked as sent, as it was before voice notes.
-func (s *VoiceNotesSuite) TestTextAloneOnTheSocketIsAskedAsBefore() {
-	opened := s.noting()
-	since := time.Now().UTC()
-	typed := "Is the walk-in fixed? " + s.utils.uuid()
-
-	s.Require().NoError(s.watching(opened).WriteJSON(frame{"type": "respond", "text": typed}))
-
-	s.Equal(typed, s.lastAsked(typed))
-	s.heard(since, 0)
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused), string(payload))
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", refused.Error.Code)
+	s.Equal("there is nothing to answer", refused.Error.Message)
 }
 
 // shownWithItsNote checks that the person's message of command carries text and the voice
@@ -568,13 +489,6 @@ func (s *VoiceNotesSuite) shownWithItsNote(opened Session, command, text string,
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the voice note is uploaded once")
 	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
-}
-
-// watching opens the session's socket as the backend that opened it.
-func (s *VoiceNotesSuite) watching(opened Session) *websocket.Conn {
-	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
-	s.T().Cleanup(func() { _ = watching.Close() })
-	return watching
 }
 
 func (s *VoiceNotesSuite) respond(opened Session) string {

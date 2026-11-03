@@ -208,10 +208,6 @@ func documentHandWritten(api huma.API) {
 			"conversation receives the question and later the findings, without raw images. Video " +
 			"capture uses task-correlated `get_video_frames` tool requests and `tool_result` " +
 			"replies. Frames are never attached automatically to conversational turns.\n" +
-			"`respond` may carry `audio: {url}`, a voice note heard as `createResponse` hears one: what " +
-			"was said is the question, after any `text`, and a note that cannot be heard is an " +
-			"`error` frame with no turn started. An agent that hands what is written to a dispatch " +
-			"worker refuses one, as it refuses images.\n" +
 			"A watcher that may lose its connection, such as to the router restarting, asks for a " +
 			"resumable socket with `resumable=true`. Its first frame is `resumed`, and every frame " +
 			"after it except `hearing` carries a `cursor`. To reconnect, open the socket again with " +

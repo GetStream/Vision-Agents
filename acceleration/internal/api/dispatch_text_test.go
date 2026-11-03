@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"maps"
 	"net/http"
 	"net/url"
 	"testing"
@@ -94,29 +93,24 @@ func (s *DispatchTextSuite) TestWhatTheServerWritesIsAnsweredByTheModel() {
 	}, settleFor, 10*time.Millisecond)
 }
 
-func (s *DispatchTextSuite) TestAWorkerIsHandedTextOnlySoAnImageOrAVoiceNoteIsRefused() {
+func (s *DispatchTextSuite) TestAWorkerIsHandedTextOnlySoAnImageIsRefused() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 4})
 	defer release()
+	opened := s.openedByEndUser()
 
-	for name, media := range map[string]frame{
-		"an image":     {"images": []map[string]string{{"url": "https://example.com/a.png"}}},
-		"a voice note": {"audio": map[string]string{"url": "https://example.com/a.m4a"}},
-	} {
-		sent := frame{"type": "respond", "text": "What is this?"}
-		maps.Copy(sent, media)
-		watching := s.writes(s.openedByEndUser().Id, sent)
+	watching := s.writes(opened.Id, frame{"type": "respond", "text": "What is this?",
+		"images": []map[string]string{{"url": "https://example.com/a.png"}}})
 
-		s.Require().NoError(watching.SetReadDeadline(time.Now().Add(settleFor)))
-		for {
-			var received map[string]any
-			s.Require().NoError(watching.ReadJSON(&received), name)
-			if received["type"] == "error" {
-				s.Contains(received["error"], "text only", name)
-				break
-			}
+	s.Require().NoError(watching.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var received map[string]any
+		s.Require().NoError(watching.ReadJSON(&received))
+		if received["type"] == "error" {
+			s.Contains(received["error"], "text only")
+			break
 		}
-		s.Empty(worker.Messages(), "half a message is not handed on: %s", name)
 	}
+	s.Empty(worker.Messages(), "half a message is not handed on")
 }
 
 // openedByEndUser is a conversation a signed-in end user holds with an agent that leaves
