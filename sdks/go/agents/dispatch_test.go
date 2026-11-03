@@ -241,7 +241,7 @@ func answering(t *testing.T, router *worked, prepare func(*stream.Pipeline)) (*D
 		if err != nil {
 			return err
 		}
-		return conversation.Respond(message.Text)
+		return conversation.Respond(message.Text, message.Images...)
 	})
 	return dispatch, &built
 }
@@ -312,6 +312,30 @@ func TestASessionIsOpenedOnTheChannelTheQuestionWasAskedIn(t *testing.T) {
 	}
 	if opened.Incognito != nil && *opened.Incognito {
 		t.Error("the session is incognito; the answer would be written nowhere the person can read it")
+	}
+}
+
+func TestThePhotosOfAMessageAreShownToTheAgentAnsweringIt(t *testing.T) {
+	// A worker that answers with Respond(message.Text) alone would answer a photo as though
+	// none had been sent.
+	router := newWorked(t, func(connection *websocket.Conn) {
+		frame := written("support-42", "is this fan broken?")
+		frame["images"] = []any{
+			map[string]any{"url": "https://cdn.example/fan.jpg", "mime_type": "image/jpeg"},
+			map[string]any{"url": "https://cdn.example/label.jpg"},
+		}
+		_ = connection.WriteJSON(frame)
+		_ = connection.WriteJSON(written("support-42", "and now?"))
+	})
+	dispatch, _ := answering(t, router, nil)
+	defer waited(t, dispatch)()
+
+	eventually(t, "the second question never reached the model", func() bool { return len(router.questions()) == 2 })
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if !slices.Equal(router.shown, []string{"https://cdn.example/fan.jpg", "https://cdn.example/label.jpg"}) {
+		t.Errorf("the photos shown were %v, want both of the first message and none for the second", router.shown)
 	}
 }
 

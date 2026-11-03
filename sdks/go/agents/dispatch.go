@@ -93,7 +93,7 @@ type DispatchOptions struct {
 //		if err != nil {
 //			return err
 //		}
-//		return conversation.Respond(message.Text)
+//		return conversation.Respond(message.Text, message.Images...)
 //	})
 //	return dispatch.Run(ctx)
 type Dispatch struct {
@@ -210,7 +210,7 @@ func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, bui
 		session: session,
 		logger:  d.logger.With("channel", message.ChannelID),
 		timeout: d.turnTimeout,
-		turns:   make(chan string, queued),
+		turns:   make(chan turn, queued),
 		settled: make(chan struct{}),
 	}
 	if d.onEvent != nil {
@@ -285,7 +285,7 @@ type Conversation struct {
 	timeout time.Duration
 	watch   func(stream.Event)
 
-	turns   chan string
+	turns   chan turn
 	settled chan struct{}
 	once    sync.Once
 }
@@ -306,7 +306,15 @@ func (c *Conversation) Ended() bool {
 	}
 }
 
-// Respond puts a question to the agent and returns without waiting for the answer.
+// turn is one question waiting to be put to the agent: its text and the photos sent with it.
+type turn struct {
+	text   string
+	images []stream.Image
+}
+
+// Respond puts a question to the agent and returns without waiting for the answer. images
+// are the photos sent with it, such as the message's Images, shown to the agent beside the
+// text.
 //
 // There is nothing to wait for: the answer is written into the channel by the backend as it
 // is generated, so the person who wrote is already reading it.
@@ -314,12 +322,12 @@ func (c *Conversation) Ended() bool {
 // Questions are answered one at a time: two messages written in quick succession would
 // otherwise have the agent answering both at once. So the second waits for the first to
 // settle.
-func (c *Conversation) Respond(text string) error {
+func (c *Conversation) Respond(text string, images ...stream.Image) error {
 	if c.Ended() {
 		return errors.New("agents: this conversation has ended")
 	}
 	select {
-	case c.turns <- text:
+	case c.turns <- turn{text: text, images: images}:
 		return nil
 	default:
 		return fmt.Errorf("agents: %d questions are already waiting to be answered here", queued)
@@ -349,8 +357,8 @@ func (c *Conversation) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case text := <-c.turns:
-			if !c.ask(ctx, events, text) {
+		case next := <-c.turns:
+			if !c.ask(ctx, events, next) {
 				return
 			}
 
@@ -377,9 +385,13 @@ func (c *Conversation) seen(event stream.Event) {
 // ask puts one question to the agent and reads until it is answered, reporting whether the
 // conversation can take another. A question the router stopped on its way down is never
 // answered, so it is asked once more.
-func (c *Conversation) ask(ctx context.Context, events <-chan stream.Event, text string) bool {
+func (c *Conversation) ask(ctx context.Context, events <-chan stream.Event, next turn) bool {
+	var inputs []client.Input
+	for _, image := range next.images {
+		inputs = append(inputs, client.Image{URL: image.URL})
+	}
 	for retried := false; ; retried = true {
-		if _, err := c.session.Responses.Create(ctx, text); err != nil {
+		if _, err := c.session.Responses.Create(ctx, next.text, inputs...); err != nil {
 			c.logger.Error("a question never reached the model", "error", err)
 			return false
 		}
