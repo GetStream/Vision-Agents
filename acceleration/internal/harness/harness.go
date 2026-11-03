@@ -178,6 +178,10 @@ type Turn struct {
 	// Attributes go on the reply's usage row, asked for when it is written
 	// (llm.ResponseParams.Attributes). Nil adds none.
 	Attributes func() map[string]string
+	// Generation tells apart two replies asked for under one ID, such as a speculative
+	// reply thrown away and the answer asked for after it. A reply that may be forgotten
+	// (Forget) carries one that is not zero and unique to it; every other reply leaves it zero.
+	Generation uint64
 }
 
 // answerNow is the note a reply that Answers is given.
@@ -235,6 +239,11 @@ type Harness struct {
 	// toolless is the replies in flight that were offered no tools (Turn.Answers,
 	// Turn.NoTools, a colleague's question), until they are written (DropUnoffered).
 	toolless map[string]bool
+	// generations is the reply last asked for under an ID that a speculative reply was asked
+	// for under, so a Forget that lands after another reply took the ID leaves what that
+	// reply recorded alone. An ID is only there from the speculative reply until it is
+	// forgotten, written or cut off.
+	generations map[string]uint64
 	// shape is what the last request opened with besides the conversation: instructions,
 	// tools, tool choice and effort. cold reports that it changed, which costs the
 	// provider's cache of the conversation and so says nothing about whether it pays.
@@ -274,12 +283,13 @@ func New(options Options) (*Harness, error) {
 	}
 
 	h := &Harness{
-		options:  options,
-		logger:   options.Logger,
-		emitter:  NewEmitter(eventBuffer),
-		charged:  context.Background(),
-		carried:  make(map[string][]llm.Message),
-		toolless: make(map[string]bool),
+		options:     options,
+		logger:      options.Logger,
+		emitter:     NewEmitter(eventBuffer),
+		charged:     context.Background(),
+		carried:     make(map[string][]llm.Message),
+		toolless:    make(map[string]bool),
+		generations: make(map[string]uint64),
 	}
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
@@ -337,6 +347,7 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 	carried := h.carried[response.ID]
 	delete(h.carried, response.ID)
 	delete(h.toolless, response.ID)
+	delete(h.generations, response.ID)
 	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
 		h.release(response.ID)
 		carried = nil
@@ -362,17 +373,25 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 // this the next turn with the same words would send nothing new and continue from a reply
 // that never saw them; the next turn sends the whole conversation instead. The notes it
 // was handed were never read, so they are owed again.
-func (h *Harness) Forget(turnID string) {
+//
+// It runs when the reply has been read out, which can be after the turn was asked for again
+// under the same ID. generation is the Turn.Generation the reply was asked for with: when
+// another reply has since taken the ID, what was recorded is that reply's and is left alone.
+func (h *Harness) Forget(turnID string, generation uint64) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if current, taken := h.generations[turnID]; taken && current != generation {
+		return
+	}
 	h.stored = stored{}
 	delete(h.carried, turnID)
 	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
 		}
 	}
-	h.mu.Unlock()
 }
 
 // resume works out how much of the input still has to be sent, and what to continue from.
@@ -441,6 +460,9 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	if offersNone {
 		h.toolless[turn.ID] = true
 	}
+	if _, taken := h.generations[turn.ID]; taken || turn.Generation != 0 {
+		h.generations[turn.ID] = turn.Generation
+	}
 	if offersNone && len(tools) > 0 {
 		if len(model.ToolChoices) == 0 || slices.Contains(model.ToolChoices, "none") {
 			toolChoice = "none"
@@ -495,7 +517,13 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	stream, err := session.Create(ctx, params)
 	if err != nil {
 		// A reply that never started read nothing: what it took is owed to the next one.
-		h.Release(turn.ID)
+		// A speculation cancelled in Create can fail after the answer took its ID, and what
+		// is recorded under the ID is then the answer's, as in Forget.
+		h.mu.Lock()
+		if current, taken := h.generations[turn.ID]; !taken || current == turn.Generation {
+			h.release(turn.ID)
+		}
+		h.mu.Unlock()
 	}
 	return stream, err
 }
@@ -523,6 +551,7 @@ func (h *Harness) release(turnID string) {
 	// what came back twice.
 	delete(h.carried, turnID)
 	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
 	if h.written.turn == turnID {
 		// The conversation keeps the reply as it was written, so the model would otherwise
 		// read itself as having already said this.
