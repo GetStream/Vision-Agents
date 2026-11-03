@@ -485,6 +485,68 @@ func (s *TwilioSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
 	s.False(s.seen.form.Has("StatusCallbackMethod"))
 }
 
+func (s *TwilioSuite) TestACallWithAMachineURLAsksTwilioForAsyncMachineDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	machineURL := "https://router.example/v1/phone/machine/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:       "+15125551234",
+		To:         "+15550001111",
+		Bridge:     phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		MachineURL: machineURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal("DetectMessageEnd", s.seen.form.Get("MachineDetection"))
+	s.Equal("true", s.seen.form.Get("AsyncAmd"))
+	s.Equal(machineURL, s.seen.form.Get("AsyncAmdStatusCallback"))
+	s.Equal(http.MethodPost, s.seen.form.Get("AsyncAmdStatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	for _, name := range []string{"MachineDetection", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+		s.False(s.seen.form.Has(name), name)
+	}
+}
+
+func (s *TwilioSuite) TestEachAnsweredByIsWhoPickedUp() {
+	for answeredBy, machine := range map[string]phone.Machine{
+		"human":               phone.MachineHuman,
+		"machine_end_beep":    phone.MachineGreetingEnded,
+		"machine_end_silence": phone.MachineGreetingEnded,
+		"machine_end_other":   phone.MachineGreetingEnded,
+		"machine_start":       phone.MachineUnknown,
+		"fax":                 phone.MachineUnknown,
+		"unknown":             phone.MachineUnknown,
+		"something_new":       phone.MachineUnknown,
+	} {
+		got, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1&AnsweredBy="+answeredBy))
+		s.Require().NoError(err)
+		s.Equal(machine, got, answeredBy)
+	}
+}
+
+func (s *TwilioSuite) TestAMachineReportWithoutAnAnsweredByIsRefused() {
+	_, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1"))
+
+	s.ErrorContains(err, "AnsweredBy")
+}
+
+func (s *TwilioSuite) TestAMachineReportThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadMachine("application/json", []byte(`{"AnsweredBy":"human"}`))
+
+	s.Error(err)
+}
+
 func (s *TwilioSuite) TestEachFinalStatusIsAnOutcome() {
 	for word, result := range map[string]phone.CallResult{
 		"completed": phone.CallCompleted,

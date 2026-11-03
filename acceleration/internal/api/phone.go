@@ -485,6 +485,23 @@ var errNoCallStatus = notFound("that call is not waiting for its status")
 // Like answerPhoneCall it is reached by a telephony vendor rather than a customer, so it
 // carries no customer header: the token made when the call was placed is the only proof.
 func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "status", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.ReportStatus(ctx, token, contentType, body)
+	})
+}
+
+// receiveCallMachine takes who picked up a placed call from the vendor that placed it, under
+// the same proof as receiveCallStatus.
+func (s *Server) receiveCallMachine(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "machine report", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.Machine(ctx, token, contentType, body)
+	})
+}
+
+// receiveVendorPost reads what a vendor posted to one of a placed call's URLs and hands it to
+// take, answering the failures every such URL shares.
+func (s *Server) receiveVendorPost(w http.ResponseWriter, r *http.Request, what string,
+	take func(ctx context.Context, token, contentType string, body []byte) error) {
 	if s.phone == nil {
 		writeError(w, errNoCallStatus)
 		return
@@ -492,15 +509,15 @@ func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, callStatusLimit))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeError(w, payloadTooLarge("a status is at most 64 KiB"))
+		writeError(w, payloadTooLarge("a "+what+" is at most 64 KiB"))
 		return
 	}
 	if err != nil {
-		writeError(w, invalidRequest("could not read that status"))
+		writeError(w, invalidRequest("could not read that "+what))
 		return
 	}
 
-	err = s.phone.ReportStatus(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
+	err = take(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
 	switch {
 	case errors.Is(err, phone.ErrUnknownStatus):
 		writeError(w, errNoCallStatus)

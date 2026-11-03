@@ -452,6 +452,49 @@ func (s *CallStatusSuite) TestATelnyxStatusIsRecorded() {
 	s.Equal("busy", call.VendorStatus)
 }
 
+// postMachine posts form as a vendor's machine report.
+func (s *CallStatusSuite) postMachine(token string, form url.Values) (int, string) {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/machine/"+token, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(answered)
+}
+
+func (s *CallStatusSuite) TestATelnyxMachineReportReachesTheMachineHookWithoutACustomer() {
+	token, callID := s.placed("telnyx")
+	var told []string
+	s.router.phone.OnMachine(func(_ context.Context, customerID, sessionID string, machine phone.Machine) {
+		told = append(told, customerID+" "+sessionID+" "+string(machine))
+	})
+	s.T().Cleanup(func() { s.router.phone.OnMachine(nil) })
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Equal([]string{s.customerID() + " " + callID + " greeting_ended"}, told)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForAnUnknownTokenIs404() {
+	status, failure := s.postMachine(s.utils.uuid(), url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, "that call is not waiting for its status")
+}
+
+func (s *CallStatusSuite) TestAMachineReportThatCannotBeReadIs400() {
+	token, _ := s.placed("telnyx")
+
+	status, failure := s.postMachine(token, url.Values{"CallSid": {"CA1"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "AnsweredBy")
+}
+
 func (s *CallStatusSuite) TestAnUnknownStatusTokenIs404() {
 	status, failure := s.post(s.utils.uuid(), "application/x-www-form-urlencoded", "CallStatus=busy")
 
