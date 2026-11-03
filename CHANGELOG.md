@@ -2,12 +2,6 @@
 
 ## Features
 
-### A knowledge lookup is priced by the bytes it searched and returned
-
-A turbopuffer lookup was priced at a flat fee per request, turbopuffer's 1.28 GB query
-minimum, so a lookup over a larger base cost more than it was billed. It is now priced by the
-bytes turbopuffer billed it for searching, which include that minimum, and by the bytes it
-returned, at turbopuffer's list rates.
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
