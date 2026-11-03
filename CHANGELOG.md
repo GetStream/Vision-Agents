@@ -2,9 +2,6 @@
 
 ## Features
 
-### A sonar search keeps what Perplexity said it cost
-
-A search answered by a Perplexity sonar model now records the `usage.cost.total_cost` Perplexity sends, its tokens and request fee together, on the row as the vendor's cost (`vendor_cost_micros`), so the price list can be checked against it. The search is still priced by the request (AI-2187).
 ### A price change writes the BYOK price beside a new item
 
 `POST /v1/manage/price-lists/changes` now writes a new `llm`, `knowledge` or `sandbox` item's BYOK entry with it, at a fifth of the vendor's rates, as the price files do, so work done on the customer's own key is never left unpriced. An item withdrawn has its BYOK entry withdrawn too. A BYOK entry the change sets itself, or one already in force, is kept. A renamed item's BYOK entry keeps the old one's SKU. The preview shows the BYOK entries the change would write, and a change sent again under its idempotency key is still answered with the first (AI-2187).
