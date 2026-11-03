@@ -305,10 +305,28 @@ func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToItsSessionAndAgentAsTheAnswerI
 	heard := s.meteredRows(routing.STT, since, 1)[0]
 	s.Equal(opened.Id, heard.SessionID, "the transcription names the session that heard the note")
 	s.Equal(opened.AgentId, heard.AgentID, "the transcription names the session's agent")
-	answered := s.meteredRows(routing.LLM, since, 1)[0]
+	answered := s.answerRow(since)
 	s.Equal([]string{answered.SessionID, answered.AgentID, answered.APIKey, answered.UserID},
 		[]string{heard.SessionID, heard.AgentID, heard.APIKey, heard.UserID},
 		"the note is billed to whom its answer is")
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteFromAnotherCallerIsBilledAsTheSessionsOpenerIs() {
+	opened := s.serverClient.actingFor(s.client).createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	since := time.Now().UTC()
+
+	command := s.utils.uuid()
+	status, payload := s.client.call(http.MethodPost, s.responses(opened),
+		CreateResponseRequest{RequestId: &command, Audio: &AudioSource{Url: s.serve(wavOf("other " + s.utils.uuid()))}})
+	s.Require().Equal(http.StatusAccepted, status, string(payload))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	answered := s.answerRow(since)
+	s.Equal(routing.CallerServer, answered.Attributes[routing.CallerAttribute], "the session was opened by a backend")
+	s.Equal(s.client.userID, answered.UserID)
+	s.Equal(answered.Attributes[routing.CallerAttribute], heard.Attributes[routing.CallerAttribute],
+		"the note is billed as the session's opener, not as the user who sent it")
+	s.Equal([]string{answered.APIKey, answered.UserID}, []string{heard.APIKey, heard.UserID})
 }
 
 func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToTheCallItWasSentIn() {
@@ -321,7 +339,7 @@ func (s *VoiceNotesSuite) TestAVoiceNoteIsBilledToTheCallItWasSentIn() {
 
 	heard := s.meteredRows(routing.STT, since, 1)[0]
 	s.Equal(opened.CallId, heard.CallID, "the transcription names the call the note was sent in")
-	answered := s.meteredRows(routing.LLM, since, 1)[0]
+	answered := s.answerRow(since)
 	s.Equal(answered.CallID, heard.CallID, "the note is on the call its answer is")
 }
 
@@ -371,6 +389,24 @@ func (s *VoiceNotesSuite) heard(since time.Time, n int) {
 // noting opens a text session on a noted model, which a test reads what it was asked from.
 func (s *VoiceNotesSuite) noting() Session {
 	return s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+}
+
+// answerRow waits for the row of the model that answered a note since then and returns it. The
+// session's other model work, naming it, writes rows of its own, so the count is not fixed.
+func (s *VoiceNotesSuite) answerRow(since time.Time) store.Request {
+	var answer store.Request
+	s.Require().Eventually(func() bool {
+		var rows []store.Request
+		err := s.store.ShardDB().NewSelect().Model(&rows).
+			Where("customer_id = ? AND modality = ? AND model = ? AND started_at >= ?", s.customerID(), string(routing.LLM), "noted-model", since).
+			Order("started_at").Scan(context.Background())
+		if err != nil || len(rows) == 0 {
+			return false
+		}
+		answer = rows[0]
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "the answer's row was never recorded")
+	return answer
 }
 
 func (s *VoiceNotesSuite) responses(opened Session) string {
