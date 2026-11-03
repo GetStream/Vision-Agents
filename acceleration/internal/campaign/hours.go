@@ -204,7 +204,8 @@ func checkZone(field, name string) error {
 	if name == "" {
 		return fmt.Errorf("the %s time zone is required", field)
 	}
-	if _, err := time.LoadLocation(name); err != nil {
+	// Local is the router's own zone, which says nothing about where the person is.
+	if _, err := time.LoadLocation(name); err != nil || name == "Local" {
 		return fmt.Errorf("the %s time zone %q is not an IANA time zone", field, name)
 	}
 	return nil

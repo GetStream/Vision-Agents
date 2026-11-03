@@ -242,6 +242,16 @@ func (s *HoursSuite) TestBadDaysTimesZonesAndDatesAreRefused() {
 	s.Error(h.Validate())
 }
 
+func (s *HoursSuite) TestTheRoutersOwnZoneIsRefusedAsFixedOrFallback() {
+	h := DefaultCallingHours()
+	h.TimeZone.Fallback = "Local"
+	s.ErrorContains(h.Validate(), "fallback")
+
+	h = DefaultCallingHours()
+	h.TimeZone = TimeZone{Mode: ZoneFixed, Fixed: "Local"}
+	s.ErrorContains(h.Validate(), "fixed")
+}
+
 func (s *HoursSuite) TestParseRefusesUnknownFieldsAndTrailingData() {
 	raw, err := json.Marshal(DefaultCallingHours())
 	s.Require().NoError(err)
