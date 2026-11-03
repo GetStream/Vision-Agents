@@ -34,6 +34,11 @@ import (
 // through several in a fraction of a second.
 const runtimeSlice = 50 * time.Millisecond
 
+// shutdownWithin is how long a shutdown may take once nothing holds it: it writes the rows
+// the sessions queued, which the recorders give up on after 15 seconds, so waiting less
+// than that fails a shutdown that is only writing them.
+const shutdownWithin = 30 * time.Second
+
 // RuntimeSuite opens sessions on a manager over Postgres and reads back what their time cost
 // and what they wrote down.
 type RuntimeSuite struct {
@@ -172,6 +177,14 @@ func modes(rows []store.Request) []string {
 	return billed
 }
 
+// rowEnd is when the slice the row records ended.
+func rowEnd(row store.Request) time.Time {
+	if row.DurationMs == nil {
+		return row.StartedAt
+	}
+	return row.StartedAt.Add(time.Duration(*row.DurationMs * float64(time.Millisecond)))
+}
+
 func totalSeconds(rows []store.Request) int64 {
 	var total int64
 	for _, row := range rows {
@@ -256,15 +269,36 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 
 	down := make(chan error, 1)
 	go func() { down <- s.manager.Shutdown() }()
-	time.Sleep(4 * runtimeSlice)
-	before := len(s.written(first.ID())) + len(s.written(second.ID()))
-	time.Sleep(6 * runtimeSlice)
-	s.Equal(before, len(s.written(first.ID()))+len(s.written(second.ID())),
-		"no session goes on being billed while another one is being closed")
-	select {
-	case <-down:
-		s.Fail("shutdown should still be waiting on a call that is speaking")
-	default:
+	// A session is halted when its own close begins, and every runtime is stopped before the
+	// first close, so a row that ends after this instant is a session billed while another
+	// is closing.
+	var closing time.Time
+	s.Require().Eventually(func() bool {
+		closing = time.Now()
+		return first.Halted() || second.Halted()
+	}, settleFor, time.Millisecond, "shutdown never began closing the sessions")
+	time.Sleep(10 * runtimeSlice)
+
+	// Rows are queued and written to Postgres later, in the order they were queued. The marker
+	// is queued after every row the sessions made while the closing went on, so once it is
+	// written so are they, however far behind the writer is.
+	marker := "marker-" + uuid.NewString()
+	s.manager.runtime.Record(routing.ProviderConfig{Provider: runtimeProvider, Model: store.ModalityText}, routing.Stat{
+		Owner:     routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{SessionID: marker}},
+		StartedAt: time.Now().UTC(),
+		Success:   true,
+	})
+	landed := time.Now().Add(shutdownWithin)
+	for len(s.written(marker)) == 0 {
+		s.Require().True(time.Now().Before(landed), "the writer never caught up")
+		time.Sleep(runtimeSlice)
+	}
+	for _, id := range []string{first.ID(), second.ID()} {
+		for _, row := range s.written(id) {
+			s.False(rowEnd(row).After(closing.Add(time.Millisecond)),
+				"no session goes on being billed while another one is being closed: %s ran until %s, closing began at %s",
+				id, rowEnd(row).Format(time.RFC3339Nano), closing.Format(time.RFC3339Nano))
+		}
 	}
 
 	for _, edge := range edges {
@@ -273,7 +307,7 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 	select {
 	case err := <-down:
 		s.Require().NoError(err)
-	case <-time.After(settleFor):
+	case <-time.After(shutdownWithin):
 		s.Fail("shutdown never finished")
 	}
 }
