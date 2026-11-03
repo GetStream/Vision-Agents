@@ -19,6 +19,9 @@ import (
 var (
 	// errNoVoiceNotes is a voice note sent to a deployment that transcribes nothing.
 	errNoVoiceNotes = notConfigured("this deployment does not transcribe voice notes")
+	// errNoVoiceNotesInRegion is a voice note sent to an agent in a region where the deployment
+	// runs no batch transcriber: a note is never heard in another region.
+	errNoVoiceNotesInRegion = notConfigured("this deployment does not transcribe voice notes in the agent's region")
 	// errNothingHeard is a voice note with no words in it: answering it would answer nothing.
 	errNothingHeard = invalidRequest("no words were heard in the voice note")
 )
@@ -70,6 +73,12 @@ func (s *Server) withHeardNote(ctx context.Context, found *session.Session, comm
 func (s *Server) hearVoiceNote(ctx context.Context, spec session.Spec, source, heard string) (conversation.VoiceNote, error) {
 	if s.streams == nil || s.streams.Transcriptions == nil {
 		return conversation.VoiceNote{}, errNoVoiceNotes
+	}
+	// A note to an agent whose region runs no batch transcriber is refused before it is fetched:
+	// Transcribe would refuse it as a model failure, which a client retries. A target that
+	// resolves to nothing in any region is left for Transcribe to refuse.
+	if served, err := s.streams.Transcriptions.InRegion(ctx, recordedTarget(spec.LanguageHints), spec.Region); err == nil && !served {
+		return conversation.VoiceNote{}, errNoVoiceNotesInRegion
 	}
 	// The person is waiting for an answer, so the note is held to what an inline
 	// transcription is.
