@@ -38,11 +38,18 @@ final class MemoryGuestStore implements GuestStore {
   Future<void> clear() async => _value = null;
 }
 
+/// What a store holds: the guest, and the refresh secret that brings them back once their
+/// token has expired.
+///
+/// The secret is kept here and not on [GuestUser]: it is a credential for coming back as this
+/// guest, and nothing an app does with a guest needs it.
+typedef RememberedGuest = ({GuestUser guest, String? refreshSecret});
+
 /// The guest a store holds, or null for nothing or something unreadable under the key.
 ///
 /// Unreadable is not an error: minting a fresh guest is the recoverable answer, and throwing
 /// would leave the app unable to ask anything at all.
-Future<GuestUser?> readGuest(GuestStore store) async {
+Future<RememberedGuest?> readGuest(GuestStore store) async {
   final held = await store.read();
   if (held == null) {
     return null;
@@ -53,26 +60,33 @@ Future<GuestUser?> readGuest(GuestStore store) async {
       return null;
     }
     final expires = decoded['expires_at'];
-    return GuestUser(
-      id: decoded['id'] as String,
-      token: decoded['token'] as String,
-      name: decoded['name'] is String ? decoded['name'] as String : '',
-      custom: decoded['custom'] is Map
-          ? (decoded['custom'] as Map).cast<String, Object?>()
-          : const {},
-      expiresAt: expires is String ? parseRouterDate(expires) : null,
+    final secret = decoded['refresh_secret'];
+    return (
+      guest: GuestUser(
+        id: decoded['id'] as String,
+        token: decoded['token'] as String,
+        name: decoded['name'] is String ? decoded['name'] as String : '',
+        custom: decoded['custom'] is Map
+            ? (decoded['custom'] as Map).cast<String, Object?>()
+            : const {},
+        expiresAt: expires is String ? parseRouterDate(expires) : null,
+      ),
+      refreshSecret: secret is String && secret.isNotEmpty ? secret : null,
     );
   } on FormatException {
     return null;
   }
 }
 
-Future<void> writeGuest(GuestStore store, GuestUser guest) => store.write(
+/// Remembers [guest] with the refresh secret the router handed out with it, which replaces
+/// the one held before: each works once.
+Future<void> writeGuest(GuestStore store, GuestUser guest, {String? refreshSecret}) => store.write(
   jsonEncode({
     'id': guest.id,
     'token': guest.token,
     if (guest.name.isNotEmpty) 'name': guest.name,
     if (guest.custom.isNotEmpty) 'custom': guest.custom,
     if (guest.expiresAt case final expires?) 'expires_at': expires.toUtc().toIso8601String(),
+    'refresh_secret': ?refreshSecret,
   }),
 );

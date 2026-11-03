@@ -28,17 +28,66 @@ import Testing
         #expect(request.body == ["name": .string("Guest")])
     }
 
-    @Test func aGuestWhoseTokenExpiredComesBackAsTheSameGuestWithAFreshOne() async throws {
-        try store.write(#"{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z"}"#)
+    @Test func aMintedGuestsRefreshSecretIsRemembered() async throws {
         let server = try SessionServer(
-            answer: Self.minted(#"{"id":"guest-1","token":"new","expires_at":"2999-01-01T00:00:00Z"}"#))
+            answer: Self.minted(#"{"id":"guest-1","token":"tok","refresh_secret":"s1"}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        _ = try await agents.guestUser(store: store)
+
+        let stored = try JSONDecoder().decode([String: String].self, from: Data(try #require(store.read()).utf8))
+        #expect(stored["refresh_secret"] == "s1")
+    }
+
+    @Test func aGuestWhoseTokenExpiredComesBackWithTheirRefreshSecret() async throws {
+        try store.write(
+            #"{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z","refresh_secret":"s1"}"#)
+        let server = try SessionServer(
+            answer: Self.minted(
+                #"{"id":"guest-1","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s2"}"#))
         defer { server.listener.cancel() }
         let agents = VisionAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(store: store)
 
-        #expect(try await server.request().body == ["id": .string("guest-1")])
+        #expect(
+            try await server.request().body
+                == ["id": .string("guest-1"), "refresh_secret": .string("s1")])
         #expect(guest.token == "new")
+        let stored = try JSONDecoder().decode([String: String].self, from: Data(try #require(store.read()).utf8))
+        #expect(stored["refresh_secret"] == "s2")
+    }
+
+    @Test func aSpentSecretIsAnsweredWithSomebodyNewWhoIsRememberedInstead() async throws {
+        try store.write(
+            #"{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z","refresh_secret":"spent"}"#)
+        let server = try SessionServer(
+            answer: Self.minted(
+                #"{"id":"guest-2","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s9"}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        let guest = try await agents.guestUser(store: store)
+        let again = try await agents.guestUser(store: store)
+
+        #expect(guest.id == "guest-2")
+        #expect(again == guest)
+        let stored = try JSONDecoder().decode([String: String].self, from: Data(try #require(store.read()).utf8))
+        #expect(stored["id"] == "guest-2")
+        #expect(stored["refresh_secret"] == "s9")
+    }
+
+    @Test func anExpiredGuestWithNoSecretDoesNotNameAnIdItCannotProve() async throws {
+        try store.write(#"{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z"}"#)
+        let server = try SessionServer(answer: Self.minted(#"{"id":"guest-2","token":"new"}"#))
+        defer { server.listener.cancel() }
+        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+
+        let guest = try await agents.guestUser(GuestOptions(name: "Guest"), store: store)
+
+        #expect(try await server.request().body == ["name": .string("Guest")])
+        #expect(guest.id == "guest-2")
     }
 
     @Test func notMeMintsSomebodyNewAndForgettingLeavesNothing() async throws {

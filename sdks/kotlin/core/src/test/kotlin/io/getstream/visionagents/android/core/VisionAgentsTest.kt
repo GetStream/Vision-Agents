@@ -17,6 +17,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** A session as the router answers one: every required field and a handful of the optional ones. */
@@ -619,15 +620,55 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `a guest whose token expired comes back as the same guest with a fresh one`() = runTest {
+    fun `a minted guest has its refresh secret remembered`() = runTest {
         val store = FileGuestStore(File(Files.createTempDirectory("guest").toFile(), "guest.json"))
-        store.write("""{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z"}""")
-        router.answer = { Reply(201, """{"id":"guest-1","token":"new","expires_at":"2999-01-01T00:00:00Z"}""") }
+        router.answer = { Reply(201, """{"id":"guest-1","token":"tok","refresh_secret":"s1"}""") }
+
+        agents.guestUser(store = store)
+
+        assertEquals("s1", Json.parseToJsonElement(store.read()!!).jsonObject["refresh_secret"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `a guest whose token expired comes back with their refresh secret`() = runTest {
+        val store = FileGuestStore(File(Files.createTempDirectory("guest").toFile(), "guest.json"))
+        store.write("""{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z","refresh_secret":"s1"}""")
+        router.answer = { Reply(201, """{"id":"guest-1","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s2"}""") }
 
         val guest = agents.guestUser(store = store)
 
-        assertEquals("""{"id":"guest-1"}""", router.requests.single().body)
+        assertEquals("""{"id":"guest-1","refresh_secret":"s1"}""", router.requests.single().body)
         assertEquals("new", guest.token)
+        assertEquals("s2", Json.parseToJsonElement(store.read()!!).jsonObject["refresh_secret"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `a spent secret is answered with somebody new, who is remembered instead`() = runTest {
+        val store = FileGuestStore(File(Files.createTempDirectory("guest").toFile(), "guest.json"))
+        store.write("""{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z","refresh_secret":"spent"}""")
+        router.answer = { Reply(201, """{"id":"guest-2","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s9"}""") }
+
+        val guest = agents.guestUser(store = store)
+        val again = agents.guestUser(store = store)
+
+        assertEquals("guest-2", guest.id)
+        assertEquals(guest, again)
+        assertEquals(1, router.requests.size)
+        val stored = Json.parseToJsonElement(store.read()!!).jsonObject
+        assertEquals("guest-2", stored["id"]?.jsonPrimitive?.content)
+        assertEquals("s9", stored["refresh_secret"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `an expired guest with no secret does not name an id it cannot prove`() = runTest {
+        val store = FileGuestStore(File(Files.createTempDirectory("guest").toFile(), "guest.json"))
+        store.write("""{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z"}""")
+        router.answer = { Reply(201, """{"id":"guest-2","token":"new"}""") }
+
+        val guest = agents.guestUser(GuestOptions(name = "Guest"), store)
+
+        assertEquals("""{"name":"Guest"}""", router.requests.single().body)
+        assertEquals("guest-2", guest.id)
     }
 
     @Test
