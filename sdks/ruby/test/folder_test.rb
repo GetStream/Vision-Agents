@@ -311,7 +311,7 @@ class TestFolder < Minitest::Test
 
   def test_plugins_are_refused_with_a_pointer_to_connectors
     ["plugins: [linear]\n", "plugins: [linear, slack]\n", "plugins: linear\n", "plugins: ''\n", "plugins: {}\n",
-     "plugins: {linear: true}\n", "plugins: [[]]\n", "plugins: [{name: linear}]\n",
+     "plugins: {linear: true}\n", "plugins: [[]]\n", "plugins: [{name: linear}]\n", "plugins: [~]\n",
      "plugins: [linear]\nconnectors:\n  - linear\n",
      "plugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n"].each do |yaml|
       write("agent.yaml", "name: jean\n#{yaml}")
