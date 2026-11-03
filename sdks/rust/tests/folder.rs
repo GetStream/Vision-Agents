@@ -424,7 +424,10 @@ fn plugins_and_plugin_events_are_refused_unless_they_declare_nothing() {
         ("plugins: github\n", "plugins"),
         ("plugins:\n  github: {}\n", "plugins"),
         ("plugins: [github]\nconnectors: [github]\n", "plugins"),
-        ("plugin_events: [{plugin: github, event: push}]\n", "plugin_events"),
+        (
+            "plugin_events: [{plugin: github, event: push}]\n",
+            "plugin_events",
+        ),
         ("plugin_events: push\n", "plugin_events"),
     ] {
         let (_temporary, root) = directory("jean");
@@ -437,7 +440,12 @@ fn plugins_and_plugin_events_are_refused_unless_they_declare_nothing() {
             "{declaration:?} was refused as {error:?}"
         );
     }
-    for declaration in ["plugins: []\n", "plugins:\n", "plugins: ~\n", "plugin_events: []\n"] {
+    for declaration in [
+        "plugins: []\n",
+        "plugins:\n",
+        "plugins: ~\n",
+        "plugin_events: []\n",
+    ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", format!("name: jean\n{declaration}"));
 
