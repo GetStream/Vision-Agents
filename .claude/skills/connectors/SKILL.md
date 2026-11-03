@@ -10,8 +10,7 @@ that someone connected. The router keeps the credential sealed and adds it to ea
 The agent's own code never sees a token.
 
 Connectors replaced plugins. The router refuses a config naming `plugins`, `plugin_events` or
-`mcp_servers` and opens none a stored config still names; the `plugin` skill describes code
-that is no longer reached.
+`mcp_servers` and opens none a stored config still names.
 
 To add a new connector to the catalog, read the `add-connector` skill.
 

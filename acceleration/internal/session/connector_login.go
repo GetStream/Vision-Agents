@@ -23,7 +23,7 @@ import (
 
 // A session binding the caller has no usable connection for, because none was chosen or the
 // chosen one needs reauthorization, is offered as two tools whose names do not depend on the
-// connection, as a user plugin is (plugins.UserTools): a session's tools are fixed when it
+// connection, as the removed plugin system's user tools were: a session's tools are fixed when it
 // opens. The first call asks the person to log in, in the conversation; once they have, the
 // same two tools reach their account through the dispatcher, and the session carries on.
 const (
